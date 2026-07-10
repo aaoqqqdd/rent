@@ -171,31 +171,49 @@ export function parseCookie(cookieHeader: string | null): Record<string, string>
  * @returns 一个包含完整 HTML 结构的字符串。
  */
 export function buildLayout(title: string, body: string, currentUser?: User | null): string {
-  const navItems = currentUser
-    ? currentUser.role === 'CUSTOMER'
-      ? `
-          <a href="/customer/dashboard">仪表盘</a>
-          <a href="/customer/rentals">我的租赁</a>
-          <a href="/customer/orders">我的订单</a>
-          <a href="/customer/profile">个人信息</a>
-          <a href="/customer/referral">我的推荐</a>
-        `
-      : currentUser.role === 'STAFF'
-      ? `
-          <a href="/staff/dashboard">员工仪表盘</a>
-          <a href="/staff/orders/pending">待处理订单</a>
-        `
-      : `
-          <a href="/admin/dashboard">管理员仪表盘</a>
-          <a href="/staff/dashboard">员工页面</a>
-        `
+  const isAuthPage = title.includes('登录') || title.includes('注册') || title.includes('找回密码');
+  const topNav = currentUser || isAuthPage
+    ? ``
     : `
-          <a href="/login">登录</a>
-          <a href="/register">注册</a>
-        `
+      <a href="/login">登录</a>
+      <a href="/register">注册</a>
+    `
 
   const userBlock = currentUser
-    ? `<span class="user-label">${currentUser.name} (${currentUser.role})</span><a href="/logout">登出</a>`
+    ? `<span class="user-label">${currentUser.name} • ${currentUser.role}</span><a class="button button-small" href="/logout">登出</a>`
+    : ''
+
+  const sidebar = currentUser
+    ? `<aside class="sidebar">
+        <div class="sidebar-brand"><strong>角色：</strong>${currentUser.role}</div>
+        <div class="sidebar-section">
+          <h3>快捷导航</h3>
+          ${currentUser.role === 'CUSTOMER' ? `
+            <a href="/customer/dashboard">顾客仪表盘</a>
+            <a href="/customer/rentals">我的租赁</a>
+            <a href="/customer/orders">我的订单</a>
+            <a href="/customer/profile">个人信息</a>
+            <a href="/customer/security">安全设置</a>
+            <a href="/customer/referral">我的推荐</a>
+          ` : ''}
+          ${currentUser.role === 'STAFF' ? `
+            <a href="/staff/dashboard">员工仪表盘</a>
+            <a href="/staff/orders/pending">待处理订单</a>
+            <a href="/staff/contracts">合同管理</a>
+            <a href="/staff/rentals/tracking">租赁进度</a>
+            <a href="/staff/devices">设备状态</a>
+          ` : ''}
+          ${currentUser.role === 'ADMIN' ? `
+            <a href="/admin/dashboard">管理员仪表盘</a>
+            <a href="/admin/users">用户管理</a>
+            <a href="/admin/orders">订单管理</a>
+            <a href="/admin/contracts">合同管理</a>
+            <a href="/admin/finance">财务管理</a>
+            <a href="/admin/devices">设备管理</a>
+            <a href="/admin/settings">系统设置</a>
+          ` : ''}
+        </div>
+      </aside>`
     : ''
 
   return `<!DOCTYPE html>
@@ -205,43 +223,175 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${title}</title>
   <style>
-    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f7fb; color: #1a1a1a; }
-    .page { max-width: 1100px; margin: 0 auto; padding: 24px; }
-    header { background: #0c4a6e; color: #fff; padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-    header h1 { margin: 0; font-size: 1.3rem; }
-    header nav { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    header nav a { color: #fff; text-decoration: none; padding: 8px 12px; border-radius: 6px; background: rgba(255,255,255,0.12); }
-    header .user-label { font-weight: 600; margin-right: 12px; }
-    .panel { background: #fff; border-radius: 18px; box-shadow: 0 20px 40px rgba(15,23,42,0.08); padding: 28px; margin-bottom: 20px; }
+    :root {
+      --primary: #0c4a6e;
+      --primary-light: #e0f2fe;
+      --primary-dark: #083344;
+      --background: #f8fafc;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    }
+    * { box-sizing: border-box; }
+    body { 
+      margin: 0; 
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+      background: var(--background); 
+      color: var(--text); 
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .page { max-width: 1200px; margin: 24px auto; padding: 0; }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .header-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 72px;
+    }
+    header .brand { font-size: 1.5rem; font-weight: 700; color: var(--primary); }
+    header nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    header nav a { 
+      color: var(--muted); 
+      text-decoration: none; 
+      padding: 8px 16px; 
+      border-radius: 8px; 
+      transition: all 0.2s ease-in-out;
+    }
+    header nav a:hover {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+    }
+    header .user-label { font-weight: 600; margin-right: 12px; color: var(--text); }
+    .panel { 
+      background: var(--surface); 
+      border: 1px solid var(--border);
+      border-radius: 16px; 
+      box-shadow: var(--shadow); 
+      padding: 28px; 
+      margin-bottom: 24px; 
+    }
     .hero { display: grid; gap: 16px; }
-    .form-label { display: block; margin-bottom: 6px; font-weight: 600; }
-    .form-control, .select-control, .textarea-control { width: 100%; padding: 12px 14px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 1rem; }
-    .textarea-control { min-height: 100px; resize: vertical; }
-    .button, .button-secondary { background: #0c4a6e; color: #fff; border: none; border-radius: 12px; padding: 12px 18px; cursor: pointer; font-size: 1rem; }
-    .button-secondary { background: #475569; }
-    .grid { display: grid; gap: 16px; }
+    .form-label { display: block; margin-bottom: 8px; font-weight: 600; }
+    .form-control, .select-control, .textarea-control { 
+      width: 100%; 
+      padding: 12px 16px; 
+      border: 1px solid var(--border); 
+      border-radius: 8px; 
+      font-size: 1rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .form-control:focus, .select-control:focus, .textarea-control:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-light);
+    }
+    .textarea-control { min-height: 120px; resize: vertical; }
+    .button, .button-secondary { 
+      background: var(--primary); 
+      color: #fff; 
+      border: none; 
+      border-radius: 8px; 
+      padding: 12px 20px; 
+      cursor: pointer; 
+      font-size: 1rem;
+      font-weight: 600;
+      transition: all 0.2s ease-in-out;
+    }
+    .button-secondary { background: var(--border); color: var(--text); }
+    .button:hover { background: var(--primary-dark); transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+    .button-secondary:hover { background: #d1d5db; transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+    .grid { display: grid; gap: 24px; }
     .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .card { border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; background: #ffffff; }
-    .badge { display: inline-flex; align-items: center; justify-content: center; padding: 4px 10px; border-radius: 999px; font-size: 0.9rem; background: #e0f2fe; color: #0369a1; }
+    .card { 
+      border: 1px solid var(--border); 
+      border-radius: 16px; 
+      padding: 24px; 
+      background: var(--surface);
+      transition: all 0.2s ease-in-out;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-lg);
+    }
+    .badge { display: inline-flex; align-items: center; justify-content: center; padding: 4px 12px; border-radius: 999px; font-size: 0.875rem; font-weight: 500; background: var(--primary-light); color: var(--primary-dark); }
     .table { width: 100%; border-collapse: collapse; }
-    .table th, .table td { border: 1px solid #e2e8f0; padding: 12px 14px; text-align: left; }
-    .table th { background: #f8fafc; }
-    .text-muted { color: #64748b; }
-    .alert { padding: 16px; border-radius: 14px; background: #f8fafc; border: 1px solid #e2e8f0; margin-bottom: 18px; }
-    .footer { text-align: center; color: #64748b; padding-top: 14px; }
-    .link-button { color: #0c4a6e; text-decoration: none; font-weight: 600; }
-    @media (max-width: 900px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
-    @media (max-width: 640px) { header { flex-direction: column; align-items: stretch; } }
+    .table th, .table td { border-bottom: 1px solid var(--border); padding: 16px; text-align: left; }
+    .table th { background: var(--background); font-weight: 600; }
+    .text-muted { color: var(--muted); }
+    .alert { padding: 16px; border-radius: 8px; background: #f8fafc; border: 1px solid var(--border); margin-bottom: 20px; }
+    .footer { text-align: center; color: var(--muted); padding: 32px 0; border-top: 1px solid var(--border); margin-top: 32px; }
+    .link-button { color: var(--primary); text-decoration: none; font-weight: 600; }
+
+    .page-centered {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: calc(100vh - 72px - 105px); /* Full height minus header and footer */
+    }
+    .layout-grid { display: grid; grid-template-columns: 240px 1fr; gap: 24px; }
+    .sidebar { background: var(--surface); border-radius: 16px; padding: 24px; box-shadow: var(--shadow); }
+    .sidebar h3 { margin-top: 0; color: var(--primary); }
+    .sidebar a { display: block; padding: 12px 16px; text-decoration: none; color: var(--text); border-radius: 8px; margin-bottom: 4px; }
+    .sidebar a:hover { background: var(--primary-light); color: var(--primary-dark); }
+    .content { background: var(--surface); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); }
+
+    /* Responsive Design */
+    @media (max-width: 900px) { 
+      .grid-2, .grid-3 { grid-template-columns: 1fr; } 
+      .layout-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 768px) { 
+      header { flex-direction: column; align-items: flex-start; }
+      .page { padding: 16px; }
+      .panel { padding: 20px; }
+    }
+     @media (max-width: 640px) {
+      header nav {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      header nav a {
+        text-align: center;
+      }
+    }
   </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
   <header>
-    <h1>电脑租赁管理系统</h1>
-    <nav>${navItems}</nav>
-    <div>${userBlock}</div>
+    <div class="header-inner">
+      <div class="brand"><strong>电脑租赁管理系统</strong></div>
+      <nav class="top-nav">${topNav}</nav>
+      <div>${userBlock}</div>
+    </div>
   </header>
-  <main class="page">${body}</main>
+  <main class="page">
+    ${currentUser
+      ? `<div class="layout-grid">
+          ${sidebar}
+          <div class="content">${body}</div>
+        </div>`
+      : body
+    }
+  </main>
   <footer class="footer">© 2026 PC Rental Pty Ltd. 电脑租赁系统演示版。</footer>
 </body>
 </html>`
