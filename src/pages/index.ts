@@ -38,6 +38,7 @@ export * from './admin/finance';
 export * from './admin/devices';
 export * from './admin/settings';
 export * from './admin/contractDetail';
+export * from './admin/contracts';
 export * from './admin/users';
 export * from './admin/userDetail';
 export * from './admin/userNew';

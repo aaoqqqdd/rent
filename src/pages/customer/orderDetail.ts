@@ -76,9 +76,9 @@ export function renderCustomerOrderDetail(user: any, orderId: string, message?: 
                 if (tokenResult.status === 'OK') {
                   return tokenResult.token;
                 } else {
-                  let errorMessage = `Tokenization failed with status: ${tokenResult.status}`;
+                  let errorMessage = 'Tokenization failed with status: ${tokenResult.status}';
                   if (tokenResult.errors) {
-                    errorMessage += `\\nErrors: ${JSON.stringify(tokenResult.errors)}`;
+                    errorMessage += '\\nErrors: ${JSON.stringify(tokenResult.errors)}';
                   }
                   throw new Error(errorMessage);
                 }

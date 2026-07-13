@@ -9,10 +9,15 @@ export interface User {
   phone?: string
   bsb?: string
   account?: string
+  account_number?: string
   balance: number
   referrerId?: string
   referralCode?: string
+  registrationDate?: string
   commissionBalance: number
+  pendingCommission?: number
+  withdrawnCommission?: number
+  referredUsers?: Array<Record<string, any>>
 }
 
 export interface Device {
@@ -20,9 +25,11 @@ export interface Device {
   name: string
   model: string
   serialNumber: string
+  serial_number?: string
   pricePerDay: number
+  dailyRate?: number
   depositAmount: number
-  status: 'available' | 'rented' | 'maintenance'
+  status: 'available' | 'rented' | 'maintenance' | 'retired'
   description: string
 }
 
@@ -31,9 +38,12 @@ export interface Order {
   orderNo: string
   userId: string
   deviceId: string
+  deviceName?: string
   startDate: string
   endDate: string
-  status: 'pending_payment' | 'paid' | 'active' | 'completed' | 'cancelled'
+  rentalPeriod?: number
+  orderDate?: string
+  status: 'pending_approval' | 'pending_payment' | 'approved' | 'paid' | 'active' | 'completed' | 'cancelled'
   paymentMethod: 'card' | 'bank_transfer' | 'balance'
   totalAmount: number
   depositAmount: number
@@ -49,6 +59,8 @@ export interface Contract {
   contractNumber: string
   content: string
   signedAt: string | null
+  createdAt?: string
+  signToken?: string
   status: 'draft' | 'pending_sign' | 'signed' | 'cancelled'
 }
 
@@ -61,6 +73,8 @@ export const users: User[] = [
     role: 'ADMIN',
     balance: 0,
     commissionBalance: 0,
+    registrationDate: '2026-07-01',
+    account_number: '00000000',
   },
   {
     id: 'u-staff',
@@ -71,6 +85,8 @@ export const users: User[] = [
     phone: '13888888888',
     balance: 0,
     commissionBalance: 0,
+    registrationDate: '2026-07-05',
+    account_number: '11111111',
   },
   {
     id: 'u-customer',
@@ -81,9 +97,17 @@ export const users: User[] = [
     phone: '13800000000',
     bsb: '062-000',
     account: '12345678',
+    account_number: '12345678',
     balance: 500,
     referralCode: 'ABC123XYZ',
     commissionBalance: 200,
+    pendingCommission: 50,
+    withdrawnCommission: 150,
+    referredUsers: [
+      { name: '李四', registeredAt: '2026-06-20', orderCount: 2, contributedCommission: 80 },
+      { name: '王五', registeredAt: '2026-06-22', orderCount: 1, contributedCommission: 20 },
+    ],
+    registrationDate: '2026-06-15',
   },
 ]
 
@@ -93,7 +117,9 @@ export const devices: Device[] = [
     name: 'MacBook Pro 14寸',
     model: 'M4 Pro 18GB 512GB',
     serialNumber: 'SN20260708001',
+    serial_number: 'SN20260708001',
     pricePerDay: 40,
+    dailyRate: 40,
     depositAmount: 2000,
     status: 'available',
     description: '适合专业创作者与商务办公的高性能笔记本',
@@ -103,7 +129,9 @@ export const devices: Device[] = [
     name: 'Dell XPS 13',
     model: 'Intel i7 16GB 512GB',
     serialNumber: 'SN20260601002',
+    serial_number: 'SN20260601002',
     pricePerDay: 35,
+    dailyRate: 35,
     depositAmount: 1500,
     status: 'rented',
     description: '轻薄便携，高效办公与移动演示首选',
@@ -117,6 +145,8 @@ export const contracts: Contract[] = [
     contractNumber: 'CT20260708001',
     content: '甲方（出租方）：PC Rental Pty Ltd\n乙方（承租方）：张三\n设备名称：MacBook Pro 14寸\n设备型号：M4 Pro 18GB 512GB\n设备序列号：SN20260708001\n租赁起始日：2026年07月10日\n租赁结束日：2026年08月10日\n日租金：¥40.00/天\n租金总额：¥1,200.00\n押金：¥2,000.00\n总计应付：¥3,200.00\n',
     signedAt: '2026-07-10 14:30:25',
+    createdAt: '2026-07-10 14:20:00',
+    signToken: 'ct-1-token',
     status: 'signed',
   },
 ]
@@ -127,8 +157,11 @@ export const orders: Order[] = [
     orderNo: 'OR20260708001',
     userId: 'u-customer',
     deviceId: 'd-1',
+    deviceName: 'MacBook Pro 14寸',
     startDate: '2026-07-10',
     endDate: '2026-08-10',
+    rentalPeriod: 31,
+    orderDate: '2026-07-08 14:00:00',
     status: 'paid',
     paymentMethod: 'card',
     totalAmount: 3200,
@@ -447,4 +480,81 @@ export function getPendingOrders(): Order[] {
 export function getOrderSummary(order: Order): string {
   const device = getDeviceById(order.deviceId)
   return `${order.orderNo} · ${device?.name ?? '设备'} · ${order.startDate} ~ ${order.endDate}`
+}
+
+export function getUserById(userId?: string): User | undefined {
+  return users.find((user) => user.id === userId)
+}
+
+export function getUsers(): User[] {
+  return users
+}
+
+export function getOrders(): Order[] {
+  return orders
+}
+
+export function getDevices(): Device[] {
+  return devices
+}
+
+export function getAllDevices(): Device[] {
+  return devices
+}
+
+export function getAllContracts(): Contract[] {
+  return contracts
+}
+
+export function getContractByOrderId(orderId?: string): Contract | undefined {
+  return contracts.find((contract) => contract.rentalId === orderId)
+}
+
+export function getContractBySignToken(token?: string): Contract | undefined {
+  return contracts.find((contract) => contract.signToken === token)
+}
+
+export function getSystemSettings() {
+  return systemSettings
+}
+
+export function updateSystemSettings(newSettings: Partial<typeof systemSettings>) {
+  Object.assign(systemSettings, newSettings)
+}
+
+export function getRentalsByUserId(userId: string): Order[] {
+  return orders.filter((order) => order.userId === userId)
+}
+
+export function getAllRentals(): Order[] {
+  return orders
+}
+
+export function updateOrderStatus(orderId: string, status: Order['status']): Order | undefined {
+  const order = getOrderById(orderId)
+  if (order) {
+    order.status = status
+  }
+  return order
+}
+
+export function updateOrder(orderId: string, updates: Partial<Order>): Order | undefined {
+  const order = getOrderById(orderId)
+  if (order) {
+    Object.assign(order, updates)
+  }
+  return order
+}
+
+export function createContract(contract: Contract): Contract {
+  contracts.push(contract)
+  return contract
+}
+
+export function updateContractStatus(contractId: string, status: Contract['status']): Contract | undefined {
+  const contract = getContractById(contractId)
+  if (contract) {
+    contract.status = status
+  }
+  return contract
 }
