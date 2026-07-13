@@ -24,12 +24,8 @@ export function renderNewContractPage(user: User) {
             <input type="date" id="end-date" name="endDate" class="form-control" required>
           </div>
         </div>
-        <div class="form-group" style="margin-top: 24px;">
-           <label for="customer-id" class="form-label">客户ID</label>
-           <input type="text" id="customer-id" name="customerId" class="form-control" required placeholder="请输入客户的用户ID">
-        </div>
         <div style="margin-top: 24px;">
-          <button type="submit" class="button">创建合同草稿</button>
+          <button type="submit" class="button">生成签约链接</button>
         </div>
       </form>
     </div>
