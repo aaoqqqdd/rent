@@ -11,6 +11,8 @@ export interface User {
   account?: string
   account_number?: string
   balance: number
+  status?: 'active' | 'inactive'
+  commissionRate?: number
   referrerId?: string
   referralCode?: string
   registrationDate?: string
@@ -258,6 +260,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             <a href="/staff/dashboard">员工仪表盘</a>
             <a href="/staff/orders/pending">待处理订单</a>
             <a href="/staff/contracts">合同管理</a>
+            <a href="/staff/contracts/new">新增合同</a>
             <a href="/staff/rentals/tracking">租赁进度</a>
             <a href="/staff/devices">设备状态</a>
           ` : ''}
@@ -432,6 +435,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+  <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
 </head>
 <body>
   <header>

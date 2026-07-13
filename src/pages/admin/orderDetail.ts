@@ -44,7 +44,6 @@ export function renderAdminOrderDetail(user: any, orderId: string) {
               <option value="active" ${order.status === 'active' ? 'selected' : ''}>租赁中</option>
               <option value="completed" ${order.status === 'completed' ? 'selected' : ''}>已完成</option>
               <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
-              <option value="refunded" ${order.status === 'refunded' ? 'selected' : ''}>已退款</option>
             </select>
           </div>
           <div class="form-group">
