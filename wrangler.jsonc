@@ -3,7 +3,12 @@
   "name": "rent",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-10"
-  
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+}
   // "compatibility_flags": [
   //   "nodejs_compat"
   // ],
@@ -22,12 +27,12 @@
   //     "bucket_name": "my-bucket"
   //   }
   // ],
-  // "d1_databases": [
-  //   {
-  //     "binding": "MY_DB",
-  //     "database_name": "my-database",
-  //     "database_id": ""
-  //   }
+     "d1_databases": [
+       {
+         "binding": "RENT",
+         "database_name": "rent",
+         "database_id": ""
+       }
   // ],
   // "ai": {
   //   "binding": "AI"
