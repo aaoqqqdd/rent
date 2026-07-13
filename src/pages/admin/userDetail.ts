@@ -1,47 +1,63 @@
-import { buildLayout, getUserById, getOrdersForUser, getDeviceById, formatCurrency } from '../../site';
+import { buildLayout, getUserById } from '../../site';
 
 export function renderAdminUserDetail(user: any, targetUserId: string) {
-  const targetUser = getUserById(targetUserId)
-  if (!targetUser) {
-    return buildLayout('用户详情 - 电脑租赁管理系统', '<div class="panel"><h2>用户未找到</h2><p>您请求的用户不存在。</p></div>', user)
-  }
+  const targetUser = getUserById(targetUserId);
 
-  const orders = getOrdersForUser(targetUserId)
+  if (!targetUser) {
+    return buildLayout('用户详情 - 电脑租赁管理系统', '<div class="panel"><h2>用户未找到</h2><p>您请求的用户不存在。</p></div>', user);
+  }
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>用户详情 - ${targetUser.name}</h2><span class="section-note">查看用户资料、订单历史及管理。</span></div>
-      <div class="grid grid-2">
-        <div>
-          <h3>基本信息</h3>
-          <p><strong>姓名:</strong> ${targetUser.name}</p>
-          <p><strong>邮箱:</strong> ${targetUser.email}</p>
-          <p><strong>角色:</strong> ${targetUser.role}</p>
-          <p><strong>手机:</strong> ${targetUser.phone ?? 'N/A'}</p>
-          <p><strong>注册日期:</strong> ${targetUser.registrationDate}</p>
-          <p><strong>余额:</strong> ${formatCurrency(targetUser.balance)}</p>
-        </div>
-        <div>
-          <h3>操作</h3>
-          <a class="button" href="/admin/users/${targetUser.id}/edit">编辑用户信息</a>
-          <form method="POST" action="/admin/users/${targetUser.id}/delete" onsubmit="return confirm('确定要删除此用户吗？');" style="margin-top: 10px;">
-            <button class="button button-danger" type="submit">删除用户</button>
-          </form>
-        </div>
+      <div class="section-title">
+        <h2>用户详情 - ${targetUser.name}</h2>
+        <span class="section-note">查看和管理用户的详细信息。</span>
+      </div>
+      <div>
+        <h3>基本信息</h3>
+        <p><strong>ID:</strong> ${targetUser.id}</p>
+        <p><strong>姓名:</strong> ${targetUser.name}</p>
+        <p><strong>邮箱:</strong> ${targetUser.email}</p>
+        <p><strong>角色:</strong> ${targetUser.role}</p>
+        <p><strong>状态:</strong> ${targetUser.status}</p>
+        <p><strong>注册日期:</strong> ${targetUser.registrationDate}</p>
+        <p><strong>推荐人 ID:</strong> ${targetUser.referrerId || 'N/A'}</p>
+        <p><strong>佣金比例:</strong> ${targetUser.commissionRate ?? '默认'}</p>
       </div>
 
-      <div class="section-title" style="margin-top: 24px;"><h3>订单历史</h3></div>
-      ${orders.length ? `
-        <div class="table-wrapper">
-          <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
-            ${orders.map((order) => {
-              const device = getDeviceById(order.deviceId)
-              return `<tr><td>${order.orderNo}</td><td>${device?.name ?? 'N/A'}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">查看订单</a></td></tr>`
-            }).join('')}
-          </tbody></table>
-        </div>
-      ` : '<p>此用户暂无订单历史。</p>'}
+      <div style="margin-top: 24px;">
+        <h3>管理操作</h3>
+        <form method="POST" action="/admin/users/${targetUser.id}/update" class="form-grid">
+          <div class="form-group">
+            <label for="role">角色</label>
+            <select id="role" name="role">
+              <option value="CUSTOMER" ${targetUser.role === 'CUSTOMER' ? 'selected' : ''}>CUSTOMER</option>
+              <option value="STAFF" ${targetUser.role === 'STAFF' ? 'selected' : ''}>STAFF</option>
+              <option value="ADMIN" ${targetUser.role === 'ADMIN' ? 'selected' : ''}>ADMIN</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="status">状态</label>
+            <select id="status" name="status">
+              <option value="active" ${targetUser.status === 'active' ? 'selected' : ''}>Active</option>
+              <option value="inactive" ${targetUser.status === 'inactive' ? 'selected' : ''}>Inactive</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="commissionRate">佣金比例 (%)</label>
+            <input type="number" id="commissionRate" name="commissionRate" min="0" max="100" step="1" value="${targetUser.commissionRate || ''}" placeholder="默认 (25%)">
+          </div>
+          <div class="form-group form-group-full">
+            <button type="submit" class="button">更新用户</button>
+          </div>
+        </form>
+
+        <form method="POST" action="/admin/users/${targetUser.id}/delete" onsubmit="return confirm('确定要删除此用户吗？此操作不可逆！');" style="margin-top: 16px;">
+          <button type="submit" class="button button-danger">删除用户</button>
+        </form>
+      </div>
     </div>
-  `
-  return buildLayout('用户详情 - 电脑租赁管理系统', body, user)
+  `;
+
+  return buildLayout('用户详情 - 电脑租赁管理系统', body, user);
 }

@@ -1,7 +1,9 @@
-import { buildLayout, getContractTemplates, updateContractTemplate } from '../../site';
+import { buildLayout } from '../../site';
 
 export function renderAdminContracts(user: any) {
-  const contractTemplates = getContractTemplates(); // 假设获取所有合同模板
+  const contractTemplates = [
+    { id: 'tmpl-1', name: '标准租赁合同模板', content: '这是默认合同模板内容，包含租赁条款、押金及租期信息。' },
+  ];
   const currentTemplate = contractTemplates.length > 0 ? contractTemplates[0] : { id: 'new', name: '默认模板', content: '' };
 
   const body = `

@@ -114,7 +114,7 @@ app.get('/customer/orders/:id', (c) => {
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerOrderDetails(user, c.req.param('id')))
+  return c.html(pages.renderCustomerOrderDetail(user, c.req.param('id')))
 })
 
 app.get('/staff/dashboard', (c) => {
@@ -138,7 +138,7 @@ app.get('/staff/orders/:id', (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffOrderDetails(user, c.req.param('id')))
+  return c.html(pages.renderStaffOrderDetail(user, c.req.param('id')))
 })
 
 app.get('/staff/contracts', (c) => {
@@ -170,7 +170,7 @@ app.get('/staff/contract/new', (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffContractNew(user))
+  return c.html(pages.renderStaffContractNew(user, c.req.query('orderId') || ''))
 })
 
 app.post('/staff/contract/new', async (c) => {
@@ -201,21 +201,20 @@ app.get('/staff/contract/view', (c) => {
 })
 
 app.get('/contract/sign', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
-  return c.html(pages.renderContractSign(c.req.query('token') || '', user))
+  return c.html(pages.renderContractSign(c.req.query('token') || '', Number(c.req.query('s') || '1')))
 })
 
 app.post('/contract/sign', async (c) => {
   return c.redirect('/payment/result?status=success&orderId=o-1')
 })
 
-app.get('/contract/view', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
-  return c.html(pages.renderContractView(c.req.query('orderId') || '', user))
+app.get('/contract/view/:id', (c) => {
+  return c.html(pages.renderContractView(c.req.param('id'), findUserBySession(c.req.header('cookie') ?? null)))
 })
 
 app.get('/payment/result', (c) => {
-  return c.html(pages.renderPaymentResult(c.req.query('status') || 'success', c.req.query('orderId') || ''))
+  const status = c.req.query('status') === 'fail' ? 'fail' : 'success'
+  return c.html(pages.renderPaymentResult(c.req.query('orderId') || '', status, findUserBySession(c.req.header('cookie') ?? null)))
 })
 
 app.get('/customer/rentals', (c) => {
@@ -278,7 +277,7 @@ app.get('/customer/referral/withdraw', (c) => {
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerReferralWithdraw(user))
+  return c.html(pages.renderCustomerReferral(user))
 })
 
 app.post('/customer/referral/withdraw', async (c) => {
@@ -290,12 +289,12 @@ app.post('/customer/referral/withdraw', async (c) => {
   const form = parseFormBody(body)
   const amount = Number(form.amount)
   if (!amount || amount <= 0) {
-    return c.html(pages.renderCustomerReferralWithdraw(user, '请输入正确的提现金额'))
+    return c.html(pages.renderCustomerReferral(user, '请输入正确的提现金额'))
   }
   if (amount > user.commissionBalance) {
-    return c.html(pages.renderCustomerReferralWithdraw(user, '提现金额不能超过可提现余额'))
+    return c.html(pages.renderCustomerReferral(user, '提现金额不能超过可提现余额'))
   }
-  return c.html(pages.renderCustomerReferralWithdraw(user, '提现申请已提交，预计2个工作日处理'))
+  return c.html(pages.renderCustomerReferral(user, '提现申请已提交，预计2个工作日处理'))
 })
 
 app.get('/customer/security', (c) => {
@@ -366,7 +365,7 @@ app.get('/admin/contracts/:id', (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminContractDetails(user, c.req.param('id')))
+  return c.html(pages.renderAdminContractDetail(user, c.req.param('id')))
 })
 
 app.get('/admin/orders/:id', (c) => {
@@ -374,7 +373,7 @@ app.get('/admin/orders/:id', (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminOrderDetails(user, c.req.param('id')))
+  return c.html(pages.renderAdminOrderDetail(user, c.req.param('id')))
 })
 
 app.get('/admin/finance', (c) => {
@@ -419,7 +418,6 @@ app.get('/admin/devices/:id/edit', (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  // In a real app, you'd fetch the device from the database.
   const device = { id: c.req.param('id'), name: 'Sample Device', model: 'Sample Model', pricePerDay: 10, depositAmount: 100, status: 'available' };
   return c.html(pages.renderAdminDeviceEdit(user, device))
 })
@@ -454,6 +452,6 @@ app.get('/admin/settings', (c) => {
   return c.html(pages.renderAdminSettings(user))
 })
 
-app.get('*', (c) => c.html(pages.render404()))
+app.get('*', (c) => c.html(pages.renderNotFound()))
 
 export default app

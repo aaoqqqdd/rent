@@ -15,7 +15,7 @@ export function renderStaffDevices(user: any) {
               <td>${device.name}</td>
               <td>${device.model}</td>
               <td>${device.serialNumber}</td>
-              <td>${formatCurrency(device.dailyRate)}</td>
+              <td>${formatCurrency(device.dailyRate ?? 0)}</td>
               <td>${device.status}</td>
               <td>
                 <a class="link-button" href="/staff/devices/${device.id}">查看</a>

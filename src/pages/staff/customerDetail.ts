@@ -2,7 +2,7 @@ import { buildLayout, getUserById, getOrdersForUser, getDeviceById, formatCurren
 
 export function renderStaffCustomerDetail(user: any, customerId: string) {
   const customer = getUserById(customerId)
-  if (!customer || customer.role !== 'customer') {
+  if (!customer || customer.role !== 'CUSTOMER') {
     return buildLayout('客户详情 - 电脑租赁管理系统', '<div class="panel"><h2>客户未找到</h2><p>您请求的客户不存在。</p></div>', user)
   }
 

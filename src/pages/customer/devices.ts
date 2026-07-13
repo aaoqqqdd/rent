@@ -12,7 +12,7 @@ export function renderCustomerDevices(user: any) {
             <div class="device-card card">
               <h3>${device.name}</h3>
               <p>型号: ${device.model}</p>
-              <p>日租金: ${formatCurrency(device.dailyRate)}</p>
+              <p>日租金: ${formatCurrency(device.dailyRate ?? 0)}</p>
               <p>押金: ${formatCurrency(device.depositAmount)}</p>
               <a class="button button-primary" href="/customer/rent/${device.id}">立即租赁</a>
             </div>

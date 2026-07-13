@@ -24,7 +24,7 @@ export function renderCustomerRent(deviceId: string, user: any, errorMessage?: s
         </div>
         <div class="form-group">
           <label class="form-label" for="dailyRate">日租金</label>
-          <input type="text" id="dailyRate" class="form-control" value="${formatCurrency(device.dailyRate)}" readonly />
+          <input type="text" id="dailyRate" class="form-control" value="${formatCurrency(device.dailyRate ?? 0)}" readonly />
         </div>
         <div class="form-group">
           <label class="form-label" for="depositAmount">押金</label>

@@ -1,26 +1,46 @@
 import { buildLayout } from '../../site';
 
-export function renderAdminUserNew(user: any, errorMessage?: string) {
+export function renderAdminUserNew(user: any) {
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>添加新用户</h2><span class="section-note">创建新的系统用户并分配角色。</span></div>
-      ${errorMessage ? `<div class="alert">${errorMessage}</div>` : ''}
-      <form method="POST" action="/admin/users/new">
-        <label class="form-label">姓名</label>
-        <input class="form-control" name="name" placeholder="请输入姓名" />
-        <label class="form-label">邮箱</label>
-        <input class="form-control" type="email" name="email" placeholder="请输入邮箱" />
-        <label class="form-label">密码</label>
-        <input class="form-control" type="password" name="password" placeholder="至少8位，包含字母和数字" />
-        <label class="form-label">角色</label>
-        <select class="form-control" name="role">
-          <option value="customer">客户</option>
-          <option value="staff">员工</option>
-          <option value="admin">管理员</option>
-        </select>
-        <button class="button button-primary" type="submit" style="margin-top: 20px;">添加用户</button>
+      <div class="section-title">
+        <h2>添加新用户</h2>
+        <span class="section-note">创建一个新的系统用户。</span>
+      </div>
+      <form method="POST" action="/admin/users/create" class="form-grid">
+        <div class="form-group">
+          <label for="name">姓名</label>
+          <input type="text" id="name" name="name" required>
+        </div>
+        <div class="form-group">
+          <label for="email">邮箱</label>
+          <input type="email" id="email" name="email" required>
+        </div>
+        <div class="form-group">
+          <label for="password">密码</label>
+          <input type="password" id="password" name="password" required>
+        </div>
+        <div class="form-group">
+          <label for="role">角色</label>
+          <select id="role" name="role">
+            <option value="CUSTOMER" selected>CUSTOMER</option>
+            <option value="STAFF">STAFF</option>
+            <option value="ADMIN">ADMIN</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="status">状态</label>
+          <select id="status" name="status">
+            <option value="active" selected>Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+        <div class="form-group form-group-full">
+          <button type="submit" class="button">创建用户</button>
+        </div>
       </form>
     </div>
-  `
-  return buildLayout('添加新用户 - 电脑租赁管理系统', body, user)
+  `;
+
+  return buildLayout('添加新用户 - 电脑租赁管理系统', body, user);
 }

@@ -16,7 +16,7 @@ export function renderStaffContractView(user: any, orderId: string) {
   // 客户信息脱敏处理
   const maskedCustomerName = customer ? `${customer.name.charAt(0)}**` : '未知';
   const maskedCustomerEmail = customer ? `${customer.email.substring(0, 3)}***@***.com` : '未知';
-  const maskedCustomerPhone = customer ? `${customer.phone.substring(0, 3)}****${customer.phone.substring(7, 11)}` : '未知';
+  const maskedCustomerPhone = customer && customer.phone ? `${customer.phone.substring(0, 3)}****${customer.phone.substring(7, 11)}` : '未知';
   const maskedCustomerBsb = customer && customer.bsb ? `***-***` : 'N/A';
   const maskedCustomerAccount = customer && customer.account_number ? `****${customer.account_number.substring(customer.account_number.length - 4)}` : 'N/A';
 

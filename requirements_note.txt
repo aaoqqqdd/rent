@@ -173,7 +173,7 @@
     D --> D7[我创建的合同 /staff/contracts]
     D --> D8[合同签署进度 /staff/contracts/:id/progress]
     D --> D9[订单详情页 /staff/orders/:id]
-    D --> D10[合同查看页（脱敏）/staff/contract/view?orderId=xxx]
+    D --> D10[合同查看页/staff/contract/view?orderId=xxx]
 
     D6 --> D6a[选择设备]
     D6 --> D6b[选择租期]
@@ -259,9 +259,6 @@
     F --> F4[续租确认弹窗]
     F --> F5[提前归还确认弹窗]
 
-好的，根据上面的流程图，我对页面结构说明和数据库设计做了修改，补充了推荐分成、设备入库、押金退还等遗漏内容。
-
----
 
 10. 页面结构说明
 10.1 公共页面

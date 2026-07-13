@@ -19,7 +19,7 @@ export function renderStaffContractProgress(user: any, contractId: string) {
 
       <div class="contract-progress-header">
         <h3>合同状态: ${contract.status === 'signed' ? '已签署' : '待签署'}</h3>
-        <p>创建日期: ${new Date(contract.createdAt).toLocaleString()}</p>
+        <p>创建日期: ${contract.createdAt ? new Date(contract.createdAt).toLocaleString() : '未知'}</p>
         ${contract.signedAt ? `<p>签署日期: ${new Date(contract.signedAt).toLocaleString()}</p>` : ''}
       </div>
 
@@ -33,7 +33,7 @@ export function renderStaffContractProgress(user: any, contractId: string) {
         <h4>签署链接</h4>
         <p>请将以下链接发送给客户进行签署:</p>
         <div class="input-group">
-          <input type="text" id="signLink" value="${window.location.origin}/contract/sign?token=${contract.signToken}" readonly class="form-control">
+          <input type="text" id="signLink" value="\${window.location.origin}/contract/sign?token=${contract.signToken}" readonly class="form-control">
           <button class="button button-secondary" onclick="copyToClipboard('signLink')">复制链接</button>
         </div>
       </div>

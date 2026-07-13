@@ -2,7 +2,7 @@ import { buildLayout, getUserById } from '../../site';
 
 export function renderStaffCustomerEdit(user: any, customerId: string, errorMessage?: string) {
   const customer = getUserById(customerId)
-  if (!customer || customer.role !== 'customer') {
+  if (!customer || customer.role !== 'CUSTOMER') {
     return buildLayout('编辑客户 - 电脑租赁管理系统', '<div class="panel"><h2>客户未找到</h2><p>您请求的客户不存在。</p></div>', user)
   }
 

@@ -17,7 +17,7 @@ export function renderCustomerReferral(user: any, errorMessage?: string) {
       <div class="form-group">
         <label class="form-label">我的推荐码</label>
         <div class="input-group">
-          <input type="text" class="form-control" value="${currentUser.referrerCode || '暂无推荐码'}" readonly id="referrerCodeInput" />
+          <input type="text" class="form-control" value="${currentUser.referralCode || '暂无推荐码'}" readonly id="referrerCodeInput" />
           <button class="button button-secondary" onclick="copyReferrerCode()">复制</button>
         </div>
         <p class="form-text">分享此推荐码给您的朋友，他们注册或下单时填写您的推荐码，您将获得佣金。</p>
@@ -26,15 +26,15 @@ export function renderCustomerReferral(user: any, errorMessage?: string) {
       <div class="grid grid-3" style="margin-top: 30px;">
         <div class="card text-center">
           <h3>累计佣金</h3>
-          <p class="text-large">${formatCurrency(currentUser.commissionBalance + currentUser.pendingCommission + currentUser.withdrawnCommission)}</p>
+          <p class="text-large">${formatCurrency(currentUser.commissionBalance + (currentUser.pendingCommission ?? 0) + (currentUser.withdrawnCommission ?? 0))}</p>
         </div>
         <div class="card text-center">
           <h3>待结算佣金</h3>
-          <p class="text-large">${formatCurrency(currentUser.pendingCommission)}</p>
+          <p class="text-large">${formatCurrency(currentUser.pendingCommission ?? 0)}</p>
         </div>
         <div class="card text-center">
           <h3>已提现佣金</h3>
-          <p class="text-large">${formatCurrency(currentUser.withdrawnCommission)}</p>
+          <p class="text-large">${formatCurrency(currentUser.withdrawnCommission ?? 0)}</p>
         </div>
       </div>
 

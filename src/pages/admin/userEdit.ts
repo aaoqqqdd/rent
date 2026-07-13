@@ -45,9 +45,9 @@ export function renderAdminUserEdit(user: any, targetUserId: string, errorMessag
           <div>
             <label class="form-label">角色</label>
             <select class="form-control" name="role">
-              <option value="customer" ${targetUser.role === 'customer' ? 'selected' : ''}>客户</option>
-              <option value="staff" ${targetUser.role === 'staff' ? 'selected' : ''}>员工</option>
-              <option value="admin" ${targetUser.role === 'admin' ? 'selected' : ''}>管理员</option>
+              <option value="CUSTOMER" ${targetUser.role === 'CUSTOMER' ? 'selected' : ''}>客户</option>
+              <option value="STAFF" ${targetUser.role === 'STAFF' ? 'selected' : ''}>员工</option>
+              <option value="ADMIN" ${targetUser.role === 'ADMIN' ? 'selected' : ''}>管理员</option>
             </select>
           </div>
           <div>

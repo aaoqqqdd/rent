@@ -182,7 +182,20 @@ export const systemSettings = {
   squareConfig: {
     applicationId: 'sq0idp-YOUR_APPLICATION_ID',
     locationId: 'YOUR_LOCATION_ID',
-  }
+  },
+  rentalTerms: '默认租赁条款：租客须遵守设备使用规范，并承担因使用不当造成的损坏责任。',
+  priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
+  paymentMethods: {
+    square: true,
+    bankTransfer: true,
+    balancePayment: true,
+  },
+  emailTemplate: '尊敬的用户，您的订单已创建。感谢选择我们的设备租赁服务！',
+  referralSettings: {
+    defaultRate: 10,
+    levelLimit: 3,
+    settlementPeriod: 30,
+  },
 };
 
 export function formatCurrency(value: number): string {
@@ -520,6 +533,35 @@ export function getSystemSettings() {
 
 export function updateSystemSettings(newSettings: Partial<typeof systemSettings>) {
   Object.assign(systemSettings, newSettings)
+}
+
+export function updateUser(userId: string, updates: Partial<User>): User | undefined {
+  const user = getUserById(userId)
+  if (user) {
+    Object.assign(user, updates)
+  }
+  return user
+}
+
+export function updatePassword(userId: string, newPassword: string): boolean {
+  const user = getUserById(userId)
+  if (!user) return false
+  user.password = newPassword
+  return true
+}
+
+export function bindReferrer(userId: string, referrerId: string): boolean {
+  const user = getUserById(userId)
+  if (!user) return false
+  user.referrerId = referrerId
+  return true
+}
+
+export function unbindReferrer(userId: string): boolean {
+  const user = getUserById(userId)
+  if (!user) return false
+  delete user.referrerId
+  return true
 }
 
 export function getRentalsByUserId(userId: string): Order[] {
