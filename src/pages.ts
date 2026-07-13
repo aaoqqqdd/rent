@@ -1,48 +1,38 @@
 import { buildLayout, findUserBySession, getOrderById, getOrdersForUser, getContractById, getDeviceById, getPendingOrders, formatCurrency, formatDate, users, devices, orders, contracts } from './site'
 
-export function renderHome(user: any) {
-  const body = `
-    <div class="panel hero">
-      <h2>欢迎来到电脑租赁管理系统</h2>
-      <p>面向顾客、员工、管理员的一体化租赁管理平台。</p>
-      <div class="grid grid-3">
-        <div class="card"><h3>公开入口</h3><p>登录、注册、合同签署、支付结果页面。</p></div>
-        <div class="card"><h3>顾客入口</h3><p>查看我的租赁、我的订单、个人信息、推荐收益。</p></div>
-        <div class="card"><h3>员工入口</h3><p>待处理订单、合同管理、租赁进度、设备状态。</p></div>
-      </div>
-    </div>
-    <div class="panel">
-      <h3>示例设备</h3>
-      <table class="table"><thead><tr><th>设备</th><th>型号</th><th>日租金</th><th>押金</th><th>状态</th></tr></thead><tbody>
-        ${devices.map((device) => `<tr><td>${device.name}</td><td>${device.model}</td><td>${formatCurrency(device.pricePerDay)}</td><td>${formatCurrency(device.depositAmount)}</td><td>${device.status}</td></tr>`).join('')}
-      </tbody></table>
-    </div>
-  `
-  return buildLayout('首页 - 电脑租赁管理系统', body, user)
-}
+
 
 export function renderLogin(errorMessage?: string) {
   const body = `
     <div class="page-centered">
-      <div class="panel login-box" style="width: 400px;">
-        <h2>登录</h2>
-        ${errorMessage ? `<div class="alert">${errorMessage}</div>` : ''}
-        <form method="POST" action="/login">
-          <label class="form-label">账号（邮箱/用户名）</label>
+      <div class="panel login-box" style="width: 400px; text-align: center;">
+        <div style="margin-bottom: 24px;">
+          <img src="/public/logo.svg" alt="Logo" style="width: 64px; height: 64px;"/>
+          <h2 style="margin-top: 12px;">电脑租赁管理系统</h2>
+        </div>
+        <form method="POST" action="/login" style="text-align: left;">
+          <label class="form-label">账号</label>
           <input class="form-control" name="account" placeholder="请输入邮箱或用户名" />
           <label class="form-label">密码</label>
           <input class="form-control" type="password" name="password" placeholder="请输入密码" />
-          <button class="button" type="submit">登录</button>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; margin-bottom: 20px;">
+            <label class="form-check">
+              <input type="checkbox" name="remember" /> 记住我
+            </label>
+            <a class="link-button" href="/forgot-password">忘记密码？</a>
+          </div>
+          <div class="auth-notice" style="border: 1px solid #fdba74; background-color: #fff7ed; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+            ${errorMessage ? `<div style="color: #c2410c; margin-bottom: 12px;">${errorMessage}</div>` : ''}
+            <strong>测试账号</strong>
+            <ul style="margin: 8px 0 0 20px; padding: 0; list-style-type: disc;">
+              <li>管理员：admin@example.com / Admin123</li>
+              <li>员工：staff@example.com / Staff123</li>
+              <li>顾客：customer@example.com / Customer123</li>
+            </ul>
+          </div>
+          <button class="button" type="submit" style="width: 100%;">登录</button>
         </form>
-        <div class="auth-notice">
-          <strong>测试账号</strong>
-          <ul>
-            <li>管理员：admin@example.com / Admin123</li>
-            <li>员工：staff@example.com / Staff123</li>
-            <li>顾客：customer@example.com / Customer123</li>
-          </ul>
-        </div>
-        <p class="text-muted">没有账号？<a class="link-button" href="/register">注册</a> | <a class="link-button" href="/forgot-password">忘记密码？</a></p>
+        <p class="text-muted" style="margin-top: 20px;">还没有账号？ <a class="link-button" href="/register">注册</a></p>
       </div>
     </div>
   `
@@ -52,37 +42,31 @@ export function renderLogin(errorMessage?: string) {
 export function renderRegister(errorMessage?: string) {
   const body = `
     <div class="page-centered">
-      <div class="panel" style="width: 600px;">
-        <h2>注册</h2>
+      <div class="panel" style="width: 480px; text-align: center;">
+        <div style="margin-bottom: 24px;">
+          <img src="/public/logo.svg" alt="Logo" style="width: 64px; height: 64px;"/>
+          <h2 style="margin-top: 12px;">创建新账户</h2>
+        </div>
         ${errorMessage ? `<div class="alert">${errorMessage}</div>` : ''}
-        <form method="POST" action="/register">
-          <div class="grid grid-2">
-            <div>
-              <label class="form-label">姓名</label>
-              <input class="form-control" name="name" placeholder="请输入姓名" />
-            </div>
-            <div>
-              <label class="form-label">邮箱</label>
-              <input class="form-control" type="email" name="email" placeholder="请输入邮箱" />
-            </div>
+        <form method="POST" action="/register" style="text-align: left;">
+          <label class="form-label">姓名</label>
+          <input class="form-control" name="name" placeholder="请输入姓名" />
+          <label class="form-label">邮箱</label>
+          <input class="form-control" type="email" name="email" placeholder="请输入邮箱" />
+          <label class="form-label">密码</label>
+          <input class="form-control" type="password" name="password" placeholder="至少8位，包含字母和数字" />
+          <label class="form-label">确认密码</label>
+          <input class="form-control" type="password" name="passwordConfirm" placeholder="请再次输入密码" />
+          <label class="form-label">推荐人（选填）</label>
+          <input class="form-control" name="referrer" placeholder="填写推荐人ID或推荐码" />
+          <div style="margin-top: 12px; margin-bottom: 20px;">
+            <label class="form-check">
+              <input type="checkbox" name="terms" /> 我已阅读并同意《用户协议》
+            </label>
           </div>
-          <div class="grid grid-2">
-            <div>
-              <label class="form-label">密码</label>
-              <input class="form-control" type="password" name="password" placeholder="至少8位，包含字母和数字" />
-            </div>
-            <div>
-              <label class="form-label">确认密码</label>
-              <input class="form-control" type="password" name="passwordConfirm" placeholder="请再次输入密码" />
-            </div>
-          </div>
-          <div>
-            <label class="form-label">推荐人（选填）</label>
-            <input class="form-control" name="referrer" placeholder="填写推荐人ID或推荐码" />
-          </div>
-          <button class="button" type="submit">注册</button>
+          <button class="button" type="submit" style="width: 100%;">注册</button>
         </form>
-        <p class="text-muted">已有账号？<a class="link-button" href="/login">登录</a></p>
+        <p class="text-muted" style="margin-top: 20px;">已有账号？ <a class="link-button" href="/login">去登录</a></p>
       </div>
     </div>
   `
@@ -407,431 +391,143 @@ export function renderStaffContractProgress(user: any, contractId: string) {
 export function renderStaffContractView(user: any, orderId: string) {
   const order = getOrderById(orderId)
   const contract = order ? getContractById(order.contractId) : undefined
-  const device = order ? getDeviceById(order.deviceId) : undefined
-  if (!order || !contract || !device) {
-    return buildLayout('合同不存在 - 员工 - 电脑租赁管理系统', `<div class="panel"><h2>合同或订单不存在</h2></div>`, user)
-  }
-  const customer = users.find((item) => item.id === order.userId)
-  const body = `
-    <div class="panel">
-      <h2>合同查看</h2>
-      <p>合同编号：${contract.contractNumber}</p>
-      <pre style="white-space: pre-wrap;">${contract.content}</pre>
-      <div class="panel"><h3>签署信息</h3><p>签署人：${customer?.name ?? '未知'}</p><p>签署时间：${contract.signedAt ?? '未签署'}</p><p>客户邮箱：${customer?.email ?? '-'}</p></div>
-      <div style="margin-top:16px;"><a class="button-secondary" href="/staff/contracts">返回列表</a></div>
-    </div>
-  `
-  return buildLayout('合同查看 - 员工 - 电脑租赁管理系统', body, user)
+  const body = `<h1>Staff Contract View (Not Implemented)</h1><p>Order ID: ${orderId}</p>`;
+  return buildLayout('Staff Contract View', body, user);
 }
 
-export function renderAdminOrderDetails(user: any, orderId: string) {
-  const order = getOrderById(orderId)
-  if (!order) {
-    return buildLayout('订单不存在 - 管理员 - 电脑租赁管理系统', `<div class="panel"><h2>订单不存在</h2></div>`, user)
-  }
-  const customer = users.find((item) => item.id === order.userId)
-  const device = getDeviceById(order.deviceId)
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>订单详情 #${order.orderNo}</h2><span class="section-note">管理员查看完整客户和财务信息。</span></div>
-      <div class="grid grid-2">
-        <div class="card"><h3>客户信息</h3><p>姓名：${customer?.name ?? ''}</p><p>邮箱：${customer?.email ?? ''}</p><p>电话：${customer?.phone ?? '-'}</p><p>BSB：${customer?.bsb ?? '-'}</p><p>Account：${customer?.account ?? '-'}</p></div>
-        <div class="card"><h3>租赁信息</h3><p>设备：${device?.name ?? ''}</p><p>租期：${order.startDate} ~ ${order.endDate}</p><p>租金：${formatCurrency(order.totalAmount - order.depositAmount)}</p><p>押金：${formatCurrency(order.depositAmount)}</p><p>状态：${order.status}</p></div>
+function renderContractAgreement(contractData: any) {
+  return `
+    <div class="card" style="margin-bottom: 24px;">
+      <div class="section-title"><h3>■ 租赁协议</h3></div>
+      <div class="contract-content" style="padding: 0 16px;">
+        <p><strong>第一条 租赁物品</strong></p>
+        <ul style="list-style-type: none; padding-left: 0;">
+          <li>甲方（出租方）：PC Rental Pty Ltd</li>
+          <li>乙方（承租方）：${contractData.lesseeName}</li>
+          <li>设备名称：${contractData.deviceName}</li>
+          <li>设备型号：${contractData.deviceModel}</li>
+          <li>设备序列号：${contractData.deviceSerial}</li>
+        </ul>
+        <p><strong>第二条 租赁期限</strong></p>
+        <ul style="list-style-type: none; padding-left: 0;">
+          <li>租赁起始日：${contractData.startDate}</li>
+          <li>租赁结束日：${contractData.endDate}</li>
+          <li>共计：${contractData.duration}天</li>
+        </ul>
+        <p><strong>第三条 租金及支付</strong></p>
+        <ul style="list-style-type: none; padding-left: 0;">
+          <li>日租金：${formatCurrency(contractData.dailyRate)}/天</li>
+          <li>租金总额：${formatCurrency(contractData.totalRent)}</li>
+          <li>押金：${formatCurrency(contractData.deposit)}</li>
+          <li>总计应付：${formatCurrency(contractData.totalDue)}</li>
+        </ul>
+        <p><strong>第四条 设备使用及保管责任</strong></p>
+        <ol>
+          <li>乙方应按照设备使用说明正确使用设备。</li>
+          <li>租赁期间设备损坏由乙方承担维修费用。</li>
+          <li>设备丢失或无法修复，乙方按设备原价赔偿。</li>
+        </ol>
+        <p><strong>第五条 逾期归还</strong></p>
+        <p>逾期归还按日租金2倍收取逾期费用。</p>
       </div>
-      <div class="panel"><h3>操作</h3><button class="button-secondary" type="button">变更状态</button> <button class="button-secondary" type="button">退款处理</button></div>
-      <div style="margin-top:16px;"><a class="button-secondary" href="/admin/orders">返回列表</a></div>
-    </div>
-  `
-  return buildLayout('订单详情 - 管理员 - 电脑租赁管理系统', body, user)
-}
-
-export function renderAdminContractDetails(user: any, contractId: string) {
-  const contract = getContractById(contractId)
-  if (!contract) {
-    return buildLayout('合同不存在 - 管理员 - 电脑租赁管理系统', `<div class="panel"><h2>合同不存在</h2></div>`, user)
-  }
-  const order = getOrderById(contract.rentalId)
-  const customer = order ? users.find((item) => item.id === order.userId) : undefined
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>合同详情</h2><span class="section-note">管理员可查看完整合同与客户结算信息。</span></div>
-      <div class="card"><h3>合同编号：${contract.contractNumber}</h3><p>状态：${contract.status}</p><p>签署时间：${contract.signedAt ?? '-'}</p></div>
-      <div class="panel"><h3>合同内容</h3><pre style="white-space: pre-wrap;">${contract.content}</pre></div>
-      <div class="panel"><h3>客户信息</h3><p>姓名：${customer?.name ?? '-'}</p><p>邮箱：${customer?.email ?? '-'}</p><p>电话：${customer?.phone ?? '-'}</p><p>BSB：${customer?.bsb ?? '-'}</p><p>Account：${customer?.account ?? '-'}</p></div>
-      <div style="margin-top:16px;"><a class="button-secondary" href="/admin/contracts">返回列表</a></div>
-    </div>
-  `
-  return buildLayout('合同详情 - 管理员 - 电脑租赁管理系统', body, user)
-}
-
-export function renderCustomerOrderDetails(user: any, orderId: string) {
-  const order = getOrderById(orderId)
-  if (!order || order.userId !== user.id) {
-    return buildLayout('订单不存在 - 电脑租赁管理系统', `<div class="panel"><h2>订单不存在或无权限查看</h2></div>`, user)
-  }
-  const device = getDeviceById(order.deviceId)
-  const contract = getContractById(order.contractId)
-  const body = `
-    <div class="panel">
-      <h2>订单详情 #${order.orderNo}</h2>
-      <div class="grid grid-2">
-        <div class="card"><h3>设备信息</h3><p>${device?.name}</p><p>${device?.model}</p></div>
-        <div class="card"><h3>租赁信息</h3><p>租期：${order.startDate} ~ ${order.endDate}</p><p>状态：${order.status}</p></div>
-      </div>
-      <div class="panel">
-        <h3>支付信息</h3>
-        <p>支付方式：${order.paymentMethod}</p>
-        <p>租金：${formatCurrency(order.totalAmount - order.depositAmount)}</p>
-        <p>押金：${formatCurrency(order.depositAmount)}</p>
-      </div>
-      <div class="panel">
-        <h3>合同信息</h3>
-        <p>合同编号：${contract?.contractNumber ?? '无'}</p>
-        <p>签署时间：${contract?.signedAt ?? '未签署'}</p>
-        <a class="link-button" href="/contract/view?orderId=${order.id}">查看合同</a>
+      <div style="padding: 16px; border-top: 1px solid #eee; margin-top: 16px;">
+        <label class="form-check">
+          <input type="checkbox" name="agreement" /> 我已阅读并同意以上租赁协议条款
+        </label>
       </div>
     </div>
-  `
-  return buildLayout('订单详情 - 电脑租赁管理系统', body, user)
+  `;
 }
 
-export function renderContractSign(token?: string, currentUser?: any) {
-  const order = orders[0]
-  const contract = getContractById(order.contractId)
-  const device = getDeviceById(order.deviceId)
-  const name = currentUser?.name ?? '张三'
-  const email = currentUser?.email ?? 'customer@example.com'
-  const bsb = currentUser?.bsb ?? '062-000'
-  const account = currentUser?.account ?? '12345678'
-  const body = `
-    <div class="panel">
-      <h2>租赁合同签署</h2>
-      <p>合同编号：${contract?.contractNumber}</p>
-      <pre style="white-space: pre-wrap;">${contract?.content}</pre>
-      <form method="POST" action="/contract/sign">
-        <div>
-          <label class="form-label">姓名</label>
-          <input class="form-control" name="name" value="${name}" />
-        </div>
-        <div>
-          <label class="form-label">邮箱</label>
-          <input class="form-control" name="email" value="${email}" />
+function renderContractUserInfo(user: any) {
+  return `
+    <div class="card" style="margin-bottom: 24px;">
+      <div class="section-title"><h3>■ 承租方信息</h3></div>
+      <div style="padding: 0 16px;">
+        <div class="grid grid-2">
+          <div>
+            <label class="form-label">姓名</label>
+            <input class="form-control" name="name" value="${user?.name ?? ''}" placeholder="请输入真实姓名" />
+          </div>
+          <div>
+            <label class="form-label">手机</label>
+            <input class="form-control" name="phone" value="${user?.phone ?? ''}" placeholder="请输入手机号" />
+          </div>
         </div>
         <div class="grid grid-2">
           <div>
-            <label class="form-label">BSB</label>
-            <input class="form-control" name="bsb" value="${bsb}" />
+            <label class="form-label">邮箱</label>
+            <input class="form-control" name="email" value="${user?.email ?? ''}" placeholder="请输入邮箱" />
           </div>
           <div>
-            <label class="form-label">Account</label>
-            <input class="form-control" name="account" value="${account}" />
+            <label class="form-label">身份证号</label>
+            <input class="form-control" name="idCard" placeholder="请输入身份证号" />
           </div>
         </div>
-        <div>
-          <label><input type="checkbox" name="agree" /> 我已阅读并同意以上租赁协议条款</label>
+      </div>
+    </div>
+  `;
+}
+
+function renderContractPayment(user: any, contractData: any) {
+  return `
+    <div class="card">
+      <div class="section-title"><h3>■ 支付信息</h3></div>
+      <div style="padding: 0 16px;">
+        <p>支付总额：<strong>${formatCurrency(contractData.totalDue)}</strong>（租金 ${formatCurrency(contractData.totalRent)} + 押金 ${formatCurrency(contractData.deposit)}）</p>
+        <div class="grid grid-3">
+          <label class="form-check">
+            <input type="radio" name="paymentMethod" value="alipay" checked /> 支付宝
+          </label>
+          <label class="form-check">
+            <input type="radio" name="paymentMethod" value="wechat" /> 微信支付
+          </label>
+          <label class="form-check">
+            <input type="radio" name="paymentMethod" value="card" /> 银行卡
+          </label>
         </div>
-        <button class="button" type="submit">确认租赁并支付</button>
+      </div>
+    </div>
+  `;
+}
+
+export function renderContractSign(token: string, user?: any) {
+  const contractData = {
+    contractNumber: 'CT20260708001',
+    lesseeName: user?.name ?? '[待填写]',
+    deviceName: 'MacBook Pro 14寸',
+    deviceModel: 'M4 Pro 18GB 512GB',
+    deviceSerial: 'SN20260708001',
+    startDate: '2026年07月10日',
+    endDate: '2026年08月10日',
+    duration: 30,
+    dailyRate: 40.00,
+    totalRent: 1200.00,
+    deposit: 2000.00,
+    totalDue: 3200.00,
+  };
+
+  const agreementHtml = renderContractAgreement(contractData);
+  const userInfoHtml = renderContractUserInfo(user);
+  const paymentHtml = renderContractPayment(user, contractData);
+
+  const body = `
+    <div class="panel" style="max-width: 800px; margin: 24px auto;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h2>📄 租赁合同签署</h2>
+        <p class="text-muted">编号：${contractData.contractNumber}</p>
+      </div>
+
+      <form method="POST" action="/contract/sign?token=${token}">
+        ${agreementHtml}
+        ${userInfoHtml}
+        ${paymentHtml}
+
+        <div style="text-align: center; margin-top: 24px;">
+          <button class="button" type="submit" style="width: 50%;">确认租赁并支付</button>
+        </div>
       </form>
     </div>
-  `
-  return buildLayout('合同签署 - 电脑租赁管理系统', body)
-}
-
-export function renderContractView(orderId: string, currentUser?: any) {
-  const order = getOrderById(orderId)
-  const contract = order ? getContractById(order.contractId) : undefined
-  const device = order ? getDeviceById(order.deviceId) : undefined
-  const customer = order ? users.find((item) => item.id === order.userId) : undefined
-  if (!order || !contract || !device) {
-    return buildLayout('合同不存在 - 电脑租赁管理系统', `<div class="panel"><h2>合同或订单不存在</h2></div>`, currentUser)
-  }
-  const signer = currentUser?.name ?? customer?.name ?? '匿名'
-  const signerEmail = currentUser?.email ?? customer?.email ?? '-'
-  const body = `
-    <div class="panel">
-      <h2>租赁合同</h2>
-      <p>合同编号：${contract.contractNumber}</p>
-      <pre style="white-space: pre-wrap;">${contract.content}</pre>
-      <div class="panel">
-        <h3>签署信息</h3>
-        <p>签署人：${signer}</p>
-        <p>签署邮箱：${signerEmail}</p>
-        <p>签署时间：${contract.signedAt ?? '未签署'}</p>
-        <p>IP地址：192.168.1.100</p>
-      </div>
-      <div>
-        <a class="button" href="/payment/result?status=success&orderId=${order.id}">查看支付结果</a>
-      </div>
-    </div>
-  `
-  return buildLayout('合同查看 - 电脑租赁管理系统', body, currentUser)
-}
-
-export function renderPaymentResult(status: string, orderId: string) {
-  const order = getOrderById(orderId)
-  const device = order ? getDeviceById(order.deviceId) : undefined
-  const success = status === 'success'
-  const body = `
-    <div class="panel">
-      <h2>${success ? '✅ 支付成功' : '❌ 支付失败'}</h2>
-      ${success ? `
-        <div class="card"><p>订单号：${order?.orderNo}</p><p>设备：${device?.name}</p><p>租期：${order?.startDate} ~ ${order?.endDate}</p><p>支付方式：${order?.paymentMethod}</p><p>支付金额：${order ? formatCurrency(order.totalAmount) : ''}</p></div>
-        <p>您的租赁订单已创建成功！</p>
-        <div><a class="button" href="/contract/view?orderId=${order?.id}">查看合同</a> <a class="button-secondary" href="/">返回首页</a></div>
-      ` : `
-        <div class="card"><p>支付未成功，请重试或更换付款方式。</p><p>错误信息：余额不足，请选择其他付款方式</p></div>
-        <div><a class="button" href="/">重新支付</a> <a class="button-secondary" href="/">返回首页</a></div>
-      `}
-    </div>
-  `
-  return buildLayout(success ? '支付成功 - 电脑租赁管理系统' : '支付失败 - 电脑租赁管理系统', body)
-}
-
-export function renderStaffDashboard(user: any) {
-  const pending = getPendingOrders()
-  const body = `
-    <div class="panel hero">
-      <div>
-        <h2>员工工作台</h2>
-        <p>查看待处理订单、合同审批、租赁进度等核心任务。</p>
-      </div>
-      <div class="hero-card-grid">
-        <div class="card"><h3>待处理订单</h3><p>${pending.length} 笔</p></div>
-        <div class="card"><h3>待签署合同</h3><p>1 份</p></div>
-        <div class="card"><h3>今日归还</h3><p>3 台</p></div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="section-title"><h2>待处理订单</h2><a class="button-secondary" href="/staff/orders/pending">查看全部</a></div>
-      <div class="table-wrapper">
-        <table class="table"><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>租期</th><th>状态</th><th>操作</th></tr></thead><tbody>
-          ${pending.map((order) => {
-            const customer = users.find((item) => item.id === order.userId)
-            const device = getDeviceById(order.deviceId)
-            return `<tr><td>${order.orderNo}</td><td>${customer?.name ?? ''}</td><td>${device?.name ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">查看</a></td></tr>`
-          }).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('员工仪表盘 - 电脑租赁管理系统', body, user)
-}
-
-export function renderStaffOrdersPending(user: any) {
-  const pending = getPendingOrders()
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>待处理订单</h2><span class="section-note">按订单状态筛选、登记出库、处理客户信息</span></div>
-      <div class="table-wrapper">
-        <table class="table"><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>租期</th><th>状态</th><th>操作</th></tr></thead><tbody>
-          ${pending.map((order) => {
-            const customer = users.find((item) => item.id === order.userId)
-            const device = getDeviceById(order.deviceId)
-            return `<tr><td>${order.orderNo}</td><td>${customer?.name ?? ''}</td><td>${device?.name ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">订单详情</a></td></tr>`
-          }).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('待处理订单 - 员工 - 电脑租赁管理系统', body, user)
-}
-
-export function renderStaffContracts(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>合同管理</h2><span class="section-note">查看签署状态，审核合同内容，下载 PDF。</span></div>
-      <div class="table-wrapper">
-        <table class="table"><thead><tr><th>合同编号</th><th>订单号</th><th>客户</th><th>状态</th><th>签署时间</th><th>操作</th></tr></thead><tbody>
-          ${contracts.map((contract) => {
-            const order = getOrderById(contract.rentalId)
-            const customer = order ? users.find((item) => item.id === order.userId) : undefined
-            return `<tr><td>${contract.contractNumber}</td><td>${order?.orderNo ?? ''}</td><td>${customer?.name ?? ''}</td><td>${contract.status}</td><td>${contract.signedAt ?? '-'}</td><td><a class="link-button" href="/contract/view?orderId=${order?.id}">查看</a></td></tr>`
-          }).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('合同管理 - 员工 - 电脑租赁管理系统', body, user)
-}
-
-export function renderStaffRentalsTracking(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>租赁进度管理</h2><span class="section-note">跟踪租赁状态、到期提醒、押金退还流程。</span></div>
-      <div class="grid grid-2">
-        <div class="card"><h3>当前追踪</h3><p>正在租赁中订单：1</p><p>逾期订单：0</p></div>
-        <div class="card"><h3>今日提醒</h3><p>3 台设备预计到期</p></div>
-      </div>
-      <div class="table-wrapper" style="margin-top: 18px;">
-        <table class="table"><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>租期</th><th>状态</th></tr></thead><tbody>
-          ${orders.map((order) => {
-            const customer = users.find((item) => item.id === order.userId)
-            const device = getDeviceById(order.deviceId)
-            return `<tr><td>${order.orderNo}</td><td>${customer?.name ?? ''}</td><td>${device?.name ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${order.status}</td></tr>`
-          }).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('租赁进度管理 - 员工 - 电脑租赁管理系统', body, user)
-}
-
-export function renderStaffDevices(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>设备状态查看</h2><span class="section-note">查看设备库存与维修状态。</span></div>
-      <div class="table-wrapper">
-        <table class="table"><thead><tr><th>设备</th><th>型号</th><th>日租金</th><th>押金</th><th>状态</th></tr></thead><tbody>
-          ${devices.map((device) => `<tr><td>${device.name}</td><td>${device.model}</td><td>${formatCurrency(device.pricePerDay)}</td><td>${formatCurrency(device.depositAmount)}</td><td>${device.status}</td></tr>`).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('设备状态 - 员工 - 电脑租赁管理系统', body, user)
-}
-
-export function renderStaffOrderDetails(user: any, orderId: string) {
-  const order = getOrderById(orderId)
-  if (!order) {
-    return buildLayout('订单不存在 - 电脑租赁管理系统', `<div class="panel"><h2>订单不存在</h2></div>`, user)
-  }
-  const customer = users.find((item) => item.id === order.userId)
-  const device = getDeviceById(order.deviceId)
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>订单详情 #${order.orderNo}</h2><a class="button-secondary" href="/staff/orders/pending">返回列表</a></div>
-      <div class="grid grid-2">
-        <div class="card"><h3>客户信息</h3><p>姓名：${customer?.name}</p><p>邮箱：${customer?.email}</p><p>电话：${customer?.phone ?? '-'}</p><p>BSB：***-***</p><p>Account：******78</p></div>
-        <div class="card"><h3>租赁信息</h3><p>设备：${device?.name}</p><p>租期：${order.startDate} ~ ${order.endDate}</p><p>租金：${formatCurrency(order.totalAmount - order.depositAmount)}</p><p>押金：${formatCurrency(order.depositAmount)}</p><p>状态：${order.status}</p></div>
-      </div>
-      <div class="panel"><h3>押金状态</h3><p>押金总额：${formatCurrency(order.depositAmount)}</p><p>已退金额：¥0.00</p><p>待退金额：${formatCurrency(order.depositAmount)}</p><button class="button">退回押金</button></div>
-    </div>
-  `
-  return buildLayout('订单详情 - 员工 - 电脑租赁管理系统', body, user)
-}
-
-export function renderAdminDashboard(user: any) {
-  const customerCount = users.filter((item) => item.role === 'CUSTOMER').length
-  const staffCount = users.filter((item) => item.role === 'STAFF').length
-  const body = `
-    <div class="panel hero">
-      <div>
-        <h2>管理员仪表盘</h2>
-        <p>系统总览：用户、订单、合同、设备管理一站式查看。</p>
-      </div>
-      <div class="hero-card-grid">
-        <div class="card"><h3>客户用户</h3><p>${customerCount} 人</p></div>
-        <div class="card"><h3>员工用户</h3><p>${staffCount} 人</p></div>
-        <div class="card"><h3>总订单</h3><p>${orders.length} 笔</p></div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="section-title"><h2>快速入口</h2></div>
-      <div class="grid grid-3">
-        <a class="card link-button" href="/admin/users">用户管理</a>
-        <a class="card link-button" href="/admin/orders">订单管理</a>
-        <a class="card link-button" href="/admin/contracts">合同管理</a>
-      </div>
-    </div>
-  `
-  return buildLayout('管理员仪表盘 - 电脑租赁管理系统', body, user)
-}
-
-export function renderAdminUsers(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>用户管理</h2><span class="section-note">查看并管理管理员、员工、顾客账户。</span></div>
-      <div class="table-wrapper">
-        <table class="table"><thead><tr><th>姓名</th><th>邮箱</th><th>账号</th><th>角色</th><th>余额</th><th>佣金</th></tr></thead><tbody>
-          ${users.map((item) => `<tr><td>${item.name}</td><td>${item.email}</td><td>${item.email}</td><td>${item.role}</td><td>${formatCurrency(item.balance)}</td><td>${formatCurrency(item.commissionBalance)}</td></tr>`).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('用户管理 - 管理员 - 电脑租赁管理系统', body, user)
-}
-
-export function renderAdminOrders(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>订单管理</h2><span class="section-note">筛选、状态变更、退款处理。</span></div>
-      <div class="table-wrapper">
-        <table class="table"><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>金额</th><th>状态</th></tr></thead><tbody>
-          ${orders.map((order) => {
-            const customer = users.find((item) => item.id === order.userId)
-            const device = getDeviceById(order.deviceId)
-            return `<tr><td>${order.orderNo}</td><td>${customer?.name ?? ''}</td><td>${device?.name ?? ''}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td></tr>`
-          }).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('订单管理 - 管理员 - 电脑租赁管理系统', body, user)
-}
-
-export function renderAdminContracts(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>合同管理</h2><span class="section-note">维护合同模板、签署状态、合同归档。</span></div>
-      <div class="table-wrapper">
-        <table class="table"><thead><tr><th>合同编号</th><th>订单号</th><th>客户</th><th>状态</th><th>签署时间</th><th>操作</th></tr></thead><tbody>
-          ${contracts.map((contract) => {
-            const order = getOrderById(contract.rentalId)
-            const customer = order ? users.find((item) => item.id === order.userId) : undefined
-            return `<tr><td>${contract.contractNumber}</td><td>${order?.orderNo ?? ''}</td><td>${customer?.name ?? ''}</td><td>${contract.status}</td><td>${contract.signedAt ?? '-'}</td><td><a class="link-button" href="/admin/contracts/${contract.id}">查看</a></td></tr>`
-          }).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('合同管理 - 管理员 - 电脑租赁管理系统', body, user)
-}
-
-export function renderAdminFinance(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>财务管理</h2><span class="section-note">收入、支出、对账与佣金记录。</span></div>
-      <div class="grid grid-3">
-        <div class="card"><h3>总收入</h3><p>${formatCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0))}</p></div>
-        <div class="card"><h3>押金总额</h3><p>${formatCurrency(orders.reduce((sum, order) => sum + order.depositAmount, 0))}</p></div>
-        <div class="card"><h3>未结清订单</h3><p>${orders.filter((order) => order.status === 'pending_payment').length} 笔</p></div>
-      </div>
-    </div>
-  `
-  return buildLayout('财务管理 - 管理员 - 电脑租赁管理系统', body, user)
-}
-
-export function renderAdminDevices(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>设备管理</h2><span class="section-note">设备库存、状态、维修记录。</span></div>
-      <div class="table-wrapper">
-        <table class="table"><thead><tr><th>设备</th><th>型号</th><th>日租金</th><th>押金</th><th>状态</th></tr></thead><tbody>
-          ${devices.map((device) => `<tr><td>${device.name}</td><td>${device.model}</td><td>${formatCurrency(device.pricePerDay)}</td><td>${formatCurrency(device.depositAmount)}</td><td>${device.status}</td></tr>`).join('')}
-        </tbody></table>
-      </div>
-    </div>
-  `
-  return buildLayout('设备管理 - 管理员 - 电脑租赁管理系统', body, user)
-}
-
-export function renderAdminSettings(user: any) {
-  const body = `
-    <div class="panel">
-      <div class="section-title"><h2>系统设置</h2><span class="section-note">租赁条款、支付方式、推荐规则配置。</span></div>
-      <div class="card"><h3>系统参数</h3><p>默认推荐分成：25%</p><p>推荐层级：1级</p><p>结算周期：每月</p></div>
-    </div>
-  `
-  return buildLayout('系统设置 - 管理员 - 电脑租赁管理系统', body, user)
-}
-
-export function render404() {
-  const body = `
-    <div class="panel">
-      <h2>404 页面未找到</h2>
-      <p>您访问的页面不存在。</p>
-      <a class="button" href="/">返回首页</a>
-    </div>
-  `
-  return buildLayout('404 - 电脑租赁管理系统', body)
+  `;
+  return buildLayout('签署租赁合同 - 电脑租赁管理系统', body, user);
 }

@@ -16,7 +16,7 @@ function parseFormBody(body: string): Record<string, string> {
 app.get('/', (c) => {
   const user = findUserBySession(c.req.header('cookie') ?? null)
   if (!user) {
-    return c.html(pages.renderHome(null))
+    return c.redirect('/login')
   }
   if (user.role === 'CUSTOMER') return c.redirect('/customer/dashboard')
   if (user.role === 'STAFF') return c.redirect('/staff/dashboard')
@@ -41,7 +41,11 @@ app.post('/login', async (c) => {
     return c.html(pages.renderLogin('账号或密码错误'))
   }
   const response = c.redirect(user.role === 'CUSTOMER' ? '/customer/dashboard' : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
-  response.headers.set('Set-Cookie', `session=${user.role}:${user.id}; Path=/; HttpOnly`)
+  let cookieOptions = `session=${user.role}:${user.id}; Path=/; HttpOnly`;
+  if (form.remember) {
+    cookieOptions += `; Max-Age=${60 * 60 * 24 * 30}`; // 30 days
+  }
+  response.headers.set('Set-Cookie', cookieOptions)
   return response
 })
 

@@ -140,6 +140,18 @@ export const orders: Order[] = [
   },
 ]
 
+export const systemSettings = {
+  bankDetails: {
+    bsb: '062-001',
+    account: '87654321',
+    accountName: 'PC Rental Pty Ltd'
+  },
+  squareConfig: {
+    applicationId: 'sq0idp-YOUR_APPLICATION_ID',
+    locationId: 'YOUR_LOCATION_ID',
+  }
+};
+
 export function formatCurrency(value: number): string {
   return `¥${value.toFixed(2)}`
 }
