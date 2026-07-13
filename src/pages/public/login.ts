@@ -1,4 +1,4 @@
-import { buildLayout } from '../../site';
+import { buildLayout } from '../../site.ts';
 
 export function renderLogin(errorMessage?: string) {
   const body = `

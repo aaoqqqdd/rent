@@ -1,0 +1,8 @@
+name = "rent"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rent"
+database_id = "de138042-b457-4257-944a-4ead43152504"

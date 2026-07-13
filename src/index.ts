@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
-import * as pages from './pages'
+import * as pages from './pages/index.ts'
+import * as actions from './actions/index.ts'
 import { users, findUserBySession, devices, getDeviceById } from './site'
 
 const app = new Hono()
@@ -165,23 +166,24 @@ app.get('/staff/devices', (c) => {
   return c.html(pages.renderStaffDevices(user))
 })
 
-app.get('/staff/contract/new', (c) => {
+
+
+app.get('/staff/contracts/new', (c) => {
   const user = findUserBySession(c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffContractNew(user, c.req.query('orderId') || ''))
+  return c.html(pages.renderNewContractPage(user))
 })
 
-app.post('/staff/contract/new', async (c) => {
+app.post('/staff/contracts/create', async (c) => {
   const user = findUserBySession(c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
-  const deviceId = form.deviceId?.trim() || 'd-1'
-  return c.redirect('/staff/contracts')
+  return actions.handleCreateContractAction(user, form)
 })
 
 app.get('/staff/contracts/:id/progress', (c) => {
@@ -201,12 +203,19 @@ app.get('/staff/contract/view', (c) => {
 })
 
 app.get('/contract/sign', (c) => {
-  return c.html(pages.renderContractSign(c.req.query('token') || '', Number(c.req.query('s') || '1')))
-})
+  const token = c.req.query('token') || '';
+  const step = Number(c.req.query('step') || '1');
+  const error = c.req.query('error');
+  return c.html(pages.renderContractSignPage(token, step, error));
+});
 
 app.post('/contract/sign', async (c) => {
-  return c.redirect('/payment/result?status=success&orderId=o-1')
-})
+  const token = c.req.query('token') || '';
+  const step = Number(c.req.query('step') || '1');
+  const body = await c.req.text();
+  const form = parseFormBody(body);
+  return actions.handleSignContractStep(token, step, form);
+});
 
 app.get('/contract/view/:id', (c) => {
   return c.html(pages.renderContractView(c.req.param('id'), findUserBySession(c.req.header('cookie') ?? null)))

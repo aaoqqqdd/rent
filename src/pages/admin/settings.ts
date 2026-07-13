@@ -10,7 +10,8 @@ export function renderAdminSettings(user: any) {
       <form id="systemSettingsForm">
         <div class="form-group">
           <label for="rentalTerms">租赁条款</label>
-          <textarea id="rentalTerms" name="rentalTerms" rows="10" class="form-control">${settings.rentalTerms}</textarea>
+          <div id="rentalTermsEditor" style="height: 250px;"></div>
+          <textarea id="rentalTerms" name="rentalTerms" style="display:none;"></textarea>
         </div>
 
         <div class="form-group">
@@ -36,7 +37,8 @@ export function renderAdminSettings(user: any) {
 
         <div class="form-group">
           <label for="emailTemplate">邮件通知模板</label>
-          <textarea id="emailTemplate" name="emailTemplate" rows="5" class="form-control">${settings.emailTemplate}</textarea>
+          <div id="emailTemplateEditor" style="height: 150px;"></div>
+          <textarea id="emailTemplate" name="emailTemplate" style="display:none;"></textarea>
         </div>
 
         <div class="form-group">
@@ -59,8 +61,46 @@ export function renderAdminSettings(user: any) {
     </div>
 
     <script>
+      // 初始化 Quill 编辑器
+      const rentalTermsEditor = new Quill('#rentalTermsEditor', {
+        theme: 'snow',
+        modules: {
+          toolbar: [
+            [{ 'header': [1, 2, 3, false] }],
+            ['bold', 'italic', 'underline'],
+            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+            ['link', 'image'],
+            ['clean']
+          ]
+        }
+      });
+      const emailTemplateEditor = new Quill('#emailTemplateEditor', {
+        theme: 'snow',
+        modules: {
+          toolbar: [['bold', 'italic'], ['link']]
+        }
+      });
+
+      // 将数据库中的内容加载到编辑器
+      const rentalTermsContent = '${settings.rentalTerms}';
+      const emailTemplateContent = '${settings.emailTemplate}';
+      rentalTermsEditor.root.innerHTML = rentalTermsContent;
+      emailTemplateEditor.root.innerHTML = emailTemplateContent;
+      
+      // 隐藏的 textarea 用于表单提交
+      const rentalTermsTextarea = document.getElementById('rentalTerms');
+      const emailTemplateTextarea = document.getElementById('emailTemplate');
+      rentalTermsTextarea.value = rentalTermsContent;
+      emailTemplateTextarea.value = emailTemplateContent;
+
+
       document.getElementById('systemSettingsForm').addEventListener('submit', function(event) {
         event.preventDefault();
+        
+        // 提交前，将编辑器内容同步到隐藏的 textarea
+        rentalTermsTextarea.value = rentalTermsEditor.root.innerHTML;
+        emailTemplateTextarea.value = emailTemplateEditor.root.innerHTML;
+
         const formData = new FormData(this);
         const newSettings = {
           rentalTerms: formData.get('rentalTerms'),
@@ -77,13 +117,33 @@ export function renderAdminSettings(user: any) {
             settlementPeriod: parseInt(formData.get('referralSettlementPeriod')),
           },
         };
-        // 假设 updateSystemSettings 是一个异步函数，通过 API 调用更新后端设置
-        updateSystemSettings(newSettings).then(() => {
-          alert('系统设置已保存成功！');
-          window.location.reload();
-        }).catch(error => {
-          alert('保存失败: ' + error.message);
+        
+        // 这里的 updateSystemSettings 是一个示意函数，实际应用中你需要实现它
+        // 它可能是一个 fetch 调用，将 newSettings 发送到后端 API
+        console.log('Saving new settings:', newSettings);
+        alert('设置已保存（演示）。请在控制台查看提交的数据。');
+        
+        // 实际场景中，你可能会这样做：
+        /*
+        fetch('/api/admin/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newSettings)
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            alert('系统设置已保存成功！');
+            window.location.reload();
+          } else {
+            alert('保存失败: ' + data.error);
+          }
+        })
+        .catch(error => {
+          console.error('Error saving settings:', error);
+          alert('保存失败，请查看控制台获取详情。');
         });
+        */
       });
     </script>
   `;
