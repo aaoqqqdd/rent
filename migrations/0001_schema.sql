@@ -225,11 +225,7 @@ CREATE TABLE device_maintenance (
 -- -----------------------------------------------------
 -- 初始数据
 -- -----------------------------------------------------
--- 注意：密码应该是哈希后的值，这里为了演示使用明文。
-INSERT INTO users (id, name, email, password_hash, role, status) VALUES
-('u-admin', 'Admin User', 'admin@example.com', 'Admin123', 'admin', 'active'),
-('u-staff', 'Staff User', 'staff@example.com', 'Staff123', 'staff', 'active'),
-('u-customer', 'Customer User', 'customer@example.com', 'Customer123', 'customer', 'active');
+-- 初始用户将由应用程序自动创建（自动哈希处理密码）
 
 INSERT INTO devices (id, name, model, price_per_day, deposit_amount, status, serial_number, entry_date) VALUES
 ('d-mbp14', 'MacBook Pro 14', 'M4 Pro', 40.0, 2000.0, 'available', 'SN-MBP14-001', '2026-07-01'),

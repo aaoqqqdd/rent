@@ -1,9 +1,6 @@
-import { buildLayout, getOrders, getUsers, getDevices, formatCurrency } from '../../site';
+import { buildLayout, formatCurrency } from '../../site';
 
-export function renderStaffDashboard(user: any) {
-  const orders = getOrders()
-  const users = getUsers()
-  const devices = getDevices()
+export function renderStaffDashboard(user: any, orders: any[], users: any[], devices: any[]) {
 
   const totalRevenue = orders.filter(o => o.status === 'completed' || o.status === 'paid').reduce((sum, order) => sum + order.totalAmount, 0)
   const activeRentals = orders.filter(o => o.status === 'active' || o.status === 'paid').length

@@ -588,6 +588,20 @@ export async function getUsersAsync(c: Context): Promise<User[]> {
   })
 }
 
+// 异步版本从数据库获取订单列表
+export async function getOrdersAsync(c: Context): Promise<any[]> {
+  const db = getDB(c)
+  const result = await db.prepare('SELECT * FROM rentals').all()
+  return result.results || []
+}
+
+// 异步版本从数据库获取设备列表
+export async function getDevicesAsync(c: Context): Promise<any[]> {
+  const db = getDB(c)
+  const result = await db.prepare('SELECT * FROM devices').all()
+  return result.results || []
+}
+
 export function getContractByOrderId(orderId: string): Contract | undefined {
   return contracts.find((c) => c.rentalId === orderId)
 }

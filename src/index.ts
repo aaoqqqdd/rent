@@ -161,7 +161,11 @@ app.get('/staff/dashboard', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffDashboard(user))
+  const { getOrdersAsync, getUsersAsync, getDevicesAsync } = await import('./site')
+  const orders = await getOrdersAsync(c)
+  const users = await getUsersAsync(c)
+  const devices = await getDevicesAsync(c)
+  return c.html(pages.renderStaffDashboard(user, orders, users, devices))
 })
 
 app.get('/staff/orders/pending', async (c) => {
