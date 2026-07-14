@@ -12,12 +12,148 @@ app.use('*', async (c, next) => {
   } catch (error) {
     console.error('Server Error:', error)
     return c.html(`
-      <div style="max-width: 800px; margin: 50px auto; padding: 20px; font-family: Arial, sans-serif;">
-        <h1 style="color: #dc2626;">Internal Server Error</h1>
-        <h3>错误详情：</h3>
-        <pre style="background: #f3f4f6; padding: 15px; border-radius: 8px; overflow-x: auto; color: #1f2937;">${error instanceof Error ? error.message + '\n\n' + error.stack : String(error)}</pre>
-        <p style="margin-top: 20px;"><a href="/login" style="color: #2563eb;">返回登录页</a></p>
-      </div>
+      <!DOCTYPE html>
+      <html lang="zh-CN">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>服务器错误 - PC Rental</title>
+        <style>
+          :root {
+            --primary-color: #3b82f6;
+            --primary-dark: #2563eb;
+            --danger-color: #ef4444;
+            --bg-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --card-bg: #ffffff;
+            --text-primary: #1f2937;
+            --text-secondary: #6b7280;
+            --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+          }
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            min-height: 100vh;
+            background: var(--bg-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+          }
+          .error-container {
+            background: var(--card-bg);
+            border-radius: 16px;
+            box-shadow: var(--shadow-lg);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+            animation: fadeInUp 0.5s ease-out;
+          }
+          @keyframes fadeInUp {
+            from {
+              opacity: 0;
+              transform: translateY(20px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+          .error-header {
+            text-align: center;
+            margin-bottom: 30px;
+          }
+          .error-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+          }
+          .error-title {
+            color: var(--danger-color);
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 10px;
+          }
+          .error-subtitle {
+            color: var(--text-secondary);
+            font-size: 16px;
+          }
+          .error-details {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            overflow-x: auto;
+          }
+          .error-details h3 {
+            color: var(--text-primary);
+            font-size: 18px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          .error-details pre {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #374151;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+          }
+          .error-actions {
+            text-align: center;
+          }
+          .btn-primary {
+            display: inline-block;
+            padding: 12px 32px;
+            background: var(--primary-color);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+          }
+          .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+          }
+          @media (max-width: 640px) {
+            .error-container {
+              padding: 25px;
+            }
+            .error-title {
+              font-size: 22px;
+            }
+            .error-icon {
+              font-size: 48px;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-container">
+          <div class="error-header">
+            <div class="error-icon">⚠️</div>
+            <h1 class="error-title">Internal Server Error</h1>
+            <p class="error-subtitle">服务器遇到了一些问题，技术团队已经收到通知</p>
+          </div>
+          <div class="error-details">
+            <h3>📋 错误详情</h3>
+            <pre>${error instanceof Error ? error.message + '\n\n' + error.stack : String(error)}</pre>
+          </div>
+          <div class="error-actions">
+            <a href="/login" class="btn-primary">返回登录页</a>
+          </div>
+        </div>
+      </body>
+      </html>
     `, 500)
   }
 })

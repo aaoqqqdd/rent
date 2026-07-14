@@ -23,7 +23,7 @@ CREATE TABLE users (
   email TEXT NOT NULL UNIQUE,
   phone TEXT,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK(role IN ('admin', 'staff', 'customer')),
+  role TEXT NOT NULL CHECK(role IN ('ADMIN', 'STAFF', 'CUSTOMER')),
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
   bsb TEXT,
   account_number TEXT,
@@ -225,8 +225,13 @@ CREATE TABLE device_maintenance (
 -- -----------------------------------------------------
 -- 初始数据
 -- -----------------------------------------------------
--- 初始用户将由应用程序自动创建（自动哈希处理密码）
+-- 初始测试用户（密码需要在应用程序中重新哈希处理，这里仅作为结构示例）
+INSERT INTO users (id, name, email, password_hash, role, status, created_at, updated_at) VALUES
+('u-admin', 'Admin User', 'admin@example.com', '$2a$10$exampleHashForAdmin123', 'ADMIN', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00'),
+('u-staff', 'Staff User', 'staff@example.com', '$2a$10$exampleHashForStaff123', 'STAFF', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00'),
+('u-customer', 'Customer User', 'customer@example.com', '$2a$10$exampleHashForCustomer123', 'CUSTOMER', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00');
 
+-- 初始设备数据
 INSERT INTO devices (id, name, model, price_per_day, deposit_amount, status, serial_number, entry_date) VALUES
 ('d-mbp14', 'MacBook Pro 14', 'M4 Pro', 40.0, 2000.0, 'available', 'SN-MBP14-001', '2026-07-01'),
 ('d-xps13', 'Dell XPS 13', 'Intel i7', 35.0, 1500.0, 'available', 'SN-XPS13-001', '2026-07-01');
