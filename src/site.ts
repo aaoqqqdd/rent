@@ -230,7 +230,7 @@ export const systemSettings = {
   bankDetails: {
     bsb: '062-001',
     account: '87654321',
-    accountName: 'ANB',
+    accountName: '账户名',
   },
   squareConfig: {
     applicationId: 'sq0idp-YOUR_APPLICATION_ID',

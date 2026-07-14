@@ -195,11 +195,9 @@ export function renderAdminSettings(user: any) {
         // 这里的 updateSystemSettings 是一个示意函数，实际应用中你需要实现它
         // 它可能是一个 fetch 调用，将 newSettings 发送到后端 API
         console.log('Saving new settings:', newSettings);
-        alert('设置已保存（演示）。请在控制台查看提交的数据。');
         
-        // 实际场景中，你可能会这样做：
-        /*
-        fetch('/api/admin/settings', {
+        // 发送到后端API保存
+        fetch('/admin/settings/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newSettings)
@@ -217,7 +215,6 @@ export function renderAdminSettings(user: any) {
           console.error('Error saving settings:', error);
           alert('保存失败，请查看控制台获取详情。');
         });
-        */
       });
     </script>
   `;
