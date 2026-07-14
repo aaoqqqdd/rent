@@ -541,7 +541,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     }
     .hero {
       background: var(--primary-gradient);
-      color: white;
+      color: #000000;
       border-radius: var(--radius-lg);
       padding: 48px;
       margin-bottom: 32px;
