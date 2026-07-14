@@ -78,7 +78,32 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
             </div>
             <div class="form-group" style="margin-top: 16px;">
               <label class="form-label" for="phone">联系电话</label>
-              <input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" />
+              <div style="display: flex; gap: 12px; align-items: start;">
+                <div style="width: 140px;">
+                  <select id="phoneCode" name="phoneCode" class="form-control" style="width: 100%;" required onchange="validatePhoneNumber()">
+                    <option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option>
+                    <option value="+61" ${userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option>
+                    <option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option>
+                    <option value="+44" ${userInput.phoneCode === '+44' ? 'selected' : ''}>+44 英国</option>
+                    <option value="+852" ${userInput.phoneCode === '+852' ? 'selected' : ''}>+852 香港</option>
+                    <option value="+886" ${userInput.phoneCode === '+886' ? 'selected' : ''}>+886 台湾</option>
+                    <option value="+65" ${userInput.phoneCode === '+65' ? 'selected' : ''}>+65 新加坡</option>
+                    <option value="+82" ${userInput.phoneCode === '+82' ? 'selected' : ''}>+82 韩国</option>
+                    <option value="+81" ${userInput.phoneCode === '+81' ? 'selected' : ''}>+81 日本</option>
+                  </select>
+                </div>
+                <div style="flex: 1;">
+                  <input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" oninput="validatePhoneNumber()" required placeholder="请输入手机号码" />
+                  <span id="phoneError" style="color: #ef4444; font-size: 14px; display: none;">电话号码格式不正确，请检查输入</span>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 推荐人代码输入框 -->
+            <div class="form-group" style="margin-top: 16px;">
+              <label class="form-label" for="referrer">推荐人代码（选填）</label>
+              <input id="referrer" class="form-control" name="referrer" value="${userInput.referrer ?? ''}" placeholder="如有推荐人请填写推荐码" />
+              <p class="form-text" style="font-size: 12px; color: #6b7280; margin-top: 4px;">填写推荐人代码后将无法更改，系统会自动为推荐人计算佣金分成</p>
             </div>
             
             <div style="display: flex; align-items: center; gap: 10px; margin-top: 24px; margin-bottom: 16px;">
@@ -116,14 +141,53 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
                   passwordConfirmInput.required = false;
                 }
               }
-              // 页面加载时也调用一次，以防浏览器记住勾选状态
-              document.addEventListener('DOMContentLoaded', togglePasswordFields);
-            </script>
 
-            <div class="form-group" style="margin-top: 16px;">
-              <label class="form-label" for="referrer">推荐码 (选填)</label>
-              <input id="referrer" class="form-control" name="referrer" value="${userInput.referrer ?? ''}" placeholder="如果您有推荐人的推荐码，请填入此处"/>
-            </div>
+              function validatePhoneNumber() {
+                const phoneCode = document.getElementById('phoneCode').value;
+                const phoneNumber = document.getElementById('phone').value.trim();
+                const phoneError = document.getElementById('phoneError');
+                let isValid = false;
+                
+                // 根据不同国家的电话号码格式进行验证
+                const phonePatterns = {
+                  '+86': /^1[3-9]\d{9}$/, // 中国手机号: 11位
+                  '+61': /^4\d{8}$/, // 澳大利亚手机号: 9位 (以4开头)
+                  '+1': /^\d{10}$/, // 美国/加拿手机号: 10位
+                  '+44': /^7\d{9}$/, // 英国手机号: 10位 (以7开头)
+                  '+852': /^[569]\d{7}$/, // 香港手机号: 8位
+                  '+886': /^9\d{8}$/, // 台湾手机号: 9位
+                  '+65': /^[89]\d{7}$/, // 新加坡手机号: 8位
+                  '+82': /^1[0-9]\d{7,8}$/, // 韩国手机号
+                  '+81': /^[789]0\d{8}$/ // 日本手机号
+                };
+                
+                const pattern = phonePatterns[phoneCode];
+                if (pattern && pattern.test(phoneNumber)) {
+                  isValid = true;
+                }
+                
+                if (isValid || phoneNumber === '') {
+                  phoneError.style.display = 'none';
+                  return true;
+                } else {
+                  phoneError.style.display = 'block';
+                  return false;
+                }
+              }
+
+              // 表单提交前验证
+              document.querySelector('form').addEventListener('submit', function(e) {
+                if (!validatePhoneNumber()) {
+                  e.preventDefault();
+                  alert('请输入正确格式的电话号码');
+                }
+              });
+              
+              // 页面加载时也调用一次，以防浏览器记住勾选状态
+              document.addEventListener('DOMContentLoaded', function() {
+                togglePasswordFields();
+              });
+            </script>
             
             <div style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
               <a href="/contract/sign?token=${token}&step=1" class="button-secondary">返回上一步</a>

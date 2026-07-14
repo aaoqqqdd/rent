@@ -1178,8 +1178,11 @@ export function getAllDevices(): Device[] {
   return devices
 }
 
-export function getOrders(): Order[] {
-  return orders
+export function getOrders(user?: User): Order[] {
+  if (user && user.role === 'STAFF') {
+    return orders.filter(order => order.created_by === user.id);
+  }
+  return orders;
 }
 
 export function getOrdersForUser(userId: string): Order[] {
@@ -1272,17 +1275,74 @@ export async function updatePassword(c: Context, userId: string, newPassword: st
 }
 
 export async function bindReferrer(c: Context, userId: string, referrerId: string): Promise<User | undefined> {
-  const user = users.find((u) => u.id === userId)
-  if (user) {
-    user.referrerId = referrerId
+  const user = await c.env.RENT.prepare('SELECT referrerId FROM users WHERE id = ?').bind(userId).first() as any;
+  
+  // 如果用户已经绑定了推荐人，不允许再次更改
+  if (user?.referrerId) {
+    return undefined; // 已经绑定过推荐人，不能再绑定
   }
-  return user
+  
+  // 检查推荐人是否存在
+  const referrerExists = await c.env.RENT.prepare('SELECT 1 FROM users WHERE id = ?').bind(referrerId).first();
+  if (!referrerExists) {
+    return undefined;
+  }
+  
+  await c.env.RENT.prepare('UPDATE users SET referrerId = ? WHERE id = ?').bind(referrerId, userId).run();
+  return await c.env.RENT.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as any;
+}
+
+// 生成6位数字和大写字母组合的唯一推荐码
+function generateReferralCode(): string {
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+// 加入推荐计划，生成唯一推荐码
+export async function joinReferralProgram(c: Context, userId: string): Promise<User | undefined> {
+  const db = getDB(c);
+  const user = await db.prepare('SELECT referralCode FROM users WHERE id = ?').bind(userId).first() as any;
+  
+  // 如果用户已经有推荐码了，直接返回
+  if (user?.referralCode) {
+    return await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as any;
+  }
+  
+  // 生成唯一的推荐码，确保不重复
+  let referralCode: string;
+  let isUnique = false;
+  let attempts = 0;
+  const maxAttempts = 10;
+  
+  while (!isUnique && attempts < maxAttempts) {
+    referralCode = generateReferralCode();
+    const existing = await db.prepare('SELECT 1 FROM users WHERE referralCode = ?').bind(referralCode).first();
+    if (!existing) {
+      isUnique = true;
+    }
+    attempts++;
+  }
+  
+  if (!isUnique) {
+    return undefined; // 生成推荐码失败
+  }
+  
+  await db.prepare('UPDATE users SET referralCode = ? WHERE id = ?').bind(referralCode, userId).run();
+  return await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as any;
+}
+
+// 退出推荐计划，清除推荐码
+export async function leaveReferralProgram(c: Context, userId: string): Promise<User | undefined> {
+  const db = getDB(c);
+  await db.prepare('UPDATE users SET referralCode = NULL WHERE id = ?').bind(userId).run();
+  return await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as any;
 }
 
 export async function unbindReferrer(c: Context, userId: string): Promise<User | undefined> {
-  const user = users.find((u) => u.id === userId)
-  if (user) {
-    delete user.referrerId
-  }
-  return user
+  // 不允许解绑推荐人，一旦绑定永久生效
+  return undefined;
 }

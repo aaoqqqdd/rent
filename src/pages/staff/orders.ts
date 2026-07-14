@@ -1,7 +1,7 @@
 import { buildLayout, getOrders, getUsers, getDevices, formatCurrency } from '../../site';
 
 export function renderStaffOrders(user: any, searchTerm: string = '') {
-  const orders = getOrders();
+  const orders = getOrders(user);
   const usersData = getUsers();
   const devicesData = getDevices();
 

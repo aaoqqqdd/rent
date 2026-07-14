@@ -500,7 +500,7 @@ app.get('/customer/referral', async (c) => {
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerReferral(user))
+  return c.html(await pages.renderCustomerReferral(c, user))
 })
 
 app.get('/customer/referral/withdraw', async (c) => {
@@ -508,7 +508,37 @@ app.get('/customer/referral/withdraw', async (c) => {
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerReferral(user))
+  return c.html(await pages.renderCustomerReferral(c, user))
+})
+
+app.post('/customer/referral/join', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'CUSTOMER') {
+    return c.redirect('/login')
+  }
+  // 导入joinReferralProgram函数
+  const { joinReferralProgram } = await import('./site')
+  const updatedUser = await joinReferralProgram(c, user.id)
+  if (updatedUser) {
+    return c.html(await pages.renderCustomerReferral(c, updatedUser, '成功加入推荐计划，您的专属推荐码已生成！'))
+  } else {
+    return c.html(await pages.renderCustomerReferral(c, user, '加入推荐计划失败，请稍后重试'))
+  }
+})
+
+app.post('/customer/referral/leave', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'CUSTOMER') {
+    return c.redirect('/login')
+  }
+  // 导入leaveReferralProgram函数
+  const { leaveReferralProgram } = await import('./site')
+  const updatedUser = await leaveReferralProgram(c, user.id)
+  if (updatedUser) {
+    return c.html(await pages.renderCustomerReferral(c, updatedUser, '已成功退出推荐计划'))
+  } else {
+    return c.html(await pages.renderCustomerReferral(c, user, '退出推荐计划失败，请稍后重试'))
+  }
 })
 
 app.post('/customer/referral/withdraw', async (c) => {
@@ -520,12 +550,34 @@ app.post('/customer/referral/withdraw', async (c) => {
   const form = parseFormBody(body)
   const amount = Number(form.amount)
   if (!amount || amount <= 0) {
-    return c.html(pages.renderCustomerReferral(user, '请输入正确的提现金额'))
+    return c.html(await pages.renderCustomerReferral(c, user, '请输入正确的提现金额'))
   }
-  if (amount > user.commissionBalance) {
-    return c.html(pages.renderCustomerReferral(user, '提现金额不能超过可提现余额'))
+  // 获取完整用户信息以验证余额
+  const fullUser = await c.env.RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as any;
+  if (amount > fullUser.commission_balance) {
+    return c.html(await pages.renderCustomerReferral(c, user, '提现金额不能超过可提现余额'))
   }
-  return c.html(pages.renderCustomerReferral(user, '提现申请已提交，预计2个工作日处理'))
+  // 处理提现申请：创建提现记录并更新用户佣金余额
+  const withdrawalId = `w-${(await import('nanoid')).nanoid(8)}`;
+  await c.env.RENT.prepare(`
+    INSERT INTO commission_withdrawals (id, user_id, amount, bsb, account_number, status)
+    VALUES (?, ?, ?, ?, ?, 'pending')
+  `).bind(withdrawalId, user.id, amount, form.bsb, form.account_number).run();
+  
+  // 更新用户佣金余额
+  await c.env.RENT.prepare(`
+    UPDATE users SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(amount, user.id).run();
+  
+  // 更新佣金记录状态
+  await c.env.RENT.prepare(`
+    UPDATE commission_records SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
+    WHERE referrer_id = ? AND status = 'pending'
+    ORDER BY created_at ASC LIMIT 1
+  `).bind(user.id).run();
+  
+  return c.html(await pages.renderCustomerReferral(c, user, '提现申请已提交，预计2个工作日处理'))
 })
 
 app.get('/customer/security', async (c) => {
@@ -602,8 +654,9 @@ app.get('/admin/contracts', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminContracts(user))
+  return c.html(await pages.renderAdminContracts(user))
 })
+
 
 app.get('/admin/contracts/:id', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
@@ -696,6 +749,19 @@ app.get('/admin/settings', async (c) => {
   }
   return c.html(pages.renderAdminSettings(user))
 })
+
+app.post('/admin/settings/save', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.text('无权限', 403)
+  }
+  const bodyText = await c.req.text()
+  // 把文本 body 挂回 req，避免 handleSaveAdminSettings 里再次读取 text 时是空
+  // Hono 不提供直接覆盖 req，这里改为直接 json 解析后写入 handler（handler已读取text）
+  // 因此直接把 c.req 交给 handler 读取即可，这里无需复用 bodyText。
+  return actions.handleSaveAdminSettings(c)
+})
+
 
 app.get('*', (c) => c.html(pages.renderNotFound()))
 

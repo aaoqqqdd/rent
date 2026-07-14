@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getContractBySignToken, insertUser, updateOrderInDB, Order, User, getDeviceById, updateContractStatusInDB } from '../../site';
+import { getContractBySignToken, insertUser, updateOrderInDB, Order, User, getDeviceById, updateContractStatusInDB, hashPassword } from '../../site';
 import { nanoid } from 'nanoid';
 
 // 这是一个临时的、内存中的会话存储，用于在签约步骤之间保存用户输入。
@@ -36,13 +36,40 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         if (!signSessions[token].agreedToTerms) {
           throw new Error('请先同意租赁协议。');
         }
-        const { name, email, password, passwordConfirm } = body;
-        if (!name || !email || !password || !passwordConfirm) {
-          throw new Error('姓名、邮箱和密码是必填项。');
+        const { name, email, password, passwordConfirm, phoneCode, phone, createAccount, referrer } = body;
+        
+        // 验证必填字段
+        if (!name || !email || !phoneCode || !phone) {
+          throw new Error('姓名、邮箱和联系电话是必填项。');
         }
-        if (password !== passwordConfirm) {
+        
+        // 如果选择创建账户，密码是必填的
+        if (createAccount && (!password || !passwordConfirm)) {
+          throw new Error('创建账户时密码和确认密码是必填项。');
+        }
+        
+        if (createAccount && password !== passwordConfirm) {
           throw new Error('两次输入的密码不一致。');
         }
+        
+        // 验证电话号码格式
+        const phonePatterns: Record<string, RegExp> = {
+          '+86': /^1[3-9]\d{9}$/,
+          '+61': /^4\d{8}$/,
+          '+1': /^\d{10}$/,
+          '+44': /^7\d{9}$/,
+          '+852': /^[569]\d{7}$/,
+          '+886': /^9\d{8}$/,
+          '+65': /^[89]\d{7}$/,
+          '+82': /^1[0-9]\d{7,8}$/,
+          '+81': /^[789]0\d{8}$/
+        };
+        
+        const pattern = phonePatterns[phoneCode];
+        if (pattern && !pattern.test(phone)) {
+          throw new Error('电话号码格式不正确，请检查国家代码和手机号。');
+        }
+        
         // 从数据库检查邮箱是否已存在
         const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
         if (existingUser) {
@@ -50,7 +77,7 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         }
 
         // 保存用户信息到会话
-        signSessions[token].userInfo = { ...body };
+        signSessions[token].userInfo = { ...body, fullPhone: `${phoneCode}${phone}` };
         redirectUrl = `/contract/sign?token=${token}&step=3`;
         break;
 
@@ -68,15 +95,39 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         // 1. 创建用户
         const userInfo = signSessions[token].userInfo;
         const newUserId = `u-${nanoid(8)}`;
+        
+        // 处理推荐人关系 - 在合同签署时绑定，一旦绑定不可更改，不验证推荐码大小写
+        let referrerId = null;
+        if (userInfo.referrer) {
+          // 将用户输入的推荐码转换为大写，与数据库中存储的大写推荐码匹配
+          const normalizedReferrerCode = userInfo.referrer.toUpperCase();
+          const referrerUser = await c.env.RENT.prepare('SELECT * FROM users WHERE UPPER(referralCode) = ?').bind(normalizedReferrerCode).first();
+          if (referrerUser) {
+            referrerId = referrerUser.id;
+          }
+        }
+        
+        // 只有当用户选择创建账户时才处理密码
+        let password_hash = null;
+        if (userInfo.createAccount && userInfo.password) {
+          password_hash = await hashPassword(userInfo.password);
+        }
+        
         const newUser: User = {
           id: newUserId,
           name: userInfo.name,
           email: userInfo.email,
-          password: userInfo.password, // 注意：实际应用中密码需要哈希处理
+          password_hash: password_hash,
           role: 'CUSTOMER',
+          phone: userInfo.fullPhone,
           balance: 0,
           commissionBalance: 0,
+          pendingCommission: 0,
+          withdrawnCommission: 0,
+          referralCode: null,
+          referrerId: referrerId, // 绑定推荐人，一旦设置不可更改
           createdAt: new Date().toISOString(),
+          registrationDate: new Date().toISOString(),
         };
         await insertUser(c, newUser);
 
@@ -90,7 +141,38 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         // 3. 更新合同状态
         await updateContractStatusInDB(c, contract.id, 'signed');
         
-        // 4. 清理会话
+        // 4. 如果有推荐人，计算并记录佣金
+        if (referrerId) {
+          // 获取租赁订单的总金额
+          const rental = await c.env.RENT.prepare('SELECT total_amount FROM rentals WHERE id = ?').bind(contract.rentalId).first();
+          if (rental) {
+            // 获取推荐人的分成比例
+            const referrer = await c.env.RENT.prepare('SELECT commission_rate FROM users WHERE id = ?').bind(referrerId).first();
+            const commissionRate = referrer?.commission_rate || 25.0; // 默认25%
+            const commissionAmount = (rental.total_amount * commissionRate) / 100;
+            
+            // 创建佣金记录
+            const commissionId = `c-${nanoid(8)}`;
+            await c.env.RENT.prepare(`
+              INSERT INTO commission_records (id, referrer_id, rental_id, customer_id, amount, rate, status)
+              VALUES (?, ?, ?, ?, ?, ?, 'pending')
+            `).bind(commissionId, referrerId, contract.rentalId, newUserId, commissionAmount, commissionRate).run();
+            
+            // 更新推荐人的佣金余额
+            await c.env.RENT.prepare(`
+              UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(commissionAmount, referrerId).run();
+            
+            // 更新租赁订单的推荐人信息
+            await c.env.RENT.prepare(`
+              UPDATE rentals SET referrer_id = ?, commission_rate = ?, commission_amount = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(referrerId, commissionRate, commissionAmount, contract.rentalId).run();
+          }
+        }
+        
+        // 5. 清理会话
         delete signSessions[token];
 
         // 5. 重定向到支付页面或成功页面

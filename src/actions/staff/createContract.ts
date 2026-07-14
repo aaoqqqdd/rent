@@ -45,6 +45,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     contractId: contractId,
     signedAt: null,
     createdAt: new Date().toISOString(),
+    created_by: user.id,
   };
 
   const newContract: Contract = {

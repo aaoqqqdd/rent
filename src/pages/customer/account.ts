@@ -55,15 +55,9 @@ export function renderCustomerAccount(user: any, message?: string, type: 'succes
           <h3>推荐人管理</h3>
           ${currentUser.referrerId ? `
             <p>您当前的推荐人ID是: <strong>${currentUser.referrerId}</strong></p>
-            <form id="unbindReferrerForm" method="POST" action="/customer/account/unbind-referrer">
-              <button class="button button-danger" type="submit" style="margin-top: 20px;">解绑推荐人</button>
-            </form>
+            <p style="color: #6b7280; font-size: 12px; margin-top: 8px;">推荐人一旦绑定后不可更改</p>
           ` : `
-            <form id="bindReferrerForm" method="POST" action="/customer/account/bind-referrer">
-              <label class="form-label">推荐人ID</label>
-              <input class="form-control" name="referrerId" required />
-              <button class="button button-primary" type="submit" style="margin-top: 20px;">绑定推荐人</button>
-            </form>
+            <p style="color: #6b7280; font-size: 12px;">您尚未绑定任何推荐人。推荐人只能在合同签署时绑定，一旦绑定永久生效。</p>
           `}
         </div>
       </div>

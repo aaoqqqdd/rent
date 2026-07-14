@@ -1,7 +1,7 @@
 import { buildLayout, getUsers } from '../../site';
 
 export function renderStaffCustomers(user: any, searchTerm: string = '') {
-  const customers = getUsers().filter(u => u.role === 'CUSTOMER');
+  const customers = getUsers().filter(u => u.role === 'CUSTOMER' && u.staffId === user.id);
 
   const filteredCustomers = customers.filter(customer => {
     const searchLower = searchTerm.toLowerCase();

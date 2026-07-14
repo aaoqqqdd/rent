@@ -1,7 +1,11 @@
 import { buildLayout, getContractTemplate } from '../../site';
 
-export function renderAdminContracts(user: any) {
-  const currentTemplate = getContractTemplate();
+export async function renderAdminContracts(user: any) {
+  // 注意：该页面只用于“合同模板管理”。getContractTemplate 在 site.ts 里需要 Context，
+  // 这里 user 可能不包含 ctx，因此做容错。
+  const currentTemplate = await getContractTemplate((user && (user as any).ctx) || ({} as any));
+
+
 
   const body = `
     <div class="panel">
@@ -14,7 +18,7 @@ export function renderAdminContracts(user: any) {
           <form id="contractTemplateForm">
             <div class="form-group">
               <label for="templateName">模板名称</label>
-              <input type="text" id="templateName" name="templateName" class="form-control" value="${currentTemplate.name}">
+              <input type="text" id="templateName" name="templateName" class="form-control" value="${currentTemplate?.name ?? ''}">
             </div>
             <div class="form-group">
               <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
@@ -63,8 +67,8 @@ export function renderAdminContracts(user: any) {
                 </table>
               </div>
               <label for="templateContentEditor">模板内容</label>
-              <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;">${currentTemplate.content}</div>
-              <input type="hidden" id="templateContent" name="templateContent" value="${currentTemplate.content.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '&#10;')}">
+              <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;">${currentTemplate?.content ?? ''}</div>
+              <input type="hidden" id="templateContent" name="templateContent" value="${(currentTemplate?.content ?? '').replace(/&/g, '&amp;').replace(/"/g, '"').replace(/</g, '<').replace(/>/g, '>').replace(/\n/g, '&#10;')}">
               <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们。</small>
             </div>
             <button type="submit" class="button button-primary">保存模板</button>
@@ -119,7 +123,7 @@ export function renderAdminContracts(user: any) {
 
         const formData = new FormData(this);
         const newTemplate = {
-          id: '${currentTemplate.id}',
+          id: '${currentTemplate?.id ?? 'default'}',
           name: formData.get('templateName'),
           content: formData.get('templateContent'),
         };
@@ -136,3 +140,4 @@ export function renderAdminContracts(user: any) {
 
   return buildLayout('合同管理 - 电脑租赁管理系统', body, user);
 }
+

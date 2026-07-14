@@ -1,0 +1,360 @@
+## 邮件通知模板 + 租赁条款变量
+
+### 📧 一、邮件通知模板
+
+以下是系统所有自动邮件的模板，用于在后台编辑邮件内容时参考使用。
+
+
+#### 1. 欢迎邮件（注册成功）
+
+**触发场景**：用户注册成功后自动发送
+
+```
+主题：欢迎加入 PC Rental 电脑租赁平台
+
+亲爱的 {user_name}，
+
+感谢您注册 PC Rental 电脑租赁平台！
+
+您的账号已创建成功，以下是您的账号信息：
+
+📌 账号：{user_email}
+📌 角色：{user_role}
+📌 注册时间：{register_time}
+
+现在您可以：
+✅ 浏览并租赁各类电脑设备
+✅ 查看您的租赁订单和历史记录
+✅ 参与推荐计划，赚取佣金
+
+立即登录开始您的租赁体验：
+{login_link}
+
+如有任何问题，请联系我们的客服团队。
+
+祝您使用愉快！
+
+PC Rental 电脑租赁团队
+{company_phone} | {company_email}
+{company_address}
+```
+
+
+#### 2. 密码重置邮件
+
+**触发场景**：用户请求重置密码时发送
+
+```
+主题：重置您的 PC Rental 账号密码
+
+亲爱的 {user_name}，
+
+我们收到了您重置密码的请求。如果您没有提出此请求，请忽略这封邮件，您的密码将保持不变。
+
+请点击以下链接重置您的密码（链接有效期为 {reset_expiry_minutes} 分钟）：
+
+🔑 {reset_link}
+
+如果以上链接无法点击，请复制以下地址到浏览器地址栏打开：
+{reset_link_url}
+
+为了账号安全，建议您：
+- 设置一个包含字母、数字和特殊字符的强密码
+- 不要与其他网站使用相同的密码
+- 定期更换密码
+
+如有任何问题，请及时联系我们的客服。
+
+PC Rental 电脑租赁团队
+{company_phone} | {company_email}
+```
+
+
+#### 3. 合同签署通知（客户）
+
+**触发场景**：合同签署成功后发送给客户
+
+```
+主题：您的电脑租赁合同已签署确认 - {contract_number}
+
+尊敬的 {customer_name}，
+
+感谢您选择 PC Rental 电脑租赁服务！
+
+您的租赁合同已成功签署，以下是合同详情：
+
+📋 合同编号：{contract_number}
+📅 签署时间：{sign_time}
+
+租赁信息：
+┌─────────────────────────────────────┐
+│  设备名称：{device_name}            │
+│  设备型号：{device_model}           │
+│  设备序列号：{device_sn}            │
+│  租赁开始：{start_date}             │
+│  租赁结束：{end_date}               │
+│  租赁天数：{rental_days} 天         │
+│  租金总额：${total_rent}            │
+│  押金：${deposit_amount}             │
+│  支付方式：{payment_method}          │
+└─────────────────────────────────────┘
+
+您的合同 PDF 已附件发送，请妥善保存。
+
+📌 重要提醒：
+• 请在 {payment_deadline} 日内完成支付
+• 支付完成后，我们将安排设备配送
+• 租赁到期前 3 天，您将收到续租提醒
+
+查看您的合同详情：
+{contract_view_link}
+
+如有任何疑问，请联系我们的客服团队。
+
+PC Rental 电脑租赁团队
+{company_phone} | {company_email}
+```
+
+
+#### 4. 合同签署通知（员工）
+
+**触发场景**：合同签署成功后发送给员工提醒
+
+```
+主题：【内部通知】新合同已签署 - {contract_number}
+
+亲爱的 {staff_name}，
+
+一份新的租赁合同已完成签署，请及时处理。
+
+📋 合同信息：
+┌─────────────────────────────────────┐
+│  合同编号：{contract_number}        │
+│  客户姓名：{customer_name}          │
+│  客户邮箱：{customer_email}         │
+│  客户电话：{customer_phone}         │
+│  设备名称：{device_name}            │
+│  设备型号：{device_model}           │
+│  租赁开始：{start_date}             │
+│  租赁结束：{end_date}               │
+│  租金总额：${total_rent}            │
+│  押金：${deposit_amount}             │
+│  支付方式：{payment_method}          │
+│  支付状态：{payment_status}          │
+└─────────────────────────────────────┘
+
+📌 待办事项：
+☐ 确认支付到账
+☐ 安排设备出库
+☐ 准备设备交付
+☐ 在系统中更新订单状态
+
+查看完整合同：
+{contract_view_link}
+
+PC Rental 电脑租赁系统（自动通知）
+```
+
+
+#### 5. 租赁到期提醒
+
+**触发场景**：租赁到期前 3 天自动发送
+
+```
+主题：【提醒】您的设备租赁即将到期 - {contract_number}
+
+尊敬的 {customer_name}，
+
+您租赁的设备即将到期，请及时安排归还或续租。
+
+📋 租赁信息：
+┌─────────────────────────────────────┐
+│  设备名称：{device_name}            │
+│  设备型号：{device_model}           │
+│  租赁结束日期：{end_date}           │
+│  剩余天数：{days_remaining} 天      │
+└─────────────────────────────────────┘
+
+请选择以下操作：
+
+✅ 归还设备
+  请在 {end_date} 前将设备归还至指定地点
+  归还地址：{return_address}
+
+🔄 续租申请
+  如需续租，请点击以下链接申请：
+  {renew_link}
+
+逾期未归还将按日租金的 {overdue_rate} 倍收取逾期费用。
+
+如有任何问题，请及时联系我们的客服。
+
+PC Rental 电脑租赁团队
+{company_phone} | {company_email}
+```
+
+
+#### 6. 押金退还通知
+
+**触发场景**：员工退还押金后自动发送给客户
+
+```
+主题：押金已退还 - {contract_number}
+
+尊敬的 {customer_name}，
+
+您租赁设备 {device_name} 的押金已完成退还。
+
+📋 退还详情：
+┌─────────────────────────────────────┐
+│  合同编号：{contract_number}        │
+│  设备名称：{device_name}            │
+│  原押金金额：${original_deposit}     │
+│  退还金额：${refund_amount}         │
+│  扣除金额：${deduct_amount}         │
+│  扣除原因：{deduct_reason}          │
+│  退还方式：{refund_method}          │
+│  退还时间：{refund_time}            │
+└─────────────────────────────────────┘
+
+退还金额已按您选择的退还方式处理，请查收。
+
+如有任何疑问，请联系我们的客服团队。
+
+PC Rental 电脑租赁团队
+{company_phone} | {company_email}
+```
+
+
+#### 7. 续租确认通知
+
+**触发场景**：客户申请续租并审核通过后发送
+
+```
+主题：续租申请已确认 - {contract_number}
+
+尊敬的 {customer_name}，
+
+您的续租申请已审核通过！
+
+📋 续租详情：
+┌─────────────────────────────────────┐
+│  设备名称：{device_name}            │
+│  原租期到期日：{old_end_date}       │
+│  新租期到期日：{new_end_date}       │
+│  续租天数：{renew_days} 天          │
+│  续租费用：${renew_fee}              │
+│  支付方式：{payment_method}          │
+└─────────────────────────────────────┘
+
+请在 {payment_deadline} 日内完成续租费用支付，以确认续租生效。
+
+查看续租合同：
+{contract_view_link}
+
+PC Rental 电脑租赁团队
+{company_phone} | {company_email}
+```
+
+
+#### 8. 联系客户（员工发送邮件）
+
+**触发场景**：员工通过系统联系客户时发送
+
+```
+主题：{subject}
+
+尊敬的 {customer_name}，
+
+{message_content}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+此邮件由 PC Rental 系统自动发送，请勿直接回复。
+
+如有任何问题，请联系我们的客服：
+📞 {company_phone}
+📧 {company_email}
+
+PC Rental 电脑租赁团队
+```
+
+
+### 📋 二、租赁条款变量（用于合同和邮件）
+
+| 变量名 | 说明 | 示例值 |
+|--------|------|--------|
+| `{user_name}` | 用户姓名 | 张三 |
+| `{user_email}` | 用户邮箱 | zhangsan@email.com |
+| `{user_role}` | 用户角色 | customer / staff / admin |
+| `{register_time}` | 注册时间 | 2026-07-14 14:30:25 |
+| `{login_link}` | 登录链接 | https://rent.pages.dev/login |
+| `{reset_link}` | 重置密码链接 | https://rent.pages.dev/reset?token=xxx |
+| `{reset_link_url}` | 重置链接（纯文本） | https://rent.pages.dev/reset?token=xxx |
+| `{reset_expiry_minutes}` | 重置链接有效期（分钟） | 30 |
+| `{contract_number}` | 合同编号 | CT20260714001 |
+| `{contract_view_link}` | 查看合同链接 | https://rent.pages.dev/contract/view?orderId=xxx |
+| `{customer_name}` | 客户姓名 | 张三 |
+| `{customer_email}` | 客户邮箱 | zhangsan@email.com |
+| `{customer_phone}` | 客户电话 | 13812345678 |
+| `{customer_address}` | 客户地址 | XX市XX区XX路XX号 |
+| `{customer_id}` | 客户身份证/信用代码 | 110101199001011234 |
+| `{device_name}` | 设备名称 | MacBook Pro 14寸 |
+| `{device_model}` | 设备型号 | M4 Pro 18GB 512GB |
+| `{device_sn}` | 设备序列号 | SN20260714001 |
+| `{device_description}` | 设备配置描述 | 深空灰色，M4 Pro芯片，18GB统一内存 |
+| `{start_date}` | 租赁起始日期 | 2026-07-14 |
+| `{end_date}` | 租赁结束日期 | 2026-08-13 |
+| `{rental_days}` | 租赁天数 | 30 |
+| `{daily_rate}` | 日租金 | 40.00 |
+| `{total_rent}` | 租金总额 | 1200.00 |
+| `{total_rent_cn}` | 租金总额（大写） | 壹仟贰佰元整 |
+| `{deposit_amount}` | 押金金额 | 2000.00 |
+| `{deposit_amount_cn}` | 押金金额（大写） | 贰仟元整 |
+| `{payment_method}` | 支付方式 | 信用卡 / 银行转账 / 余额 |
+| `{payment_method_desc}` | 支付方式描述 | 信用卡支付（Square） |
+| `{payment_status}` | 支付状态 | 已支付 / 待支付 |
+| `{payment_deadline}` | 付款期限 | 3 |
+| `{sign_time}` | 签署时间 | 2026-07-14 14:30:25 |
+| `{sign_ip}` | 签署IP | 192.168.1.100 |
+| `{signer_name}` | 签署人姓名 | 张三 |
+| `{overdue_rate}` | 逾期费率（倍数） | 2 |
+| `{early_return_penalty}` | 提前归还违约金比例（%） | 30 |
+| `{penalty_amount}` | 违约金金额 | 500.00 |
+| `{bank_bsb}` | 公司银行BSB | 062-000 |
+| `{bank_account}` | 公司银行Account | 12345678 |
+| `{company_address}` | 公司地址 | XX市XX区XX路XX号XX大厦XX室 |
+| `{company_phone}` | 公司电话 | 400-888-9999 |
+| `{company_email}` | 公司邮箱 | support@rent.com |
+| `{company_contact}` | 公司联系人 | 王经理 |
+| `{days_remaining}` | 剩余天数 | 3 |
+| `{return_address}` | 设备归还地址 | XX市XX区XX仓库 |
+| `{renew_link}` | 续租链接 | https://rent.pages.dev/renew?orderId=xxx |
+| `{old_end_date}` | 原租期结束日期 | 2026-08-13 |
+| `{new_end_date}` | 新租期结束日期 | 2026-09-12 |
+| `{renew_days}` | 续租天数 | 30 |
+| `{renew_fee}` | 续租费用 | 1200.00 |
+| `{original_deposit}` | 原押金金额 | 2000.00 |
+| `{refund_amount}` | 退还押金金额 | 2000.00 |
+| `{deduct_amount}` | 扣除金额 | 0.00 |
+| `{deduct_reason}` | 扣除原因 | 设备正常磨损，无扣除 |
+| `{refund_method}` | 退还方式 | 原路退回 |
+| `{refund_time}` | 退还时间 | 2026-07-14 14:30:25 |
+| `{subject}` | 邮件主题（员工填写） | 关于租赁合同的重要通知 |
+| `{message_content}` | 邮件正文（员工填写） | 您好，您的租赁合同已审核通过... |
+| `{staff_name}` | 员工姓名 | 王经理 |
+
+
+### 📌 三、变量使用规范
+
+#### 格式规范
+- 所有变量必须用 `{变量名}` 包裹
+- 变量名**严格区分大小写**（`{user_name}` ≠ `{UserName}`）
+- 系统会在发送邮件/生成合同时自动替换这些变量
+
+### 💡 建议
+
+1. **所有模板保存到数据库**：在系统设置的“邮件通知模板”和“租赁条款设置”中保存，方便随时修改。
+2. **支持多语言**：如果需要中英文双语，可以增加 `{lang}` 变量或单独配置多套模板。
+3. **邮件发送限制**：为避免被标记为垃圾邮件，建议控制发送频率（如每分钟不超过 10 封）。
+4. **记录发送日志**：所有邮件发送记录都应保存到 `communication_records` 表，便于追踪和审计。
