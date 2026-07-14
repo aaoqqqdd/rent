@@ -197,8 +197,8 @@ export const rentalTerms = `## 电脑租赁协议条款
 - 租赁设备：{device_name} ({device_model})
 - 设备序列号：{device_sn}
 - 租赁期限：从 {start_date} 至 {end_date}，共 {rental_days} 天
-- 日租金：${daily_rate}，租金总额：${total_rent}
-- 押金金额：${deposit_amount}
+- 日租金：\${daily_rate}，租金总额：\${total_rent}
+- 押金金额：\${deposit_amount}
 
 ### 二、租客责任
 1. 妥善保管租赁设备，不得转借、转租或抵押给第三方
@@ -262,8 +262,8 @@ export const systemSettings = {
 │  租赁开始：{start_date}             │
 │  租赁结束：{end_date}               │
 │  租赁天数：{rental_days} 天         │
-│  租金总额：${total_rent}            │
-│  押金：${deposit_amount}             │
+│  租金总额：\${total_rent}            │
+│  押金：\${deposit_amount}             │
 │  支付方式：{payment_method}          │
 └─────────────────────────────────────┘
 
@@ -327,9 +327,9 @@ export const contractTemplate = {
 <p>租赁天数：{rental_days}天</p>
 
 <h2>四、费用明细</h2>
-<p>日租金：${daily_rate}</p>
-<p>租金总额：${total_rent}</p>
-<p>押金金额：${deposit_amount}</p>
+<p>日租金：\${daily_rate}</p>
+<p>租金总额：\${total_rent}</p>
+<p>押金金额：\${deposit_amount}</p>
 <p>支付方式：{payment_method}</p>
 
 <h2>五、银行账户信息</h2>
