@@ -267,16 +267,16 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   const count = Number(countResult.results?.[0]?.count ?? 0)
   if (count > 0) return
   const usersToSeed = [
-    { id: 'u-admin', name: 'Admin User', email: 'admin@example.com', password: 'Admin123', role: 'admin' },
-    { id: 'u-staff', name: 'Staff User', email: 'staff@example.com', password: 'Staff123', role: 'staff' },
-    { id: 'u-customer', name: 'Customer User', email: 'customer@example.com', password: 'Customer123', role: 'customer' },
+    { id: 'u-admin', name: 'Admin User', email: 'admin@example.com', password: 'Admin123', role: 'ADMIN' },
+    { id: 'u-staff', name: 'Staff User', email: 'staff@example.com', password: 'Staff123', role: 'STAFF' },
+    { id: 'u-customer', name: 'Customer User', email: 'customer@example.com', password: 'Customer123', role: 'CUSTOMER' },
   ]
 
   const userInsert = db.prepare('INSERT INTO users (id, name, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, ?)')
   const userInserts = []
   for (const user of usersToSeed) {
     const hash = await hashPassword(user.password)
-    userInserts.push(userInsert.bind(user.id, user.name, user.email, hash, user.role.toUpperCase(), 'active'))
+    userInserts.push(userInsert.bind(user.id, user.name, user.email, hash, user.role, 'active'))
   }
   await db.batch(userInserts)
 }
