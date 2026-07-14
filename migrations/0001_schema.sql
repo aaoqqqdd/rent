@@ -30,6 +30,7 @@ CREATE TABLE users (
   referrer_id TEXT,
   commission_rate REAL DEFAULT 25.0,
   commission_balance REAL NOT NULL DEFAULT 0,
+  balance REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (referrer_id) REFERENCES users(id) ON DELETE SET NULL

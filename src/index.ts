@@ -348,7 +348,8 @@ app.get('/staff/contracts', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffContracts(user))
+  const status = c.req.query('status');
+  return c.html(pages.renderStaffContracts(user, status))
 })
 
 app.get('/staff/rentals/tracking', async (c) => {

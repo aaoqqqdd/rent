@@ -1,11 +1,22 @@
 import { buildLayout, getAllContracts, getOrderById, getUserById } from '../../site';
 
-export function renderStaffContracts(user: any) {
-  const allContracts = getAllContracts(); // 假设有一个函数获取所有合同
+export function renderStaffContracts(user: any, status?: string) {
+  let allContracts = getAllContracts(); 
+
+  if (status) {
+    allContracts = allContracts.filter(c => c.status === status);
+  }
 
   const body = `
     <div class="panel">
       <div class="section-title"><h2>合同管理</h2><span class="section-note">管理所有租赁合同的签署状态和文件。</span></div>
+
+      <div class="filter-tabs" style="margin-bottom: 24px; display: flex; gap: 8px;">
+        <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部</a>
+        <a href="/staff/contracts?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
+        <a href="/staff/contracts?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
+        <a href="/staff/contracts?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
+      </div>
 
       ${allContracts.length > 0 ? `
         <table class="table">
@@ -40,7 +51,7 @@ export function renderStaffContracts(user: any) {
             }).join('')}
           </tbody>
         </table>
-      ` : '<p>目前没有合同记录。</p>'}
+      ` : '<p>没有找到符合条件的合同记录。</p>'}
     </div>
   `;
 

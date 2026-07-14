@@ -6,7 +6,4 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "RENT"
 database_name = "rent-db"
-# 1. 在 Cloudflare Dashboard 中创建 D1 数据库，或使用 `npx wrangler d1 create rent-db` 命令创建。
-# 2. 创建后，将生成的 database_id 粘贴到下方。
-# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 database_id = "039c09b0-e11e-42b0-a002-930373044241"

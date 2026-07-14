@@ -68,14 +68,30 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
       <h2>签约链接已生成</h2>
       <p>请将以下链接发送给客户进行签署：</p>
       <div class="alert" style="background:#e0f2fe;border-color:#bae6fd;">
-        <a href="${signUrl}" target="_blank">${signUrl}</a>
+        <span id="sign-url">${signUrl}</span>
+        <button id="copy-button" class="button button-primary" style="margin-left: 16px;">复制链接</button>
       </div>
-      <p style="margin-top: 16px;">或者，您可以复制下面的链接：</p>
-      <input type="text" class="form-control" value="${signUrl}" readonly onclick="this.select();">
       <div style="margin-top: 24px;">
         <a href="/staff/contracts" class="button">返回合同列表</a>
       </div>
     </div>
+    <script>
+      document.getElementById('copy-button').addEventListener('click', function() {
+        const url = document.getElementById('sign-url').innerText;
+        navigator.clipboard.writeText(window.location.origin + url).then(function() {
+          const button = document.getElementById('copy-button');
+          button.innerText = '已复制!';
+          button.disabled = true;
+          setTimeout(function() {
+            button.innerText = '复制链接';
+            button.disabled = false;
+          }, 2000);
+        }, function(err) {
+          console.error('无法复制链接: ', err);
+        });
+      });
+    </script>
+    
   `;
 
   return new Response(buildLayout('签约链接 - 电脑租赁管理系统', successPage, user), {
