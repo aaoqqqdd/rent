@@ -1,4 +1,4 @@
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate, rentalTerms } from '../../site';
 
 export function renderContractSignPage(token: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
   const contract = getContractBySignToken(token);
