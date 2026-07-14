@@ -1284,7 +1284,7 @@ export async function getUsersAsync(c: Context): Promise<User[]> {
 // 异步版本从数据库获取订单列表
 export async function getOrdersAsync(c: Context): Promise<any[]> {
   const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM rentals').all()
+  const result = await db.prepare('SELECT * FROM orders').all()
   return result.results || []
 }
 
