@@ -1,7 +1,8 @@
-import { buildLayout, getUsers } from '../../site';
+import { buildLayout } from '../../site';
 
-export function renderAdminUsers(user: any) {
-  const allUsers = getUsers();
+export async function renderAdminUsers(user: any, c: any) {
+  const { getUsers } = await import('../../site')
+  const allUsers = await getUsers(c);
 
   const body = `
     <div class="panel">

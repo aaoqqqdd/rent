@@ -1,10 +1,7 @@
-import { buildLayout } from '../../site';
+import { buildLayout, getContractTemplate } from '../../site';
 
 export function renderAdminContracts(user: any) {
-  const contractTemplates = [
-    { id: 'tmpl-1', name: '标准租赁合同模板', content: '这是默认合同模板内容，包含租赁条款、押金及租期信息。' },
-  ];
-  const currentTemplate = contractTemplates.length > 0 ? contractTemplates[0] : { id: 'new', name: '默认模板', content: '' };
+  const currentTemplate = getContractTemplate();
 
   const body = `
     <div class="panel">
@@ -20,9 +17,10 @@ export function renderAdminContracts(user: any) {
               <input type="text" id="templateName" name="templateName" class="form-control" value="${currentTemplate.name}">
             </div>
             <div class="form-group">
-              <label for="templateContent">模板内容</label>
-              <textarea id="templateContent" name="templateContent" rows="20" class="form-control">${currentTemplate.content}</textarea>
-              <small class="form-text text-muted">在实际前端中，此区域可集成富文本编辑器（如 TinyMCE, CKEditor）。</small>
+              <label for="templateContentEditor">模板内容</label>
+              <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;">${currentTemplate.content}</div>
+              <input type="hidden" id="templateContent" name="templateContent" value="${currentTemplate.content.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '&#10;')}">
+              <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。</small>
             </div>
             <button type="submit" class="button button-primary">保存模板</button>
           </form>
@@ -43,15 +41,44 @@ export function renderAdminContracts(user: any) {
     </div>
 
     <script>
+      const quill = new Quill('#templateContentEditor', {
+        theme: 'snow',
+        modules: {
+          toolbar: [
+            [{ header: [1, 2, 3, false] }],
+            ['bold', 'italic', 'underline', 'strike'],
+            [{ list: 'ordered' }, { list: 'bullet' }],
+            ['blockquote', 'code-block'],
+            [{ color: [] }, { background: [] }],
+            ['link', 'clean']
+          ]
+        }
+      });
+
+      const updateContractTemplate = async (template) => {
+        const response = await fetch('/admin/contracts/template', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(template),
+        });
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        return response.json();
+      };
+
       document.getElementById('contractTemplateForm').addEventListener('submit', function(event) {
         event.preventDefault();
+        const contentHtml = quill.root.innerHTML;
+        document.getElementById('templateContent').value = contentHtml;
+
         const formData = new FormData(this);
         const newTemplate = {
-          id: '${currentTemplate.id}', // 假设是编辑现有模板或创建新模板
+          id: '${currentTemplate.id}',
           name: formData.get('templateName'),
           content: formData.get('templateContent'),
         };
-        // 假设 updateContractTemplate 是一个异步函数，通过 API 调用更新后端模板
+
         updateContractTemplate(newTemplate).then(() => {
           alert('合同模板已保存成功！');
           window.location.reload();

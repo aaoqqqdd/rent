@@ -1,10 +1,14 @@
+import { Context } from 'hono'
+import { subtle } from 'node:crypto'
+import { TextEncoder } from 'node:util'
+
 export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
 
 export interface User {
   id: string
   name: string
   email: string
-  password: string
+  password_hash?: string
   role: Role
   phone?: string
   bsb?: string
@@ -16,6 +20,7 @@ export interface User {
   referrerId?: string
   referralCode?: string
   registrationDate?: string
+  createdAt?: string
   commissionBalance: number
   pendingCommission?: number
   withdrawnCommission?: number
@@ -66,52 +71,26 @@ export interface Contract {
   status: 'draft' | 'pending_sign' | 'signed' | 'cancelled'
 }
 
-export const users: User[] = [
-  {
-    id: 'u-admin',
-    name: '管理员',
-    email: 'admin@example.com',
-    password: 'Admin123',
-    role: 'ADMIN',
-    balance: 0,
-    commissionBalance: 0,
-    registrationDate: '2026-07-01',
-    account_number: '00000000',
-  },
-  {
-    id: 'u-staff',
-    name: '王经理',
-    email: 'staff@example.com',
-    password: 'Staff123',
-    role: 'STAFF',
-    phone: '13888888888',
-    balance: 0,
-    commissionBalance: 0,
-    registrationDate: '2026-07-05',
-    account_number: '11111111',
-  },
-  {
-    id: 'u-customer',
-    name: '张三',
-    email: 'customer@example.com',
-    password: 'Customer123',
-    role: 'CUSTOMER',
-    phone: '13800000000',
-    bsb: '062-000',
-    account: '12345678',
-    account_number: '12345678',
-    balance: 500,
-    referralCode: 'ABC123XYZ',
-    commissionBalance: 200,
-    pendingCommission: 50,
-    withdrawnCommission: 150,
-    referredUsers: [
-      { name: '李四', registeredAt: '2026-06-20', orderCount: 2, contributedCommission: 80 },
-      { name: '王五', registeredAt: '2026-06-22', orderCount: 1, contributedCommission: 20 },
-    ],
-    registrationDate: '2026-06-15',
-  },
-]
+export interface ContractTemplate {
+  id: string
+  name: string
+  content: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(password)
+  const hashBuffer = await subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  const passwordHash = await hashPassword(password)
+  return passwordHash === hash
+}
 
 export const devices: Device[] = [
   {
@@ -179,7 +158,7 @@ export const systemSettings = {
   bankDetails: {
     bsb: '062-001',
     account: '87654321',
-    accountName: 'PC Rental Pty Ltd'
+    accountName: 'PC Rental Pty Ltd',
   },
   squareConfig: {
     applicationId: 'sq0idp-YOUR_APPLICATION_ID',
@@ -198,7 +177,22 @@ export const systemSettings = {
     levelLimit: 3,
     settlementPeriod: 30,
   },
-};
+}
+
+export const contractTemplate = {
+  id: 'tmpl-1',
+  name: '标准租赁合同模板',
+  content: '这是默认合同模板内容，包含租赁条款、押金及租期信息。',
+}
+
+export function getContractTemplate() {
+  return contractTemplate
+}
+
+export function updateContractTemplate(newTemplate: { id: string; name: string; content: string }) {
+  Object.assign(contractTemplate, newTemplate)
+  return contractTemplate
+}
 
 export function formatCurrency(value: number): string {
   return `¥${value.toFixed(2)}`
@@ -219,52 +213,124 @@ export function parseCookie(cookieHeader: string | null): Record<string, string>
   return result
 }
 
-/**
- * 构建并返回一个完整的 HTML 页面字符串。
- * 此函数将页面的核心内容（body）和标题（title）包装在一个通用的网站布局中，
- * 该布局包含统一的页眉、页脚、导航和内联 CSS 样式。
- * 导航栏和用户信息会根据传入的 `currentUser` 对象动态生成。
- *
- * @param title - 要在 <title> 标签中显示的页面标题。
- * @param body - 页面的主要 HTML 内容，将被插入到 <main> 标签中。
- * @param currentUser - 可选的当前用户信息对象。用于显示个性化的导航链接和用户信息。
- * @returns 一个包含完整 HTML 结构的字符串。
- */
+let dbInstance: any = null
+
+export function getDB(c: Context): any {
+  if (!dbInstance) {
+    dbInstance = c.env.RENT
+  }
+  return dbInstance
+}
+
+function toNumber(value: any): number {
+  if (value === undefined || value === null || value === '') return 0
+  return Number(value)
+}
+
+export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
+  const db = getDB(c)
+  const countResult = await db.prepare('SELECT COUNT(*) AS count FROM users').all()
+  const count = Number(countResult.results?.[0]?.count ?? 0)
+  if (count > 0) return
+  const usersToSeed = [
+    { id: 'u-admin', name: 'Admin User', email: 'admin@example.com', password: 'Admin123', role: 'admin' },
+    { id: 'u-staff', name: 'Staff User', email: 'staff@example.com', password: 'Staff123', role: 'staff' },
+    { id: 'u-customer', name: 'Customer User', email: 'customer@example.com', password: 'Customer123', role: 'customer' },
+  ]
+
+  const userInsert = db.prepare('INSERT INTO users (id, name, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, ?)')
+  const userInserts = []
+  for (const user of usersToSeed) {
+    const hash = await hashPassword(user.password)
+    userInserts.push(userInsert.bind(user.id, user.name, user.email, hash, user.role.toUpperCase(), 'active'))
+  }
+  await db.batch(userInserts)
+}
+
+export async function loadDatabaseData(c: Context): Promise<void> {
+  const db = getDB(c)
+  await seedDatabaseIfEmpty(c)
+}
+
+export async function verifyUserCredentials(c: Context, emailOrName: string, password: string): Promise<User | null> {
+  const db = getDB(c)
+  const user: User | null =
+    await db.prepare('SELECT * FROM users WHERE email = ? OR name = ?').bind(emailOrName, emailOrName).first()
+
+  if (!user || !user.password_hash) {
+    return null
+  }
+
+  const isPasswordValid = await verifyPassword(password, user.password_hash)
+  if (!isPasswordValid) {
+    return null
+  }
+
+  delete user.password_hash
+  return user
+}
+
+export async function findUserBySession(c: Context, cookieHeader: string | null): Promise<User | null> {
+  const db = getDB(c)
+  const cookies = parseCookie(cookieHeader)
+  const token = cookies.session || ''
+  if (!token) return null
+
+  const [role, id] = token.split(':')
+  if (!role || !id) return null
+
+  const user: User | null = await db
+    .prepare('SELECT id, name, email, role, phone, bsb, account_number, commission_balance, referralCode FROM users WHERE id = ? AND role = ?')
+    .bind(id, role.toUpperCase())
+    .first()
+
+  return user
+}
+
 export function buildLayout(title: string, body: string, currentUser?: User | null): string {
-  const isAuthPage = title.includes('登录') || title.includes('注册') || title.includes('找回密码');
-  const topNav = currentUser || isAuthPage
-    ? ``
-    : `
+  const isAuthPage = title.includes('登录') || title.includes('注册') || title.includes('找回密码')
+  const topNav =
+    currentUser || isAuthPage
+      ? ``
+      : `
       <a href="/login">登录</a>
       <a href="/register">注册</a>
     `
 
-  const userBlock = currentUser
-    ? `<span class="user-label">${currentUser.name} • ${currentUser.role}</span><a class="button button-small" href="/logout">登出</a>`
-    : ''
+  const userBlock = currentUser ? `<span class="user-label">${currentUser.name} • ${currentUser.role}</span><a class="button button-small" href="/logout">登出</a>` : ''
 
   const sidebar = currentUser
     ? `<aside class="sidebar">
         <div class="sidebar-brand"><strong>角色：</strong>${currentUser.role}</div>
         <div class="sidebar-section">
           <h3>快捷导航</h3>
-          ${currentUser.role === 'CUSTOMER' ? `
+          ${
+            currentUser.role === 'CUSTOMER'
+              ? `
             <a href="/customer/dashboard">顾客仪表盘</a>
             <a href="/customer/rentals">我的租赁</a>
             <a href="/customer/orders">我的订单</a>
             <a href="/customer/profile">个人信息</a>
             <a href="/customer/security">安全设置</a>
             <a href="/customer/referral">我的推荐</a>
-          ` : ''}
-          ${currentUser.role === 'STAFF' ? `
+          `
+              : ''
+          }
+          ${
+            currentUser.role === 'STAFF'
+              ? `
             <a href="/staff/dashboard">员工仪表盘</a>
             <a href="/staff/orders/pending">待处理订单</a>
             <a href="/staff/contracts">合同管理</a>
             <a href="/staff/contracts/new">新增合同</a>
             <a href="/staff/rentals/tracking">租赁进度</a>
             <a href="/staff/devices">设备状态</a>
-          ` : ''}
-          ${currentUser.role === 'ADMIN' ? `
+          `
+              : ''
+          }
+          ${
+            currentUser.role === 'ADMIN'
+              ? `
             <a href="/admin/dashboard">管理员仪表盘</a>
             <a href="/admin/users">用户管理</a>
             <a href="/admin/orders">订单管理</a>
@@ -272,7 +338,9 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             <a href="/admin/finance">财务管理</a>
             <a href="/admin/devices">设备管理</a>
             <a href="/admin/settings">系统设置</a>
-          ` : ''}
+          `
+              : ''
+          }
         </div>
       </aside>`
     : ''
@@ -307,301 +375,175 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     }
     .page { max-width: 1200px; margin: 24px auto; padding: 0; }
     header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 0 24px;
-      position: sticky;
-      top: 0;
-      z-index: 10;
+      box-shadow: var(--shadow);
     }
-    .header-inner {
-      max-width: 1200px;
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: 72px;
+    .logo { font-size: 1.5rem; font-weight: bold; color: var(--primary-dark); text-decoration: none; }
+    .main-nav a { margin-left: 16px; text-decoration: none; color: var(--muted); }
+    .main-nav a:hover { color: var(--text); }
+    .user-block { display: flex; align-items: center; gap: 12px; }
+    .user-label { font-weight: 500; }
+    .container { display: flex; }
+    .content { flex: 1; padding: 24px; }
+    .page-centered { display: flex; justify-content: center; align-items: center; min-height: 80vh; }
+    .panel { background: var(--surface); border-radius: 12px; padding: 32px; box-shadow: var(--shadow-lg); }
+    .button { 
+      display: inline-block;
+      padding: 10px 20px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      text-decoration: none;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.2s;
     }
-    header .brand { font-size: 1.5rem; font-weight: 700; color: var(--primary); }
-    header nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    header nav a { 
-      color: var(--muted); 
-      text-decoration: none; 
-      padding: 8px 16px; 
-      border-radius: 8px; 
-      transition: all 0.2s ease-in-out;
-    }
-    header nav a:hover {
-      background: var(--primary-light);
-      color: var(--primary-dark);
-    }
-    header .user-label { font-weight: 600; margin-right: 12px; color: var(--text); }
-    .panel { 
+    .button:hover { background: var(--primary-dark); }
+    .button-secondary { 
       background: var(--surface); 
-      border: 1px solid var(--border);
-      border-radius: 16px; 
-      box-shadow: var(--shadow); 
-      padding: 28px; 
-      margin-bottom: 24px; 
+      color: var(--primary); 
+      border: 1px solid var(--primary);
     }
-    .hero { display: grid; gap: 16px; }
-    .form-label { display: block; margin-bottom: 8px; font-weight: 600; }
-    .form-control, .select-control, .textarea-control { 
-      width: 100%; 
-      padding: 12px 16px; 
-      border: 1px solid var(--border); 
-      border-radius: 8px; 
-      font-size: 1rem;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    .form-control:focus, .select-control:focus, .textarea-control:focus {
-      outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px var(--primary-light);
-    }
-    .textarea-control { min-height: 120px; resize: vertical; }
-    .button, .button-secondary { 
-      background: var(--primary); 
-      color: #fff; 
+    .button-secondary:hover { background: var(--primary-light); }
+    .link-button { 
+      background: none; 
       border: none; 
-      border-radius: 8px; 
-      padding: 12px 20px; 
+      color: var(--primary); 
+      text-decoration: underline; 
       cursor: pointer; 
-      font-size: 1rem;
-      font-weight: 600;
-      transition: all 0.2s ease-in-out;
+      font-size: 0.9rem;
     }
-    .button-secondary { background: var(--border); color: var(--text); }
-    .button:hover { background: var(--primary-dark); transform: translateY(-2px); box-shadow: var(--shadow-lg); }
-    .button-secondary:hover { background: #d1d5db; transform: translateY(-2px); box-shadow: var(--shadow-lg); }
-    .grid { display: grid; gap: 24px; }
-    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .card { 
+    .form-label { display: block; margin-bottom: 4px; font-weight: 500; font-size: 0.9rem; }
+    .form-control { 
+      width: 100%; 
+      padding: 10px; 
       border: 1px solid var(--border); 
-      border-radius: 16px; 
-      padding: 24px; 
-      background: var(--surface);
-      transition: all 0.2s ease-in-out;
+      border-radius: 6px; 
+      margin-bottom: 16px; 
+      font-size: 1rem;
     }
-    .card:hover {
-      transform: translateY(-4px);
-      box-shadow: var(--shadow-lg);
-    }
-    .badge { display: inline-flex; align-items: center; justify-content: center; padding: 4px 12px; border-radius: 999px; font-size: 0.875rem; font-weight: 500; background: var(--primary-light); color: var(--primary-dark); }
-    .table { width: 100%; border-collapse: collapse; }
-    .table th, .table td { border-bottom: 1px solid var(--border); padding: 16px; text-align: left; }
-    .table th { background: var(--background); font-weight: 600; }
-    .text-muted { color: var(--muted); }
-    .alert { padding: 16px; border-radius: 8px; background: #f8fafc; border: 1px solid var(--border); margin-bottom: 20px; }
-    .footer { text-align: center; color: var(--muted); padding: 32px 0; border-top: 1px solid var(--border); margin-top: 32px; }
-    .link-button { color: var(--primary); text-decoration: none; font-weight: 600; }
-
-    .page-centered {
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      min-height: calc(100vh - 72px - 105px); /* Full height minus header and footer */
-    }
-    .layout-grid { display: grid; grid-template-columns: 240px 1fr; gap: 24px; }
-    .sidebar { background: var(--surface); border-radius: 16px; padding: 24px; box-shadow: var(--shadow); }
-    .sidebar h3 { margin-top: 0; color: var(--primary); }
-    .sidebar a { display: block; padding: 12px 16px; text-decoration: none; color: var(--text); border-radius: 8px; margin-bottom: 4px; }
-    .sidebar a:hover { background: var(--primary-light); color: var(--primary-dark); }
-    .content { background: var(--surface); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); }
-
-    /* Responsive Design */
-    @media (max-width: 900px) { 
-      .grid-2, .grid-3 { grid-template-columns: 1fr; } 
-      .layout-grid { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 768px) { 
-      header { flex-direction: column; align-items: flex-start; }
-      .page { padding: 16px; }
-      .panel { padding: 20px; }
-    }
-     @media (max-width: 640px) {
-      header nav {
-        width: 100%;
-        flex-direction: column;
-        align-items: stretch;
-      }
-      header nav a {
-        text-align: center;
-      }
-    }
+    .form-check { display: block; margin-bottom: 16px; font-size: 0.9rem; }
+    .form-check input { margin-right: 8px; }
+    .grid { display: grid; gap: 20px; }
+    .grid-2 { grid-template-columns: repeat(2, 1fr); }
+    .alert { padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid; }
+    .card { background: var(--surface); border-radius: 8px; padding: 24px; box-shadow: var(--shadow); }
+    .text-muted { color: var(--muted); font-size: 0.9rem; }
+    .sidebar { width: 240px; background: var(--surface); padding: 20px; border-right: 1px solid var(--border); }
+    .sidebar-brand { font-size: 1.2rem; font-weight: bold; margin-bottom: 20px; }
+    .sidebar-section { margin-bottom: 20px; }
+    .sidebar-section h3 { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; }
+    .sidebar-section a { display: block; padding: 8px 0; text-decoration: none; color: var(--text); border-radius: 4px; }
+    .sidebar-section a:hover { background: var(--primary-light); }
   </style>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
-  <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
 </head>
 <body>
-  <header>
-    <div class="header-inner">
-      <div class="brand"><strong>电脑租赁管理系统</strong></div>
-      <nav class="top-nav">${topNav}</nav>
-      <div>${userBlock}</div>
+  <div class="page">
+    <header>
+      <a href="/" class="logo">PC Rental</a>
+      <nav class="main-nav">
+        ${topNav}
+      </nav>
+      <div class="user-block">${userBlock}</div>
+    </header>
+    <div class="container">
+      ${sidebar}
+      <main class="content">
+        ${body}
+      </main>
     </div>
-  </header>
-  <main class="page">
-    ${currentUser
-      ? `<div class="layout-grid">
-          ${sidebar}
-          <div class="content">${body}</div>
-        </div>`
-      : body
-    }
-  </main>
-  <footer class="footer">© 2026 PC Rental Pty Ltd. 电脑租赁系统演示版。</footer>
+  </div>
 </body>
 </html>`
 }
 
-export function renderMessageBox(message: string, type: 'info' | 'success' | 'error' = 'info'): string {
-  const color = type === 'error' ? '#fee2e2' : type === 'success' ? '#dcfce7' : '#e0f2fe'
-  const borderColor = type === 'error' ? '#fecaca' : type === 'success' ? '#bbf7d0' : '#bae6fd'
-  return `<div class="alert" style="background:${color};border-color:${borderColor};">${message}</div>`
+export function getDeviceById(id: string): Device | undefined {
+  return devices.find((d) => d.id === id)
 }
 
-export function findUserBySession(cookieHeader: string | null): User | null {
-  const cookies = parseCookie(cookieHeader)
-  const token = cookies.session || ''
-  if (!token) return null
-  const [role, id] = token.split(':')
-  if (!role || !id) return null
-  return users.find((user) => user.id === id && user.role === role as Role) ?? null
+export function getOrderById(id: string): Order | undefined {
+  return orders.find((o) => o.id === id)
 }
 
-export function getDeviceById(deviceId?: string): Device | undefined {
-  return devices.find((device) => device.id === deviceId)
+export function getContractById(id: string): Contract | undefined {
+  return contracts.find((c) => c.id === id)
 }
 
-export function getOrderById(orderId?: string): Order | undefined {
-  return orders.find((order) => order.id === orderId)
-}
-
-export function getContractById(contractId?: string): Contract | undefined {
-  return contracts.find((contract) => contract.id === contractId)
-}
-
-export function getOrdersForUser(userId: string): Order[] {
-  return orders.filter((order) => order.userId === userId)
-}
-
-export function getPendingOrders(): Order[] {
-  return orders.filter((order) => order.status === 'pending_payment')
-}
-
-export function getOrderSummary(order: Order): string {
-  const device = getDeviceById(order.deviceId)
-  return `${order.orderNo} · ${device?.name ?? '设备'} · ${order.startDate} ~ ${order.endDate}`
-}
-
-export function getUserById(userId?: string): User | undefined {
-  return users.find((user) => user.id === userId)
-}
-
-export function getUsers(): User[] {
-  return users
-}
-
-export function getOrders(): Order[] {
-  return orders
-}
-
-export function getDevices(): Device[] {
-  return devices
-}
-
-export function getAllDevices(): Device[] {
-  return devices
-}
-
-export function getAllContracts(): Contract[] {
-  return contracts
-}
-
-export function getContractByOrderId(orderId?: string): Contract | undefined {
-  return contracts.find((contract) => contract.rentalId === orderId)
-}
-
-export function getContractBySignToken(token?: string): Contract | undefined {
-  return contracts.find((contract) => contract.signToken === token)
+export function getContractBySignToken(token: string): Contract | undefined {
+  return contracts.find((c) => c.signToken === token)
 }
 
 export function getSystemSettings() {
   return systemSettings
 }
 
-export function updateSystemSettings(newSettings: Partial<typeof systemSettings>) {
-  Object.assign(systemSettings, newSettings)
-}
+export async function updateUser(c: Context, userId: string, data: Partial<User> & { password?: string }): Promise<User | null> {
+  const db = getDB(c)
+  const fields: { [key: string]: any } = { ...data }
 
-export function updateUser(userId: string, updates: Partial<User>): User | undefined {
-  const user = getUserById(userId)
-  if (user) {
-    Object.assign(user, updates)
+  if (fields.password) {
+    fields.password_hash = await hashPassword(fields.password)
+    delete fields.password
   }
-  return user
-}
 
-export function updatePassword(userId: string, newPassword: string): boolean {
-  const user = getUserById(userId)
-  if (!user) return false
-  user.password = newPassword
-  return true
-}
-
-export function bindReferrer(userId: string, referrerId: string): boolean {
-  const user = getUserById(userId)
-  if (!user) return false
-  user.referrerId = referrerId
-  return true
-}
-
-export function unbindReferrer(userId: string): boolean {
-  const user = getUserById(userId)
-  if (!user) return false
-  delete user.referrerId
-  return true
-}
-
-export function getRentalsByUserId(userId: string): Order[] {
-  return orders.filter((order) => order.userId === userId)
-}
-
-export function getAllRentals(): Order[] {
-  return orders
-}
-
-export function updateOrderStatus(orderId: string, status: Order['status']): Order | undefined {
-  const order = getOrderById(orderId)
-  if (order) {
-    order.status = status
+  const fieldEntries = Object.entries(fields).filter(([key]) => key !== 'id')
+  if (fieldEntries.length === 0) {
+    return findUserBySession(c, null)
   }
-  return order
-}
 
-export function updateOrder(orderId: string, updates: Partial<Order>): Order | undefined {
-  const order = getOrderById(orderId)
-  if (order) {
-    Object.assign(order, updates)
+  const setClause = fieldEntries.map(([key]) => `${key} = ?`).join(', ')
+  const values = fieldEntries.map(([, value]) => value)
+  values.push(userId)
+
+  await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).bind(...values).run()
+
+  const updatedUser: User | null = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first()
+  if (updatedUser) {
+    delete updatedUser.password_hash
   }
-  return order
+  return updatedUser
 }
 
-export function createContract(contract: Contract): Contract {
-  contracts.push(contract)
-  return contract
-}
+export async function insertUser(c: Context, user: User): Promise<User> {
+  const db = getDB(c)
+  const fields: { [key: string]: any } = { ...user }
 
-export function updateContractStatus(contractId: string, status: Contract['status']): Contract | undefined {
-  const contract = getContractById(contractId)
-  if (contract) {
-    contract.status = status
+  if (fields.password) {
+    fields.password_hash = await hashPassword(fields.password)
+    delete fields.password
   }
-  return contract
+
+  const fieldEntries = Object.entries(fields)
+  const keys = fieldEntries.map(([key]) => key).join(', ')
+  const placeholders = fieldEntries.map(() => '?').join(', ')
+  const values = fieldEntries.map(([, value]) => value)
+
+  await db.prepare(`INSERT INTO users (${keys}) VALUES (${placeholders})`).bind(...values).run()
+
+  const insertedUser: User | null = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first()
+  if (insertedUser) {
+    delete insertedUser.password_hash
+  }
+  return insertedUser as User
+}
+
+export async function getUsers(c: Context): Promise<User[]> {
+  const db = getDB(c)
+  const users = await db.prepare('SELECT * FROM users').all()
+  return (users.results as User[] || []).map(user => {
+    delete user.password_hash
+    return user
+  })
+}
+
+// 为了向后兼容，保留无参的getUsers，但它会返回空数组，所有新代码都应该使用带c参数的异步版本
+export function getUsers(): User[] {
+  console.warn('Deprecated: 使用异步版本 getUsers(c: Context) 来从数据库获取用户列表')
+  return []
 }

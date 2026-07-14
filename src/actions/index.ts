@@ -1,2 +1,2 @@
-export * from './staff/createContract.ts';
-export * from './public/signContract.ts';
+export * from './staff/createContract';
+export * from './public/signContract';

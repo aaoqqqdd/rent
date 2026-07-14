@@ -1,7 +1,8 @@
-import { User, getDeviceById, Order, Contract, orders, contracts, buildLayout } from '../../site';
+import { Context } from 'hono';
+import { User, getDeviceById, Order, Contract, buildLayout, insertOrder, insertContract, updateDeviceStatus } from '../../site';
 import { nanoid } from 'nanoid';
 
-export function handleCreateContractAction(user: User, body: Record<string, string>): Response {
+export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
   const { deviceId, startDate, endDate } = body;
 
   if (!deviceId || !startDate || !endDate) {
@@ -56,9 +57,9 @@ export function handleCreateContractAction(user: User, body: Record<string, stri
     signToken: signToken,
   };
 
-  orders.push(newOrder);
-  contracts.push(newContract);
-  device.status = 'rented';
+  await insertOrder(c, newOrder);
+  await insertContract(c, newContract);
+  await updateDeviceStatus(c, device.id, 'rented');
 
   const signUrl = `/contract/sign?token=${signToken}`;
   const successPage = `

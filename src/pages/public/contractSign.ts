@@ -1,4 +1,4 @@
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, formatCurrency, getSystemSettings } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate } from '../../site';
 
 export function renderContractSignPage(token: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
   const contract = getContractBySignToken(token);
@@ -13,6 +13,11 @@ export function renderContractSignPage(token: string, step: number, errorMessage
 
   const device = getDeviceById(order.deviceId);
   const systemSettings = getSystemSettings();
+  const contractTemplate = getContractTemplate();
+  const activeContractContent = contract.content || contractTemplate.content || systemSettings.rentalTerms;
+  const contractHtml = /<[^>]+>/.test(activeContractContent)
+    ? activeContractContent
+    : activeContractContent.replace(/\n/g, '<br>');
 
   let content = '';
   let title = '合同签署';
@@ -29,12 +34,16 @@ export function renderContractSignPage(token: string, step: number, errorMessage
   switch (step) {
     case 1:
       title = '步骤 1/3: 阅读并同意租赁协议';
-      const rentalTerms = systemSettings.rentalTerms.replace(/\n/g, '<br>');
       content = `
         <div class="panel">
           ${progressBar}
           <h2>${title}</h2>
           ${errorMessage ? `<div class="alert" style="background:#fee2e2;border-color:#fecaca;">${errorMessage}</div>` : ''}
+          
+          <h3>${contractTemplate?.name ?? '租赁合同模板'}</h3>
+          <div class="contract-content" style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; max-height: 360px; overflow-y: auto; margin-bottom: 20px; background: #f9fafb;">
+            ${rentalTerms}
+          </div>
           
           <h3>设备与费用</h3>
           <ul>
@@ -45,11 +54,6 @@ export function renderContractSignPage(token: string, step: number, errorMessage
             <li><strong>总计费用:</strong> ${formatCurrency(order.totalAmount)}</li>
           </ul>
 
-          <h3>租赁条款</h3>
-          <div class="contract-content" style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; max-height: 300px; overflow-y: auto; margin-bottom: 20px; background: #f9fafb;">
-            ${rentalTerms}
-          </div>
-          
           <form method="POST" action="/contract/sign?token=${token}&step=1">
             <label class="form-check" style="display: flex; align-items: center; gap: 8px;">
               <input type="checkbox" name="agreeTerms" required style="width: auto;"/> 
@@ -83,17 +87,45 @@ export function renderContractSignPage(token: string, step: number, errorMessage
               <input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" />
             </div>
             
-            <h3 style="margin-top: 24px; margin-bottom: 16px;">创建账户 (用于管理您的订单)</h3>
-            <div class="grid grid-2">
-              <div class="form-group">
-                <label class="form-label" for="password">设置密码</label>
-                <input id="password" class="form-control" type="password" name="password" required />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="passwordConfirm">确认密码</label>
-                <input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" required />
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 24px; margin-bottom: 16px;">
+              <input type="checkbox" id="createAccountCheckbox" name="createAccount" style="width: auto;" onchange="togglePasswordFields()" />
+              <label for="createAccountCheckbox" style="margin: 0;">创建账户 (用于管理您的订单)</label>
+            </div>
+
+            <div id="passwordFields" style="display: none;">
+              <div class="grid grid-2">
+                <div class="form-group">
+                  <label class="form-label" for="password">设置密码</label>
+                  <input id="password" class="form-control" type="password" name="password" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="passwordConfirm">确认密码</label>
+                  <input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" />
+                </div>
               </div>
             </div>
+
+            <script>
+              function togglePasswordFields() {
+                const checkbox = document.getElementById('createAccountCheckbox');
+                const passwordFields = document.getElementById('passwordFields');
+                const passwordInput = document.getElementById('password');
+                const passwordConfirmInput = document.getElementById('passwordConfirm');
+
+                if (checkbox.checked) {
+                  passwordFields.style.display = 'block';
+                  passwordInput.required = true;
+                  passwordConfirmInput.required = true;
+                } else {
+                  passwordFields.style.display = 'none';
+                  passwordInput.required = false;
+                  passwordConfirmInput.required = false;
+                }
+              }
+              // 页面加载时也调用一次，以防浏览器记住勾选状态
+              document.addEventListener('DOMContentLoaded', togglePasswordFields);
+            </script>
+
             <div class="form-group" style="margin-top: 16px;">
               <label class="form-label" for="referrer">推荐码 (选填)</label>
               <input id="referrer" class="form-control" name="referrer" value="${userInput.referrer ?? ''}" placeholder="如果您有推荐人的推荐码，请填入此处"/>

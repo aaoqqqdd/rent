@@ -1,4 +1,4 @@
-import { buildLayout, User, getAllDevices } from '../../site.ts'
+import { buildLayout, User, getAllDevices } from '../../site'
 
 export function renderNewContractPage(user: User) {
   const devices = getAllDevices().filter(d => d.status === 'available');

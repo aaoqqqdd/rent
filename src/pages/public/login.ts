@@ -1,4 +1,4 @@
-import { buildLayout } from '../../site.ts';
+import { buildLayout } from '../../site';
 
 export function renderLogin(errorMessage?: string) {
   const body = `
@@ -19,7 +19,7 @@ export function renderLogin(errorMessage?: string) {
             </label>
             <a class="link-button" href="/forgot-password">忘记密码？</a>
           </div>
-          <div class="auth-notice" style="border: 1px solid #fdba74; background-color: #fff7ed; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+          <div class="auth-notice" style="border: 1px solid #748bfd; background-color: #fff7ed; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
             ${errorMessage ? `<div style="color: #c2410c; margin-bottom: 12px;">${errorMessage}</div>` : ''}
             <strong>测试账号</strong>
             <ul style="margin: 8px 0 0 20px; padding: 0; list-style-type: disc;">

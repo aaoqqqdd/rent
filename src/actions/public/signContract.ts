@@ -1,11 +1,12 @@
-import { getContractBySignToken, updateOrder, updateUser, users, Order, User, getOrderByOrderNo, getDeviceById, updateContractStatus } from '../../site';
+import { Context } from 'hono';
+import { getContractBySignToken, insertUser, updateOrderInDB, Order, User, getDeviceById, updateContractStatusInDB } from '../../site';
 import { nanoid } from 'nanoid';
 
 // 这是一个临时的、内存中的会话存储，用于在签约步骤之间保存用户输入。
 // 在生产环境中，应该使用更持久的会话管理机制，例如 Redis 或数据库支持的 session。
 const signSessions: Record<string, Record<string, any>> = {};
 
-export function handleSignContractStep(token: string, step: number, body: Record<string, string>): Response {
+export async function handleSignContractStep(c: Context, token: string, step: number, body: Record<string, string>): Promise<Response> {
   const contract = getContractBySignToken(token);
   if (!contract) {
     return new Response('合同链接无效或已过期', { status: 404 });
@@ -42,7 +43,9 @@ export function handleSignContractStep(token: string, step: number, body: Record
         if (password !== passwordConfirm) {
           throw new Error('两次输入的密码不一致。');
         }
-        if (users.some(u => u.email === email)) {
+        // 从数据库检查邮箱是否已存在
+        const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
+        if (existingUser) {
           throw new Error('该电子邮箱已被注册。');
         }
 
@@ -75,17 +78,17 @@ export function handleSignContractStep(token: string, step: number, body: Record
           commissionBalance: 0,
           createdAt: new Date().toISOString(),
         };
-        users.push(newUser);
+        await insertUser(c, newUser);
 
         // 2. 更新订单信息
-        const order = updateOrder(contract.rentalId, { 
+        const order = await updateOrderInDB(c, contract.rentalId, {
           userId: newUserId,
           paymentMethod: paymentMethod as Order['paymentMethod'],
-          status: 'pending_payment' // 等待支付
+          status: 'pending_payment', // 等待支付
         });
-        
+
         // 3. 更新合同状态
-        updateContractStatus(contract.id, 'signed');
+        await updateContractStatusInDB(c, contract.id, 'signed');
         
         // 4. 清理会话
         delete signSessions[token];
@@ -102,7 +105,7 @@ export function handleSignContractStep(token: string, step: number, body: Record
     errorMessage = e.message;
     // 如果出错，重定向回当前步骤并显示错误消息
     const stepToRedirect = (step > 1 && step <= 3) ? step : 1;
-    redirectUrl = `/contract/sign?token=${token}&step=${stepToRedirect}&error=${encodeURIComponent(errorMessage)}`;
+    redirectUrl = `/contract/sign?token=${token}&step=${stepToRedirect}&error=${encodeURIComponent(errorMessage || '')}`;
   }
 
   return new Response(null, {

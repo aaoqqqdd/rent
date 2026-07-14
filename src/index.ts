@@ -1,9 +1,15 @@
 import { Hono } from 'hono'
-import * as pages from './pages/index.ts'
-import * as actions from './actions/index.ts'
-import { users, findUserBySession, devices, getDeviceById } from './site'
+import * as pages from './pages/index'
+import * as actions from './actions/index'
+import { verifyUserCredentials, findUserBySession, devices, getDeviceById, loadDatabaseData, updateContractTemplateInDB, updateUser, verifyPassword, insertUser } from './site'
 
 const app = new Hono()
+
+app.use('*', async (c, next) => {
+  await loadDatabaseData(c)
+  return next()
+})
+
 
 function parseFormBody(body: string): Record<string, string> {
   const result: Record<string, string> = {}
@@ -14,8 +20,8 @@ function parseFormBody(body: string): Record<string, string> {
   return result
 }
 
-app.get('/', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user) {
     return c.redirect('/login')
   }
@@ -24,8 +30,8 @@ app.get('/', (c) => {
   return c.redirect('/admin/dashboard')
 })
 
-app.get('/login', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/login', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     return c.redirect('/')
   }
@@ -37,21 +43,24 @@ app.post('/login', async (c) => {
   const form = parseFormBody(body)
   const account = form.account?.trim()
   const password = form.password?.trim()
-  const user = users.find((item) => item.email === account || item.name === account)
-  if (!user || user.password !== password) {
+  if (!account || !password) {
+    return c.html(pages.renderLogin('请输入账号和密码'))
+  }
+  const user = await verifyUserCredentials(c, account, password)
+  if (!user) {
     return c.html(pages.renderLogin('账号或密码错误'))
   }
   const response = c.redirect(user.role === 'CUSTOMER' ? '/customer/dashboard' : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
   let cookieOptions = `session=${user.role}:${user.id}; Path=/; HttpOnly`;
-  if (form.remember) {
+  if (form.remember === 'on') {
     cookieOptions += `; Max-Age=${60 * 60 * 24 * 30}`; // 30 days
   }
   response.headers.set('Set-Cookie', cookieOptions)
   return response
 })
 
-app.get('/register', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/register', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     return c.redirect('/')
   }
@@ -71,10 +80,39 @@ app.post('/register', async (c) => {
   if (password !== passwordConfirm) {
     return c.html(pages.renderRegister('两次输入密码不一致'))
   }
-  return c.html(pages.renderRegister('注册功能仅演示，暂不保存数据'))
+  
+  // 检查邮箱是否已存在
+  const existingUser = await (c.env as any).RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
+  if (existingUser) {
+    return c.html(pages.renderRegister('该电子邮箱已被注册'))
+  }
+  
+  // 创建新用户
+  const { nanoid } = await import('nanoid')
+  const newUserId = `u-${nanoid(8)}`
+  const newUser = {
+    id: newUserId,
+    name,
+    email,
+    password,
+    role: 'CUSTOMER' as const,
+    balance: 0,
+    commissionBalance: 0,
+    createdAt: new Date().toISOString(),
+    status: 'active' as const
+  }
+  
+  await insertUser(c, newUser)
+  
+  // 自动登录
+  const sessionId = nanoid(16)
+  const response = c.redirect('/customer/dashboard')
+  response.headers.set('Set-Cookie', `session=${sessionId}; Path=/; HttpOnly; SameSite=Lax`)
+  
+  return response
 })
 
-app.get('/forgot-password', (c) => {
+app.get('/forgot-password', async (c) => {
   return c.html(pages.renderForgotPassword())
 })
 
@@ -88,78 +126,78 @@ app.post('/forgot-password', async (c) => {
   return c.html(pages.renderForgotPassword('重置链接已发送至您的邮箱，请查收'))
 })
 
-app.get('/logout', (c) => {
+app.get('/logout', async (c) => {
   const response = c.redirect('/')
   response.headers.set('Set-Cookie', 'session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT')
   return response
 })
 
-app.get('/customer/dashboard', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/customer/dashboard', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
   return c.html(pages.renderCustomerDashboard(user))
 })
 
-app.get('/customer/orders', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/customer/orders', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
   return c.html(pages.renderCustomerOrders(user))
 })
 
-app.get('/customer/orders/:id', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/customer/orders/:id', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
   return c.html(pages.renderCustomerOrderDetail(user, c.req.param('id')))
 })
 
-app.get('/staff/dashboard', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/dashboard', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   return c.html(pages.renderStaffDashboard(user))
 })
 
-app.get('/staff/orders/pending', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/orders/pending', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   return c.html(pages.renderStaffOrdersPending(user))
 })
 
-app.get('/staff/orders/:id', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/orders/:id', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   return c.html(pages.renderStaffOrderDetail(user, c.req.param('id')))
 })
 
-app.get('/staff/contracts', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/contracts', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   return c.html(pages.renderStaffContracts(user))
 })
 
-app.get('/staff/rentals/tracking', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/rentals/tracking', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   return c.html(pages.renderStaffRentalsTracking(user))
 })
 
-app.get('/staff/devices', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/devices', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
@@ -168,8 +206,8 @@ app.get('/staff/devices', (c) => {
 
 
 
-app.get('/staff/contracts/new', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/contracts/new', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
@@ -177,32 +215,32 @@ app.get('/staff/contracts/new', (c) => {
 })
 
 app.post('/staff/contracts/create', async (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
-  return actions.handleCreateContractAction(user, form)
+  return actions.handleCreateContractAction(c, user, form)
 })
 
-app.get('/staff/contracts/:id/progress', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/contracts/:id/progress', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   return c.html(pages.renderStaffContractProgress(user, c.req.param('id')))
 })
 
-app.get('/staff/contract/view', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/staff/contract/view', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   return c.html(pages.renderStaffContractView(user, c.req.query('orderId') || ''))
 })
 
-app.get('/contract/sign', (c) => {
+app.get('/contract/sign', async (c) => {
   const token = c.req.query('token') || '';
   const step = Number(c.req.query('step') || '1');
   const error = c.req.query('error');
@@ -214,28 +252,44 @@ app.post('/contract/sign', async (c) => {
   const step = Number(c.req.query('step') || '1');
   const body = await c.req.text();
   const form = parseFormBody(body);
-  return actions.handleSignContractStep(token, step, form);
+  return actions.handleSignContractStep(c, token, step, form);
 });
 
-app.get('/contract/view/:id', (c) => {
-  return c.html(pages.renderContractView(c.req.param('id'), findUserBySession(c.req.header('cookie') ?? null)))
+app.post('/admin/contracts/template', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.text('无权限', 403)
+  }
+
+  const body = await c.req.text()
+  const payload = JSON.parse(body || '{}')
+  const updatedTemplate = await updateContractTemplateInDB(c, {
+    id: payload.id || 'tmpl-1',
+    name: payload.name || '标准租赁合同模板',
+    content: payload.content || '',
+  })
+  return c.json(updatedTemplate)
+});
+
+app.get('/contract/view/:id', async (c) => {
+  return c.html(pages.renderContractView(c.req.param('id'), await findUserBySession(c, c.req.header('cookie') ?? null)))
 })
 
-app.get('/payment/result', (c) => {
+app.get('/payment/result', async (c) => {
   const status = c.req.query('status') === 'fail' ? 'fail' : 'success'
-  return c.html(pages.renderPaymentResult(c.req.query('orderId') || '', status, findUserBySession(c.req.header('cookie') ?? null)))
+  return c.html(pages.renderPaymentResult(c.req.query('orderId') || '', status, await findUserBySession(c, c.req.header('cookie') ?? null)))
 })
 
-app.get('/customer/rentals', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/customer/rentals', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
   return c.html(pages.renderCustomerRentals(user))
 })
 
-app.get('/customer/profile', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/customer/profile', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -243,7 +297,7 @@ app.get('/customer/profile', (c) => {
 })
 
 app.post('/customer/profile', async (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -261,28 +315,33 @@ app.post('/customer/profile', async (c) => {
     return c.html(pages.renderCustomerProfile(user, '两次输入的新密码不一致'))
   }
 
-  user.name = name
-  user.phone = phone
-  user.bsb = bsb
-  user.account = account
-  user.referralCode = referralCode
-  if (password) {
-    user.password = password
+  const dataToUpdate: any = {
+    name,
+    phone,
+    bsb,
+    account,
+    referralCode
   }
 
-  return c.html(pages.renderCustomerProfile(user, '个人信息已更新', 'success'))
+  if (password) {
+    dataToUpdate.password = password
+  }
+
+  const updatedUser = await updateUser(c, user.id, dataToUpdate)
+
+  return c.html(pages.renderCustomerProfile(updatedUser, '个人信息已更新', 'success'))
 })
 
-app.get('/customer/referral', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/customer/referral', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
   return c.html(pages.renderCustomerReferral(user))
 })
 
-app.get('/customer/referral/withdraw', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/customer/referral/withdraw', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -290,7 +349,7 @@ app.get('/customer/referral/withdraw', (c) => {
 })
 
 app.post('/customer/referral/withdraw', async (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -306,8 +365,8 @@ app.post('/customer/referral/withdraw', async (c) => {
   return c.html(pages.renderCustomerReferral(user, '提现申请已提交，预计2个工作日处理'))
 })
 
-app.get('/customer/security', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/customer/security', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -315,7 +374,7 @@ app.get('/customer/security', (c) => {
 })
 
 app.post('/customer/security', async (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -327,82 +386,92 @@ app.post('/customer/security', async (c) => {
   if (!currentPassword || !newPassword || !confirmPassword) {
     return c.html(pages.renderCustomerSecurity(user, '请输入完整密码信息'))
   }
-  if (currentPassword !== user.password) {
+
+  const fullUser = await (c.env as any).RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first()
+    
+  if (!fullUser || !fullUser.password_hash) {
+    return c.html(pages.renderCustomerSecurity(user, '无法验证当前密码'))
+  }
+
+  const isPasswordValid = await verifyPassword(currentPassword, fullUser.password_hash)
+  
+  if (!isPasswordValid) {
     return c.html(pages.renderCustomerSecurity(user, '当前密码不正确'))
   }
   if (newPassword !== confirmPassword) {
     return c.html(pages.renderCustomerSecurity(user, '两次输入的新密码不一致'))
   }
-  user.password = newPassword
+  await updateUser(c, user.id, { password: newPassword })
   return c.html(pages.renderCustomerSecurity(user, '密码已更新', 'success'))
 })
 
-app.get('/admin/dashboard', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/dashboard', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
   return c.html(pages.renderAdminDashboard(user))
 })
 
-app.get('/admin/users', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/users', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminUsers(user))
+  const html = await pages.renderAdminUsers(user, c)
+  return c.html(html)
 })
 
-app.get('/admin/orders', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/orders', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
   return c.html(pages.renderAdminOrders(user))
 })
 
-app.get('/admin/contracts', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/contracts', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
   return c.html(pages.renderAdminContracts(user))
 })
 
-app.get('/admin/contracts/:id', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/contracts/:id', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
   return c.html(pages.renderAdminContractDetail(user, c.req.param('id')))
 })
 
-app.get('/admin/orders/:id', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/orders/:id', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
   return c.html(pages.renderAdminOrderDetail(user, c.req.param('id')))
 })
 
-app.get('/admin/finance', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/finance', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
   return c.html(pages.renderAdminFinance(user))
 })
 
-app.get('/admin/devices', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/devices', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
   return c.html(pages.renderAdminDevices(user))
 })
 
-app.get('/admin/devices/new', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/devices/new', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
@@ -410,7 +479,7 @@ app.get('/admin/devices/new', (c) => {
 })
 
 app.post('/admin/devices/new', async (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
@@ -422,8 +491,8 @@ app.post('/admin/devices/new', async (c) => {
   return c.redirect('/admin/devices')
 })
 
-app.get('/admin/devices/:id/edit', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/devices/:id/edit', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
@@ -432,7 +501,7 @@ app.get('/admin/devices/:id/edit', (c) => {
 })
 
 app.post('/admin/devices/:id/edit', async (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
@@ -443,8 +512,8 @@ app.post('/admin/devices/:id/edit', async (c) => {
   return c.redirect('/admin/devices')
 })
 
-app.get('/admin/devices/:id/delete', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/devices/:id/delete', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
@@ -453,8 +522,8 @@ app.get('/admin/devices/:id/delete', (c) => {
 })
 
 
-app.get('/admin/settings', (c) => {
-  const user = findUserBySession(c.req.header('cookie') ?? null)
+app.get('/admin/settings', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
