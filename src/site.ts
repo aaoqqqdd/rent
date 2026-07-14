@@ -121,6 +121,39 @@ export const devices: Device[] = [
   },
 ]
 
+export const users: User[] = [
+  {
+    id: 'u-admin',
+    name: 'Admin User',
+    email: 'admin@example.com',
+    role: 'ADMIN',
+    balance: 0,
+    commissionBalance: 0,
+    status: 'active',
+    createdAt: '2026-07-01T00:00:00Z',
+  },
+  {
+    id: 'u-staff',
+    name: 'Staff User',
+    email: 'staff@example.com',
+    role: 'STAFF',
+    balance: 0,
+    commissionBalance: 0,
+    status: 'active',
+    createdAt: '2026-07-01T00:00:00Z',
+  },
+  {
+    id: 'u-customer',
+    name: 'Customer User',
+    email: 'customer@example.com',
+    role: 'CUSTOMER',
+    balance: 0,
+    commissionBalance: 0,
+    status: 'active',
+    createdAt: '2026-07-01T00:00:00Z',
+  },
+]
+
 export const contracts: Contract[] = [
   {
     id: 'ct-1',
@@ -483,7 +516,7 @@ export function getContractBySignToken(token: string): Contract | undefined {
 }
 
 export function getUserById(id: string): User | undefined {
-  return undefined
+  return users.find((user) => user.id === id)
 }
 
 export function getSystemSettings() {

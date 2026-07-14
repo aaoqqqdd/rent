@@ -31,14 +31,9 @@
 		{
 			"binding": "RENT",
 			"database_name": "rent",
-			"database_id": ""
+			"database_id": "fefc8aa6-18a3-49f2-9bf0-34a2e31bdd01"
+      "remote": true
 		},
-		{
-			"binding": "rent_new",
-			"database_name": "rent-new",
-			"database_id": "fefc8aa6-18a3-49f2-9bf0-34a2e31bdd01",
-			"remote": true
-		}
 	],
 	// "ai": {
 	//   "binding": "AI"
