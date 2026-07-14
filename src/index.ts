@@ -6,8 +6,20 @@ import { verifyUserCredentials, findUserBySession, devices, getDeviceById, loadD
 const app = new Hono()
 
 app.use('*', async (c, next) => {
-  await loadDatabaseData(c)
-  return next()
+  try {
+    await loadDatabaseData(c)
+    await next()
+  } catch (error) {
+    console.error('Server Error:', error)
+    return c.html(`
+      <div style="max-width: 800px; margin: 50px auto; padding: 20px; font-family: Arial, sans-serif;">
+        <h1 style="color: #dc2626;">Internal Server Error</h1>
+        <h3>错误详情：</h3>
+        <pre style="background: #f3f4f6; padding: 15px; border-radius: 8px; overflow-x: auto; color: #1f2937;">${error instanceof Error ? error.message + '\n\n' + error.stack : String(error)}</pre>
+        <p style="margin-top: 20px;"><a href="/login" style="color: #2563eb;">返回登录页</a></p>
+      </div>
+    `, 500)
+  }
 })
 
 
@@ -137,7 +149,10 @@ app.get('/customer/dashboard', async (c) => {
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerDashboard(user))
+  const { getOrdersAsync, getDevicesAsync } = await import('./site')
+  const orders = await getOrdersAsync(c)
+  const devices = await getDevicesAsync(c)
+  return c.html(pages.renderCustomerDashboard(user, orders, devices))
 })
 
 app.get('/customer/orders', async (c) => {
