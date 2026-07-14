@@ -5,5 +5,5 @@ compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "RENT"
-database_name = "rent"
+database_name = "rent-db"
 database_id = "039c09b0-e11e-42b0-a002-930373044241"
