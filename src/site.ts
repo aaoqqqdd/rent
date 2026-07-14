@@ -304,6 +304,12 @@ export async function verifyUserCredentials(c: Context, emailOrName: string, pas
   return user
 }
 
+async function userHasColumn(c: Context, columnName: string): Promise<boolean> {
+  const db = getDB(c)
+  const result = await db.prepare('PRAGMA table_info(users)').all()
+  return (result.results || []).some((column: any) => column.name === columnName)
+}
+
 export async function findUserBySession(c: Context, cookieHeader: string | null): Promise<User | null> {
   const db = getDB(c)
   const cookies = parseCookie(cookieHeader)
@@ -313,10 +319,19 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
   const [role, id] = token.split(':')
   if (!role || !id) return null
 
+  const hasReferralCode = await userHasColumn(c, 'referralCode')
+  const selectClause = hasReferralCode
+    ? 'id, name, email, role, phone, bsb, account_number AS account, commission_balance AS commissionBalance, referralCode'
+    : 'id, name, email, role, phone, bsb, account_number AS account, commission_balance AS commissionBalance'
+
   const user: User | null = await db
-    .prepare('SELECT id, name, email, role, phone, bsb, account_number, commission_balance, referralCode FROM users WHERE id = ? AND role = ?')
+    .prepare(`SELECT ${selectClause} FROM users WHERE id = ? AND role = ?`)
     .bind(id, role.toUpperCase())
     .first()
+
+  if (user && !hasReferralCode) {
+    user.referralCode = ''
+  }
 
   return user
 }
@@ -1007,6 +1022,11 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     delete fields.password
   }
 
+  const hasReferralCode = await userHasColumn(c, 'referralCode')
+  if (!hasReferralCode) {
+    delete fields.referralCode
+  }
+
   const fieldEntries = Object.entries(fields).filter(([key]) => key !== 'id')
   if (fieldEntries.length === 0) {
     return findUserBySession(c, null)
@@ -1032,6 +1052,11 @@ export async function insertUser(c: Context, user: User): Promise<User> {
   if (fields.password) {
     fields.password_hash = await hashPassword(fields.password)
     delete fields.password
+  }
+
+  const hasReferralCode = await userHasColumn(c, 'referralCode')
+  if (!hasReferralCode) {
+    delete fields.referralCode
   }
 
   const fieldEntries = Object.entries(fields)
