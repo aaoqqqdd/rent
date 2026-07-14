@@ -227,9 +227,9 @@ CREATE TABLE device_maintenance (
 -- -----------------------------------------------------
 -- 初始测试用户（密码需要在应用程序中重新哈希处理，这里仅作为结构示例）
 INSERT INTO users (id, name, email, password_hash, role, status, created_at, updated_at) VALUES
-('u-admin', 'Admin User', 'admin@example.com', '$2a$10$exampleHashForAdmin123', 'ADMIN', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00'),
-('u-staff', 'Staff User', 'staff@example.com', '$2a$10$exampleHashForStaff123', 'STAFF', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00'),
-('u-customer', 'Customer User', 'customer@example.com', '$2a$10$exampleHashForCustomer123', 'CUSTOMER', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00');
+('u-admin', 'Admin User', 'admin@example.com', '3b612c75a7b5048a435fb6ec81e52ff92d6d795a8b5a9c17070f6a63c97a53b2', 'ADMIN', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00'),
+('u-staff', 'Staff User', 'staff@example.com', '2f005e42a17da46ec51ba6f11d725e60788931a1dadd33d9cb85084fb32bb166', 'STAFF', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00'),
+('u-customer', 'Customer User', 'customer@example.com', 'e6f59d120b99238e3a81b7322136ac9be6f9e27c764f8daca738f68c16a62202', 'CUSTOMER', 'active', '2026-07-01 00:00:00', '2026-07-01 00:00:00');
 
 -- 初始设备数据
 INSERT INTO devices (id, name, model, price_per_day, deposit_amount, status, serial_number, entry_date) VALUES

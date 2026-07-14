@@ -1,23 +1,17 @@
-import { Hono } from 'hono'
+ import { Hono } from 'hono'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
 import { verifyUserCredentials, findUserBySession, devices, getDeviceById, loadDatabaseData, updateContractTemplateInDB, updateUser, verifyPassword, insertUser } from './site'
 
 const app = new Hono()
 
-app.use('*', async (c, next) => {
-  try {
-    await loadDatabaseData(c)
-    await next()
-  } catch (error) {
-    console.error('Server Error:', error)
-    return c.html(`
-      <!DOCTYPE html>
+function renderErrorPage(status: number, title: string, subtitle: string, errorDetails: string) {
+  return `<!DOCTYPE html>
       <html lang="zh-CN">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>服务器错误 - PC Rental</title>
+        <title>${title} - PC Rental</title>
         <style>
           :root {
             --primary-color: #3b82f6;
@@ -141,23 +135,37 @@ app.use('*', async (c, next) => {
         <div class="error-container">
           <div class="error-header">
             <div class="error-icon">⚠️</div>
-            <h1 class="error-title">Internal Server Error</h1>
-            <p class="error-subtitle">服务器遇到了一些问题，技术团队已经收到通知</p>
+            <h1 class="error-title">${title}</h1>
+            <p class="error-subtitle">${subtitle}</p>
           </div>
           <div class="error-details">
             <h3>📋 错误详情</h3>
-            <pre>${error instanceof Error ? error.message + '\n\n' + error.stack : String(error)}</pre>
+            <pre>${errorDetails}</pre>
           </div>
           <div class="error-actions">
-            <a href="/login" class="btn-primary">返回登录页</a>
+            <a href="/" class="btn-primary">返回首页</a>
           </div>
         </div>
       </body>
-      </html>
-    `, 500)
+      </html>`
+}
+
+app.use('*', async (c, next) => {
+  try {
+    await loadDatabaseData(c)
+    await next()
+  } catch (error) {
+    console.error('Server Error:', error)
+    const details = error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error)
+    return c.html(renderErrorPage(500, '服务器错误', '出现未处理错误，请检查日志。', details), 500)
   }
 })
 
+app.onError((error, c) => {
+  console.error('Unhandled Application Error:', error)
+  const details = error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error)
+  return c.html(renderErrorPage(500, '服务器错误', '应用程序发生了未捕获错误。', details), 500)
+})
 
 function parseFormBody(body: string): Record<string, string> {
   const result: Record<string, string> = {}
