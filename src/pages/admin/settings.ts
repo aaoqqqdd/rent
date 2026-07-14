@@ -10,6 +10,30 @@ export function renderAdminSettings(user: any) {
       <form id="systemSettingsForm">
         <div class="form-group">
           <label for="rentalTerms">租赁条款</label>
+          <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
+             <strong style="color: #155e75; display: block; margin-bottom: 12px;">📋 租赁条款模板可用变量：</strong>
+             <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 6px; overflow: hidden;">
+               <thead>
+                 <tr style="background: var(--primary-light);">
+                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
+                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">数据来源</th>
+                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">说明</th>
+                 </tr>
+               </thead>
+               <tbody>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${contract_number}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同编号</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${company_address}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司地址</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${company_phone}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司电话</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${company_contact}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司联系人</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${customer_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">承租方姓名</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${device_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备表</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备名称</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${start_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁起始日</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${end_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁结束日</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${total_rent}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统计算</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租金总额</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace;">${deposit_amount}</td><td style="padding: 6px 12px;">员工填写</td><td style="padding: 6px 12px;">押金金额</td></tr>
+               </tbody>
+             </table>
+           </div>
           <div id="rentalTermsEditor" style="height: 250px;"></div>
           <textarea id="rentalTerms" name="rentalTerms" style="display:none;"></textarea>
         </div>
@@ -33,10 +57,55 @@ export function renderAdminSettings(user: any) {
             <input type="checkbox" id="enableBalancePayment" name="enableBalancePayment" ${settings.paymentMethods.balancePayment ? 'checked' : ''}>
             <label for="enableBalancePayment">启用余额支付</label>
           </div>
+          
+          <!-- 银行转账账户信息设置 -->
+          <div style="margin-top: 24px; padding: 24px; background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 12px; border: 1px solid #bae6fd;">
+            <h4 style="margin: 0 0 20px 0; color: #0369a1; display: flex; align-items: center; gap: 8px;">
+              🏦 银行转账账户信息
+            </h4>
+            <div class="grid grid-2">
+              <div>
+                <label for="bankAccountName" class="form-label">账户名称 (ANB)</label>
+                <input type="text" id="bankAccountName" name="bankAccountName" class="form-control" value="${settings.bankDetails.accountName}" placeholder="请输入账户名称">
+              </div>
+              <div>
+                <label for="bankBSB" class="form-label">BSB 码</label>
+                <input type="text" id="bankBSB" name="bankBSB" class="form-control" value="${settings.bankDetails.bsb}" placeholder="例如: 062-001">
+              </div>
+              <div>
+                <label for="bankAccount" class="form-label">银行账号</label>
+                <input type="text" id="bankAccount" name="bankAccount" class="form-control" value="${settings.bankDetails.account}" placeholder="请输入银行账号">
+              </div>
+            </div>
+            <p style="margin: 16px 0 0 0; color: #0c4a6e; font-size: 0.9rem;">
+              💡 这些银行账户信息将会在用户选择银行转账时显示，供客户转账使用。
+            </p>
+          </div>
         </div>
 
         <div class="form-group">
           <label for="emailTemplate">邮件通知模板</label>
+          <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
+             <strong style="color: #155e75; display: block; margin-bottom: 12px;">📧 邮件通知模板可用变量：</strong>
+             <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 6px; overflow: hidden;">
+               <thead>
+                 <tr style="background: var(--primary-light);">
+                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
+                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">数据来源</th>
+                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">说明</th>
+                 </tr>
+               </thead>
+               <tbody>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${user_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">收件人姓名</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${user_email}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">收件人邮箱</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${order_no}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">订单编号</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${contract_number}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同编号</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${device_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备表</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁设备名称</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">${sign_link}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同签署链接</td></tr>
+                 <tr><td style="padding: 6px 12px; font-family: monospace;">${expire_time}</td><td style="padding: 6px 12px;">系统设置</td><td style="padding: 6px 12px;">签署链接有效期</td></tr>
+               </tbody>
+             </table>
+           </div>
           <div id="emailTemplateEditor" style="height: 150px;"></div>
           <textarea id="emailTemplate" name="emailTemplate" style="display:none;"></textarea>
         </div>
@@ -109,6 +178,11 @@ export function renderAdminSettings(user: any) {
             square: formData.has('enableSquare'),
             bankTransfer: formData.has('enableBankTransfer'),
             balancePayment: formData.has('enableBalancePayment'),
+          },
+          bankDetails: {
+            accountName: formData.get('bankAccountName'),
+            bsb: formData.get('bankBSB'),
+            account: formData.get('bankAccount'),
           },
           emailTemplate: formData.get('emailTemplate'),
           referralSettings: {

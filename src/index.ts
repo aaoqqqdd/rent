@@ -573,7 +573,11 @@ app.get('/admin/dashboard', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminDashboard(user))
+  const { getOrdersAsync, getUsersAsync, getDevicesAsync } = await import('./site')
+  const orders = await getOrdersAsync(c)
+  const users = await getUsersAsync(c)
+  const devices = await getDevicesAsync(c)
+  return c.html(pages.renderAdminDashboard(user, orders, users, devices))
 })
 
 app.get('/admin/users', async (c) => {

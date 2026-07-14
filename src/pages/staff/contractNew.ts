@@ -38,7 +38,7 @@ export function renderStaffContractNew(user: any, orderId: string, errorMessage?
   const body = `
     <div class="panel">
       <div class="section-title"><h2>为订单 #${order.orderNo} 创建租赁合同</h2><span class="section-note">编辑合同内容并生成。</span></div>
-      ${errorMessage ? `<div class="alert">${errorMessage}</div>` : ''}
+      ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
       <form method="POST" action="/staff/orders/${order.id}/generate-contract">
         <label class="form-label">合同内容</label>
         <textarea class="form-control" name="contractContent" rows="20">${defaultContractContent}</textarea>

@@ -1,6 +1,7 @@
 import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate, rentalTerms } from '../../site';
+import { Context } from 'hono';
 
-export function renderContractSignPage(token: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
+export async function renderContractSignPage(c: Context, token: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
   const contract = getContractBySignToken(token);
   if (!contract) {
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
@@ -13,7 +14,7 @@ export function renderContractSignPage(token: string, step: number, errorMessage
 
   const device = getDeviceById(order.deviceId);
   const systemSettings = getSystemSettings();
-  const contractTemplate = getContractTemplate();
+  const contractTemplate = await getContractTemplate(c);
   const activeContractContent = contract.content || contractTemplate.content || systemSettings.rentalTerms;
   const contractHtml = /<[^>]+>/.test(activeContractContent)
     ? activeContractContent
@@ -45,14 +46,7 @@ export function renderContractSignPage(token: string, step: number, errorMessage
             ${rentalTerms}
           </div>
           
-          <h3>设备与费用</h3>
-          <ul>
-            <li><strong>设备:</strong> ${device?.name ?? 'N/A'} (${device?.model ?? 'N/A'})</li>
-            <li><strong>租期:</strong> ${order.startDate} to ${order.endDate}</li>
-            <li><strong>日租金:</strong> ${formatCurrency(order.dailyRate)}</li>
-            <li><strong>押金:</strong> ${formatCurrency(order.depositAmount)}</li>
-            <li><strong>总计费用:</strong> ${formatCurrency(order.totalAmount)}</li>
-          </ul>
+
 
           <form method="POST" action="/contract/sign?token=${token}&step=1">
             <label class="form-check" style="display: flex; align-items: center; gap: 8px;">

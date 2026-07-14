@@ -219,17 +219,35 @@ export const contractTemplate = {
   content: '这是默认合同模板内容，包含租赁条款、押金及租期信息。',
 }
 
-export function getContractTemplate() {
-  return contractTemplate
+export async function getContractTemplate(c: Context): Promise<ContractTemplate> {
+  const db = getDB(c);
+  const template = await db.prepare('SELECT * FROM contract_templates WHERE id = ?').bind('default').first<ContractTemplate>();
+  if (template) {
+    return template;
+  }
+  // Fallback to a default in-memory template if not found in DB
+  return {
+    id: 'default',
+    name: '标准租赁合同模板',
+    content: '<h1>电脑租赁协议</h1><p>本协议由以下双方于 {{date}} 签订：</p><p><strong>出租方：</strong> 电脑租赁公司</p><p><strong>承租方：：</strong> {{customerName}}</p><h2>租赁设备</h2><p><strong>设备名称：</strong> {{deviceName}}</p><p><strong>型号：</strong> {{deviceModel}}</p><p><strong>序列号：</strong> {{deviceSerialNumber}}</p><h2>租赁期限</h2><p><strong>起始日期：</strong> {{startDate}}</p><p><strong>结束日期：：</strong> {{endDate}}</p><h2>租金与押金</h2><p><strong>日租金：</strong> {{dailyRate}} 元</p><p><strong>总租金：</strong> {{totalRent}} 元</p><p><strong>押金：</strong> {{depositAmount}} 元</p><p><strong>总计：</strong> {{totalAmount}} 元</p>',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 }
 
-export function updateContractTemplate(newTemplate: { id: string; name: string; content: string }) {
-  Object.assign(contractTemplate, newTemplate)
-  return contractTemplate
+export async function updateContractTemplate(c: Context, newTemplate: { id: string; name: string; content: string }): Promise<ContractTemplate> {
+  const db = getDB(c);
+  await db.prepare('INSERT INTO contract_templates (id, name, content, updatedAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name = EXCLUDED.name, content = EXCLUDED.content, updatedAt = EXCLUDED.updatedAt')
+    .bind(newTemplate.id, newTemplate.name, newTemplate.content)
+    .run();
+  return getContractTemplate(c);
 }
 
-export function formatCurrency(value: number): string {
-  return `¥${value.toFixed(2)}`
+export function formatCurrency(value: number | undefined | null): string {
+  if (value === undefined || value === null || isNaN(value)) {
+    return `AUD$0.00`
+  }
+  return `AUD$${value.toFixed(2)}`
 }
 
 export function formatDate(value: string): string {
@@ -272,11 +290,11 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
     { id: 'u-customer', name: 'Customer User', email: 'customer@example.com', password: 'Customer123', role: 'CUSTOMER' },
   ]
 
-  const userInsert = db.prepare('INSERT INTO users (id, name, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, ?)')
+  const userInsert = db.prepare('INSERT INTO users (id, name, email, password_hash, role, status, balance, commissionBalance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
   const userInserts = []
   for (const user of usersToSeed) {
     const hash = await hashPassword(user.password)
-    userInserts.push(userInsert.bind(user.id, user.name, user.email, hash, user.role, 'active'))
+    userInserts.push(userInsert.bind(user.id, user.name, user.email, hash, user.role, 'active', 0, 0))
   }
   await db.batch(userInserts)
 }
@@ -354,7 +372,6 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const sidebar = currentUser
     ? `<aside class="sidebar">
-        <div class="sidebar-brand">PC Rental</div>
         <div class="sidebar-section">
           <h3>快捷导航</h3>
           ${currentUser.role === 'CUSTOMER' ? `
@@ -377,6 +394,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             <a href="/admin/dashboard">管理员仪表盘</a>
             <a href="/admin/users">用户管理</a>
             <a href="/admin/orders">订单管理</a>
+            <a href="/admin/refunds">待退款处理</a>
             <a href="/admin/contracts">合同管理</a>
             <a href="/admin/finance">财务管理</a>
             <a href="/admin/devices">设备管理</a>
@@ -728,6 +746,50 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       outline: none;
       border-color: var(--primary);
       box-shadow: 0 0 0 3px var(--primary-light);
+    }
+    /* Quill Editor Styles */
+    .quill {
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-md);
+      border: 1px solid var(--border);
+      transition: var(--transition);
+      margin-bottom: 20px;
+    }
+    .quill:hover {
+      box-shadow: var(--shadow-lg);
+    }
+    .quill:focus-within {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-light);
+    }
+    .ql-toolbar {
+      border-top-left-radius: var(--radius);
+      border-top-right-radius: var(--radius);
+      background: var(--surface-secondary);
+      border-bottom: 1px solid var(--border);
+      border-left: none;
+      border-right: none;
+      border-top: none;
+    }
+    .ql-container {
+      border-bottom-left-radius: var(--radius);
+      border-bottom-right-radius: var(--radius);
+      min-height: 300px;
+      background: var(--surface);
+      border-left: none;
+      border-right: none;
+      border-bottom: none;
+      font-size: 1rem;
+      color: var(--text);
+    }
+    .ql-editor {
+      min-height: 300px;
+      font-family: inherit;
+      line-height: 1.7;
+    }
+    .ql-editor.ql-blank::before {
+      color: var(--text-secondary);
+      font-style: normal;
     }
     .form-check { 
       display: flex;
