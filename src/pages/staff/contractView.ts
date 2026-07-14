@@ -55,8 +55,7 @@ export function renderStaffContractView(user: any, orderId: string) {
       </div>
 
       <div class="contract-actions">
-        <button class="button button-primary" onclick="window.print()">打印合同</button>
-        <a class="button button-secondary" href="/staff/contract/${contract.id}/download-pdf">下载PDF</a>
+        <button class="button button-primary" onclick="window.print()">打印/下载PDF</button>
         <a class="button button-info" href="/staff/contracts">返回合同管理</a>
       </div>
     </div>

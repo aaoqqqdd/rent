@@ -20,8 +20,7 @@ export function renderContractView(contractId: string, user: any) {
         ${contract.content}
       </div>
       <div class="contract-actions" style="display: flex; gap: 12px;">
-        <button class="button" onclick="window.print()">打印合同</button>
-        <a class="button button-secondary" href="/contract/download/${contract.id}">下载PDF</a>
+        <button class="button" onclick="window.print()">打印/下载PDF</button>
         ${user ? `<a class="button button-primary" href="/customer/dashboard">查看我的账户</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}
       </div>
     </div>

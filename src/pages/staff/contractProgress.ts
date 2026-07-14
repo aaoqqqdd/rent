@@ -18,7 +18,12 @@ export function renderStaffContractProgress(user: any, contractId: string) {
       <div class="section-title"><h2>合同签署进度</h2><span class="section-note">合同编号: ${contract.contractNumber}</span></div>
 
       <div class="contract-progress-header">
-        <h3>合同状态: ${contract.status === 'signed' ? '已签署' : '待签署'}</h3>
+        <h3>合同状态: ${
+          contract.status === 'signed' ? '已签署' : 
+          contract.status === 'cancelled' ? '已取消' :
+          contract.status === 'draft' ? '草稿中' :
+          '未查看' // pending_sign 状态下显示为未查看
+        }</h3>
         <p>创建日期: ${contract.createdAt ? new Date(contract.createdAt).toLocaleString() : '未知'}</p>
         ${contract.signedAt ? `<p>签署日期: ${new Date(contract.signedAt).toLocaleString()}</p>` : ''}
       </div>
@@ -40,7 +45,7 @@ export function renderStaffContractProgress(user: any, contractId: string) {
 
       <div class="contract-actions">
         <a class="button button-primary" href="/staff/contract/view?orderId=${contract.rentalId}">查看合同内容</a>
-        <a class="button button-secondary" href="/staff/contract/${contract.id}/download-pdf">下载PDF</a>
+        <button class="button button-secondary" onclick="window.print()">下载PDF</button>
         <a class="button button-info" href="/staff/contracts">返回合同管理</a>
       </div>
     </div>
