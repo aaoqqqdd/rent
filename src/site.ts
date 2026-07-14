@@ -92,65 +92,112 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   return passwordHash === hash
 }
 
-export const devices: Device[] = [
-  {
-    id: 'd-1',
-    name: 'MacBook Pro 14寸',
-    model: 'M4 Pro 18GB 512GB',
-    serialNumber: 'SN20260708001',
-    serial_number: 'SN20260708001',
-    pricePerDay: 40,
-    dailyRate: 40,
-    depositAmount: 2000,
-    status: 'available',
-    description: '适合专业创作者与商务办公的高性能笔记本',
-  },
-  {
-    id: 'd-2',
-    name: 'Dell XPS 13',
-    model: 'Intel i7 16GB 512GB',
-    serialNumber: 'SN20260601002',
-    serial_number: 'SN20260601002',
-    pricePerDay: 35,
-    dailyRate: 35,
-    depositAmount: 1500,
-    status: 'rented',
-    description: '轻薄便携，高效办公与移动演示首选',
-  },
-]
+export async function getUserById(c: Context, id: string): Promise<User | null> {
+  const db = getDB(c);
+  return db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<User>();
+}
 
-export const users: User[] = [
-  {
-    id: 'u-admin',
-    name: 'Admin User',
-    email: 'admin@example.com',
-    role: 'ADMIN',
-    balance: 0,
-    commissionBalance: 0,
-    status: 'active',
-    createdAt: '2026-07-01T00:00:00Z',
-  },
-  {
-    id: 'u-staff',
-    name: 'Staff User',
-    email: 'staff@example.com',
-    role: 'STAFF',
-    balance: 0,
-    commissionBalance: 0,
-    status: 'active',
-    createdAt: '2026-07-01T00:00:00Z',
-  },
-  {
-    id: 'u-customer',
-    name: 'Customer User',
-    email: 'customer@example.com',
-    role: 'CUSTOMER',
-    balance: 0,
-    commissionBalance: 0,
-    status: 'active',
-    createdAt: '2026-07-01T00:00:00Z',
-  },
-]
+export async function getOrderById(c: Context, id: string): Promise<Order | null> {
+  const db = getDB(c);
+  return db.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first<Order>();
+}
+
+export async function getDeviceById(c: Context, id: string): Promise<Device | null> {
+  const db = getDB(c);
+  return db.prepare('SELECT * FROM devices WHERE id = ?').bind(id).first<Device>();
+}
+
+export async function getContractById(c: Context, id: string): Promise<Contract | null> {
+  const db = getDB(c);
+  return db.prepare('SELECT * FROM contracts WHERE id = ?').bind(id).first<Contract>();
+}
+
+export async function getContractByOrderId(c: Context, orderId: string): Promise<Contract | null> {
+  const db = getDB(c);
+  return db.prepare('SELECT * FROM contracts WHERE rentalId = ?').bind(orderId).first<Contract>();
+}
+
+export async function getAllContracts(c: Context): Promise<Contract[]> {
+  const db = getDB(c);
+  const result = await db.prepare('SELECT * FROM contracts').all<Contract>();
+  return result.results || [];
+}
+
+export async function getOrders(c: Context): Promise<Order[]> {
+  const db = getDB(c);
+  const result = await db.prepare('SELECT * FROM orders').all<Order>();
+  return result.results || [];
+}
+
+export async function getOrdersForUser(c: Context, userId: string): Promise<Order[]> {
+  const db = getDB(c);
+  const result = await db.prepare('SELECT * FROM orders WHERE userId = ?').bind(userId).all<Order>();
+  return result.results || [];
+}
+
+export async function insertOrder(c: Context, order: Order): Promise<void> {
+  const db = getDB(c);
+  await db.prepare('INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, status, paymentMethod, totalAmount, depositAmount, dailyRate, contractId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
+    order.id, order.orderNo, order.userId, order.deviceId, order.startDate, order.endDate, order.status, order.paymentMethod, order.totalAmount, order.depositAmount, order.dailyRate, order.contractId, order.createdAt
+  ).run();
+}
+
+export async function insertContract(c: Context, contract: Contract): Promise<void> {
+  const db = getDB(c);
+  await db.prepare('INSERT INTO contracts (id, rentalId, contractNumber, content, signedAt, createdAt, signToken, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(
+    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status
+  ).run();
+}
+
+export async function updateDeviceStatus(c: Context, deviceId: string, status: string): Promise<void> {
+  const db = getDB(c);
+  await db.prepare('UPDATE devices SET status = ? WHERE id = ?').bind(status, deviceId).run();
+}
+
+export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
+  const db = getDB(c);
+  await db.prepare('UPDATE orders SET status = ? WHERE id = ?').bind(status, orderId).run();
+}
+
+export async function updateOrder(c: Context, order: Order): Promise<void> {
+  const db = getDB(c);
+  await db.prepare('UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, dailyRate = ?, contractId = ?, signedAt = ? WHERE id = ?').bind(
+    order.orderNo, order.userId, order.deviceId, order.startDate, order.endDate, order.status, order.paymentMethod, order.totalAmount, order.depositAmount, order.dailyRate, order.contractId, order.signedAt, order.id
+  ).run();
+}
+
+export async function updateContractStatus(c: Context, contractId: string, status: string, signedAt: string | null = null): Promise<void> {
+  const db = getDB(c);
+  await db.prepare('UPDATE contracts SET status = ?, signedAt = ? WHERE id = ?').bind(status, signedAt, contractId).run();
+}
+
+export async function getContractBySignToken(c: Context, signToken: string): Promise<Contract | null> {
+  const db = getDB(c);
+  return db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(signToken).first<Contract>();
+}
+
+export async function getDeviceBySerialNumber(c: Context, serialNumber: string): Promise<Device | null> {
+  const db = getDB(c);
+  return db.prepare('SELECT * FROM devices WHERE serialNumber = ?').bind(serialNumber).first<Device>();
+}
+
+export async function getDevices(c: Context): Promise<Device[]> {
+  const db = getDB(c);
+  const result = await db.prepare('SELECT * FROM devices').all<Device>();
+  return result.results || [];
+}
+
+export async function getUsers(c: Context): Promise<User[]> {
+  const db = getDB(c);
+  const result = await db.prepare('SELECT * FROM users').all<User>();
+  return result.results || [];
+}
+
+export async function getOrdersAsync(c: Context): Promise<any[]> {
+  const db = getDB(c)
+  const result = await db.prepare('SELECT * FROM orders').all()
+  return result.results || []
+}
 
 export const contracts: Contract[] = [
   {
@@ -162,28 +209,6 @@ export const contracts: Contract[] = [
     createdAt: '2026-07-10 14:20:00',
     signToken: 'ct-1-token',
     status: 'signed',
-  },
-]
-
-export const orders: Order[] = [
-  {
-    id: 'o-1',
-    orderNo: 'OR20260708001',
-    userId: 'u-customer',
-    deviceId: 'd-1',
-    deviceName: 'MacBook Pro 14寸',
-    startDate: '2026-07-10',
-    endDate: '2026-08-10',
-    rentalPeriod: 31,
-    orderDate: '2026-07-08 14:00:00',
-    status: 'paid',
-    paymentMethod: 'card',
-    totalAmount: 3200,
-    depositAmount: 2000,
-    dailyRate: 40,
-    contractId: 'ct-1',
-    signedAt: '2026-07-10 14:30:25',
-    createdAt: '2026-07-10 14:00:00',
   },
 ]
 
@@ -1178,25 +1203,34 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 </html>`
 }
 
-export function getDeviceById(id: string): Device | undefined {
+/**
+ * ===========================
+ * In-memory (legacy) helpers
+ * ===========================
+ * These MUST NOT shadow DB-backed exports.
+ */
+export function getDeviceByIdLocal(id: string): Device | undefined {
   return devices.find((d) => d.id === id)
 }
 
-export function getOrderById(id: string): Order | undefined {
+export function getOrderByIdLocal(id: string): Order | undefined {
   return orders.find((o) => o.id === id)
 }
 
-export function getContractById(id: string): Contract | undefined {
+export function getContractByIdLocal(id: string): Contract | undefined {
   return contracts.find((c) => c.id === id)
 }
 
-export async function getContractBySignToken(c: Context, token: string): Promise<Contract | null> {
-  const db = getDB(c)
-  const contract = await db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(token).first()
-  return contract as Contract | null
+export function getContractByOrderIdLocal(orderId: string): Contract | undefined {
+  return contracts.find((c) => c.rentalId === orderId)
 }
 
-export function getUserById(id: string): User | undefined {
+export async function getContractBySignTokenLocal(c: Context, token: string): Promise<Contract | null> {
+  // local fallback (still uses DB because the D1 is authoritative)
+  return getContractBySignToken(c, token)
+}
+
+export function getUserByIdLocal(id: string): User | undefined {
   return users.find((user) => user.id === id)
 }
 
@@ -1334,17 +1368,21 @@ export function getAllContracts(): Contract[] {
   return contracts
 }
 
-export async function insertOrder(c: Context, order: Order): Promise<Order> {
+/**
+ * ⚠️ Local/in-memory implementations (do NOT override DB-backed exports above).
+ * These are kept for legacy compatibility but should not be used for persistence-critical flows.
+ */
+export async function insertOrderLocal(c: Context, order: Order): Promise<Order> {
   orders.push(order)
   return order
 }
 
-export async function insertContract(c: Context, contract: Contract): Promise<Contract> {
+export async function insertContractLocal(c: Context, contract: Contract): Promise<Contract> {
   contracts.push(contract)
   return contract
 }
 
-export async function updateDeviceStatus(c: Context, deviceId: string, status: Device['status']): Promise<Device | undefined> {
+export async function updateDeviceStatusLocal(c: Context, deviceId: string, status: Device['status']): Promise<Device | undefined> {
   const device = devices.find((d) => d.id === deviceId)
   if (device) {
     device.status = status
@@ -1352,7 +1390,7 @@ export async function updateDeviceStatus(c: Context, deviceId: string, status: D
   return device
 }
 
-export async function updateOrderStatus(c: Context, orderId: string, status: Order['status']): Promise<Order | undefined> {
+export async function updateOrderStatusLocal(c: Context, orderId: string, status: Order['status']): Promise<Order | undefined> {
   const order = orders.find((o) => o.id === orderId)
   if (order) {
     order.status = status
@@ -1360,18 +1398,18 @@ export async function updateOrderStatus(c: Context, orderId: string, status: Ord
   return order
 }
 
-export async function updateOrder(c: Context, orderId: string, data: Partial<Order>): Promise<Order | undefined> {
+export async function updateOrderLocal(c: Context, orderId: string, data: Partial<Order>): Promise<Order | undefined> {
   const order = orders.find((o) => o.id === orderId)
   if (!order) return undefined
   Object.assign(order, data)
   return order
 }
 
-export async function updateOrderInDB(c: Context, orderId: string, data: Partial<Order>): Promise<Order | undefined> {
-  return updateOrder(c, orderId, data)
+export async function updateOrderInDBLocal(c: Context, orderId: string, data: Partial<Order>): Promise<Order | undefined> {
+  return updateOrderLocal(c, orderId, data)
 }
 
-export async function updateContractStatus(c: Context, contractId: string, status: Contract['status']): Promise<Contract | undefined> {
+export async function updateContractStatusLocal(c: Context, contractId: string, status: Contract['status']): Promise<Contract | undefined> {
   const contract = contracts.find((c) => c.id === contractId)
   if (contract) {
     contract.status = status
@@ -1379,16 +1417,16 @@ export async function updateContractStatus(c: Context, contractId: string, statu
   return contract
 }
 
-export async function updateContractStatusInDB(c: Context, contractId: string, status: Contract['status']): Promise<Contract | undefined> {
-  return updateContractStatus(c, contractId, status)
+export async function updateContractStatusInDBLocal(c: Context, contractId: string, status: Contract['status']): Promise<Contract | undefined> {
+  return updateContractStatusLocal(c, contractId, status)
 }
 
-export async function updateContractTemplateInDB(c: Context, newTemplate: { id: string; name: string; content: string }): Promise<ContractTemplate> {
+export async function updateContractTemplateInDBLocal(c: Context, newTemplate: { id: string; name: string; content: string }): Promise<ContractTemplate> {
   return updateContractTemplate(newTemplate)
 }
 
-export async function createContract(c: Context, contract: Contract): Promise<Contract> {
-  return insertContract(c, contract)
+export async function createContractLocal(c: Context, contract: Contract): Promise<Contract> {
+  return insertContractLocal(c, contract)
 }
 
 export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {

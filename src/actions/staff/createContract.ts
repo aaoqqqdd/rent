@@ -9,7 +9,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     return new Response('设备、开始日期和结束日期均为必填项', { status: 400 });
   }
 
-  const device = getDeviceById(deviceId);
+  const device = await getDeviceById(c, deviceId);
 
   if (!device || device.status !== 'available') {
     return new Response('设备不存在或当前不可用', { status: 400 });

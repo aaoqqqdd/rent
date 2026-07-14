@@ -1,13 +1,13 @@
 import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, getContractByOrderId, updateOrderStatus, updateOrder, createContract, updateContractStatus, systemSettings } from '../../site';
 
-export function renderStaffOrderDetail(user: any, orderId: string, message?: string, type: 'success' | 'error' = 'error') {
-  const order = getOrderById(orderId)
+export async function renderStaffOrderDetail(c: Context, user: any, orderId: string, message?: string, type: 'success' | 'error' = 'error') {
+  const order = await getOrderById(c, orderId)
   if (!order) {
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user)
   }
-  const customer = getUserById(order.userId)
-  const device = getDeviceById(order.deviceId)
-  const contract = getContractByOrderId(order.id)
+  const customer = await getUserById(c, order.userId)
+  const device = await getDeviceById(c, order.deviceId)
+  const contract = await getContractByOrderId(c, order.id)
   const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
 
   const body = `

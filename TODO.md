@@ -10,6 +10,8 @@
 - [ ] 新增/修复后端 endpoint（在 `src/index.ts` / actions 中）以接收设置保存请求并写入数据库。
 
 ## Phase 2（签署与推荐/分成）：计划 C + D
+- [ ] 修复“合同签署链接无效/已过期”（根因：`src/site.ts` 里 insertContract 被重复定义，导致签约数据没写入 DB）
+- [ ] 修复“待退款也不能用/退款不可用”（若同样是 in-memory / DB 数据源不一致，统一到 DB）
 - [ ] `src/pages/public/contractSign.ts`：手机号改为国际区号 + 本地号输入（如 +86/+61），UI 校验提示。
 - [ ] `src/actions/public/signContract.ts`：服务端校验国际区号+手机号格式，并将标准化后的手机号落库。
 - [ ] `src/pages/public/contractSign.ts`：客户端“是否参加推荐码”交互（勾选/可选）。
@@ -23,6 +25,8 @@
 
 ## 验证清单（完成每一步后手动验证）
 - [ ] `/admin/contracts` 打开不报错。
+- [ ] 修复后：staff 生成签约链接 -> 客户打开 `/contract/sign?token=...` 不再显示“合同链接无效或已过期”。
+- [ ] 修复后：待退款列表可正常打开并可处理退款。
 - [ ] `/admin/settings` 保存后刷新仍能看到更新的租赁条款/邮件模板。
 - [ ] 客户签约页 phone 输入支持 +86/+61，错误能返回提示。
 - [ ] 客户选择参加推荐码后，合同/佣金分成按配置生效。

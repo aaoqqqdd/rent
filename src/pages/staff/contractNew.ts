@@ -1,12 +1,12 @@
 import { buildLayout, getOrders, getOrderById, getDeviceById, getUserById } from '../../site';
 
-export function renderStaffContractNew(user: any, orderId: string, errorMessage?: string) {
-  const order = getOrderById(orderId)
+export async function renderStaffContractNew(c: Context, user: any, orderId: string, errorMessage?: string) {
+  const order = await getOrderById(c, orderId)
   if (!order) {
     return buildLayout('新建合同 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>无法为不存在的订单创建合同。</p></div>', user)
   }
-  const customer = getUserById(order.userId)
-  const device = getDeviceById(order.deviceId)
+  const customer = await getUserById(c, order.userId)
+  const device = await getDeviceById(c, order.deviceId)
 
   const defaultContractContent = `
     <h1>电脑租赁协议</h1>

@@ -1,13 +1,13 @@
 import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById } from '../../site';
 
-export function renderContractView(contractId: string, user: any) {
-  const contract = getContractById(contractId);
+export async function renderContractView(c: Context, contractId: string, user: any) {
+  const contract = await getContractById(c, contractId);
   if (!contract) {
     return buildLayout('查看合同 - 电脑租赁管理系统', '<div class="panel"><h2>合同未找到</h2><p>您请求的合同不存在。</p></div>', user);
   }
-  const order = getOrderById(contract.rentalId);
-  const device = order ? getDeviceById(order.deviceId) : null;
-  const customer = order ? getUserById(order.userId) : null;
+  const order = await getOrderById(c, contract.rentalId);
+  const device = order ? await getDeviceById(c, order.deviceId) : null;
+  const customer = order ? await getUserById(c, order.userId) : null;
 
   const body = `
     <div class="panel">

@@ -151,8 +151,8 @@ export function renderAdminSettings(user: any) {
       });
 
       // 将数据库中的内容加载到编辑器
-      const rentalTermsContent = '${settings.rentalTerms}';
-      const emailTemplateContent = '${settings.emailTemplate}';
+      const rentalTermsContent = ${JSON.stringify(settings.rentalTerms)};
+      const emailTemplateContent = ${JSON.stringify(settings.emailTemplate)};
       rentalTermsEditor.root.innerHTML = rentalTermsContent;
       emailTemplateEditor.root.innerHTML = emailTemplateContent;
       

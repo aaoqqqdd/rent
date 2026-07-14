@@ -1,17 +1,17 @@
 import { buildLayout, getContractByOrderId, getOrderById, getUserById } from '../../site';
 
-export function renderStaffContractView(user: any, orderId: string) {
-  const order = getOrderById(orderId);
+export async function renderStaffContractView(c: Context, user: any, orderId: string) {
+  const order = await getOrderById(c, orderId);
   if (!order) {
     return buildLayout('合同查看 - 电脑租赁管理系统', `<div class="panel"><h2>订单未找到</h2><p>指定的订单不存在。</p></div>`, user);
   }
 
-  const contract = getContractByOrderId(orderId);
+  const contract = await getContractByOrderId(c, orderId);
   if (!contract) {
     return buildLayout('合同查看 - 电脑租赁管理系统', `<div class="panel"><h2>合同未找到</h2><p>该订单没有关联的合同。</p></div>`, user);
   }
 
-  const customer = getUserById(order.userId);
+  const customer = await getUserById(c, order.userId);
 
   // 客户信息脱敏处理
   const maskedCustomerName = customer ? `${customer.name.charAt(0)}**` : '未知';
