@@ -65,7 +65,7 @@ export function renderAdminSettings(user: any) {
             </h4>
             <div class="grid grid-2">
               <div>
-                <label for="bankAccountName" class="form-label">账户名称 (ANB)</label>
+                <label for="bankAccountName" class="form-label">账户名称</label>
                 <input type="text" id="bankAccountName" name="bankAccountName" class="form-control" value="${settings.bankDetails.accountName}" placeholder="请输入账户名称">
               </div>
               <div>

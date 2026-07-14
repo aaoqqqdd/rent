@@ -7,7 +7,7 @@ import { nanoid } from 'nanoid';
 const signSessions: Record<string, Record<string, any>> = {};
 
 export async function handleSignContractStep(c: Context, token: string, step: number, body: Record<string, string>): Promise<Response> {
-  const contract = getContractBySignToken(token);
+  const contract = await getContractBySignToken(c, token);
   if (!contract) {
     return new Response('合同链接无效或已过期', { status: 404 });
   }
@@ -145,7 +145,7 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         // 4. 如果有推荐人，计算并记录佣金
         if (referrerId) {
           // 获取租赁订单的总金额
-          const rental = await c.env.RENT.prepare('SELECT total_amount FROM orders WHERE id = ?').bind(contract.rentalId).first();
+          const rental = await c.env.RENT.prepare('SELECT total_amount FROM rentals WHERE id = ?').bind(contract.rentalId).first();
           if (rental) {
             // 获取推荐人的分成比例
             const referrer = await c.env.RENT.prepare('SELECT commission_rate FROM users WHERE id = ?').bind(referrerId).first();

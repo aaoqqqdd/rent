@@ -2,7 +2,7 @@ import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, forma
 import { Context } from 'hono';
 
 export async function renderContractSignPage(c: Context, token: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
-  const contract = getContractBySignToken(token);
+  const contract = await getContractBySignToken(c, token);
   if (!contract) {
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
   }

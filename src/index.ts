@@ -420,7 +420,7 @@ app.get('/contract/sign', async (c) => {
   const token = c.req.query('token') || '';
   const step = Number(c.req.query('step') || '1');
   const error = c.req.query('error');
-  return c.html(pages.renderContractSignPage(token, step, error));
+  return c.html(await pages.renderContractSignPage(c, token, step, error));
 });
 
 app.post('/contract/sign', async (c) => {

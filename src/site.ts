@@ -187,12 +187,50 @@ export const orders: Order[] = [
   },
 ]
 
-export const rentalTerms = '默认租赁条款：租客须遵守设备使用规范，并承担因使用不当造成的损坏责任。';
+export const rentalTerms = `## 电脑租赁协议条款
+
+尊敬的 {customer_name}：
+
+感谢您选择PC Rental电脑租赁服务，在签署合同前请仔细阅读以下租赁条款：
+
+### 一、租赁基本信息
+- 租赁设备：{device_name} ({device_model})
+- 设备序列号：{device_sn}
+- 租赁期限：从 {start_date} 至 {end_date}，共 {rental_days} 天
+- 日租金：${daily_rate}，租金总额：${total_rent}
+- 押金金额：${deposit_amount}
+
+### 二、租客责任
+1. 妥善保管租赁设备，不得转借、转租或抵押给第三方
+2. 按时支付租金及押金，逾期未付将按日租金的 {overdue_rate} 倍收取逾期费用
+3. 设备仅用于合法办公用途，不得用于任何违法活动
+4. 租赁到期前3天需联系客服确认是否续租，逾期未归还将自动收取逾期费用
+
+### 三、设备维护
+1. 租赁期间设备正常损耗由出租方承担
+2. 因人为损坏造成的维修费用由承租方承担
+3. 不得自行拆卸、改装设备，否则需承担全部赔偿责任
+
+### 四、付款信息
+请将租金及押金支付至以下账户：
+- 开户行BSB：{bank_bsb}
+- 账号：{bank_account}
+- 账户名：{account_name}
+
+### 五、联系方式
+如有任何问题，请联系我们的客服团队：
+- 电话：{company_phone}
+- 邮箱：{company_email}
+- 地址：{company_address}
+
+PC Rental电脑租赁团队
+{register_time}`;
+
 export const systemSettings = {
   bankDetails: {
     bsb: '062-001',
     account: '87654321',
-    accountName: 'PC Rental Pty Ltd',
+    accountName: 'ANB',
   },
   squareConfig: {
     applicationId: 'sq0idp-YOUR_APPLICATION_ID',
@@ -205,7 +243,44 @@ export const systemSettings = {
     bankTransfer: true,
     balancePayment: true,
   },
-  emailTemplate: '尊敬的用户，您的订单已创建。感谢选择我们的设备租赁服务！',
+  emailTemplate: `主题：您的电脑租赁合同已签署确认 - {contract_number}
+
+尊敬的 {customer_name}：
+
+感谢您选择PC Rental电脑租赁服务！
+
+您的租赁合同已成功签署，以下是合同详情：
+
+📋 合同编号：{contract_number}
+📅 签署时间：{sign_time}
+
+租赁信息：
+┌─────────────────────────────────────┐
+│  设备名称：{device_name}            │
+│  设备型号：{device_model}           │
+│  设备序列号：{device_sn}            │
+│  租赁开始：{start_date}             │
+│  租赁结束：{end_date}               │
+│  租赁天数：{rental_days} 天         │
+│  租金总额：${total_rent}            │
+│  押金：${deposit_amount}             │
+│  支付方式：{payment_method}          │
+└─────────────────────────────────────┘
+
+您的合同PDF已附件发送，请妥善保存。
+
+📌 重要提醒：
+• 请在 {payment_deadline} 日内完成支付
+• 支付完成后，我们将安排设备配送
+• 租赁到期前3天，您将收到续租提醒
+
+查看您的合同详情：
+{contract_view_link}
+
+如有任何疑问，请联系我们的客服团队。
+
+PC Rental电脑租赁团队
+{company_phone} | {company_email}`,
   referralSettings: {
     defaultRate: 10,
     levelLimit: 3,
@@ -216,7 +291,55 @@ export const systemSettings = {
 export const contractTemplate = {
   id: 'tmpl-1',
   name: '标准租赁合同模板',
-  content: '这是默认合同模板内容，包含租赁条款、押金及租期信息。',
+  content: `<h1>电脑租赁协议</h1>
+
+<p>合同编号：<strong>{contract_number}</strong></p>
+<p>签署日期：<strong>{sign_time}</strong></p>
+
+<h2>一、双方当事人</h2>
+<p><strong>出租方（甲方）：</strong>PC Rental电脑租赁平台</p>
+<p>联系电话：{company_phone}</p>
+<p>联系邮箱：{company_email}</p>
+<br>
+<p><strong>承租方（乙方）：</strong>{customer_name}</p>
+<p>联系电话：{customer_phone}</p>
+<p>联系邮箱：{customer_email}</p>
+
+<h2>二、租赁设备信息</h2>
+<table style="width:100%;border-collapse:collapse;margin:16px 0;">
+  <tr style="background:#f3f4f6;">
+    <th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">设备名称</th>
+    <th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">{device_name}</th>
+  </tr>
+  <tr>
+    <td style="border:1px solid #e5e7eb;padding:8px;">设备型号</td>
+    <td style="border:1px solid #e5e7eb;padding:8px;">{device_model}</td>
+  </tr>
+  <tr style="background:#f3f4f6;">
+    <td style="border:1px solid #e5e7eb;padding:8px;">序列号</td>
+    <td style="border:1px solid #e5e7eb;padding:8px;">{device_sn}</td>
+  </tr>
+</table>
+
+<h2>三、租赁期限</h2>
+<p>租赁开始日期：{start_date}</p>
+<p>租赁结束日期：{end_date}</p>
+<p>租赁天数：{rental_days}天</p>
+
+<h2>四、费用明细</h2>
+<p>日租金：${daily_rate}</p>
+<p>租金总额：${total_rent}</p>
+<p>押金金额：${deposit_amount}</p>
+<p>支付方式：{payment_method}</p>
+
+<h2>五、银行账户信息</h2>
+<p>BSB：{bank_bsb}</p>
+<p>账号：{bank_account}</p>
+<p>账户名：{account_name}</p>
+
+<h2>六、双方签字</h2>
+<p>甲方签字：_____________________ 日期：__________</p>
+<p>乙方签字：{signer_name} 日期：{sign_time}</p>`,
 }
 
 export async function getContractTemplate(c: Context): Promise<ContractTemplate> {
@@ -410,6 +533,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${title}</title>
+  <!-- Quill Editor CSS -->
+  <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
   <style>
     :root {
       --primary: #3b82f6;
@@ -1047,6 +1172,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       </main>
     </div>
   </div>
+  <!-- Quill Editor JS -->
+  <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 </body>
 </html>`
 }
@@ -1063,8 +1190,10 @@ export function getContractById(id: string): Contract | undefined {
   return contracts.find((c) => c.id === id)
 }
 
-export function getContractBySignToken(token: string): Contract | undefined {
-  return contracts.find((c) => c.signToken === token)
+export async function getContractBySignToken(c: Context, token: string): Promise<Contract | null> {
+  const db = getDB(c)
+  const contract = await db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(token).first()
+  return contract as Contract | null
 }
 
 export function getUserById(id: string): User | undefined {
@@ -1155,7 +1284,7 @@ export async function getUsersAsync(c: Context): Promise<User[]> {
 // 异步版本从数据库获取订单列表
 export async function getOrdersAsync(c: Context): Promise<any[]> {
   const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM orders').all()
+  const result = await db.prepare('SELECT * FROM rentals').all()
   return result.results || []
 }
 

@@ -29,7 +29,7 @@ export function renderAdminUserDetail(user: any, targetUserId: string) {
         ${targetUser.role === 'CUSTOMER' ? `
         <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding: 24px; border-radius: 12px; border: 1px solid #f59e0b;">
           <h3 style="margin-top: 0; color: #92400e;">💳 客户银行账户信息</h3>
-          <p><strong>账户名称(ANB):</strong> ${targetUser.accountName || '未填写'}</p>
+          <p><strong>账户名称:</strong> ${targetUser.accountName || '未填写'}</p>
           <p><strong>BSB码:</strong> ${targetUser.bsb || '未填写'}</p>
           <p><strong>银行账号:</strong> ${targetUser.account || '未填写'}</p>
           <p style="margin-top: 16px; padding: 12px; background: rgba(255,255,255,0.5); border-radius: 8px; color: #78350f;">
