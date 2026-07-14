@@ -125,7 +125,7 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
           pendingCommission: 0,
           withdrawnCommission: 0,
           referralCode: null,
-          referrerId: referrerId, // 绑定推荐人，一旦设置不可更改
+          referrer_id: referrerId, // 绑定推荐人，一旦设置不可更改
           createdAt: new Date().toISOString(),
           registrationDate: new Date().toISOString(),
         };
@@ -136,6 +136,7 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
           userId: newUserId,
           paymentMethod: paymentMethod as Order['paymentMethod'],
           status: 'pending_payment', // 等待支付
+          referrer_id: referrerId, // 在这里同步推荐人ID
         });
 
         // 3. 更新合同状态
@@ -144,7 +145,7 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         // 4. 如果有推荐人，计算并记录佣金
         if (referrerId) {
           // 获取租赁订单的总金额
-          const rental = await c.env.RENT.prepare('SELECT total_amount FROM rentals WHERE id = ?').bind(contract.rentalId).first();
+          const rental = await c.env.RENT.prepare('SELECT total_amount FROM orders WHERE id = ?').bind(contract.rentalId).first();
           if (rental) {
             // 获取推荐人的分成比例
             const referrer = await c.env.RENT.prepare('SELECT commission_rate FROM users WHERE id = ?').bind(referrerId).first();
@@ -163,12 +164,6 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
               UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP
               WHERE id = ?
             `).bind(commissionAmount, referrerId).run();
-            
-            // 更新租赁订单的推荐人信息
-            await c.env.RENT.prepare(`
-              UPDATE rentals SET referrer_id = ?, commission_rate = ?, commission_amount = ?, updated_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `).bind(referrerId, commissionRate, commissionAmount, contract.rentalId).run();
           }
         }
         

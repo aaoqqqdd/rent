@@ -226,11 +226,9 @@ app.get('/register', async (c) => {
 app.post('/register', async (c) => {
   const body = await c.req.text()
   const form = parseFormBody(body)
-  const name = form.name?.trim()
-  const email = form.email?.trim()
-  const password = form.password?.trim()
-  const passwordConfirm = form.passwordConfirm?.trim()
-  if (!name || !email || !password || !passwordConfirm) {
+  const { name, email, password, passwordConfirm, referrer } = form
+
+  if (!name?.trim() || !email?.trim() || !password?.trim() || !passwordConfirm?.trim()) {
     return c.html(pages.renderRegister('请输入完整注册信息'))
   }
   if (password !== passwordConfirm) {
@@ -242,18 +240,33 @@ app.post('/register', async (c) => {
   if (existingUser) {
     return c.html(pages.renderRegister('该电子邮箱已被注册'))
   }
+
+  // 处理推荐人
+  let referrerId = null;
+  if (referrer && referrer.trim()) {
+    const normalizedReferrerCode = referrer.trim().toUpperCase();
+    const referrerUser = await (c.env as any).RENT.prepare('SELECT id FROM users WHERE UPPER(referralCode) = ?').bind(normalizedReferrerCode).first();
+    if (referrerUser) {
+      referrerId = referrerUser.id;
+    } else {
+      // 如果推荐码无效，可以选择返回错误或忽略
+      // return c.html(pages.renderRegister('无效的推荐码'))
+    }
+  }
   
   // 创建新用户
   const { nanoid } = await import('nanoid')
+  const { hashPassword } = await import('./site')
   const newUserId = `u-${nanoid(8)}`
   const newUser = {
     id: newUserId,
-    name,
-    email,
-    password,
+    name: name.trim(),
+    email: email.trim(),
+    password_hash: await hashPassword(password),
     role: 'CUSTOMER' as const,
     balance: 0,
     commissionBalance: 0,
+    referrer_id: referrerId,
     createdAt: new Date().toISOString(),
     status: 'active' as const
   }
@@ -261,9 +274,8 @@ app.post('/register', async (c) => {
   await insertUser(c, newUser)
   
   // 自动登录
-  const sessionId = nanoid(16)
   const response = c.redirect('/customer/dashboard')
-  response.headers.set('Set-Cookie', `session=${sessionId}; Path=/; HttpOnly; SameSite=Lax`)
+  response.headers.set('Set-Cookie', `session=CUSTOMER:${newUserId}; Path=/; HttpOnly; SameSite=Lax`)
   
   return response
 })

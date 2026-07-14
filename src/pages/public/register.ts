@@ -19,7 +19,7 @@ export function renderRegister(errorMessage?: string) {
           <label class="form-label">确认密码</label>
           <input class="form-control" type="password" name="passwordConfirm" placeholder="请再次输入密码" />
           <label class="form-label">推荐人（选填）</label>
-          <input class="form-control" name="referrer" placeholder="填写推荐人ID或推荐码" />
+          <input class="form-control" name="referrer" placeholder="填写推荐码" />
           <div style="margin-top: 12px; margin-bottom: 20px;">
             <label class="form-check">
               <input type="checkbox" name="terms" /> 我已阅读并同意《用户协议》

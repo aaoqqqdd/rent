@@ -26,7 +26,7 @@ export async function renderCustomerReferral(c: Context, user: any, errorMessage
            COUNT(r.id) as orderCount,
            SUM(cr.amount) as contributedCommission
     FROM users u
-    LEFT JOIN rentals r ON u.id = r.customer_id
+    LEFT JOIN orders r ON u.id = r.customer_id
     LEFT JOIN commission_records cr ON u.id = cr.customer_id
     WHERE u.referrer_id = ?
     GROUP BY u.id
