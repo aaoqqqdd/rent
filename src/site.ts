@@ -575,22 +575,23 @@ export async function insertUser(c: Context, user: User): Promise<User> {
 
 // 同步版本保持向后兼容，返回空数组
 export function getUsers(): User[] {
-  console.warn('Deprecated: 使用异步版本 getUsersAsync(c: Context) 来从数据库获取用户列表')
-  return []
+  return users
 }
 
 // 异步版本从数据库获取用户列表
 export async function getUsersAsync(c: Context): Promise<User[]> {
   const db = getDB(c)
-  const users = await db.prepare('SELECT * FROM users').all()
-  return (users.results as User[] || []).map(user => {
-    delete user.password_hash
+  const result = await db.prepare('SELECT * FROM users').all()
+  return (result.results as User[] || []).map((user) => {
+    if (user.password_hash) {
+      delete user.password_hash
+    }
     return user
   })
 }
 
 export function getContractByOrderId(orderId: string): Contract | undefined {
-  return contracts.find(c => (c as any).orderId === orderId)
+  return contracts.find((c) => c.rentalId === orderId)
 }
 
 export function getDevices(): Device[] {
@@ -606,11 +607,11 @@ export function getOrders(): Order[] {
 }
 
 export function getOrdersForUser(userId: string): Order[] {
-  return orders.filter(o => o.userId === userId)
+  return orders.filter((o) => o.userId === userId || o.customerId === userId)
 }
 
 export function getPendingOrders(): Order[] {
-  return orders.filter(o => o.status === 'pending_payment')
+  return orders.filter((o) => o.status === 'pending_payment' || o.status === 'pending_approval')
 }
 
 export function getAllRentals(): Order[] {
@@ -618,28 +619,94 @@ export function getAllRentals(): Order[] {
 }
 
 export function getRentalsByUserId(userId: string): Order[] {
-  return orders.filter(o => o.userId === userId)
+  return orders.filter((o) => o.userId === userId || o.customerId === userId)
 }
 
 export function getAllContracts(): Contract[] {
   return contracts
 }
 
-// 添加缺失的导出函数以满足编译要求
-// 添加所有缺失的导出函数以满足编译要求
-export function updateOrderStatus(...args: any[]) {}
-export function updateDeviceStatus(...args: any[]) {}
-export function insertOrder(...args: any[]) {}
-export function insertContract(...args: any[]) {}
-export function updateContractStatusInDB(...args: any[]) {}
-export function updateOrderInDB(...args: any[]) {
-  return { id: 'temp-order-id' }
+export async function insertOrder(c: Context, order: Order): Promise<Order> {
+  orders.push(order)
+  return order
 }
-export function updateContractTemplateInDB(...args: any[]) {}
-export function updateOrder(...args: any[]) {}
-export function createContract(...args: any[]) {}
-export function updateContractStatus(...args: any[]) {}
-export function updateSystemSettings(...args: any[]) {}
-export function updatePassword(...args: any[]) {}
-export function bindReferrer(...args: any[]) {}
-export function unbindReferrer(...args: any[]) {}
+
+export async function insertContract(c: Context, contract: Contract): Promise<Contract> {
+  contracts.push(contract)
+  return contract
+}
+
+export async function updateDeviceStatus(c: Context, deviceId: string, status: Device['status']): Promise<Device | undefined> {
+  const device = devices.find((d) => d.id === deviceId)
+  if (device) {
+    device.status = status
+  }
+  return device
+}
+
+export async function updateOrderStatus(c: Context, orderId: string, status: Order['status']): Promise<Order | undefined> {
+  const order = orders.find((o) => o.id === orderId)
+  if (order) {
+    order.status = status
+  }
+  return order
+}
+
+export async function updateOrder(c: Context, orderId: string, data: Partial<Order>): Promise<Order | undefined> {
+  const order = orders.find((o) => o.id === orderId)
+  if (!order) return undefined
+  Object.assign(order, data)
+  return order
+}
+
+export async function updateOrderInDB(c: Context, orderId: string, data: Partial<Order>): Promise<Order | undefined> {
+  return updateOrder(c, orderId, data)
+}
+
+export async function updateContractStatus(c: Context, contractId: string, status: Contract['status']): Promise<Contract | undefined> {
+  const contract = contracts.find((c) => c.id === contractId)
+  if (contract) {
+    contract.status = status
+  }
+  return contract
+}
+
+export async function updateContractStatusInDB(c: Context, contractId: string, status: Contract['status']): Promise<Contract | undefined> {
+  return updateContractStatus(c, contractId, status)
+}
+
+export async function updateContractTemplateInDB(c: Context, newTemplate: { id: string; name: string; content: string }): Promise<ContractTemplate> {
+  return updateContractTemplate(newTemplate)
+}
+
+export async function createContract(c: Context, contract: Contract): Promise<Contract> {
+  return insertContract(c, contract)
+}
+
+export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {
+  Object.assign(systemSettings, updates)
+  return systemSettings
+}
+
+export async function updatePassword(c: Context, userId: string, newPassword: string): Promise<User | undefined> {
+  const user = users.find((u) => u.id === userId)
+  if (!user) return undefined
+  user.password = newPassword
+  return user
+}
+
+export async function bindReferrer(c: Context, userId: string, referrerId: string): Promise<User | undefined> {
+  const user = users.find((u) => u.id === userId)
+  if (user) {
+    user.referrerId = referrerId
+  }
+  return user
+}
+
+export async function unbindReferrer(c: Context, userId: string): Promise<User | undefined> {
+  const user = users.find((u) => u.id === userId)
+  if (user) {
+    delete user.referrerId
+  }
+  return user
+}
