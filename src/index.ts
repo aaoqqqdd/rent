@@ -5,7 +5,6 @@ import {
   verifyUserCredentials, 
   findUserBySession, 
   getDeviceById, 
-grep -n "daily_rate" src/site.ts  updateContractTemplateInDB,
   updateUser, 
   verifyPassword, 
   insertUser, 
