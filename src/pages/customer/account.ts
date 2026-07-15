@@ -1,10 +1,10 @@
 import { buildLayout, getUserById, updateUser, updatePassword, bindReferrer, unbindReferrer, formatCurrency } from '../../site';
 
-export function renderCustomerAccount(user: any, message?: string, type: 'success' | 'error' = 'error') {
-  const currentUser = getUserById(user.id); // Re-fetch user to ensure latest data
+export async function renderCustomerAccount(user: any, message?: string, type: 'success' | 'error' = 'error') {
+  const currentUser = await getUserById(user.id) // Re-fetch user to ensure latest data
 
   if (!currentUser) {
-    return buildLayout('我的账户 - 电脑租赁管理系统', '<div class="panel"><h2>用户未找到</h2><p>您的账户信息无法加载。</p></div>', user);
+    return buildLayout('我的账户 - 电脑租赁管理系统', '<div class="panel"><h2>用户未找到</h2><p>您的账户信息无法加载。</p></div>', user)
   }
 
   const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : '';

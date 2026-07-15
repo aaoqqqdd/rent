@@ -1,7 +1,7 @@
 import { buildLayout, getDevices, formatCurrency } from '../../site';
 
-export function renderCustomerDevices(user: any) {
-  const devices = getDevices().filter(device => device.status === 'available'); // 只显示可用设备
+export async function renderCustomerDevices(user: any) {
+  const devices = (await getDevices()).filter(device => device.status === 'available'); // 只显示可用设备
 
   const body = `
     <div class="panel">

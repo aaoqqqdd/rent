@@ -55,8 +55,11 @@ export async function renderAdminUsers(user: any, c: any) {
                 <td>${u.email}</td>
                 <td><span class="badge ${role.class}">${role.text}</span></td>
                 <td><span class="badge ${status.class}">${status.text}</span></td>
-                <td>AUD$${(u.balance || 0).toFixed(2)}</td>
-                <td>${(u.created_at || u.createdAt) ? new Date(u.created_at || u.createdAt).toLocaleDateString('zh-CN') : '-'}</td>
+                <td>AUD$${parseFloat(String(u.balance || 0)).toFixed(2)}</td>
+                <td>${(u.created_at || u.createdAt)
+                  ? new Date(u.created_at || u.createdAt as string).toLocaleDateString('zh-CN')
+                  : '-'
+                }</td>
                 <td>
                   <a class="link-button" href="/admin/users/${u.id}">查看</a>
                   <a class="link-button" href="/admin/users/${u.id}/edit">编辑</a>

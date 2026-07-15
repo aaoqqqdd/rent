@@ -1,12 +1,20 @@
-import { buildLayout, getAllContracts, getOrderById, getUserById } from '../../site';
-import { Context } from 'hono';
+import { buildLayout, getAllContracts, getOrderById, getUserById } from '../../site'
+import type { Context } from 'hono'
 
 export async function renderStaffContracts(c: Context, user: any, status?: string) {
-  let allContracts = await getAllContracts(c); 
+  let allContracts = await getAllContracts(c)
 
   if (status) {
-    allContracts = allContracts.filter(c => c.status === status);
+    allContracts = allContracts.filter((ct) => ct.status === status)
   }
+
+  const contractsWithDetails = await Promise.all(
+    allContracts.map(async (contract) => {
+      const order = await getOrderById(c, contract.rentalId)
+      const customer = order ? await getUserById(c, order.userId) : null
+      return { contract, order, customer }
+    })
+  )
 
   const body = `
     <div class="panel">
@@ -19,7 +27,9 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         <a href="/staff/contracts?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
       </div>
 
-      ${allContracts.length > 0 ? `
+      ${
+        contractsWithDetails.length > 0
+          ? `
         <table class="table">
           <thead>
             <tr>
@@ -32,10 +42,9 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
             </tr>
           </thead>
           <tbody>
-            ${allContracts.map(contract => {
-              const order = getOrderById(c, contract.rentalId);
-              const customer = order ? getUserById(c, order.userId) : null;
-              return `
+            ${contractsWithDetails
+              .map(({ contract, order, customer }) => {
+                return `
                 <tr>
                   <td>${contract.contractNumber}</td>
                   <td>${order?.orderNo ?? 'N/A'}</td>
@@ -44,17 +53,24 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                   <td>${contract.signedAt ?? '未签署'}</td>
                   <td>
                     <a class="button button-sm button-secondary" href="/staff/contract/view/${contract.id}">查看</a>
-                    ${contract.status === 'pending_sign' ? `<a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>` : ''}
+                    ${
+                      contract.status === 'pending_sign'
+                        ? `<a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>`
+                        : ''
+                    }
                     <a class="button button-sm button-info" href="/staff/contract/${contract.id}/upload">上传/更新文件</a>
                   </td>
                 </tr>
-              `;
-            }).join('')}
+              `
+              })
+              .join('')}
           </tbody>
         </table>
-      ` : '<p>没有找到符合条件的合同记录。</p>'}
+      `
+          : '<p>没有找到符合条件的合同记录。</p>'
+      }
     </div>
-  `;
+  `
 
-  return buildLayout('合同管理 - 电脑租赁管理系统', body, user);
+  return buildLayout('合同管理 - 电脑租赁管理系统', body, user)
 }

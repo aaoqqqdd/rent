@@ -1,4 +1,5 @@
-import { buildLayout, getContractByOrderId, getOrderById, getUserById } from '../../site';
+import { buildLayout, getContractByOrderId, getOrderById, getUserById } from '../../site'
+import type { Context } from 'hono'
 
 export async function renderStaffContractView(c: Context, user: any, orderId: string) {
   const order = await getOrderById(c, orderId);

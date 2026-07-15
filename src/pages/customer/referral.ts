@@ -1,6 +1,12 @@
 import { buildLayout, getUserById, formatCurrency } from '../../site';
 import { Context } from 'hono';
 
+function desensitizeName(name: string): string {
+  const n = name || ''
+  if (n.length <= 1) return n
+  return `${n[0]}${'*'.repeat(Math.min(2, n.length - 1))}`
+}
+
 export async function renderCustomerReferral(c: Context, user: any, errorMessage?: string) {
   // 从数据库获取完整的用户信息和佣金统计
   const currentUser = await c.env.RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
@@ -14,11 +20,21 @@ export async function renderCustomerReferral(c: Context, user: any, errorMessage
     SELECT * FROM commission_records WHERE referrer_id = ?
   `).bind(user.id).all();
   
+  type CommissionRecord = { amount: number; status: string }
+
+  const records = (commissionRecords.results || []) as CommissionRecord[]
+
   // 计算佣金统计
-  const totalCommission = commissionRecords.results?.reduce((sum, record) => sum + record.amount, 0) || 0;
-  const pendingCommission = commissionRecords.results?.filter(record => record.status === 'pending').reduce((sum, record) => sum + record.amount, 0) || 0;
-  const settledCommission = commissionRecords.results?.filter(record => record.status === 'settled').reduce((sum, record) => sum + record.amount, 0) || 0;
-  const withdrawnCommission = commissionRecords.results?.filter(record => record.status === 'withdrawn').reduce((sum, record) => sum + record.amount, 0) || 0;
+  const totalCommission = records.reduce((sum, record) => sum + (record.amount || 0), 0)
+  const pendingCommission = records
+    .filter((record) => record.status === 'pending')
+    .reduce((sum, record) => sum + (record.amount || 0), 0)
+  const settledCommission = records
+    .filter((record) => record.status === 'settled')
+    .reduce((sum, record) => sum + (record.amount || 0), 0)
+  const withdrawnCommission = records
+    .filter((record) => record.status === 'withdrawn')
+    .reduce((sum, record) => sum + (record.amount || 0), 0)
   
   // 获取已推荐的好友列表
   const referredUsers = await c.env.RENT.prepare(`

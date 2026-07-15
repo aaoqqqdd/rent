@@ -1,7 +1,8 @@
-import { buildLayout, getDeviceById } from '../../site';
+import { buildLayout, getDeviceById } from '../../site'
+import type { Context } from 'hono'
 
-export function renderStaffDeviceEdit(user: any, deviceId: string, errorMessage?: string) {
-  const device = getDeviceById(deviceId)
+export async function renderStaffDeviceEdit(c: Context, user: any, deviceId: string, errorMessage?: string) {
+  const device = await getDeviceById(c, deviceId)
   if (!device) {
     return buildLayout('编辑设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求的设备不存在。</p></div>', user)
   }

@@ -1,7 +1,8 @@
-import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById } from '../../site';
+import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById } from '../../site'
+import type { Context } from 'hono'
 
 export async function renderContractView(c: Context, contractId: string, user: any) {
-  const contract = await getContractById(c, contractId);
+  const contract = await getContractById(c, contractId)
   if (!contract) {
     return buildLayout('查看合同 - 电脑租赁管理系统', '<div class="panel"><h2>合同未找到</h2><p>您请求的合同不存在。</p></div>', user);
   }

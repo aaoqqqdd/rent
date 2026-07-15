@@ -3,33 +3,33 @@ import { buildLayout } from '../../site';
 export function renderRegister(errorMessage?: string) {
   const body = `
     <div class="page-centered">
-      <div class="panel" style="width: 480px; text-align: center;">
-        <div style="margin-bottom: 24px;">
-          <img src="/public/logo.svg" alt="Logo" style="width: 64px; height: 64px;"/>
-          <h2 style="margin-top: 12px;">创建新账户</h2>
+      <div class="login-container" style="max-width: 480px;">
+        <div class="login-card">
+          <div class="login-logo"><span class="logo-mark">▣</span>PC Rental</div>
+          <p class="login-subtitle">创建您的专业设备租赁账户</p>
+          <form method="POST" action="/register">
+            ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
+            <label class="form-label">姓名</label>
+            <input class="form-control" name="name" placeholder="请输入姓名" required />
+            <label class="form-label">邮箱地址</label>
+            <input class="form-control" type="email" name="email" placeholder="name@example.com" required />
+            <label class="form-label">登录密码</label>
+            <input class="form-control" type="password" name="password" placeholder="至少8位，包含字母和数字" required />
+            <label class="form-label">确认密码</label>
+            <input class="form-control" type="password" name="passwordConfirm" placeholder="请再次输入密码" required />
+            <label class="form-label">推荐码 (选填)</label>
+            <input class="form-control" name="referrer" placeholder="来自朋友的推荐码" />
+            <div class="form-row">
+              <label class="form-check">
+                <input type="checkbox" name="terms" required /> 我已阅读并同意 <a href="/terms" class="link-button">用户协议</a>
+              </label>
+            </div>
+            <button class="button" type="submit" style="width: 100%;">立即注册</button>
+          </form>
+          <p class="text-muted-center">已有账号？ <a class="link-button" href="/login">直接登录</a></p>
         </div>
-        ${errorMessage ? `<div class="alert">${errorMessage}</div>` : ''}
-        <form method="POST" action="/register" style="text-align: left;">
-          <label class="form-label">姓名</label>
-          <input class="form-control" name="name" placeholder="请输入姓名" />
-          <label class="form-label">邮箱</label>
-          <input class="form-control" type="email" name="email" placeholder="请输入邮箱" />
-          <label class="form-label">密码</label>
-          <input class="form-control" type="password" name="password" placeholder="至少8位，包含字母和数字" />
-          <label class="form-label">确认密码</label>
-          <input class="form-control" type="password" name="passwordConfirm" placeholder="请再次输入密码" />
-          <label class="form-label">推荐人（选填）</label>
-          <input class="form-control" name="referrer" placeholder="填写推荐码" />
-          <div style="margin-top: 12px; margin-bottom: 20px;">
-            <label class="form-check">
-              <input type="checkbox" name="terms" /> 我已阅读并同意《用户协议》
-            </label>
-          </div>
-          <button class="button" type="submit" style="width: 100%;">注册</button>
-        </form>
-        <p class="text-muted" style="margin-top: 20px;">已有账号？ <a class="link-button" href="/login">去登录</a></p>
       </div>
     </div>
   `
-  return buildLayout('注册 - 电脑租赁管理系统', body)
+  return buildLayout('注册 - PC Rental', body)
 }

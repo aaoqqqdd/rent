@@ -30,7 +30,7 @@ export async function renderAdminOrders(c: Context, user: any) {
         <span class="section-note">查看和管理系统中的所有订单。</span>
         <a href="/admin/orders/export" class="button button-secondary" style="margin-left: auto;">导出报表</a>
       </div>
-      ${ordersWithDetails.length === 0 ? `
+      ${ordersWithDetail.length === 0 ? `
         <div style="text-align: center; padding: 48px 24px; color: var(--text-secondary);">
           <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">📋</div>
           <h3>暂无订单</h3>

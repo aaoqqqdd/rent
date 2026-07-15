@@ -1,7 +1,7 @@
 import { buildLayout, getDeviceById, formatCurrency } from '../../site';
 
-export function renderCustomerRent(deviceId: string, user: any, errorMessage?: string) {
-  const device = getDeviceById(deviceId);
+export async function renderCustomerRent(deviceId: string, user: any, errorMessage?: string) {
+  const device = await getDeviceById(deviceId);
 
   if (!device) {
     return buildLayout('租赁设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求租赁的设备不存在。</p></div>', user);

@@ -45,8 +45,9 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     contractId: contractId,
     signedAt: null,
     createdAt: new Date().toISOString(),
-    created_by: user.id,
-  };
+    // created_by 在部分旧代码/表结构中存在，这里与 Order 类型对齐使用 createdAt
+    createdAtBy: user.id,
+  } as any;
 
   const newContract: Contract = {
     id: contractId,

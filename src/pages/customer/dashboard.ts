@@ -6,7 +6,11 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
   const pendingPayment = orders.filter((order) => order.status === 'pending_payment').length
   const completedOrders = orders.filter((order) => order.status === 'completed').length
 
-  const cards = `
+  const body = `
+    <div class="hero">
+      <h2>欢迎回来，${user.name}</h2>
+      <p>管理您的设备租赁、查看订单状态、完成支付。</p>
+    </div>
     <div class="stats-grid">
       <div class="stat-card primary">
         <h3>当前租赁</h3>
@@ -29,25 +33,23 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
         <div class="trend">历史租赁</div>
       </div>
     </div>
-  `
-
-  const upcoming = currentRentals.length > 0 ? `
-    <div class="card">
-      <h3>即将到期提醒</h3>
-      <p><span class="mono">${currentRentals[0].orderNo}</span> 将于 3 天后到期</p>
-      <p style="margin-top: 12px;">
-        <a class="button button-sm" href="/customer/rentals">续租申请</a>
-        <a class="button button-sm button-secondary" href="/customer/rentals" style="margin-left:8px;">提前归还</a>
-      </p>
-    </div>` : ''
-
-  const body = `
-    <div class="hero">
-      <h2>欢迎回来，${user.name}</h2>
-      <p>管理您的设备租赁、查看订单状态、完成支付。</p>
+    <div class="grid grid-2">
+      ${currentRentals.length > 0 ? `
+      <div class="card">
+        <h3>即将到期提醒</h3>
+        <p><span class="mono">${currentRentals[0].orderNo}</span> 将于 3 天后到期</p>
+        <p style="margin-top: 12px;">
+          <a class="button button-sm" href="/customer/rentals">续租申请</a>
+          <a class="button button-sm button-secondary" href="/customer/rentals" style="margin-left:8px;">提前归还</a>
+        </p>
+      </div>` : ''}
+      <div class="card">
+        <h3>快捷操作</h3>
+        <p><a class="link-button" href="/customer/devices">浏览可租设备 →</a></p>
+        <p><a class="link-button" href="/customer/referral">邀请好友赚佣金 →</a></p>
+        <p><a class="link-button" href="/customer/profile">完善账户信息 →</a></p>
+      </div>
     </div>
-    ${cards}
-    ${upcoming ? `<div class="grid grid-2">${upcoming}<div class="card"><h3>快捷操作</h3><p><a class="link-button" href="/customer/devices">浏览可租设备 →</a></p><p><a class="link-button" href="/customer/referral">邀请好友赚佣金 →</a></p><p><a class="link-button" href="/customer/profile">完善账户信息 →</a></p></div></div>` : ''}
     <div class="panel" style="margin-top: 20px;">
       <div class="section-title">
         <h2>我的订单</h2>
@@ -59,12 +61,8 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
         ${orders.slice(0, 5).map((order) => {
           const device = devices.find(d => d.id === order.deviceId)
           const statusMap: Record<string, string> = {
-            'active': 'badge-success',
-            'paid': 'badge-info',
-            'pending_payment': 'badge-warning',
-            'pending_approval': 'badge-warning',
-            'completed': 'badge-primary',
-            'cancelled': 'badge-danger'
+            'active': 'badge-success', 'paid': 'badge-info', 'pending_payment': 'badge-warning',
+            'pending_approval': 'badge-warning', 'completed': 'badge-primary', 'cancelled': 'badge-danger'
           }
           const statusClass = statusMap[order.status] || 'badge-info'
           return `<tr>

@@ -488,6 +488,26 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   return inserted
 }
 
+// ===== Customer account helpers (used by src/pages/customer/account.ts) =====
+
+export async function updatePassword(c: Context, userId: string, newPassword: string): Promise<User | null> {
+  return updateUser(c, userId, { password: newPassword })
+}
+
+export async function bindReferrer(c: Context, userId: string, referrerId: string): Promise<User | null> {
+  // 绑定后不可更改：如果 referrer_id 已存在则不更新
+  const db = getDB(c)
+  await db.prepare('UPDATE users SET referrer_id = ? WHERE id = ? AND referrer_id IS NULL').bind(referrerId, userId).run()
+  return getUserById(c, userId)
+}
+
+export async function unbindReferrer(c: Context, userId: string): Promise<User | null> {
+  // 允许解除（如果你不允许，删除该函数或改成 no-op）
+  const db = getDB(c)
+  await db.prepare('UPDATE users SET referrer_id = NULL WHERE id = ?').bind(userId).run()
+  return getUserById(c, userId)
+}
+
 export async function updateDevice(c: Context, deviceId: string, data: Partial<Device>): Promise<Device | null> {
   const db = getDB(c)
   const existing = await getDeviceById(c, deviceId)
@@ -1073,7 +1093,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       <a href="/register">注册</a>
     `
 
-  const userBlock = currentUser
+  const userBlockHtml = currentUser
     ? `
         <span class="user-label">${currentUser.name}</span>
         <div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div>
@@ -1567,7 +1587,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     <header>
       <a href="/" class="logo"><span class="logo-mark">▣</span>PC Rental</a>
       <nav class="main-nav">${topNav}</nav>
-      <div class="user-block">${userBlock}</div>
+      <div class="user-block">${userBlockHtml}</div>
     </header>
     <div class="container">
       ${sidebar}

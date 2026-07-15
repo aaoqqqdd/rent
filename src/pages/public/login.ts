@@ -12,10 +12,8 @@ export function renderLogin(errorMessage?: string) {
             <input class="form-control" name="account" placeholder="name@example.com" />
             <label class="form-label">登录密码</label>
             <input class="form-control" type="password" name="password" placeholder="••••••••" />
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-              <label class="form-check">
-                <input type="checkbox" name="remember" /> 记住我
-              </label>
+            <div class="form-row">
+              <label class="form-check"><input type="checkbox" name="remember" /> 记住我</label>
               <a class="link-button" href="/forgot-password">忘记密码？</a>
             </div>
             ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
@@ -31,7 +29,7 @@ export function renderLogin(errorMessage?: string) {
             </div>
             <button class="button" type="submit" style="width: 100%;">登录</button>
           </form>
-          <p class="text-muted" style="margin-top: 24px; text-align: center;">还没有账号？ <a class="link-button" href="/register">立即注册</a></p>
+          <p class="text-muted-center">还没有账号？ <a class="link-button" href="/register">立即注册</a></p>
         </div>
       </div>
     </div>
