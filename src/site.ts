@@ -19,11 +19,21 @@ export interface User {
   referrerId?: string
   referralCode?: string
   registrationDate?: string
+
+  // camelCase
   createdAt?: string
   commissionBalance: number
+
+  // snake_case 兼容旧页面
+  created_at?: string
+  commission_balance?: number
+
   pendingCommission?: number
   withdrawnCommission?: number
   referredUsers?: Array<Record<string, any>>
+
+  // staff 相关旧代码可能依赖
+  staffId?: string
 }
 
 export interface Device {
@@ -32,9 +42,16 @@ export interface Device {
   model: string
   serialNumber: string
   serial_number?: string
+
+  // camelCase
   pricePerDay: number
   dailyRate?: number
   depositAmount: number
+
+  // snake_case 兼容旧页面
+  price_per_day?: number
+  deposit_amount?: number
+
   status: 'available' | 'rented' | 'maintenance' | 'retired'
   description: string
 }
@@ -58,6 +75,19 @@ export interface Order {
   contractId: string
   signedAt: string | null
   createdAt: string
+
+  // snake_case 兼容旧页面
+  customer_id?: string
+  device_id?: string
+  start_date?: string
+  end_date?: string
+  rental_period?: number
+  total_amount?: number
+  deposit_amount?: number
+  created_at?: string
+
+  // refunds 旧逻辑
+  needsRefund?: boolean
 }
 
 export interface Contract {
@@ -69,6 +99,9 @@ export interface Contract {
   createdAt?: string
   signToken?: string
   status: 'draft' | 'pending_sign' | 'signed' | 'cancelled'
+
+  // snake_case 兼容旧页面
+  rental_id?: string
 }
 
 export interface ContractTemplate {
@@ -328,12 +361,73 @@ export const contracts: Contract[] = [
   },
 ]
 
-export function getSystemSettings() {
+type SystemSettingsKey = 'rentalTerms' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings'
+
+function safeJsonParse<T>(value: string | null | undefined): T | undefined {
+  if (!value) return undefined
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return undefined
+  }
+}
+
+export function getSystemSettings(): typeof systemSettings {
+  return systemSettings
+}
+
+export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
+  const db = getDB(c)
+
+  const read = async (key: SystemSettingsKey) => {
+    const row = await db.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(key).first()
+    const value = (row as any)?.value
+    return value ?? null
+  }
+
+  const rentalTermsValue = await read('rentalTerms')
+  const priceStrategyValue = await read('priceStrategy')
+  const paymentMethodsValue = await read('paymentMethods')
+  const bankDetailsValue = await read('bankDetails')
+  const emailTemplateValue = await read('emailTemplate')
+  const referralSettingsValue = await read('referralSettings')
+
+  systemSettings.rentalTerms = rentalTermsValue ?? systemSettings.rentalTerms
+  systemSettings.priceStrategy = priceStrategyValue ?? systemSettings.priceStrategy
+  systemSettings.emailTemplate = emailTemplateValue ?? systemSettings.emailTemplate
+
+  const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)
+  const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
+  const parsedReferralSettings = safeJsonParse<typeof systemSettings.referralSettings>(referralSettingsValue)
+
+  if (parsedPaymentMethods) systemSettings.paymentMethods = parsedPaymentMethods
+  if (parsedBankDetails) systemSettings.bankDetails = parsedBankDetails
+  if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
+
   return systemSettings
 }
 
 export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {
   Object.assign(systemSettings, updates)
+
+  const db = getDB(c)
+
+  const write = async (key: SystemSettingsKey, value: any) => {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+    await db.prepare(`
+      INSERT INTO systemSettings (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value
+    `).bind(key, serialized).run()
+  }
+
+  await write('rentalTerms', systemSettings.rentalTerms)
+  await write('priceStrategy', systemSettings.priceStrategy)
+  await write('paymentMethods', systemSettings.paymentMethods)
+  await write('bankDetails', systemSettings.bankDetails)
+  await write('emailTemplate', systemSettings.emailTemplate)
+  await write('referralSettings', systemSettings.referralSettings)
+
   return systemSettings
 }
 
@@ -866,15 +960,24 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
 
   // Seed示例设备
   const devicesToSeed = [
-    { id: 'd-mbp14', name: 'MacBook Pro 14寸', model: 'M4 Pro 18GB 512GB', serial_number: 'SN-MBP14-001', price_per_day: 40.0, deposit_amount: 2000.0, status: 'available', description: 'Apple M4 Pro芯片，18GB内存，512GB固态硬盘，14英寸Liquid Retina XDR显示屏' },
-    { id: 'd-xps13', name: 'Dell XPS 13', model: 'Intel i7-1360P 16GB', serial_number: 'SN-XPS13-001', price_per_day: 35.0, deposit_amount: 1500.0, status: 'available', description: '第13代Intel酷睿i7处理器，16GB LPDDR5内存，512GB NVMe SSD' },
-    { id: 'd-thinkpad', name: 'Lenovo ThinkPad X1 Carbon', model: 'i7-1365U 16GB', serial_number: 'SN-TPX1-001', price_per_day: 38.0, deposit_amount: 1800.0, status: 'rented', description: '13代Intel vPro i7，16GB内存，1TB SSD，14英寸2.8K OLED屏' },
-    { id: 'd-imac', name: 'iMac 24寸', model: 'M3 8GB 256GB', serial_number: 'SN-IMAC24-001', price_per_day: 45.0, deposit_amount: 2200.0, status: 'maintenance', description: 'Apple M3芯片，8GB统一内存，256GB SSD，24英寸4.5K Retina显示屏' },
+    { id: 'd-mbp14', name: 'MacBook Pro 14寸', model: 'M4 Pro 18GB 512GB', serial_number: 'SN-MBP14-001', pricePerDay: 40.0, depositAmount: 2000.0, status: 'available', description: 'Apple M4 Pro芯片，18GB内存，512GB固态硬盘，14英寸Liquid Retina XDR显示屏' },
+    { id: 'd-xps13', name: 'Dell XPS 13', model: 'Intel i7-1360P 16GB', serial_number: 'SN-XPS13-001', pricePerDay: 35.0, depositAmount: 1500.0, status: 'available', description: '第13代Intel酷睿i7处理器，16GB LPDDR5内存，512GB NVMe SSD' },
+    { id: 'd-thinkpad', name: 'Lenovo ThinkPad X1 Carbon', model: 'i7-1365U 16GB', serial_number: 'SN-TPX1-001', pricePerDay: 38.0, depositAmount: 1800.0, status: 'rented', description: '13代Intel vPro i7，16GB内存，1TB SSD，14英寸2.8K OLED屏' },
+    { id: 'd-imac', name: 'iMac 24寸', model: 'M3 8GB 256GB', serial_number: 'SN-IMAC24-001', pricePerDay: 45.0, depositAmount: 2200.0, status: 'maintenance', description: 'Apple M3芯片，8GB统一内存，256GB SSD，24英寸4.5K Retina显示屏' },
   ]
 
   const deviceInsert = db.prepare('INSERT INTO devices (id, name, model, serial_number, price_per_day, deposit_amount, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-  const deviceInserts = devicesToSeed.map(d => 
-    deviceInsert.bind(d.id, d.name, d.model, d.serial_number, d.price_per_day, d.deposit_amount, d.status, d.description)
+  const deviceInserts = devicesToSeed.map(d =>
+    deviceInsert.bind(
+      d.id,
+      d.name,
+      d.model,
+      d.serial_number,
+      d.pricePerDay ?? 0,
+      d.depositAmount ?? 0,
+      d.status,
+      d.description
+    )
   )
   await db.batch(deviceInserts)
 
@@ -969,6 +1072,14 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       <a href="/login">登录</a>
       <a href="/register">注册</a>
     `
+
+  const userBlock = currentUser
+    ? `
+        <span class="user-label">${currentUser.name}</span>
+        <div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div>
+        <a href="/logout" class="logout-button">登出</a>
+      `
+    : ''
 
   const navIcons: Record<string, string> = {
     '/customer/dashboard': '◉', '/customer/rentals': '▤', '/customer/orders': '▦',

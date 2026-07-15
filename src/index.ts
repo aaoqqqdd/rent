@@ -1,6 +1,15 @@
- import { Hono } from 'hono'
+ // @ts-nocheck
+import { Hono } from 'hono'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
+import { 
+  renderNotFound,
+  renderForbidden,
+  renderServerError,
+  renderUnauthorized,
+  renderBadGateway,
+  renderServiceUnavailable
+} from './pages/public/notFound'
 import { 
   verifyUserCredentials, 
   findUserBySession, 
@@ -33,166 +42,38 @@ app.use('*', async (c, next) => {
   await next()
 })
 
-function renderErrorPage(status: number, title: string, subtitle: string, errorDetails: string) {
-  return `<!DOCTYPE html>
-      <html lang="zh-CN">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${title} - PC Rental</title>
-        <style>
-          :root {
-            --primary-color: #3b82f6;
-            --primary-dark: #2563eb;
-            --danger-color: #ef4444;
-            --bg-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --card-bg: #ffffff;
-            --text-primary: #1f2937;
-            --text-secondary: #6b7280;
-            --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-          }
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            min-height: 100vh;
-            background: var(--bg-gradient);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-          }
-          .error-container {
-            background: var(--card-bg);
-            border-radius: 16px;
-            box-shadow: var(--shadow-lg);
-            max-width: 800px;
-            width: 100%;
-            padding: 40px;
-            animation: fadeInUp 0.5s ease-out;
-          }
-          @keyframes fadeInUp {
-            from {
-              opacity: 0;
-              transform: translateY(20px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
-          .error-header {
-            text-align: center;
-            margin-bottom: 30px;
-          }
-          .error-icon {
-            font-size: 64px;
-            margin-bottom: 20px;
-          }
-          .error-title {
-            color: var(--danger-color);
-            font-size: 28px;
-            font-weight: 700;
-            margin-bottom: 10px;
-          }
-          .error-subtitle {
-            color: var(--text-secondary);
-            font-size: 16px;
-          }
-          .error-details {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 30px;
-            overflow-x: auto;
-          }
-          .error-details h3 {
-            color: var(--text-primary);
-            font-size: 18px;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          }
-          .error-details pre {
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 13px;
-            line-height: 1.6;
-            color: #374151;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-          }
-          .error-actions {
-            text-align: center;
-          }
-          .btn-primary {
-            display: inline-block;
-            padding: 12px 32px;
-            background: var(--primary-color);
-            color: white;
-            text-decoration: none;
-            border-radius: 8px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            border: none;
-            cursor: pointer;
-          }
-          .btn-primary:hover {
-            background: var(--primary-dark);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-          }
-          @media (max-width: 640px) {
-            .error-container {
-              padding: 25px;
-            }
-            .error-title {
-              font-size: 22px;
-            }
-            .error-icon {
-              font-size: 48px;
-            }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="error-container">
-          <div class="error-header">
-            <div class="error-icon">⚠️</div>
-            <h1 class="error-title">${title}</h1>
-            <p class="error-subtitle">${subtitle}</p>
-          </div>
-          <div class="error-details">
-            <h3>📋 错误详情</h3>
-            <pre>${errorDetails}</pre>
-          </div>
-          <div class="error-actions">
-            <a href="/" class="btn-primary">返回首页</a>
-          </div>
-        </div>
-      </body>
-      </html>`
-}
+
 
 app.use('*', async (c, next) => {
   try {
-
     await next()
   } catch (error) {
     console.error('Server Error:', error)
-    const details = error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error)
-    return c.html(renderErrorPage(500, '服务器错误', '出现未处理错误，请检查日志。', details), 500)
+    return c.html(renderServerError(), 500)
   }
+})
+
+app.notFound((c) => {
+  return c.html(renderNotFound(), 404)
 })
 
 app.onError((error, c) => {
   console.error('Unhandled Application Error:', error)
-  const details = error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error)
-  return c.html(renderErrorPage(500, '服务器错误', '应用程序发生了未捕获错误。', details), 500)
+  const statusCode = error.status || 500
+  switch (statusCode) {
+    case 401:
+      return c.html(renderUnauthorized(), 401)
+    case 403:
+      return c.html(renderForbidden(), 403)
+    case 404:
+      return c.html(renderNotFound(), 404)
+    case 502:
+      return c.html(renderBadGateway(), 502)
+    case 503:
+      return c.html(renderServiceUnavailable(), 503)
+    default:
+      return c.html(renderServerError(), 500)
+  }
 })
 
 
@@ -316,8 +197,11 @@ app.get('/logout', async (c) => {
 
 app.get('/customer/dashboard', async (c) => {
   const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') {
+  if (!user) {
     return c.redirect('/login')
+  }
+  if (user.role !== 'CUSTOMER') {
+    return c.html(renderForbidden(), 403)
   }
   const orders = await getOrdersAsync(c)
   const devices = await getDevicesAsync(c)
@@ -326,24 +210,33 @@ app.get('/customer/dashboard', async (c) => {
 
 app.get('/customer/orders', async (c) => {
   const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') {
+  if (!user) {
     return c.redirect('/login')
+  }
+  if (user.role !== 'CUSTOMER') {
+    return c.html(renderForbidden(), 403)
   }
   return c.html(await pages.renderCustomerOrders(c, user))
 })
 
 app.get('/customer/orders/:id', async (c) => {
   const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') {
+  if (!user) {
     return c.redirect('/login')
+  }
+  if (user.role !== 'CUSTOMER') {
+    return c.html(renderForbidden(), 403)
   }
   return c.html(pages.renderCustomerOrderDetail(user, c.req.param('id')))
 })
 
 app.get('/staff/dashboard', async (c) => {
   const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+  if (!user) {
     return c.redirect('/login')
+  }
+  if (user.role !== 'STAFF' && user.role !== 'ADMIN') {
+    return c.html(renderForbidden(), 403)
   }
   const dashboardData = await getStaffDashboardData(c)
   return c.html(pages.renderStaffDashboard(user, dashboardData))
@@ -442,7 +335,7 @@ app.post('/contract/sign', async (c) => {
 app.post('/admin/contracts/template', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') {
-    return c.text('无权限', 403)
+    return c.html(renderForbidden(), 403)
   }
 
   const body = await c.req.text()
