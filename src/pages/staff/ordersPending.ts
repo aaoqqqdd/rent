@@ -1,7 +1,9 @@
-import { buildLayout, getPendingOrders, getUserById, getDeviceById, formatCurrency } from '../../site';
+import { buildLayout, formatCurrency } from '../../site';
+import { getPendingOrdersWithDetails } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffOrdersPending(user: any) {
-  const pendingOrders = getPendingOrders(); // 假设有一个函数获取所有待处理订单
+export async function renderStaffOrdersPending(c: Context, user: any) {
+  const pendingOrders = await getPendingOrdersWithDetails(c);
 
   const body = `
     <div class="panel">
@@ -21,25 +23,21 @@ export function renderStaffOrdersPending(user: any) {
             </tr>
           </thead>
           <tbody>
-            ${pendingOrders.map(order => {
-              const customer = getUserById(order.userId);
-              const device = getDeviceById(order.deviceId);
-              return `
-                <tr>
-                  <td>${order.orderNo}</td>
-                  <td>${customer?.name ?? '未知客户'}</td>
-                  <td>${device?.name ?? '未知设备'}</td>
-                  <td>${order.startDate} 至 ${order.endDate}</td>
-                  <td>${formatCurrency(order.totalAmount)}</td>
-                  <td>${order.status}</td>
-                  <td>
-                    <a class="button button-sm button-primary" href="/staff/orders/${order.id}/approve">批准</a>
-                    <a class="button button-sm button-danger" href="/staff/orders/${order.id}/reject">拒绝</a>
-                    <a class="button button-sm button-secondary" href="/staff/orders/${order.id}">详情</a>
-                  </td>
-                </tr>
-              `;
-            }).join('')}
+            ${pendingOrders.map((order: any) => `
+              <tr>
+                <td>${order.orderNo}</td>
+                <td>${order.customerName ?? '未知客户'}</td>
+                <td>${order.deviceName ?? '未知设备'}</td>
+                <td>${order.startDate} 至 ${order.endDate}</td>
+                <td>${formatCurrency(order.totalAmount)}</td>
+                <td>${order.status}</td>
+                <td>
+                  <a class="button button-sm button-primary" href="/staff/orders/${order.id}/approve">批准</a>
+                  <a class="button button-sm button-danger" href="/staff/orders/${order.id}/reject">拒绝</a>
+                  <a class="button button-sm button-secondary" href="/staff/orders/${order.id}">详情</a>
+                </td>
+              </tr>
+            `).join('')}
           </tbody>
         </table>
       ` : '<p>目前没有待处理的订单。</p>'}

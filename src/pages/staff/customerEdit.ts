@@ -1,7 +1,8 @@
 import { buildLayout, getUserById } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffCustomerEdit(user: any, customerId: string, errorMessage?: string) {
-  const customer = getUserById(customerId)
+export async function renderStaffCustomerEdit(c: Context, user: any, customerId: string, errorMessage?: string) {
+  const customer = await getUserById(c, customerId)
   if (!customer || customer.role !== 'CUSTOMER') {
     return buildLayout('编辑客户 - 电脑租赁管理系统', '<div class="panel"><h2>客户未找到</h2><p>您请求的客户不存在。</p></div>', user)
   }

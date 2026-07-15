@@ -1,7 +1,8 @@
 import { buildLayout, getUsers } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffCustomers(user: any, searchTerm: string = '') {
-  const customers = getUsers().filter(u => u.role === 'CUSTOMER' && u.staffId === user.id);
+export async function renderStaffCustomers(c: Context, user: any, searchTerm: string = '') {
+  const customers = (await getUsers(c)).filter(u => u.role === 'CUSTOMER' && u.staffId === user.id);
 
   const filteredCustomers = customers.filter(customer => {
     const searchLower = searchTerm.toLowerCase();

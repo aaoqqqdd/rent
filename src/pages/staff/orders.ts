@@ -1,9 +1,10 @@
 import { buildLayout, getOrders, getUsers, getDevices, formatCurrency } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffOrders(user: any, searchTerm: string = '') {
-  const orders = getOrders(user);
-  const usersData = getUsers();
-  const devicesData = getDevices();
+export async function renderStaffOrders(c: Context, user: any, searchTerm: string = '') {
+  const orders = await getOrders(c);
+  const usersData = await getUsers(c);
+  const devicesData = await getDevices(c);
 
   const filteredOrders = orders.filter(order => {
     const customer = usersData.find(u => u.id === order.userId);

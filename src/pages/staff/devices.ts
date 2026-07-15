@@ -1,7 +1,8 @@
 import { buildLayout, getDevices, formatCurrency } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffDevices(user: any) {
-  const devices = getDevices()
+export async function renderStaffDevices(c: Context, user: any) {
+  const devices = await getDevices(c)
   const body = `
     <div class="panel">
       <h2>设备管理</h2>

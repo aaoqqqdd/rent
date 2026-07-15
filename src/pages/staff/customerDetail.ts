@@ -1,12 +1,16 @@
-import { buildLayout, getUserById, getOrdersForUser, getDeviceById, formatCurrency } from '../../site';
+import { buildLayout, getUserById, getOrdersForUser, getDevicesByIds, formatCurrency } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffCustomerDetail(user: any, customerId: string) {
-  const customer = getUserById(customerId)
+export async function renderStaffCustomerDetail(c: Context, user: any, customerId: string) {
+  const customer = await getUserById(c, customerId)
   if (!customer || customer.role !== 'CUSTOMER') {
     return buildLayout('客户详情 - 电脑租赁管理系统', '<div class="panel"><h2>客户未找到</h2><p>您请求的客户不存在。</p></div>', user)
   }
 
-  const orders = getOrdersForUser(customerId)
+  const orders = await getOrdersForUser(c, customerId)
+  const deviceIds = Array.from(new Set(orders.map((order) => order.deviceId).filter(Boolean)))
+  const devices = await getDevicesByIds(c, deviceIds)
+  const deviceMap = new Map(devices.map((device) => [device.id, device]))
 
   const body = `
     <div class="panel">
@@ -34,7 +38,7 @@ export function renderStaffCustomerDetail(user: any, customerId: string) {
         <div class="table-wrapper">
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
             ${orders.map((order) => {
-              const device = getDeviceById(order.deviceId)
+              const device = deviceMap.get(order.deviceId)
               return `<tr><td>${order.orderNo}</td><td>${device?.name ?? 'N/A'}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">查看订单</a></td></tr>`
             }).join('')}
           </tbody></table>

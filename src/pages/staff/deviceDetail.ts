@@ -1,13 +1,14 @@
 import { buildLayout, getDeviceById, formatCurrency, getOrders, getUsers } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffDeviceDetail(user: any, deviceId: string) {
-  const device = getDeviceById(deviceId)
+export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: string) {
+  const device = await getDeviceById(c, deviceId)
   if (!device) {
     return buildLayout('设备详情 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求的设备不存在。</p></div>', user)
   }
 
-  const orders = getOrders().filter(order => order.deviceId === device.id)
-  const usersData = getUsers()
+  const orders = (await getOrders(c)).filter(order => order.deviceId === device.id)
+  const usersData = await getUsers(c)
 
   const body = `
     <div class="panel">

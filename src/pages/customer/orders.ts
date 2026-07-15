@@ -1,7 +1,9 @@
-import { buildLayout, getOrdersForUser, getDeviceById, formatCurrency } from '../../site';
+import { buildLayout, formatCurrency } from '../../site';
+import { getOrdersWithDetailsForUser } from '../../site';
+import { Context } from 'hono';
 
-export function renderCustomerOrders(user: any) {
-  const orders = getOrdersForUser(user.id);
+export async function renderCustomerOrders(c: Context, user: any) {
+  const orders = await getOrdersWithDetailsForUser(c, user.id);
   const pendingOrders = orders.filter(order => order.status === 'pending_payment');
   const completedOrders = orders.filter(order => order.status !== 'pending_payment');
 
@@ -13,10 +15,9 @@ export function renderCustomerOrders(user: any) {
       ${pendingOrders.length > 0 ? `
         <div class="table-wrapper">
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
-            ${pendingOrders.map((order) => {
-              const device = getDeviceById(order.deviceId);
-              return `<tr><td>${order.orderNo}</td><td>${device?.name ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">去支付</a></td></tr>`;
-            }).join('')}
+            ${pendingOrders.map((order: any) => `
+              <tr><td>${order.orderNo}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">去支付</a></td></tr>
+            `).join('')}
           </tbody></table>
         </div>
       ` : '<p>您目前没有待付款订单。</p>'}
@@ -25,10 +26,9 @@ export function renderCustomerOrders(user: any) {
       ${completedOrders.length > 0 ? `
         <div class="table-wrapper">
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
-            ${completedOrders.map((order) => {
-              const device = getDeviceById(order.deviceId);
-              return `<tr><td>${order.orderNo}</td><td>${device?.name ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>`;
-            }).join('')}
+            ${completedOrders.map((order: any) => `
+              <tr><td>${order.orderNo}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
+            `).join('')}
           </tbody></table>
         </div>
       ` : '<p>您目前没有已完成订单。</p>'}

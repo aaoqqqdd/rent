@@ -1,9 +1,38 @@
  import { Hono } from 'hono'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
-import { verifyUserCredentials, findUserBySession, getDeviceById, loadDatabaseData, updateContractTemplateInDB, updateUser, verifyPassword, insertUser, insertDevice, updateDevice, deleteDevice } from './site'
+import { 
+  verifyUserCredentials, 
+  findUserBySession, 
+  getDeviceById, 
+grep -n "daily_rate" src/site.ts  updateContractTemplateInDB,
+  updateUser, 
+  verifyPassword, 
+  insertUser, 
+  insertDevice, 
+  updateDevice, 
+  deleteDevice,
+  getOrdersAsync,
+  getDevicesAsync,
+  getStaffDashboardData,
+  hashPassword,
+  joinReferralProgram,
+  leaveReferralProgram,
+  findUserByEmail,
+  findUserByReferralCode,
+  createWithdrawalRequest
+} from './site'
+import { nanoid } from 'nanoid'
 
 const app = new Hono()
+
+app.use('*', async (c, next) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (user) {
+    c.set('user', user)
+  }
+  await next()
+})
 
 function renderErrorPage(status: number, title: string, subtitle: string, errorDetails: string) {
   return `<!DOCTYPE html>
@@ -152,7 +181,7 @@ function renderErrorPage(status: number, title: string, subtitle: string, errorD
 
 app.use('*', async (c, next) => {
   try {
-    await loadDatabaseData(c)
+
     await next()
   } catch (error) {
     console.error('Server Error:', error)
@@ -167,17 +196,10 @@ app.onError((error, c) => {
   return c.html(renderErrorPage(500, '服务器错误', '应用程序发生了未捕获错误。', details), 500)
 })
 
-function parseFormBody(body: string): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const pair of body.split('&')) {
-    const [key, value] = pair.split('=')
-    if (key) result[decodeURIComponent(key)] = decodeURIComponent(value || '')
-  }
-  return result
-}
+
 
 app.get('/', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user) {
     return c.redirect('/login')
   }
@@ -187,7 +209,7 @@ app.get('/', async (c) => {
 })
 
 app.get('/login', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (user) {
     return c.redirect('/')
   }
@@ -195,8 +217,7 @@ app.get('/login', async (c) => {
 })
 
 app.post('/login', async (c) => {
-  const body = await c.req.text()
-  const form = parseFormBody(body)
+  const form = await c.req.parseBody()
   const account = form.account?.trim()
   const password = form.password?.trim()
   if (!account || !password) {
@@ -216,7 +237,7 @@ app.post('/login', async (c) => {
 })
 
 app.get('/register', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (user) {
     return c.redirect('/')
   }
@@ -224,8 +245,7 @@ app.get('/register', async (c) => {
 })
 
 app.post('/register', async (c) => {
-  const body = await c.req.text()
-  const form = parseFormBody(body)
+  const form = await c.req.parseBody()
   const { name, email, password, passwordConfirm, referrer } = form
 
   if (!name?.trim() || !email?.trim() || !password?.trim() || !passwordConfirm?.trim()) {
@@ -236,7 +256,7 @@ app.post('/register', async (c) => {
   }
   
   // 检查邮箱是否已存在
-  const existingUser = await (c.env as any).RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
+  const existingUser = await findUserByEmail(c, email)
   if (existingUser) {
     return c.html(pages.renderRegister('该电子邮箱已被注册'))
   }
@@ -244,8 +264,7 @@ app.post('/register', async (c) => {
   // 处理推荐人
   let referrerId = null;
   if (referrer && referrer.trim()) {
-    const normalizedReferrerCode = referrer.trim().toUpperCase();
-    const referrerUser = await (c.env as any).RENT.prepare('SELECT id FROM users WHERE UPPER(referralCode) = ?').bind(normalizedReferrerCode).first();
+    const referrerUser = await findUserByReferralCode(c, referrer)
     if (referrerUser) {
       referrerId = referrerUser.id;
     } else {
@@ -254,9 +273,6 @@ app.post('/register', async (c) => {
     }
   }
   
-  // 创建新用户
-  const { nanoid } = await import('nanoid')
-  const { hashPassword } = await import('./site')
   const newUserId = `u-${nanoid(8)}`
   const newUser = {
     id: newUserId,
@@ -285,8 +301,7 @@ app.get('/forgot-password', async (c) => {
 })
 
 app.post('/forgot-password', async (c) => {
-  const body = await c.req.text()
-  const form = parseFormBody(body)
+  const form = await c.req.parseBody()
   const email = form.email?.trim()
   if (!email) {
     return c.html(pages.renderForgotPassword('请输入邮箱地址'))
@@ -301,26 +316,25 @@ app.get('/logout', async (c) => {
 })
 
 app.get('/customer/dashboard', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  const { getOrdersAsync, getDevicesAsync } = await import('./site')
   const orders = await getOrdersAsync(c)
   const devices = await getDevicesAsync(c)
   return c.html(pages.renderCustomerDashboard(user, orders, devices))
 })
 
 app.get('/customer/orders', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerOrders(user))
+  return c.html(await pages.renderCustomerOrders(c, user))
 })
 
 app.get('/customer/orders/:id', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -328,27 +342,24 @@ app.get('/customer/orders/:id', async (c) => {
 })
 
 app.get('/staff/dashboard', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  const { getOrdersAsync, getUsersAsync, getDevicesAsync } = await import('./site')
-  const orders = await getOrdersAsync(c)
-  const users = await getUsersAsync(c)
-  const devices = await getDevicesAsync(c)
-  return c.html(pages.renderStaffDashboard(user, orders, users, devices))
+  const dashboardData = await getStaffDashboardData(c)
+  return c.html(pages.renderStaffDashboard(user, dashboardData))
 })
 
 app.get('/staff/orders/pending', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffOrdersPending(user))
+  return c.html(await pages.renderStaffOrdersPending(c, user))
 })
 
 app.get('/staff/orders/:id', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
@@ -356,16 +367,16 @@ app.get('/staff/orders/:id', async (c) => {
 })
 
 app.get('/staff/contracts', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
   const status = c.req.query('status');
-  return c.html(pages.renderStaffContracts(user, status))
+  return c.html(await pages.renderStaffContracts(c, user, status))
 })
 
 app.get('/staff/rentals/tracking', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
@@ -373,17 +384,17 @@ app.get('/staff/rentals/tracking', async (c) => {
 })
 
 app.get('/staff/devices', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffDevices(user))
+  return c.html(await pages.renderStaffDevices(c, user))
 })
 
 
 
 app.get('/staff/contracts/new', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
@@ -391,17 +402,16 @@ app.get('/staff/contracts/new', async (c) => {
 })
 
 app.post('/staff/contracts/create', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  const body = await c.req.text()
-  const form = parseFormBody(body)
+  const form = await c.req.parseBody()
   return actions.handleCreateContractAction(c, user, form)
 })
 
 app.get('/staff/contracts/:id/progress', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
@@ -409,7 +419,7 @@ app.get('/staff/contracts/:id/progress', async (c) => {
 })
 
 app.get('/staff/contract/view', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
@@ -426,13 +436,12 @@ app.get('/contract/sign', async (c) => {
 app.post('/contract/sign', async (c) => {
   const token = c.req.query('token') || '';
   const step = Number(c.req.query('step') || '1');
-  const body = await c.req.text();
-  const form = parseFormBody(body);
+  const form = await c.req.parseBody();
   return actions.handleSignContractStep(c, token, step, form);
 });
 
 app.post('/admin/contracts/template', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'ADMIN') {
     return c.text('无权限', 403)
   }
@@ -448,16 +457,16 @@ app.post('/admin/contracts/template', async (c) => {
 });
 
 app.get('/contract/view/:id', async (c) => {
-  return c.html(pages.renderContractView(c.req.param('id'), await findUserBySession(c, c.req.header('cookie') ?? null)))
+  return c.html(pages.renderContractView(c.req.param('id'), c.get('user')))
 })
 
 app.get('/payment/result', async (c) => {
   const status = c.req.query('status') === 'fail' ? 'fail' : 'success'
-  return c.html(pages.renderPaymentResult(c.req.query('orderId') || '', status, await findUserBySession(c, c.req.header('cookie') ?? null)))
+  return c.html(pages.renderPaymentResult(c.req.query('orderId') || '', status, c.get('user')))
 })
 
 app.get('/customer/rentals', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -465,20 +474,19 @@ app.get('/customer/rentals', async (c) => {
 })
 
 app.get('/customer/profile', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerProfile(user))
+  return c.html(await pages.renderCustomerProfile(c, user))
 })
 
 app.post('/customer/profile', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  const body = await c.req.text()
-  const form = parseFormBody(body)
+  const form = await c.req.parseBody()
   const name = form.name?.trim() || user.name
   const phone = form.phone?.trim() || user.phone || ''
   const bsb = form.bsb?.trim() || user.bsb || ''
@@ -488,7 +496,7 @@ app.post('/customer/profile', async (c) => {
   const passwordConfirm = form.passwordConfirm?.trim()
 
   if (password && password !== passwordConfirm) {
-    return c.html(pages.renderCustomerProfile(user, '两次输入的新密码不一致'))
+    return c.html(await pages.renderCustomerProfile(c, user, '两次输入的新密码不一致'))
   }
 
   const dataToUpdate: any = {
@@ -505,11 +513,11 @@ app.post('/customer/profile', async (c) => {
 
   const updatedUser = await updateUser(c, user.id, dataToUpdate)
 
-  return c.html(pages.renderCustomerProfile(updatedUser, '个人信息已更新', 'success'))
+  return c.html(await pages.renderCustomerProfile(c, updatedUser, '个人信息已更新', 'success'))
 })
 
 app.get('/customer/referral', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -517,7 +525,7 @@ app.get('/customer/referral', async (c) => {
 })
 
 app.get('/customer/referral/withdraw', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
@@ -525,12 +533,10 @@ app.get('/customer/referral/withdraw', async (c) => {
 })
 
 app.post('/customer/referral/join', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  // 导入joinReferralProgram函数
-  const { joinReferralProgram } = await import('./site')
   const updatedUser = await joinReferralProgram(c, user.id)
   if (updatedUser) {
     return c.html(await pages.renderCustomerReferral(c, updatedUser, '成功加入推荐计划，您的专属推荐码已生成！'))
@@ -540,12 +546,10 @@ app.post('/customer/referral/join', async (c) => {
 })
 
 app.post('/customer/referral/leave', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  // 导入leaveReferralProgram函数
-  const { leaveReferralProgram } = await import('./site')
   const updatedUser = await leaveReferralProgram(c, user.id)
   if (updatedUser) {
     return c.html(await pages.renderCustomerReferral(c, updatedUser, '已成功退出推荐计划'))
@@ -555,23 +559,19 @@ app.post('/customer/referral/leave', async (c) => {
 })
 
 app.post('/customer/referral/withdraw', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  const body = await c.req.text()
-  const form = parseFormBody(body)
+  const form = await c.req.parseBody()
   const amount = Number(form.amount)
   if (!amount || amount <= 0) {
     return c.html(await pages.renderCustomerReferral(c, user, '请输入正确的提现金额'))
   }
-  // 获取完整用户信息以验证余额
-  const fullUser = await c.env.RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as any;
-  if (amount > fullUser.commission_balance) {
+  if (amount > user.commissionBalance) {
     return c.html(await pages.renderCustomerReferral(c, user, '提现金额不能超过可提现余额'))
   }
-  // 处理提现申请：创建提现记录并更新用户佣金余额
-  const withdrawalId = `w-${(await import('nanoid')).nanoid(8)}`;
+  const withdrawalId = `w-${nanoid(8)}`;
   await c.env.RENT.prepare(`
     INSERT INTO commission_withdrawals (id, user_id, amount, bsb, account_number, status)
     VALUES (?, ?, ?, ?, ?, 'pending')
@@ -594,11 +594,11 @@ app.post('/customer/referral/withdraw', async (c) => {
 })
 
 app.get('/customer/security', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerSecurity(user))
+  return c.html(await pages.renderCustomerSecurity(c, user))
 })
 
 app.post('/customer/security', async (c) => {
@@ -612,25 +612,25 @@ app.post('/customer/security', async (c) => {
   const newPassword = form.newPassword?.trim()
   const confirmPassword = form.confirmPassword?.trim()
   if (!currentPassword || !newPassword || !confirmPassword) {
-    return c.html(pages.renderCustomerSecurity(user, '请输入完整密码信息'))
+    return c.html(await pages.renderCustomerSecurity(c, user, '请输入完整密码信息'))
   }
 
   const fullUser = await (c.env as any).RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first()
     
   if (!fullUser || !fullUser.password_hash) {
-    return c.html(pages.renderCustomerSecurity(user, '无法验证当前密码'))
+    return c.html(await pages.renderCustomerSecurity(c, user, '无法验证当前密码'))
   }
 
   const isPasswordValid = await verifyPassword(currentPassword, fullUser.password_hash)
   
   if (!isPasswordValid) {
-    return c.html(pages.renderCustomerSecurity(user, '当前密码不正确'))
+    return c.html(await pages.renderCustomerSecurity(c, user, '当前密码不正确'))
   }
   if (newPassword !== confirmPassword) {
-    return c.html(pages.renderCustomerSecurity(user, '两次输入的新密码不一致'))
+    return c.html(await pages.renderCustomerSecurity(c, user, '两次输入的新密码不一致'))
   }
   await updateUser(c, user.id, { password: newPassword })
-  return c.html(pages.renderCustomerSecurity(user, '密码已更新', 'success'))
+  return c.html(await pages.renderCustomerSecurity(c, user, '密码已更新', 'success'))
 })
 
 app.get('/admin/dashboard', async (c) => {
