@@ -7,12 +7,12 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
   }
 
-  const order = getOrderById(contract.rentalId);
+  const order = await getOrderById(c, contract.rentalId);
   if (!order) {
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
   }
 
-  const device = getDeviceById(order.deviceId);
+  const device = await getDeviceById(c, order.deviceId);
   const systemSettings = getSystemSettings();
   const contractTemplate = await getContractTemplate(c);
   const activeContractContent = contract.content || contractTemplate.content || systemSettings.rentalTerms;
@@ -64,8 +64,25 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
         <div class="panel">
           ${progressBar}
           <h2>${title}</h2>
-          ${errorMessage ? `<div class="alert" style="background:#fee2e2;border-color:#fecaca;">${errorMessage}</div>` : ''}
-          <form method="POST" action="/contract/sign?token=${token}&step=2">
+          
+          ${errorMessage ? `
+            <div id="error-container" class="alert" style="background:#fee2e2;border-color:#fecaca;">
+              ${errorMessage === 'EMAIL_EXISTS' ? 
+                `
+                <p><strong>此电子邮箱已被注册。</strong></p>
+                <p>您可以选择直接继续，合同将自动关联到您的账户下；或者您可以选择登录后继续。</p>
+                <div style="margin-top: 16px;">
+                  <button type="button" class="button" onclick="continueWithExistingEmail()">直接继续</button>
+                  <a href="/login?redirect=/contract/sign?token=${token}%26step=2" class="button-secondary" style="margin-left: 12px;">立即登录</a>
+                </div>
+                ` : 
+                errorMessage
+              }
+            </div>
+          ` : ''}
+
+          <form method="POST" action="/contract/sign?token=${token}&step=2" id="sign-form">
+            <input type="hidden" name="force_continue" id="force_continue" value="false" />
             <div class="grid grid-2">
               <div class="form-group">
                 <label class="form-label" for="name">姓名</label>
@@ -106,7 +123,7 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
               <p class="form-text" style="font-size: 12px; color: #6b7280; margin-top: 4px;">填写推荐人代码后将无法更改，系统会自动为推荐人计算佣金分成</p>
             </div>
             
-            <div style="display: flex; align-items: center; gap: 10px; margin-top: 24px; margin-bottom: 16px;">
+            <div id="create-account-section" style="display: flex; align-items: center; gap: 10px; margin-top: 24px; margin-bottom: 16px;">
               <input type="checkbox" id="createAccountCheckbox" name="createAccount" style="width: auto;" onchange="togglePasswordFields()" />
               <label for="createAccountCheckbox" style="margin: 0;">创建账户 (用于管理您的订单)</label>
             </div>
@@ -125,6 +142,11 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
             </div>
 
             <script>
+              function continueWithExistingEmail() {
+                document.getElementById('force_continue').value = 'true';
+                document.getElementById('sign-form').submit();
+              }
+
               function togglePasswordFields() {
                 const checkbox = document.getElementById('createAccountCheckbox');
                 const passwordFields = document.getElementById('passwordFields');
@@ -148,17 +170,16 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
                 const phoneError = document.getElementById('phoneError');
                 let isValid = false;
                 
-                // 根据不同国家的电话号码格式进行验证
                 const phonePatterns = {
-                  '+86': /^1[3-9]\d{9}$/, // 中国手机号: 11位
-                  '+61': /^4\d{8}$/, // 澳大利亚手机号: 9位 (以4开头)
-                  '+1': /^\d{10}$/, // 美国/加拿手机号: 10位
-                  '+44': /^7\d{9}$/, // 英国手机号: 10位 (以7开头)
-                  '+852': /^[569]\d{7}$/, // 香港手机号: 8位
-                  '+886': /^9\d{8}$/, // 台湾手机号: 9位
-                  '+65': /^[89]\d{7}$/, // 新加坡手机号: 8位
-                  '+82': /^1[0-9]\d{7,8}$/, // 韩国手机号
-                  '+81': /^[789]0\d{8}$/ // 日本手机号
+                  '+86': /^1[3-9]\d{9}$/,
+                  '+61': /^4\d{8}$/,
+                  '+1': /^\d{10}$/,
+                  '+44': /^7\d{9}$/,
+                  '+852': /^[569]\d{7}$/,
+                  '+886': /^9\d{8}$/,
+                  '+65': /^[89]\d{7}$/,
+                  '+82': /^1[0-9]\d{7,8}$/,
+                  '+81': /^[789]0\d{8}$/
                 };
                 
                 const pattern = phonePatterns[phoneCode];
@@ -175,17 +196,24 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
                 }
               }
 
-              // 表单提交前验证
-              document.querySelector('form').addEventListener('submit', function(e) {
+              document.addEventListener('DOMContentLoaded', function() {
+                togglePasswordFields();
+                const errorMessage = "${errorMessage}";
+                if (errorMessage === 'EMAIL_EXISTS') {
+                  // 隐藏创建账户和密码字段
+                  const createAccountSection = document.getElementById('create-account-section');
+                  if(createAccountSection) createAccountSection.style.display = 'none';
+                  
+                  const passwordFields = document.getElementById('passwordFields');
+                  if(passwordFields) passwordFields.style.display = 'none';
+                }
+              });
+
+              document.getElementById('sign-form').addEventListener('submit', function(e) {
                 if (!validatePhoneNumber()) {
                   e.preventDefault();
                   alert('请输入正确格式的电话号码');
                 }
-              });
-              
-              // 页面加载时也调用一次，以防浏览器记住勾选状态
-              document.addEventListener('DOMContentLoaded', function() {
-                togglePasswordFields();
               });
             </script>
             

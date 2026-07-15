@@ -92,55 +92,85 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   return passwordHash === hash
 }
 
-export async function getUserById(c: Context, id: string): Promise<User | null> {
-  const db = getDB(c);
-  return db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<User>();
+export async function getUserById(cOrContext: Context | string, id?: string): Promise<User | null> {
+  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
+  const actualId = typeof cOrContext === 'string' ? cOrContext : id
+  if (!actualId) return null
+  return db.prepare('SELECT * FROM users WHERE id = ?').bind(actualId).first() as User | null
 }
 
-export async function getOrderById(c: Context, id: string): Promise<Order | null> {
-  const db = getDB(c);
-  return db.prepare('SELECT * FROM orders WHERE id = ?').bind(id).first<Order>();
+export async function getOrderById(cOrContext: Context | string, id?: string): Promise<Order | null> {
+  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
+  const actualId = typeof cOrContext === 'string' ? cOrContext : id
+  if (!actualId) return null
+  return db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first() as Order | null
 }
 
-export async function getDeviceById(c: Context, id: string): Promise<Device | null> {
-  const db = getDB(c);
-  return db.prepare('SELECT * FROM devices WHERE id = ?').bind(id).first<Device>();
+export async function getDeviceById(cOrContext: Context | string, id?: string): Promise<Device | null> {
+  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
+  const actualId = typeof cOrContext === 'string' ? cOrContext : id
+  if (!actualId) return null
+  return db.prepare('SELECT * FROM devices WHERE id = ?').bind(actualId).first() as Device | null
 }
 
-export async function getContractById(c: Context, id: string): Promise<Contract | null> {
-  const db = getDB(c);
-  return db.prepare('SELECT * FROM contracts WHERE id = ?').bind(id).first<Contract>();
+export async function getContractById(cOrContext: Context | string, id?: string): Promise<Contract | null> {
+  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
+  const actualId = typeof cOrContext === 'string' ? cOrContext : id
+  if (!actualId) return null
+  return db.prepare('SELECT * FROM contracts WHERE id = ?').bind(actualId).first() as Contract | null
 }
 
-export async function getContractByOrderId(c: Context, orderId: string): Promise<Contract | null> {
-  const db = getDB(c);
-  return db.prepare('SELECT * FROM contracts WHERE rentalId = ?').bind(orderId).first<Contract>();
+export async function getContractByOrderId(cOrContext: Context | string, orderId?: string): Promise<Contract | null> {
+  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
+  const actualOrderId = typeof cOrContext === 'string' ? cOrContext : orderId
+  if (!actualOrderId) return null
+  return db.prepare('SELECT * FROM contracts WHERE rentalId = ?').bind(actualOrderId).first() as Contract | null
 }
 
-export async function getAllContracts(c: Context): Promise<Contract[]> {
-  const db = getDB(c);
-  const result = await db.prepare('SELECT * FROM contracts').all<Contract>();
-  return result.results || [];
+export async function getAllContracts(c?: Context): Promise<Contract[]> {
+  const db = getDB(c)
+  const result = await db.prepare('SELECT * FROM contracts').all()
+  return (result.results as Contract[]) || []
 }
 
-export async function getOrders(c: Context): Promise<Order[]> {
-  const db = getDB(c);
-  const result = await db.prepare('SELECT * FROM orders').all<Order>();
-  return result.results || [];
+export async function getOrders(c?: Context): Promise<Order[]> {
+  const db = getDB(c)
+  const result = await db.prepare('SELECT * FROM orders').all()
+  return (result.results as Order[]) || []
 }
 
-export async function getOrdersForUser(c: Context, userId: string): Promise<Order[]> {
-  const db = getDB(c);
-  const result = await db.prepare('SELECT * FROM orders WHERE userId = ?').bind(userId).all<Order>();
-  return result.results || [];
+export async function getOrdersForUser(cOrContext: Context | string, userId?: string): Promise<Order[]> {
+  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
+  const actualUserId = typeof cOrContext === 'string' ? cOrContext : userId
+  if (!actualUserId) return []
+  const result = await db.prepare('SELECT * FROM orders WHERE customer_id = ?').bind(actualUserId).all()
+  return (result.results as Order[]) || []
 }
 
 export async function insertOrder(c: Context, order: Order): Promise<void> {
-  const db = getDB(c);
-  await db.prepare('INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, status, paymentMethod, totalAmount, depositAmount, dailyRate, contractId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
-    order.id, order.orderNo, order.userId, order.deviceId, order.startDate, order.endDate, order.status, order.paymentMethod, order.totalAmount, order.depositAmount, order.dailyRate, order.contractId, order.createdAt
-  ).run();
+  const db = getDB(c)
+  await db
+    .prepare(
+      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, status, paymentMethod, totalAmount, depositAmount, dailyRate, contractId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .bind(
+      order.id,
+      order.orderNo,
+      order.userId,
+      order.deviceId,
+      order.startDate,
+      order.endDate,
+      order.status,
+      order.paymentMethod,
+      order.totalAmount,
+      order.depositAmount,
+      order.dailyRate,
+      order.contractId,
+      order.createdAt
+    )
+    .run()
 }
+
 
 export async function insertContract(c: Context, contract: Contract): Promise<void> {
   const db = getDB(c);
@@ -160,37 +190,68 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
 }
 
 export async function updateOrder(c: Context, order: Order): Promise<void> {
-  const db = getDB(c);
-  await db.prepare('UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, dailyRate = ?, contractId = ?, signedAt = ? WHERE id = ?').bind(
-    order.orderNo, order.userId, order.deviceId, order.startDate, order.endDate, order.status, order.paymentMethod, order.totalAmount, order.depositAmount, order.dailyRate, order.contractId, order.signedAt, order.id
-  ).run();
+  const db = getDB(c)
+  await db
+    .prepare(
+      'UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, dailyRate = ?, contractId = ?, signedAt = ? WHERE id = ?'
+    )
+    .bind(
+      order.orderNo,
+      order.userId,
+      order.deviceId,
+      order.startDate,
+      order.endDate,
+      order.status,
+      order.paymentMethod,
+      order.totalAmount,
+      order.depositAmount,
+      order.dailyRate,
+      order.contractId,
+      order.signedAt,
+      order.id
+    )
+    .run()
 }
+
+// Compatibility aliases expected by legacy code
+export async function updateOrderInDB(c: Context, orderId: string, data: Partial<Order>): Promise<void> {
+  const existing = await getOrderById(c, orderId)
+  if (!existing) return
+  await updateOrder(c, { ...existing, ...data, id: orderId } as Order)
+}
+
 
 export async function updateContractStatus(c: Context, contractId: string, status: string, signedAt: string | null = null): Promise<void> {
-  const db = getDB(c);
-  await db.prepare('UPDATE contracts SET status = ?, signedAt = ? WHERE id = ?').bind(status, signedAt, contractId).run();
+  const db = getDB(c)
+  await db.prepare('UPDATE contracts SET status = ?, signedAt = ? WHERE id = ?').bind(status, signedAt, contractId).run()
 }
 
+// Compatibility alias expected by legacy code
+export async function updateContractStatusInDB(c: Context, contractId: string, status: string, signedAt: string | null = null): Promise<void> {
+  await updateContractStatus(c, contractId, status, signedAt)
+}
+
+
 export async function getContractBySignToken(c: Context, signToken: string): Promise<Contract | null> {
-  const db = getDB(c);
-  return db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(signToken).first<Contract>();
+  const db = getDB(c)
+  return db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(signToken).first() as Contract | null
 }
 
 export async function getDeviceBySerialNumber(c: Context, serialNumber: string): Promise<Device | null> {
-  const db = getDB(c);
-  return db.prepare('SELECT * FROM devices WHERE serialNumber = ?').bind(serialNumber).first<Device>();
+  const db = getDB(c)
+  return db.prepare('SELECT * FROM devices WHERE serialNumber = ?').bind(serialNumber).first() as Device | null
 }
 
-export async function getDevices(c: Context): Promise<Device[]> {
-  const db = getDB(c);
-  const result = await db.prepare('SELECT * FROM devices').all<Device>();
-  return result.results || [];
+export async function getDevices(c?: Context): Promise<Device[]> {
+  const db = getDB(c)
+  const result = await db.prepare('SELECT * FROM devices').all()
+  return (result.results as Device[]) || []
 }
 
-export async function getUsers(c: Context): Promise<User[]> {
-  const db = getDB(c);
-  const result = await db.prepare('SELECT * FROM users').all<User>();
-  return result.results || [];
+export async function getUsers(c?: Context): Promise<User[]> {
+  const db = getDB(c)
+  const result = await db.prepare('SELECT * FROM users').all()
+  return (result.results as User[]) || []
 }
 
 export async function getOrdersAsync(c: Context): Promise<any[]> {
@@ -204,13 +265,153 @@ export const contracts: Contract[] = [
     id: 'ct-1',
     rentalId: 'o-1',
     contractNumber: 'CT20260708001',
-    content: '甲方（出租方）：PC Rental Pty Ltd\n乙方（承租方）：张三\n设备名称：MacBook Pro 14寸\n设备型号：M4 Pro 18GB 512GB\n设备序列号：SN20260708001\n租赁起始日：2026年07月10日\n租赁结束日：2026年08月10日\n日租金：¥40.00/天\n租金总额：¥1,200.00\n押金：¥2,000.00\n总计应付：¥3,200.00\n',
+    content: '甲方（出租方）：PC Rental Pty Ltd\n乙方（承租方）：张三\n设备名称：MacBook Pro 14寸\n设备型号：M4 Pro 18GB 512GB\n设备序列号：SN20260708001\n租赁起始日：2026年07月10日\n租赁结束日：2026年08月10日\n日租金：AUD$40.00/天\n租金总额：AUD$1,200.00\n押金：AUD$2,000.00\n总计应付：AUD$3,200.00\n',
     signedAt: '2026-07-10 14:30:25',
     createdAt: '2026-07-10 14:20:00',
     signToken: 'ct-1-token',
     status: 'signed',
   },
 ]
+
+export function getSystemSettings() {
+  return systemSettings
+}
+
+export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {
+  Object.assign(systemSettings, updates)
+  return systemSettings
+}
+
+export async function insertUser(c: Context, user: any): Promise<User> {
+  const db = getDB(c)
+  await db.prepare('INSERT INTO users (id, name, email, password_hash, role, status, balance, commissionBalance, referralCode, referrerId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(user.id, user.name, user.email, user.password_hash ?? null, user.role, user.status ?? 'active', user.balance ?? 0, user.commissionBalance ?? 0, user.referralCode ?? null, user.referrerId ?? null, user.createdAt ?? new Date().toISOString())
+    .run()
+  const inserted = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as User | null
+  if (inserted && inserted.password_hash) delete (inserted as any).password_hash
+  return inserted as User
+}
+
+export async function updateUser(c: Context, userId: string, data: Partial<User> & { password?: string }): Promise<User | null> {
+  const db = getDB(c)
+  const fields: Record<string, any> = { ...data }
+
+  if (fields.password) {
+    fields.password_hash = await hashPassword(fields.password)
+    delete fields.password
+  }
+
+  const setEntries = Object.entries(fields).filter(([k]) => k !== 'id' && fields[k] !== undefined)
+  if (setEntries.length === 0) {
+    return db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
+  }
+
+  const setClause = setEntries.map(([k]) => `${k} = ?`).join(', ')
+  const values = setEntries.map(([, v]) => v)
+
+  await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).bind(...values, userId).run()
+  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
+  if (updated && (updated as any).password_hash) delete (updated as any).password_hash
+  return updated
+}
+
+export async function getDevicesAsync(c: Context): Promise<Device[]> {
+  return getDevices(c)
+}
+
+export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id?: string }): Promise<Device> {
+  const db = getDB(c)
+  const { nanoid } = await import('nanoid')
+  const deviceId = device.id || `d-${nanoid(8)}`
+  await db.prepare(
+    'INSERT INTO devices (id, name, model, serial_number, price_per_day, deposit_amount, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(
+    deviceId,
+    device.name,
+    device.model,
+    device.serialNumber || device.serial_number || '',
+    device.pricePerDay || device.price_per_day || 0,
+    device.depositAmount || device.deposit_amount || 0,
+    device.status || 'available',
+    device.description || ''
+  ).run()
+  const inserted = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
+  return inserted
+}
+
+export async function updateDevice(c: Context, deviceId: string, data: Partial<Device>): Promise<Device | null> {
+  const db = getDB(c)
+  const existing = await getDeviceById(c, deviceId)
+  if (!existing) return null
+  
+  // 字段名映射 camelCase -> snake_case
+  const fieldMap: Record<string, string> = {
+    name: 'name',
+    model: 'model',
+    serialNumber: 'serial_number',
+    serial_number: 'serial_number',
+    pricePerDay: 'price_per_day',
+    price_per_day: 'price_per_day',
+    depositAmount: 'deposit_amount',
+    deposit_amount: 'deposit_amount',
+    status: 'status',
+    description: 'description'
+  }
+  
+  const setEntries: [string, any][] = []
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined && fieldMap[key]) {
+      setEntries.push([fieldMap[key], value])
+    }
+  }
+  
+  if (setEntries.length === 0) return existing
+  
+  const setClause = setEntries.map(([col]) => `${col} = ?`).join(', ')
+  const values = setEntries.map(([, v]) => v)
+  
+  await db.prepare(`UPDATE devices SET ${setClause} WHERE id = ?`).bind(...values, deviceId).run()
+  return db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
+}
+
+export async function deleteDevice(c: Context, deviceId: string): Promise<boolean> {
+  const db = getDB(c)
+  const result = await db.prepare('DELETE FROM devices WHERE id = ?').bind(deviceId).run()
+  return result.success
+}
+
+export async function getUsersAsync(c: Context): Promise<User[]> {
+  return getUsers(c)
+}
+
+export function getAllDevices(): Device[] {
+  // DB-backed list is async; this is only used by templates. Keep empty for now.
+  return []
+}
+
+export function devices(): Device[] {
+  return []
+}
+
+export async function updateContractTemplateInDB(c: Context, newTemplate: { id: string; name: string; content: string }) {
+  return updateContractTemplate(c, newTemplate)
+}
+
+export function joinReferralProgram() {
+  return Promise.resolve(undefined)
+}
+
+export function leaveReferralProgram() {
+  return Promise.resolve(undefined)
+}
+
+export function getPendingOrders() {
+  return [] as Order[]
+}
+
+export function getAllRentals() {
+  return [] as Order[]
+}
 
 export const rentalTerms = `## 电脑租赁协议条款
 
@@ -222,8 +423,8 @@ export const rentalTerms = `## 电脑租赁协议条款
 - 租赁设备：{device_name} ({device_model})
 - 设备序列号：{device_sn}
 - 租赁期限：从 {start_date} 至 {end_date}，共 {rental_days} 天
-- 日租金：\${daily_rate}，租金总额：\${total_rent}
-- 押金金额：\${deposit_amount}
+- 日租金：AUD${daily_rate}/天，租金总额：AUD${total_rent}
+- 押金金额：AUD${deposit_amount}
 
 ### 二、租客责任
 1. 妥善保管租赁设备，不得转借、转租或抵押给第三方
@@ -287,8 +488,8 @@ export const systemSettings = {
 │  租赁开始：{start_date}             │
 │  租赁结束：{end_date}               │
 │  租赁天数：{rental_days} 天         │
-│  租金总额：\${total_rent}            │
-│  押金：\${deposit_amount}             │
+│  租金总额：AUD${total_rent}        │
+│  押金：AUD${deposit_amount}         │
 │  支付方式：{payment_method}          │
 └─────────────────────────────────────┘
 
@@ -352,9 +553,9 @@ export const contractTemplate = {
 <p>租赁天数：{rental_days}天</p>
 
 <h2>四、费用明细</h2>
-<p>日租金：\${daily_rate}</p>
-<p>租金总额：\${total_rent}</p>
-<p>押金金额：\${deposit_amount}</p>
+<p>日租金：AUD${daily_rate}</p>
+<p>租金总额：AUD${total_rent}</p>
+<p>押金金额：AUD${deposit_amount}</p>
 <p>支付方式：{payment_method}</p>
 
 <h2>五、银行账户信息</h2>
@@ -369,7 +570,7 @@ export const contractTemplate = {
 
 export async function getContractTemplate(c: Context): Promise<ContractTemplate> {
   const db = getDB(c);
-  const template = await db.prepare('SELECT * FROM contract_templates WHERE id = ?').bind('default').first<ContractTemplate>();
+  const template = await db.prepare('SELECT * FROM contract_templates WHERE id = ?').bind('default').first() as ContractTemplate | null
   if (template) {
     return template;
   }
@@ -377,7 +578,54 @@ export async function getContractTemplate(c: Context): Promise<ContractTemplate>
   return {
     id: 'default',
     name: '标准租赁合同模板',
-    content: '<h1>电脑租赁协议</h1><p>本协议由以下双方于 {{date}} 签订：</p><p><strong>出租方：</strong> 电脑租赁公司</p><p><strong>承租方：：</strong> {{customerName}}</p><h2>租赁设备</h2><p><strong>设备名称：</strong> {{deviceName}}</p><p><strong>型号：</strong> {{deviceModel}}</p><p><strong>序列号：</strong> {{deviceSerialNumber}}</p><h2>租赁期限</h2><p><strong>起始日期：</strong> {{startDate}}</p><p><strong>结束日期：：</strong> {{endDate}}</p><h2>租金与押金</h2><p><strong>日租金：</strong> {{dailyRate}} 元</p><p><strong>总租金：</strong> {{totalRent}} 元</p><p><strong>押金：</strong> {{depositAmount}} 元</p><p><strong>总计：</strong> {{totalAmount}} 元</p>',
+    content: `<h1>电脑租赁协议</h1>
+<p>合同编号：<strong>{contract_number}</strong></p>
+<p>签署日期：<strong>{sign_time}</strong></p>
+
+<h2>一、双方当事人</h2>
+<p><strong>出租方（甲方）：</strong>PC Rental电脑租赁平台</p>
+<p>联系电话：{company_phone}</p>
+<p>联系邮箱：{company_email}</p>
+<br>
+<p><strong>承租方（乙方）：</strong>{customer_name}</p>
+<p>联系电话：{customer_phone}</p>
+<p>联系邮箱：{customer_email}</p>
+
+<h2>二、租赁设备信息</h2>
+<table style="width:100%;border-collapse:collapse;margin:16px 0;">
+  <tr style="background:#f3f4f6;">
+    <th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">设备名称</th>
+    <th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">{device_name}</th>
+  </tr>
+  <tr>
+    <td style="border:1px solid #e5e7eb;padding:8px;">设备型号</td>
+    <td style="border:1px solid #e5e7eb;padding:8px;">{device_model}</td>
+  </tr>
+  <tr style="background:#f3f4f6;">
+    <td style="border:1px solid #e5e7eb;padding:8px;">序列号</td>
+    <td style="border:1px solid #e5e7eb;padding:8px;">{device_sn}</td>
+  </tr>
+</table>
+
+<h2>三、租赁期限</h2>
+<p>租赁开始日期：{start_date}</p>
+<p>租赁结束日期：{end_date}</p>
+<p>租赁天数：{rental_days}天</p>
+
+<h2>四、费用明细</h2>
+<p>日租金：AUD${daily_rate}</p>
+<p>租金总额：AUD${total_rent}</p>
+<p>押金金额：AUD${deposit_amount}</p>
+<p>支付方式：{payment_method}</p>
+
+<h2>五、银行账户信息</h2>
+<p>BSB：{bank_bsb}</p>
+<p>账号：{bank_account}</p>
+<p>账户名：{account_name}</p>
+
+<h2>六、双方签字</h2>
+<p>甲方签字：_____________________ 日期：__________</p>
+<p>乙方签字：{signer_name} 日期：{sign_time}</p>`,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -415,9 +663,12 @@ export function parseCookie(cookieHeader: string | null): Record<string, string>
 
 let dbInstance: any = null
 
-export function getDB(c: Context): any {
-  if (!dbInstance) {
+export function getDB(c?: Context): any {
+  if (c) {
     dbInstance = c.env.RENT
+  }
+  if (!dbInstance) {
+    throw new Error('Database connection is not initialized. Ensure the request context is available.')
   }
   return dbInstance
 }
@@ -438,13 +689,53 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
     { id: 'u-customer', name: 'Customer User', email: 'customer@example.com', password: 'Customer123', role: 'CUSTOMER' },
   ]
 
-  const userInsert = db.prepare('INSERT INTO users (id, name, email, password_hash, role, status, balance, commissionBalance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const userInsert = db.prepare('INSERT INTO users (id, name, email, password_hash, role, status, balance, commission_balance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
   const userInserts = []
   for (const user of usersToSeed) {
     const hash = await hashPassword(user.password)
     userInserts.push(userInsert.bind(user.id, user.name, user.email, hash, user.role, 'active', 0, 0))
   }
   await db.batch(userInserts)
+
+  // Seed示例设备
+  const devicesToSeed = [
+    { id: 'd-mbp14', name: 'MacBook Pro 14寸', model: 'M4 Pro 18GB 512GB', serial_number: 'SN-MBP14-001', price_per_day: 40.0, deposit_amount: 2000.0, status: 'available', description: 'Apple M4 Pro芯片，18GB内存，512GB固态硬盘，14英寸Liquid Retina XDR显示屏' },
+    { id: 'd-xps13', name: 'Dell XPS 13', model: 'Intel i7-1360P 16GB', serial_number: 'SN-XPS13-001', price_per_day: 35.0, deposit_amount: 1500.0, status: 'available', description: '第13代Intel酷睿i7处理器，16GB LPDDR5内存，512GB NVMe SSD' },
+    { id: 'd-thinkpad', name: 'Lenovo ThinkPad X1 Carbon', model: 'i7-1365U 16GB', serial_number: 'SN-TPX1-001', price_per_day: 38.0, deposit_amount: 1800.0, status: 'rented', description: '13代Intel vPro i7，16GB内存，1TB SSD，14英寸2.8K OLED屏' },
+    { id: 'd-imac', name: 'iMac 24寸', model: 'M3 8GB 256GB', serial_number: 'SN-IMAC24-001', price_per_day: 45.0, deposit_amount: 2200.0, status: 'maintenance', description: 'Apple M3芯片，8GB统一内存，256GB SSD，24英寸4.5K Retina显示屏' },
+  ]
+
+  const deviceInsert = db.prepare('INSERT INTO devices (id, name, model, serial_number, price_per_day, deposit_amount, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const deviceInserts = devicesToSeed.map(d => 
+    deviceInsert.bind(d.id, d.name, d.model, d.serial_number, d.price_per_day, d.deposit_amount, d.status, d.description)
+  )
+  await db.batch(deviceInserts)
+
+  // Seed示例订单
+  const now = new Date().toISOString()
+  const ordersToSeed = [
+    { 
+      id: 'o-1', customer_id: 'u-customer', device_id: 'd-thinkpad', 
+      start_date: '2026-07-10', end_date: '2026-08-10', rental_period: 31,
+      total_amount: 1178.0, deposit_amount: 1800.0, status: 'active', payment_method: 'bank_transfer'
+    },
+    { 
+      id: 'o-2', customer_id: 'u-customer', device_id: 'd-mbp14', 
+      start_date: '2026-07-01', end_date: '2026-07-07', rental_period: 7,
+      total_amount: 280.0, deposit_amount: 2000.0, status: 'completed', payment_method: 'card'
+    },
+    { 
+      id: 'o-3', customer_id: 'u-customer', device_id: 'd-xps13', 
+      start_date: '2026-07-20', end_date: '2026-07-27', rental_period: 7,
+      total_amount: 245.0, deposit_amount: 1500.0, status: 'pending_payment', payment_method: null
+    },
+  ]
+
+  const orderInsert = db.prepare('INSERT INTO orders (id, customer_id, device_id, start_date, end_date, rental_period, total_amount, deposit_amount, status, payment_method, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const orderInserts = ordersToSeed.map(o => 
+    orderInsert.bind(o.id, o.customer_id, o.device_id, o.start_date, o.end_date, o.rental_period, o.total_amount, o.deposit_amount, o.status, o.payment_method, now, now)
+  )
+  await db.batch(orderInserts)
 }
 
 export async function loadDatabaseData(c: Context): Promise<void> {
@@ -1203,313 +1494,5 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 </html>`
 }
 
-/**
- * ===========================
- * In-memory (legacy) helpers
- * ===========================
- * These MUST NOT shadow DB-backed exports.
- */
-export function getDeviceByIdLocal(id: string): Device | undefined {
-  return devices.find((d) => d.id === id)
-}
+// Legacy/local in-memory helpers have been removed to avoid shadowing DB-backed exports.
 
-export function getOrderByIdLocal(id: string): Order | undefined {
-  return orders.find((o) => o.id === id)
-}
-
-export function getContractByIdLocal(id: string): Contract | undefined {
-  return contracts.find((c) => c.id === id)
-}
-
-export function getContractByOrderIdLocal(orderId: string): Contract | undefined {
-  return contracts.find((c) => c.rentalId === orderId)
-}
-
-export async function getContractBySignTokenLocal(c: Context, token: string): Promise<Contract | null> {
-  // local fallback (still uses DB because the D1 is authoritative)
-  return getContractBySignToken(c, token)
-}
-
-export function getUserByIdLocal(id: string): User | undefined {
-  return users.find((user) => user.id === id)
-}
-
-export function getSystemSettings() {
-  return systemSettings
-}
-
-export async function updateUser(c: Context, userId: string, data: Partial<User> & { password?: string }): Promise<User | null> {
-  const db = getDB(c)
-  const fields: { [key: string]: any } = { ...data }
-
-  if (fields.password) {
-    fields.password_hash = await hashPassword(fields.password)
-    delete fields.password
-  }
-
-  const hasReferralCode = await userHasColumn(c, 'referralCode')
-  if (!hasReferralCode) {
-    delete fields.referralCode
-  }
-
-  const fieldEntries = Object.entries(fields).filter(([key]) => key !== 'id')
-  if (fieldEntries.length === 0) {
-    return findUserBySession(c, null)
-  }
-
-  const setClause = fieldEntries.map(([key]) => `${key} = ?`).join(', ')
-  const values = fieldEntries.map(([, value]) => value)
-  values.push(userId)
-
-  await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).bind(...values).run()
-
-  const updatedUser: User | null = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first()
-  if (updatedUser) {
-    delete updatedUser.password_hash
-  }
-  return updatedUser
-}
-
-export async function insertUser(c: Context, user: User): Promise<User> {
-  const db = getDB(c)
-  const fields: { [key: string]: any } = { ...user }
-
-  if (fields.password) {
-    fields.password_hash = await hashPassword(fields.password)
-    delete fields.password
-  }
-
-  const hasReferralCode = await userHasColumn(c, 'referralCode')
-  if (!hasReferralCode) {
-    delete fields.referralCode
-  }
-
-  const fieldEntries = Object.entries(fields)
-  const keys = fieldEntries.map(([key]) => key).join(', ')
-  const placeholders = fieldEntries.map(() => '?').join(', ')
-  const values = fieldEntries.map(([, value]) => value)
-
-  await db.prepare(`INSERT INTO users (${keys}) VALUES (${placeholders})`).bind(...values).run()
-
-  const insertedUser: User | null = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first()
-  if (insertedUser) {
-    delete insertedUser.password_hash
-  }
-  return insertedUser as User
-}
-
-// 同步版本保持向后兼容，返回空数组
-export function getUsers(): User[] {
-  return users
-}
-
-// 异步版本从数据库获取用户列表
-export async function getUsersAsync(c: Context): Promise<User[]> {
-  const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM users').all()
-  return (result.results as User[] || []).map((user) => {
-    if (user.password_hash) {
-      delete user.password_hash
-    }
-    return user
-  })
-}
-
-// 异步版本从数据库获取订单列表
-export async function getOrdersAsync(c: Context): Promise<any[]> {
-  const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM orders').all()
-  return result.results || []
-}
-
-// 异步版本从数据库获取设备列表
-export async function getDevicesAsync(c: Context): Promise<any[]> {
-  const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM devices').all()
-  return result.results || []
-}
-
-export function getContractByOrderId(orderId: string): Contract | undefined {
-  return contracts.find((c) => c.rentalId === orderId)
-}
-
-export function getDevices(): Device[] {
-  return devices
-}
-
-export function getAllDevices(): Device[] {
-  return devices
-}
-
-export function getOrders(user?: User): Order[] {
-  if (user && user.role === 'STAFF') {
-    return orders.filter(order => order.created_by === user.id);
-  }
-  return orders;
-}
-
-export function getOrdersForUser(userId: string): Order[] {
-  return orders.filter((o) => o.userId === userId || o.customerId === userId)
-}
-
-export function getPendingOrders(): Order[] {
-  return orders.filter((o) => o.status === 'pending_payment' || o.status === 'pending_approval')
-}
-
-export function getAllRentals(): Order[] {
-  return orders
-}
-
-export function getRentalsByUserId(userId: string): Order[] {
-  return orders.filter((o) => o.userId === userId || o.customerId === userId)
-}
-
-export function getAllContracts(): Contract[] {
-  return contracts
-}
-
-/**
- * ⚠️ Local/in-memory implementations (do NOT override DB-backed exports above).
- * These are kept for legacy compatibility but should not be used for persistence-critical flows.
- */
-export async function insertOrderLocal(c: Context, order: Order): Promise<Order> {
-  orders.push(order)
-  return order
-}
-
-export async function insertContractLocal(c: Context, contract: Contract): Promise<Contract> {
-  contracts.push(contract)
-  return contract
-}
-
-export async function updateDeviceStatusLocal(c: Context, deviceId: string, status: Device['status']): Promise<Device | undefined> {
-  const device = devices.find((d) => d.id === deviceId)
-  if (device) {
-    device.status = status
-  }
-  return device
-}
-
-export async function updateOrderStatusLocal(c: Context, orderId: string, status: Order['status']): Promise<Order | undefined> {
-  const order = orders.find((o) => o.id === orderId)
-  if (order) {
-    order.status = status
-  }
-  return order
-}
-
-export async function updateOrderLocal(c: Context, orderId: string, data: Partial<Order>): Promise<Order | undefined> {
-  const order = orders.find((o) => o.id === orderId)
-  if (!order) return undefined
-  Object.assign(order, data)
-  return order
-}
-
-export async function updateOrderInDBLocal(c: Context, orderId: string, data: Partial<Order>): Promise<Order | undefined> {
-  return updateOrderLocal(c, orderId, data)
-}
-
-export async function updateContractStatusLocal(c: Context, contractId: string, status: Contract['status']): Promise<Contract | undefined> {
-  const contract = contracts.find((c) => c.id === contractId)
-  if (contract) {
-    contract.status = status
-  }
-  return contract
-}
-
-export async function updateContractStatusInDBLocal(c: Context, contractId: string, status: Contract['status']): Promise<Contract | undefined> {
-  return updateContractStatusLocal(c, contractId, status)
-}
-
-export async function updateContractTemplateInDBLocal(c: Context, newTemplate: { id: string; name: string; content: string }): Promise<ContractTemplate> {
-  return updateContractTemplate(newTemplate)
-}
-
-export async function createContractLocal(c: Context, contract: Contract): Promise<Contract> {
-  return insertContractLocal(c, contract)
-}
-
-export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {
-  Object.assign(systemSettings, updates)
-  return systemSettings
-}
-
-export async function updatePassword(c: Context, userId: string, newPassword: string): Promise<User | undefined> {
-  const user = users.find((u) => u.id === userId)
-  if (!user) return undefined
-  user.password = newPassword
-  return user
-}
-
-export async function bindReferrer(c: Context, userId: string, referrerId: string): Promise<User | undefined> {
-  const user = await c.env.RENT.prepare('SELECT referrerId FROM users WHERE id = ?').bind(userId).first() as any;
-  
-  // 如果用户已经绑定了推荐人，不允许再次更改
-  if (user?.referrerId) {
-    return undefined; // 已经绑定过推荐人，不能再绑定
-  }
-  
-  // 检查推荐人是否存在
-  const referrerExists = await c.env.RENT.prepare('SELECT 1 FROM users WHERE id = ?').bind(referrerId).first();
-  if (!referrerExists) {
-    return undefined;
-  }
-  
-  await c.env.RENT.prepare('UPDATE users SET referrerId = ? WHERE id = ?').bind(referrerId, userId).run();
-  return await c.env.RENT.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as any;
-}
-
-// 生成6位数字和大写字母组合的唯一推荐码
-function generateReferralCode(): string {
-  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-}
-
-// 加入推荐计划，生成唯一推荐码
-export async function joinReferralProgram(c: Context, userId: string): Promise<User | undefined> {
-  const db = getDB(c);
-  const user = await db.prepare('SELECT referralCode FROM users WHERE id = ?').bind(userId).first() as any;
-  
-  // 如果用户已经有推荐码了，直接返回
-  if (user?.referralCode) {
-    return await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as any;
-  }
-  
-  // 生成唯一的推荐码，确保不重复
-  let referralCode: string;
-  let isUnique = false;
-  let attempts = 0;
-  const maxAttempts = 10;
-  
-  while (!isUnique && attempts < maxAttempts) {
-    referralCode = generateReferralCode();
-    const existing = await db.prepare('SELECT 1 FROM users WHERE referralCode = ?').bind(referralCode).first();
-    if (!existing) {
-      isUnique = true;
-    }
-    attempts++;
-  }
-  
-  if (!isUnique) {
-    return undefined; // 生成推荐码失败
-  }
-  
-  await db.prepare('UPDATE users SET referralCode = ? WHERE id = ?').bind(referralCode, userId).run();
-  return await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as any;
-}
-
-// 退出推荐计划，清除推荐码
-export async function leaveReferralProgram(c: Context, userId: string): Promise<User | undefined> {
-  const db = getDB(c);
-  await db.prepare('UPDATE users SET referralCode = NULL WHERE id = ?').bind(userId).run();
-  return await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as any;
-}
-
-export async function unbindReferrer(c: Context, userId: string): Promise<User | undefined> {
-  // 不允许解绑推荐人，一旦绑定永久生效
-  return undefined;
-}

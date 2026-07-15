@@ -1,7 +1,7 @@
  import { Hono } from 'hono'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
-import { verifyUserCredentials, findUserBySession, devices, getDeviceById, loadDatabaseData, updateContractTemplateInDB, updateUser, verifyPassword, insertUser } from './site'
+import { verifyUserCredentials, findUserBySession, getDeviceById, loadDatabaseData, updateContractTemplateInDB, updateUser, verifyPassword, insertUser, insertDevice, updateDevice, deleteDevice } from './site'
 
 const app = new Hono()
 
@@ -461,7 +461,7 @@ app.get('/customer/rentals', async (c) => {
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderCustomerRentals(user))
+  return c.html(await pages.renderCustomerRentals(c, user))
 })
 
 app.get('/customer/profile', async (c) => {
@@ -654,12 +654,86 @@ app.get('/admin/users', async (c) => {
   return c.html(html)
 })
 
+app.get('/admin/users/new', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.html(pages.renderAdminUserNew(user))
+})
+
+app.post('/admin/users/new', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  const body = await c.req.text()
+  const form = parseFormBody(body)
+  return c.redirect('/admin/users')
+})
+
+app.get('/admin/users/:id', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.html(await pages.renderAdminUserDetail(c, user, c.req.param('id')))
+})
+
+app.get('/admin/users/:id/edit', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.html(await pages.renderAdminUserEdit(c, user, c.req.param('id')))
+})
+
+app.post('/admin/users/:id/edit', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.redirect('/admin/users')
+})
+
+app.get('/admin/refunds', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.html(await pages.renderAdminRefunds(c, user))
+})
+
+app.get('/admin/contracts/signing-status', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.redirect('/admin/contracts?status=pending')
+})
+
+app.get('/admin/contracts/archive', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.redirect('/admin/contracts?status=completed')
+})
+
+app.get('/admin/orders/export', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.redirect('/admin/orders')
+})
+
 app.get('/admin/orders', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminOrders(user))
+  return c.html(await pages.renderAdminOrders(c, user))
 })
 
 app.get('/admin/contracts', async (c) => {
@@ -667,7 +741,7 @@ app.get('/admin/contracts', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderAdminContracts(user))
+  return c.html(await pages.renderAdminContracts(c, user))
 })
 
 
@@ -692,7 +766,9 @@ app.get('/admin/finance', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminFinance(user))
+  const { getOrdersAsync } = await import('./site')
+  const orders = await getOrdersAsync(c)
+  return c.html(pages.renderAdminFinance(user, orders))
 })
 
 app.get('/admin/devices', async (c) => {
@@ -700,7 +776,9 @@ app.get('/admin/devices', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminDevices(user))
+  const { getDevicesAsync } = await import('./site')
+  const devices = await getDevicesAsync(c)
+  return c.html(pages.renderAdminDevices(user, devices))
 })
 
 app.get('/admin/devices/new', async (c) => {
@@ -718,9 +796,15 @@ app.post('/admin/devices/new', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
-  // In a real app, you'd validate the form data
-  // and create a new device in the database.
-  // For now, we'll just redirect.
+  await insertDevice(c, {
+    name: form.name || '',
+    model: form.model || '',
+    serialNumber: form.serialNumber || '',
+    pricePerDay: Number(form.pricePerDay) || 0,
+    depositAmount: Number(form.depositAmount) || 0,
+    status: (form.status as any) || 'available',
+    description: form.description || ''
+  })
   return c.redirect('/admin/devices')
 })
 
@@ -729,7 +813,10 @@ app.get('/admin/devices/:id/edit', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  const device = { id: c.req.param('id'), name: 'Sample Device', model: 'Sample Model', pricePerDay: 10, depositAmount: 100, status: 'available' };
+  const device = await getDeviceById(c, c.req.param('id'))
+  if (!device) {
+    return c.redirect('/admin/devices')
+  }
   return c.html(pages.renderAdminDeviceEdit(user, device))
 })
 
@@ -740,8 +827,15 @@ app.post('/admin/devices/:id/edit', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
-  // In a real app, you'd validate the form data
-  // and update the device in the database.
+  await updateDevice(c, c.req.param('id'), {
+    name: form.name,
+    model: form.model,
+    serialNumber: form.serialNumber,
+    pricePerDay: form.pricePerDay ? Number(form.pricePerDay) : undefined,
+    depositAmount: form.depositAmount ? Number(form.depositAmount) : undefined,
+    status: form.status as any,
+    description: form.description
+  })
   return c.redirect('/admin/devices')
 })
 
@@ -750,7 +844,7 @@ app.get('/admin/devices/:id/delete', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  // In a real app, you'd delete the device from the database.
+  await deleteDevice(c, c.req.param('id'))
   return c.redirect('/admin/devices')
 })
 
@@ -776,6 +870,9 @@ app.post('/admin/settings/save', async (c) => {
 })
 
 
-app.get('*', (c) => c.html(pages.renderNotFound()))
+app.get('*', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  return c.html(pages.renderNotFound(user))
+})
 
 export default app

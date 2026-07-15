@@ -1,66 +1,68 @@
 import { buildLayout, getOrders, getUserById, getDeviceById, formatCurrency } from '../../site';
+import { Context } from 'hono';
 
-export function renderAdminRefunds(user: any) {
-  // 获取所有需要退款的订单：状态为pending_refund或需要退款的订单
-  const allOrders = getOrders();
+export async function renderAdminRefunds(c: Context, user: any) {
+  const allOrders = await getOrders(c);
+  // 获取所有需要退款的订单：状态为cancelled或已完成需要退押金的
   const refundOrders = allOrders.filter(order => 
-    order.status === 'pending_refund' || 
-    order.needsRefund || 
-    order.status === 'refund_pending'
+    order.status === 'cancelled' || 
+    order.needsRefund
   );
+
+  // 获取关联数据
+  const ordersWithDetails = await Promise.all(refundOrders.map(async (order) => {
+    const customer = await getUserById(c, order.customer_id || order.userId);
+    const device = await getDeviceById(c, order.device_id || order.deviceId);
+    return { ...order, customer, device };
+  }));
 
   const body = `
     <div class="panel">
       <div class="section-title">
-        <h2>待退款处理</h2>
-        <span class="section-note">管理所有待退款的订单，处理客户退款请求。</span>
+        <div>
+          <h2>待退款处理</h2>
+          <p style="color: var(--text-secondary); margin-top: 4px; font-size: 0.9rem;">管理所有待退款的订单，处理客户退款请求。</p>
+        </div>
       </div>
       
-      ${refundOrders.length > 0 ? `
-        <div class="table-wrapper">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>订单号</th>
-                <th>客户信息</th>
-                <th>设备</th>
-                <th>退款金额</th>
-                <th>客户银行信息</th>
-                <th>申请时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${refundOrders.map(order => {
-                const customer = getUserById(order.userId);
-                const device = getDeviceById(order.deviceId);
-                const refundAmount = order.depositAmount || order.totalAmount || 0;
-                return `
-                  <tr>
-                    <td><strong>${order.orderNo}</strong></td>
-                    <td>
-                      <div>${customer?.name || '未知客户'}</div>
-                      <div style="color: var(--text-secondary); font-size: 0.85rem;">${customer?.email || ''}</div>
-                    </td>
-                    <td>${device?.name || '未知设备'}</td>
-                    <td><span style="color: var(--danger); font-weight: bold;">${formatCurrency(refundAmount)}</span></td>
-                    <td>
-                      <div><small>BSB: ${customer?.bsb || '未填写'}</small></div>
-                      <div><small>账号: ${customer?.account || '未填写'}</small></div>
-                    </td>
-                    <td>${order.refundRequestedAt ? new Date(order.refundRequestedAt).toLocaleDateString('zh-CN') : '未知'}</td>
-                    <td>
-                      <form method="POST" action="/admin/refunds/${order.id}/process" style="display: inline;">
-                        <button class="button button-primary" type="submit" style="margin-right: 8px;">处理退款</button>
-                      </form>
-                      <a href="/admin/orders/${order.id}" class="link-button">查看详情</a>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
+      ${ordersWithDetails.length > 0 ? `
+        <table>
+          <thead>
+            <tr>
+              <th>订单号</th>
+              <th>客户信息</th>
+              <th>设备</th>
+              <th>退款金额</th>
+              <th>客户银行信息</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${ordersWithDetails.map(order => {
+              const refundAmount = order.deposit_amount || order.depositAmount || order.total_amount || 0;
+              return `
+                <tr>
+                  <td style="font-family: monospace;">${order.id}</td>
+                  <td>
+                    <div><strong>${order.customer?.name || '未知客户'}</strong></div>
+                    <div style="color: var(--text-secondary); font-size: 0.85rem;">${order.customer?.email || ''}</div>
+                  </td>
+                  <td>${order.device?.name || '未知设备'}</td>
+                  <td><span style="color: var(--danger); font-weight: bold;">${formatCurrency(refundAmount)}</span></td>
+                  <td>
+                    <div><small>BSB: ${order.customer?.bsb || '未填写'}</small></div>
+                    <div><small>账号: ${order.customer?.account_number || order.customer?.account || '未填写'}</small></div>
+                  </td>
+                  <td><span class="badge badge-warning">待退款</span></td>
+                  <td>
+                    <a href="/admin/orders/${order.id}" class="link-button">查看详情</a>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
       ` : `
         <div style="text-align: center; padding: 60px 20px;">
           <div style="font-size: 48px; margin-bottom: 16px;">🎉</div>

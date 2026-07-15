@@ -1,13 +1,14 @@
 import { buildLayout, getContractById, getOrderById, getUserById } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffContractProgress(user: any, contractId: string) {
-  const contract = getContractById(contractId);
+export async function renderStaffContractProgress(c: Context, user: any, contractId: string) {
+  const contract = await getContractById(c, contractId);
   if (!contract) {
     return buildLayout('合同签署进度 - 电脑租赁管理系统', `<div class="panel"><h2>合同未找到</h2><p>指定的合同不存在。</p></div>`, user);
   }
 
-  const order = getOrderById(contract.rentalId);
-  const customer = order ? getUserById(order.userId) : null;
+  const order = await getOrderById(c, contract.rentalId);
+  const customer = order ? await getUserById(c, order.userId) : null;
 
   // 客户信息脱敏处理
   const maskedCustomerName = customer ? `${customer.name.charAt(0)}**` : '未知';

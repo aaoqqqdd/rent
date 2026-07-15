@@ -1,7 +1,8 @@
 import { buildLayout, getAllContracts, getOrderById, getUserById } from '../../site';
+import { Context } from 'hono';
 
-export function renderStaffContracts(user: any, status?: string) {
-  let allContracts = getAllContracts(); 
+export async function renderStaffContracts(c: Context, user: any, status?: string) {
+  let allContracts = await getAllContracts(c); 
 
   if (status) {
     allContracts = allContracts.filter(c => c.status === status);
@@ -32,8 +33,8 @@ export function renderStaffContracts(user: any, status?: string) {
           </thead>
           <tbody>
             ${allContracts.map(contract => {
-              const order = getOrderById(contract.rentalId);
-              const customer = order ? getUserById(order.userId) : null;
+              const order = getOrderById(c, contract.rentalId);
+              const customer = order ? getUserById(c, order.userId) : null;
               return `
                 <tr>
                   <td>${contract.contractNumber}</td>

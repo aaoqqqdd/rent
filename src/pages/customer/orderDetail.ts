@@ -1,12 +1,13 @@
 import { buildLayout, getOrderById, getDeviceById, formatCurrency, getContractByOrderId, systemSettings } from '../../site';
+import { Context } from 'hono';
 
-export function renderCustomerOrderDetail(user: any, orderId: string, message?: string, type: 'success' | 'error' = 'error') {
-  const order = getOrderById(orderId)
+export async function renderCustomerOrderDetail(c: Context, user: any, orderId: string, message?: string, type: 'success' | 'error' = 'error') {
+  const order = await getOrderById(c, orderId)
   if (!order || order.userId !== user.id) {
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在或无权访问。</p></div>', user)
   }
-  const device = getDeviceById(order.deviceId)
-  const contract = getContractByOrderId(order.id)
+  const device = await getDeviceById(c, order.deviceId)
+  const contract = await getContractByOrderId(c, order.id)
   const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
 
   const body = `

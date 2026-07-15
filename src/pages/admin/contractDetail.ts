@@ -1,13 +1,15 @@
-import { buildLayout, getContractById, getOrderById, getUserById } from '../../site';
+import { buildLayout, getContractById, getOrderById, getUserById, formatCurrency } from '../../site';
+import { Context } from 'hono';
 
 export async function renderAdminContractDetail(c: Context, user: any, contractId: string) {
   const contract = await getContractById(c, contractId);
   if (!contract) {
-    return buildLayout('合同详情 - 电脑租赁管理系统', `<div class="panel"><h2>合同未找到</h2><p>指定的合同不存在。</p></div>`, user);
+    return buildLayout('合同未找到 - 电脑租赁管理系统', `<div class="panel"><h2>合同未找到</h2><p>指定的合同不存在。</p><a href="/admin/contracts" class="button">返回合同列表</a></div>`, user);
   }
 
-  const order = await getOrderById(c, contract.rentalId);
-  const customer = order ? await getUserById(c, order.userId) : null;
+  const orderId = contract.rental_id || contract.rentalId
+  const order = orderId ? await getOrderById(c, orderId) : null;
+  const customer = order ? await getUserById(c, order.customer_id || order.userId) : null;
 
   const body = `
     <div class="panel">
@@ -30,11 +32,10 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
 
       <div class="contract-section">
         <h4>租赁详情</h4>
-        <p>订单号: ${order?.orderNo ?? 'N/A'}</p>
-        <p>设备: ${order?.deviceName ?? 'N/A'}</p>
-        <p>租期: ${order?.startDate ?? 'N/A'} 至 ${order?.endDate ?? 'N/A'} (${order?.rentalPeriod ?? 'N/A'} 天)</p>
-        <p>租金: $${order?.totalAmount ?? '0.00'}</p>
-        <p>押金: $${order?.depositAmount ?? '0.00'}</p>
+        <p>订单号: ${order?.id ?? 'N/A'}</p>
+        <p>租期: ${order?.start_date || order?.startDate || 'N/A'} 至 ${order?.end_date || order?.endDate || 'N/A'} (${order?.rental_period || order?.rentalPeriod || 'N/A'} 天)</p>
+        <p>租金: ${formatCurrency(order?.total_amount || order?.totalAmount || 0)}</p>
+        <p>押金: ${formatCurrency(order?.deposit_amount || order?.depositAmount || 0)}</p>
       </div>
 
       <div class="contract-section contract-content">

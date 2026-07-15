@@ -73,7 +73,22 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         // 从数据库检查邮箱是否已存在
         const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
         if (existingUser) {
-          throw new Error('该电子邮箱已被注册。');
+          // 如果邮箱已存在，我们不会立即报错，而是将现有用户的ID存入会话
+          // 在步骤3中，我们会用这个ID来关联合同，而不是创建新用户
+          signSessions[token].userIdToLink = existingUser.id;
+        } else {
+          // 仅当用户不存在时，才处理创建账户的逻辑
+          if (createAccount && (!password || !passwordConfirm)) {
+            throw new Error('创建账户时密码和确认密码是必填项。');
+          }
+          if (createAccount && password !== passwordConfirm) {
+            throw new Error('两次输入的密码不一致。');
+          }
+        }
+
+        // 检查邮箱是否存在，并抛出特定错误以便前端处理
+        if (existingUser && !body.force_continue) {
+          throw new Error('EMAIL_EXISTS');
         }
 
         // 保存用户信息到会话
@@ -92,65 +107,74 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         }
 
         // **核心签约逻辑**
-        // 1. 创建用户
         const userInfo = signSessions[token].userInfo;
-        const newUserId = `u-${nanoid(8)}`;
-        
-        // 处理推荐人关系 - 在合同签署时绑定，一旦绑定不可更改，不验证推荐码大小写
-        let referrerId = null;
-        if (userInfo.referrer) {
-          // 将用户输入的推荐码转换为大写，与数据库中存储的大写推荐码匹配
-          const normalizedReferrerCode = userInfo.referrer.toUpperCase();
-          const referrerUser = await c.env.RENT.prepare('SELECT * FROM users WHERE UPPER(referralCode) = ?').bind(normalizedReferrerCode).first();
-          if (referrerUser) {
-            referrerId = referrerUser.id;
+        const userIdToLink = signSessions[token].userIdToLink;
+        let userId = userIdToLink; // 默认使用已存在的用户ID
+
+        // 1. 如果没有已存在的用户ID，则创建新用户
+        if (!userId) {
+          const newUserId = `u-${nanoid(8)}`;
+          userId = newUserId;
+          
+          // 处理推荐人关系
+          let referrerId = null;
+          if (userInfo.referrer) {
+            const normalizedReferrerCode = userInfo.referrer.toUpperCase();
+            const referrerUser = await c.env.RENT.prepare('SELECT * FROM users WHERE UPPER(referralCode) = ?').bind(normalizedReferrerCode).first();
+            if (referrerUser) {
+              referrerId = referrerUser.id;
+            }
           }
+          
+          // 仅当用户选择创建账户时才处理密码
+          let password_hash = null;
+          if (userInfo.createAccount && userInfo.password) {
+            password_hash = await hashPassword(userInfo.password);
+          }
+          
+          const newUser: User = {
+            id: newUserId,
+            name: userInfo.name,
+            email: userInfo.email,
+            password_hash: password_hash ?? undefined,
+            role: 'CUSTOMER',
+            phone: userInfo.fullPhone,
+            balance: 0,
+            commissionBalance: 0,
+            pendingCommission: 0,
+            withdrawnCommission: 0,
+            referralCode: undefined,
+            referrerId: referrerId ?? undefined,
+            createdAt: new Date().toISOString(),
+            registrationDate: new Date().toISOString(),
+          };
+          await insertUser(c, newUser);
         }
-        
-        // 只有当用户选择创建账户时才处理密码
-        let password_hash = null;
-        if (userInfo.createAccount && userInfo.password) {
-          password_hash = await hashPassword(userInfo.password);
-        }
-        
-        const newUser: User = {
-          id: newUserId,
-          name: userInfo.name,
-          email: userInfo.email,
-          password_hash: password_hash,
-          role: 'CUSTOMER',
-          phone: userInfo.fullPhone,
-          balance: 0,
-          commissionBalance: 0,
-          pendingCommission: 0,
-          withdrawnCommission: 0,
-          referralCode: null,
-          referrer_id: referrerId, // 绑定推荐人，一旦设置不可更改
-          createdAt: new Date().toISOString(),
-          registrationDate: new Date().toISOString(),
-        };
-        await insertUser(c, newUser);
 
         // 2. 更新订单信息
-        const order = await updateOrderInDB(c, contract.rentalId, {
-          userId: newUserId,
+        await updateOrderInDB(c, contract.rentalId, {
+          userId: userId,
           paymentMethod: paymentMethod as Order['paymentMethod'],
-          status: 'pending_payment', // 等待支付
-          referrer_id: referrerId, // 在这里同步推荐人ID
+          status: 'pending_payment',
         });
 
         // 3. 更新合同状态
         await updateContractStatusInDB(c, contract.id, 'signed');
+
         
         // 4. 如果有推荐人，计算并记录佣金
+        const referrerId = signSessions[token].referrerId as string | null;
+        const newUserId = userId;
+
         if (referrerId) {
           // 获取租赁订单的总金额
-          const rental = await c.env.RENT.prepare('SELECT total_amount FROM orders WHERE id = ?').bind(contract.rentalId).first();
+          const rental = await c.env.RENT.prepare('SELECT total_amount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
           if (rental) {
             // 获取推荐人的分成比例
-            const referrer = await c.env.RENT.prepare('SELECT commission_rate FROM users WHERE id = ?').bind(referrerId).first();
+            const referrer = await c.env.RENT.prepare('SELECT commission_rate FROM users WHERE id = ?').bind(referrerId).first() as any;
             const commissionRate = referrer?.commission_rate || 25.0; // 默认25%
             const commissionAmount = (rental.total_amount * commissionRate) / 100;
+
             
             // 创建佣金记录
             const commissionId = `c-${nanoid(8)}`;
@@ -172,7 +196,7 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
 
         // 5. 重定向到支付页面或成功页面
         // 这里我们假设支付是下一步，并重定向到一个支付结果页
-        redirectUrl = `/payment/result?orderId=${order?.id}&status=success`;
+        redirectUrl = `/payment/result?orderId=${contract.rentalId}&status=success`;
         break;
 
       default:

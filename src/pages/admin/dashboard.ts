@@ -1,11 +1,37 @@
 import { buildLayout, formatCurrency } from '../../site';
 
 export function renderAdminDashboard(user: any, orders: any[], users: any[], devices: any[]) {
-  const totalRevenue = orders.filter(o => o.status === 'completed' || o.status === 'paid').reduce((sum, order) => sum + (order.total_amount || order.totalAmount || 0), 0)
-  const activeRentals = orders.filter(o => o.status === 'active' || o.status === 'paid').length
+  const today = new Date()
+  const totalRevenue = orders.filter(o => o.status === 'completed' || o.status === 'paid' || o.status === 'active').reduce((sum, order) => sum + (order.total_amount || order.totalAmount || 0), 0)
+  
+  // 活跃租赁：状态为active且当前日期在租期内
+  const activeRentals = orders.filter(o => {
+    if (o.status !== 'active' && o.status !== 'paid') return false
+    const start = new Date(o.start_date || o.startDate)
+    const end = new Date(o.end_date || o.endDate)
+    return today >= start && today <= end
+  }).length
+  
   const pendingOrders = orders.filter(o => o.status === 'pending_approval' || o.status === 'pending_payment').length
   const availableDevices = devices.filter(d => d.status === 'available').length
   const totalUsers = users.length;
+
+  const statusMap: Record<string, { text: string; class: string }> = {
+    'pending_approval': { text: '待审核', class: 'badge-warning' },
+    'pending_payment': { text: '待支付', class: 'badge-warning' },
+    'approved': { text: '已审核', class: 'badge-info' },
+    'paid': { text: '已支付', class: 'badge-primary' },
+    'active': { text: '租赁中', class: 'badge-primary' },
+    'completed': { text: '已完成', class: 'badge-success' },
+    'cancelled': { text: '已取消', class: 'badge-danger' }
+  }
+
+  const deviceStatusMap: Record<string, { text: string; class: string }> = {
+    'available': { text: '可用', class: 'badge-success' },
+    'rented': { text: '已出租', class: 'badge-primary' },
+    'maintenance': { text: '维护中', class: 'badge-warning' },
+    'retired': { text: '已退役', class: 'badge-info' }
+  }
 
   const body = `
     <div class="panel hero">
@@ -44,31 +70,36 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
         <h3>最新订单</h3>
         <span class="section-note">最近的5条租赁记录</span>
       </div>
-      <table><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>状态</th><th>操作</th></tr></thead><tbody>
+      ${orders.length === 0 ? `
+        <div style="text-align: center; padding: 32px; color: var(--text-secondary);">暂无订单</div>
+      ` : `
+      <table><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
         ${orders.slice(0, 5).map((order) => {
-          const customer = users.find(u => u.id === (order.userId || order.user_id))
-          const device = devices.find(d => d.id === (order.deviceId || order.device_id))
-          const statusClass = order.status === 'completed' ? 'badge-success' : 
-                             order.status === 'pending_payment' || order.status === 'pending_approval' ? 'badge-warning' : 
-                             order.status === 'active' ? 'badge-primary' : 'badge-info';
-          return `<tr><td>${order.orderNo || order.order_no || 'N/A'}</td><td>${customer?.name ?? '未知用户'}</td><td>${device?.name ?? '未知设备'}</td><td><span class="badge ${statusClass}">${order.status}</span></td><td><a class="link-button" href="/admin/orders/${order.id}">查看详情</a></td></tr>`
+          const customer = users.find(u => u.id === (order.customer_id || order.userId))
+          const device = devices.find(d => d.id === (order.device_id || order.deviceId))
+          const status = statusMap[order.status] || { text: order.status, class: 'badge-info' }
+          return `<tr><td style="font-family: monospace;">${order.id}</td><td>${customer?.name ?? '未知用户'}</td><td>${device?.name ?? '未知设备'}</td><td>${formatCurrency(order.total_amount || order.totalAmount || 0)}</td><td><span class="badge ${status.class}">${status.text}</span></td><td><a class="link-button" href="/admin/orders/${order.id}">查看详情</a></td></tr>`
         }).join('')}
       </tbody></table>
+      `}
     </div>
     <div class="panel">
       <div class="section-title">
         <h3>设备概览</h3>
         <span class="section-note">最近的5台设备状态</span>
       </div>
-      <table><thead><tr><th>设备名称</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
+      ${devices.length === 0 ? `
+        <div style="text-align: center; padding: 32px; color: var(--text-secondary);">暂无设备</div>
+      ` : `
+      <table><thead><tr><th>设备名称</th><th>型号</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
         ${devices.slice(0, 5).map((device) => {
-          const currentOrder = orders.find(o => (o.deviceId || o.device_id) === device.id && (o.status === 'active' || o.status === 'paid'))
-          const customer = currentOrder ? users.find(u => u.id === (currentOrder.userId || currentOrder.user_id)) : null
-          const deviceStatusClass = device.status === 'available' ? 'badge-success' : 
-                                   device.status === 'rented' ? 'badge-primary' : 'badge-warning';
-          return `<tr><td>${device.name}</td><td><span class="badge ${deviceStatusClass}">${device.status}</span></td><td>${customer?.name ?? '无'}</td><td><a class="link-button" href="/admin/devices/${device.id}">查看详情</a></td></tr>`
+          const currentOrder = orders.find(o => (o.device_id || o.deviceId) === device.id && (o.status === 'active' || o.status === 'paid'))
+          const customer = currentOrder ? users.find(u => u.id === (currentOrder.customer_id || currentOrder.userId)) : null
+          const deviceStatus = deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
+          return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${customer?.name ?? '无'}</td><td><a class="link-button" href="/admin/devices/${device.id}/edit">编辑</a></td></tr>`
         }).join('')}
       </tbody></table>
+      `}
     </div>
   `;
   return buildLayout('管理员仪表盘 - 电脑租赁管理系统', body, user);

@@ -16,7 +16,7 @@ export function renderAdminDeviceNew(user: any) {
         <h3 style="margin: 0 0 8px 0; color: #0369a1;">📝 设备入库提示</h3>
         <p style="margin: 0; color: #0c4a6e; font-size: 0.95rem;">请准确填写设备的所有信息，序列号将作为设备的唯一标识，日租金和押金将影响订单计算。</p>
       </div>
-      <form method="POST" action="/admin/devices/create" class="form-grid" style="gap: 24px;">
+      <form method="POST" action="/admin/devices/new" class="form-grid" style="gap: 24px;">
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px;">
           <div class="form-group" style="margin: 0;">
             <label for="name" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">💻 设备名称</label>
@@ -44,17 +44,17 @@ export function renderAdminDeviceNew(user: any) {
         </div>
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px;">
           <div class="form-group" style="margin: 0;">
-            <label for="pricePerDay" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">💰 日租金 (元)</label>
+            <label for="pricePerDay" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">💰 日租金 (AUD)</label>
             <div style="position: relative;">
-              <span style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #6b7280; font-weight: 500;">¥</span>
-              <input type="number" id="pricePerDay" name="pricePerDay" min="0" step="0.01" required style="width: 100%; padding: 12px 16px 12px: 44px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none; padding-left: 44px;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="0.00">
+              <span style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #6b7280; font-weight: 500;">AUD$</span>
+              <input type="number" id="pricePerDay" name="pricePerDay" min="0" step="0.01" required style="width: 100%; padding: 12px 16px 12px 64px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="0.00">
             </div>
           </div>
           <div class="form-group" style="margin: 0;">
-            <label for="depositAmount" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">💎 押金金额 (元)</label>
+            <label for="depositAmount" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">💎 押金金额 (AUD)</label>
             <div style="position: relative;">
-              <span style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #6b7280; font-weight: 500;">¥</span>
-              <input type="number" id="depositAmount" name="depositAmount" min="0" step="0.01" required style="width: 100%; padding: 12px 16px 12px: 44px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none; padding-left: 44px;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="0.00">
+              <span style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #6b7280; font-weight: 500;">AUD$</span>
+              <input type="number" id="depositAmount" name="depositAmount" min="0" step="0.01" required style="width: 100%; padding: 12px 16px 12px 64px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="0.00">
             </div>
           </div>
         </div>

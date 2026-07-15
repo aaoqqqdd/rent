@@ -1,14 +1,15 @@
 import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency } from '../../site';
+import { Context } from 'hono';
 
-export function renderAdminOrderDetail(user: any, orderId: string) {
-  const order = getOrderById(orderId);
+export async function renderAdminOrderDetail(c: Context, user: any, orderId: string) {
+  const order = await getOrderById(c, orderId);
 
   if (!order) {
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user);
   }
 
-  const customer = getUserById(order.userId);
-  const device = getDeviceById(order.deviceId);
+  const customer = await getUserById(c, order.userId);
+  const device = await getDeviceById(c, order.deviceId);
 
   const statusLabels: Record<string, {label: string, color: string, bg: string, icon: string}> = {
     'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
