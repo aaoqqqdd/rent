@@ -655,8 +655,8 @@ export const systemSettings = {
 │  租赁开始：{start_date}             │
 │  租赁结束：{end_date}               │
 │  租赁天数：{rental_days} 天         │
-│  租金总额：AUD${total_rent}        │
-│  押金：AUD${deposit_amount}         │
+│  租金总额：AUD$ {total_rent}        │
+│  押金：AUD$ {deposit_amount}         │
 │  支付方式：{payment_method}          │
 └─────────────────────────────────────┘
 
@@ -720,9 +720,9 @@ export const contractTemplate = {
 <p>租赁天数：{rental_days}天</p>
 
 <h2>四、费用明细</h2>
-<p>日租金：AUD${daily_rate}</p>
-<p>租金总额：AUD${total_rent}</p>
-<p>押金金额：AUD${deposit_amount}</p>
+<p>日租金：AUD$ {daily_rate}</p>
+<p>租金总额：AUD$ {total_rent}</p>
+<p>押金金额：AUD$ {deposit_amount}</p>
 <p>支付方式：{payment_method}</p>
 
 <h2>五、银行账户信息</h2>
@@ -780,9 +780,9 @@ export async function getContractTemplate(c: Context): Promise<ContractTemplate>
 <p>租赁天数：{rental_days}天</p>
 
 <h2>四、费用明细</h2>
-<p>日租金：AUD${daily_rate}</p>
-<p>租金总额：AUD${total_rent}</p>
-<p>押金金额：AUD${deposit_amount}</p>
+<p>日租金：AUD$ {daily_rate}</p>
+<p>租金总额：AUD$ {total_rent}</p>
+<p>押金金额：AUD$ {deposit_amount}</p>
 <p>支付方式：{payment_method}</p>
 
 <h2>五、银行账户信息</h2>
