@@ -235,11 +235,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 const rawPhone = phoneNumber.replace(/\D/g, '');
                 let phoneToValidate = rawPhone;
 
-                console.log('validatePhoneNumber called');
-                console.log('phoneCode:', phoneCode);
-                console.log('phoneNumber (raw input):', phoneNumber);
-                console.log('rawPhone (digits only):', rawPhone);
-
                 if (phoneCode === '+86' && rawPhone.startsWith('86') && rawPhone.length === 13) {
                   phoneToValidate = rawPhone.slice(2);
                 } else {
@@ -248,16 +243,16 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 
                 // 每个国家的详细手机号格式要求
                 const phonePatterns = {
-                  '+86': /^1[3-9]\d{9}$/, // 中国：11位，必须以13-19开头
-                  '+61': /^0\d{9}$/, // 澳大利亚：手机以0开头，共10位
-                  '+1': /^\d{10}$/, // 美国/加拿大：10位手机号
-                  '+44': /^7\d{9}$/, // 英国：手机以7开头，共10位
-                  '+852': /^[5689]\d{7}$/, // 香港：手机以5/6/8/9开头，共8位
-                  '+853': /^6\d{7}$/, // 澳门：手机以6开头，共8位
-                  '+886': /^9\d{8}$/, // 台湾：手机以9开头，共9位
-                  '+65': /^[89]\d{7}$/, // 新加坡：手机以8/9开头，共8位
-                  '+82': /^1[0-9]\d{7,8}$/, // 韩国：手机以1开头，共9-10位
-                  '+81': /^[789]0\d{8}$/ // 日本：手机以70/80/90开头，共10位
+                  '+86': /^1[3-9]\\d{9}$/, // 中国：11位，必须以13-19开头
+                  '+61': /^0\\d{9}$/, // 澳大利亚：手机以0开头，共10位
+                  '+1': /^\\d{10}$/, // 美国/加拿大：10位手机号
+                  '+44': /^7\\d{9}$/, // 英国：手机以7开头，共10位
+                  '+852': /^[5689]\\d{7}$/, // 香港：手机以5/6/8/9开头，共8位
+                  '+853': /^6\\d{7}$/, // 澳门：手机以6开头，共8位
+                  '+886': /^9\\d{8}$/, // 台湾：手机以9开头，共9位
+                  '+65': /^[89]\\d{7}$/, // 新加坡：手机以8/9开头，共8位
+                  '+82': /^1[0-9]\\d{7,8}$/, // 韩国：手机以1开头，共9-10位
+                  '+81': /^[789]0\\d{8}$/ // 日本：手机以70/80/90开头，共10位
                 };
                 
                 // 错误提示信息
@@ -281,13 +276,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                   return true;
                 }
                 
-                console.log('--- REGEX TEST ---');
-                console.log('Value to test:', phoneToValidate);
-                console.log('Pattern to use:', pattern ? pattern.toString() : 'null');
                 const testResult = pattern ? pattern.test(phoneToValidate) : false;
-                console.log('Test result:', testResult);
-                console.log('--- END REGEX TEST ---');
-
                 if (testResult) {
                   phoneError.style.display = 'none';
                   phoneError.textContent = '';
