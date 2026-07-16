@@ -38,13 +38,15 @@ export async function renderCustomerReferral(c: Context, user: any, errorMessage
   
   // 获取已推荐的好友列表
   const referredUsers = await c.env.RENT.prepare(`
-    SELECT u.name, u.created_at as registeredAt, 
-           COUNT(r.id) as orderCount,
-           SUM(cr.amount) as contributedCommission
+    SELECT 
+      u.name, 
+      u.createdAt as registeredAt,
+      COUNT(r.id) as orderCount,
+      SUM(cr.amount) as contributedCommission
     FROM users u
-    LEFT JOIN orders r ON u.id = r.customer_id
-    LEFT JOIN commission_records cr ON u.id = cr.customer_id
-    WHERE u.referrer_id = ?
+    LEFT JOIN orders r ON u.id = r.userId
+    LEFT JOIN commission_records cr ON u.id = cr.userId
+    WHERE u.referrerId = ?
     GROUP BY u.id
   `).bind(user.id).all();
 

@@ -1,14 +1,14 @@
-import { buildLayout, getAllRentals, getUserById, getDeviceById } from '../../site'
+import { buildLayout, getOrders, getUserById, getDeviceById } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffRentalsTracking(c: Context, user: any) {
-  const allRentals = await getAllRentals()
+  const allOrders = await getOrders(c)
 
-  const rentalsWithDetails = await Promise.all(
-    allRentals.map(async (rental: any) => {
-      const customer = await getUserById(c, rental.userId)
-      const device = await getDeviceById(c, rental.deviceId)
-      return { ...rental, customer, device }
+  const ordersWithDetails = await Promise.all(
+    allOrders.map(async (order: any) => {
+      const customer = await getUserById(c, order.userId)
+      const device = await getDeviceById(c, order.deviceId)
+      return { ...order, customer, device }
     })
   )
 
@@ -18,7 +18,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any) {
 
       <h3>当前租赁中</h3>
       ${
-        rentalsWithDetails.filter((r: any) => r.status === 'active').length > 0
+        ordersWithDetails.filter((r: any) => r.status === 'active').length > 0
           ? `
         <table class="table">
           <thead>
@@ -32,20 +32,20 @@ export async function renderStaffRentalsTracking(c: Context, user: any) {
             </tr>
           </thead>
           <tbody>
-            ${rentalsWithDetails
+            ${ordersWithDetails
               .filter((r: any) => r.status === 'active')
-              .map((rental: any) => {
+              .map((order: any) => {
                 return `
                 <tr>
-                  <td>${rental.orderNo}</td>
-                  <td>${rental.customer?.name ?? '未知客户'}</td>
-                  <td>${rental.device?.name ?? '未知设备'}</td>
-                  <td>${rental.startDate} 至 ${rental.endDate}</td>
-                  <td>${rental.status}</td>
+                  <td>${order.orderNo}</td>
+                  <td>${order.customer?.name ?? '未知客户'}</td>
+                  <td>${order.device?.name ?? '未知设备'}</td>
+                  <td>${order.startDate} 至 ${order.endDate}</td>
+                  <td>${order.status}</td>
                   <td>
-                    <a class="button button-sm button-secondary" href="/staff/rentals/${rental.id}/remind">到期提醒</a>
-                    <a class="button button-sm button-primary" href="/staff/rentals/${rental.id}/return-check">归还验收</a>
-                    <a class="button button-sm button-danger" href="/staff/rentals/${rental.id}/overdue">逾期处理</a>
+                    <a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看详情</a>
+                    <a class="button button-sm button-primary" href="/staff/orders/${order.id}/return-check">归还验收</a>
+                    <a class="button button-sm button-danger" href="/staff/orders/${order.id}/overdue">逾期处理</a>
                   </td>
                 </tr>
               `
@@ -59,7 +59,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any) {
 
       <h3 style="margin-top: 40px;">已完成/已取消租赁</h3>
       ${
-        rentalsWithDetails.filter((r: any) => r.status !== 'active').length > 0
+        ordersWithDetails.filter((r: any) => r.status !== 'active').length > 0
           ? `
         <table class="table">
           <thead>
@@ -73,18 +73,18 @@ export async function renderStaffRentalsTracking(c: Context, user: any) {
             </tr>
           </thead>
           <tbody>
-            ${rentalsWithDetails
+            ${ordersWithDetails
               .filter((r: any) => r.status !== 'active')
-              .map((rental: any) => {
+              .map((order: any) => {
                 return `
                 <tr>
-                  <td>${rental.orderNo}</td>
-                  <td>${rental.customer?.name ?? '未知客户'}</td>
-                  <td>${rental.device?.name ?? '未知设备'}</td>
-                  <td>${rental.startDate} 至 ${rental.endDate}</td>
-                  <td>${rental.status}</td>
+                  <td>${order.orderNo}</td>
+                  <td>${order.customer?.name ?? '未知客户'}}</td>
+                  <td>${order.device?.name ?? '未知设备'}</td>
+                  <td>${order.startDate} 至 ${order.endDate}</td>
+                  <td>${order.status}</td>
                   <td>
-                    <a class="button button-sm button-secondary" href="/staff/orders/${rental.id}">查看详情</a>
+                    <a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看详情</a>
                   </td>
                 </tr>
               `

@@ -6,7 +6,7 @@ export async function renderAdminOrders(c: Context, user: any) {
 
   // 并行获取所有订单关联的用户和设备
   const ordersWithDetail = await Promise.all(orders.map(async (order: any) => {
-    const customerId = order.customer_id || order.userId
+    const customerId = order.userId
     const deviceId = order.device_id || order.deviceId
     const customer = customerId ? await getUserById(c, customerId) : null
     const device = deviceId ? await getDeviceById(c, deviceId) : null

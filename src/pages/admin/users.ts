@@ -56,8 +56,8 @@ export async function renderAdminUsers(user: any, c: any) {
                 <td><span class="badge ${role.class}">${role.text}</span></td>
                 <td><span class="badge ${status.class}">${status.text}</span></td>
                 <td>AUD$${parseFloat(String(u.balance || 0)).toFixed(2)}</td>
-                <td>${(u.created_at || u.createdAt)
-                  ? new Date(u.created_at || u.createdAt as string).toLocaleDateString('zh-CN')
+                <td>${u.createdAt
+                  ? new Date(u.createdAt as string).toLocaleDateString('zh-CN')
                   : '-'
                 }</td>
                 <td>

@@ -80,49 +80,57 @@ export async function renderAdminContracts(c: Context, user: any) {
     </div>
 
     <script>
-      const quill = new Quill('#templateContentEditor', {
-        theme: 'snow',
-        modules: {
-          toolbar: [
-            [{ header: [1, 2, 3, false] }],
-            ['bold', 'italic', 'underline', 'strike'],
-            [{ list: 'ordered' }, { list: 'bullet' }],
-            ['blockquote', 'code-block'],
-            [{ color: [] }, { background: [] }],
-            ['link', 'clean']
-          ]
-        }
-      });
-
-      const updateContractTemplate = async (template) => {
-        const response = await fetch('/admin/contracts/template', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(template),
+      document.addEventListener('DOMContentLoaded', function() {
+        const quill = new Quill('#templateContentEditor', {
+          theme: 'snow',
+          modules: {
+            toolbar: [
+              [{ header: [1, 2, 3, false] }],
+              ['bold', 'italic', 'underline', 'strike'],
+              [{ list: 'ordered' }, { list: 'bullet' }],
+              ['blockquote', 'code-block'],
+              [{ color: [] }, { background: [] }],
+              ['link', 'clean']
+            ]
+          }
         });
-        if (!response.ok) {
-          throw new Error(await response.text());
-        }
-        return response.json();
-      };
 
-      document.getElementById('contractTemplateForm').addEventListener('submit', function(event) {
-        event.preventDefault();
-        const contentHtml = quill.root.innerHTML;
-        document.getElementById('templateContent').value = contentHtml;
-
-        const formData = new FormData(this);
-        const newTemplate = {
-          id: '${currentTemplate?.id ?? 'default'}',
-          name: formData.get('templateName'),
-          content: formData.get('templateContent'),
+        const updateContractTemplate = async (template) => {
+          const response = await fetch('/admin/contracts/template', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(template),
+          });
+          if (!response.ok) {
+            throw new Error(await response.text());
+          }
+          return response.json();
         };
 
-        updateContractTemplate(newTemplate).then(() => {
-          alert('合同模板已保存成功！');
-          window.location.reload();
-        }).catch(error => {
-          alert('保存失败: ' + error.message);
+        // 初始化编辑器内容
+        const initialContent = document.getElementById('templateContent').value;
+        if (initialContent) {
+          quill.root.innerHTML = initialContent;
+        }
+
+        document.getElementById('contractTemplateForm').addEventListener('submit', function(event) {
+          event.preventDefault();
+          const contentHtml = quill.root.innerHTML;
+          document.getElementById('templateContent').value = contentHtml;
+
+          const formData = new FormData(this);
+          const newTemplate = {
+            id: '${currentTemplate?.id ?? 'default'}',
+            name: formData.get('templateName'),
+            content: formData.get('templateContent'),
+          };
+
+          updateContractTemplate(newTemplate).then(() => {
+            alert('合同模板已保存成功！');
+            window.location.reload();
+          }).catch(error => {
+            alert('保存失败: ' + error.message);
+          });
         });
       });
     </script>
@@ -130,4 +138,3 @@ export async function renderAdminContracts(c: Context, user: any) {
 
   return buildLayout('合同管理 - 电脑租赁管理系统', body, user);
 }
-

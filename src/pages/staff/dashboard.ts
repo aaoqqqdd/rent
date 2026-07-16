@@ -4,7 +4,7 @@ export function renderStaffDashboard(user: any, dashboardData: any) {
   const { stats, recentOrders, recentDevices } = dashboardData;
 
   const body = `
-    <div class="panel hero">
+    <div class="hero">
       <h2>欢迎回来，${user.name}！</h2>
       <p>这是您的员工控制中心，管理所有租赁订单和设备状态。</p>
     </div>

@@ -290,7 +290,7 @@ app.get('/staff/contracts/new', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderNewContractPage(user))
+  return c.html(await pages.renderNewContractPage(c, user))
 })
 
 app.post('/staff/contracts/create', async (c) => {

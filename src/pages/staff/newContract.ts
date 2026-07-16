@@ -1,7 +1,9 @@
-import { buildLayout, User, getAllDevices } from '../../site'
+import { buildLayout, getDevices } from '../../site'
+import type { Context } from 'hono'
 
-export function renderNewContractPage(user: User) {
-  const devices = getAllDevices().filter(d => d.status === 'available');
+export async function renderNewContractPage(c: Context, user: any) {
+  const allDevices = await getDevices(c);
+  const devices = allDevices.filter(d => d.status === 'available');
 
   const formHtml = `
     <div class="panel">
@@ -28,6 +30,7 @@ export function renderNewContractPage(user: User) {
           <button type="submit" class="button">生成签约链接</button>
         </div>
       </form>
+      ${devices.length === 0 ? '<p style="margin-top: 16px; color: var(--text-secondary);">当前没有可用的设备，请先添加设备或等待已出租的设备归还。</p>' : ''}
     </div>
   `;
 

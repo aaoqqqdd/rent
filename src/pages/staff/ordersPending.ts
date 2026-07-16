@@ -1,5 +1,4 @@
-import { buildLayout, formatCurrency } from '../../site';
-import { getPendingOrdersWithDetails } from '../../site';
+import { buildLayout, formatCurrency, getPendingOrdersWithDetails } from '../../site';
 import { Context } from 'hono';
 
 export async function renderStaffOrdersPending(c: Context, user: any) {

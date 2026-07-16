@@ -1,7 +1,7 @@
 import { buildLayout, formatCurrency } from '../../site';
 
 export function renderCustomerDashboard(user: any, allOrders: any[], devices: any[]) {
-  const orders = allOrders.filter(o => o.user_id === user.id || o.userId === user.id)
+  const orders = allOrders.filter(o => o.userId === user.id)
   const currentRentals = orders.filter((order) => order.status === 'active' || order.status === 'paid')
   const pendingPayment = orders.filter((order) => order.status === 'pending_payment').length
   const completedOrders = orders.filter((order) => order.status === 'completed').length

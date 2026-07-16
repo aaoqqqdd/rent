@@ -19,7 +19,7 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
   const maskedCustomerEmail = customer ? `${customer.email.substring(0, 3)}***@***.com` : '未知';
   const maskedCustomerPhone = customer && customer.phone ? `${customer.phone.substring(0, 3)}****${customer.phone.substring(7, 11)}` : '未知';
   const maskedCustomerBsb = customer && customer.bsb ? `***-***` : 'N/A';
-  const maskedCustomerAccount = customer && customer.account_number ? `****${customer.account_number.substring(customer.account_number.length - 4)}` : 'N/A';
+  const maskedCustomerAccount = customer && customer.accountNumber ? `****${customer.accountNumber.substring(customer.accountNumber.length - 4)}` : 'N/A';
 
   const body = `
     <div class="panel">

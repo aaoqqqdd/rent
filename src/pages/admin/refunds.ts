@@ -11,7 +11,7 @@ export async function renderAdminRefunds(c: Context, user: any) {
 
   // 获取关联数据
   const ordersWithDetails = await Promise.all(refundOrders.map(async (order) => {
-    const customer = await getUserById(c, order.customer_id || order.userId);
+    const customer = await getUserById(c, order.userId);
     const device = await getDeviceById(c, order.device_id || order.deviceId);
     return { ...order, customer, device };
   }));

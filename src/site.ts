@@ -60,7 +60,6 @@ export interface Order {
   id: string
   orderNo: string
   userId: string
-  customerId?: string // 添加customerId作为userId的别名，兼容现有代码，设置为可选
   deviceId: string
   deviceName?: string
   startDate: string
@@ -77,7 +76,6 @@ export interface Order {
   createdAt: string
 
   // snake_case 兼容旧页面
-  customer_id?: string
   device_id?: string
   start_date?: string
   end_date?: string
@@ -176,7 +174,7 @@ export async function getOrdersForUser(cOrContext: Context | string, userId?: st
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualUserId = typeof cOrContext === 'string' ? cOrContext : userId
   if (!actualUserId) return []
-  const result = await db.prepare('SELECT * FROM orders WHERE customer_id = ?').bind(actualUserId).all()
+  const result = await db.prepare('SELECT * FROM orders WHERE userId = ?').bind(actualUserId).all()
   return (result.results as Order[]) || []
 }
 
@@ -348,18 +346,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
   return result.results || []
 }
 
-export const contracts: Contract[] = [
-  {
-    id: 'ct-1',
-    rentalId: 'o-1',
-    contractNumber: 'CT20260708001',
-    content: '甲方（出租方）：PC Rental Pty Ltd\n乙方（承租方）：张三\n设备名称：MacBook Pro 14寸\n设备型号：M4 Pro 18GB 512GB\n设备序列号：SN20260708001\n租赁起始日：2026年07月10日\n租赁结束日：2026年08月10日\n日租金：AUD$40.00/天\n租金总额：AUD$1,200.00\n押金：AUD$2,000.00\n总计应付：AUD$3,200.00\n',
-    signedAt: '2026-07-10 14:30:25',
-    createdAt: '2026-07-10 14:20:00',
-    signToken: 'ct-1-token',
-    status: 'signed',
-  },
-]
+
 
 type SystemSettingsKey = 'rentalTerms' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings'
 
@@ -473,14 +460,14 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   const { nanoid } = await import('nanoid')
   const deviceId = device.id || `d-${nanoid(8)}`
   await db.prepare(
-    'INSERT INTO devices (id, name, model, serial_number, price_per_day, deposit_amount, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO devices (id, name, model, serialNumber, pricePerDay, depositAmount, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(
     deviceId,
     device.name,
     device.model,
-    device.serialNumber || device.serial_number || '',
-    device.pricePerDay || device.price_per_day || 0,
-    device.depositAmount || device.deposit_amount || 0,
+    device.serialNumber,
+    device.pricePerDay,
+    device.depositAmount,
     device.status || 'available',
     device.description || ''
   ).run()
@@ -513,24 +500,10 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   const existing = await getDeviceById(c, deviceId)
   if (!existing) return null
   
-  // 字段名映射 camelCase -> snake_case
-  const fieldMap: Record<string, string> = {
-    name: 'name',
-    model: 'model',
-    serialNumber: 'serial_number',
-    serial_number: 'serial_number',
-    pricePerDay: 'price_per_day',
-    price_per_day: 'price_per_day',
-    depositAmount: 'deposit_amount',
-    deposit_amount: 'deposit_amount',
-    status: 'status',
-    description: 'description'
-  }
-  
   const setEntries: [string, any][] = []
   for (const [key, value] of Object.entries(data)) {
-    if (value !== undefined && fieldMap[key]) {
-      setEntries.push([fieldMap[key], value])
+    if (value !== undefined && Object.keys(existing).includes(key)) {
+      setEntries.push([key, value])
     }
   }
   
@@ -553,14 +526,9 @@ export async function getUsersAsync(c: Context): Promise<User[]> {
   return getUsers(c)
 }
 
-export function getAllDevices(): Device[] {
-  // DB-backed list is async; this is only used by templates. Keep empty for now.
-  return []
-}
 
-export function devices(): Device[] {
-  return []
-}
+
+
 
 export async function updateContractTemplateInDB(c: Context, newTemplate: { id: string; name: string; content: string }) {
   return updateContractTemplate(c, newTemplate)
@@ -1050,25 +1018,25 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   const now = new Date().toISOString()
   const ordersToSeed = [
     { 
-      id: 'o-1', customer_id: 'u-customer', device_id: 'd-thinkpad', 
-      start_date: '2026-07-10', end_date: '2026-08-10', rental_period: 31,
-      total_amount: 1178.0, deposit_amount: 1800.0, status: 'active', payment_method: 'bank_transfer'
+      id: 'o-1', userId: 'u-customer', deviceId: 'd-thinkpad', 
+      startDate: '2026-07-10', endDate: '2026-08-10', rentalPeriod: 31,
+      totalAmount: 1178.0, depositAmount: 1800.0, status: 'active', paymentMethod: 'bank_transfer'
     },
     { 
-      id: 'o-2', customer_id: 'u-customer', device_id: 'd-mbp14', 
-      start_date: '2026-07-01', end_date: '2026-07-07', rental_period: 7,
-      total_amount: 280.0, deposit_amount: 2000.0, status: 'completed', payment_method: 'card'
+      id: 'o-2', userId: 'u-customer', deviceId: 'd-mbp14', 
+      startDate: '2026-07-01', endDate: '2026-07-07', rentalPeriod: 7,
+      totalAmount: 280.0, depositAmount: 2000.0, status: 'completed', paymentMethod: 'card'
     },
     { 
-      id: 'o-3', customer_id: 'u-customer', device_id: 'd-xps13', 
-      start_date: '2026-07-20', end_date: '2026-07-27', rental_period: 7,
-      total_amount: 245.0, deposit_amount: 1500.0, status: 'pending_payment', payment_method: null
+      id: 'o-3', userId: 'u-customer', deviceId: 'd-xps13', 
+      startDate: '2026-07-20', endDate: '2026-07-27', rentalPeriod: 7,
+      totalAmount: 245.0, depositAmount: 1500.0, status: 'pending_payment', paymentMethod: null
     },
   ]
 
-  const orderInsert = db.prepare('INSERT INTO orders (id, customer_id, device_id, start_date, end_date, rental_period, total_amount, deposit_amount, status, payment_method, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const orderInsert = db.prepare('INSERT INTO orders (id, userId, deviceId, startDate, endDate, rentalPeriod, totalAmount, depositAmount, status, paymentMethod, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
   const orderInserts = ordersToSeed.map(o => 
-    orderInsert.bind(o.id, o.customer_id, o.device_id, o.start_date, o.end_date, o.rental_period, o.total_amount, o.deposit_amount, o.status, o.payment_method, now, now)
+    orderInsert.bind(o.id, o.userId, o.deviceId, o.startDate, o.endDate, o.rentalPeriod, o.totalAmount, o.depositAmount, o.status, o.paymentMethod, now, now)
   )
   await db.batch(orderInserts)
 }
@@ -1207,7 +1175,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/staff/contracts', '合同管理')}
             ${renderNavLink('/staff/contracts/new', '新建合同')}
             ${renderNavLink('/staff/rentals/tracking', '租赁追踪')}
-            ${renderNavLink('/staff/devices', '设备状态')}
+            ${renderNavLink('/staff/devices', '设备管理')}
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '管理后台')}

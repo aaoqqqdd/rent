@@ -9,7 +9,7 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
 
   const orderId = contract.rental_id || contract.rentalId
   const order = orderId ? await getOrderById(c, orderId) : null;
-  const customer = order ? await getUserById(c, order.customer_id || order.userId) : null;
+  const customer = order ? await getUserById(c, order.userId) : null;
 
   const body = `
     <div class="panel">

@@ -179,7 +179,7 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
             // 创建佣金记录
             const commissionId = `c-${nanoid(8)}`;
             await c.env.RENT.prepare(`
-              INSERT INTO commission_records (id, referrer_id, rental_id, customer_id, amount, rate, status)
+              INSERT INTO commission_records (id, referrer_id, rental_id, userId, amount, rate, status)
               VALUES (?, ?, ?, ?, ?, ?, 'pending')
             `).bind(commissionId, referrerId, contract.rentalId, newUserId, commissionAmount, commissionRate).run();
             

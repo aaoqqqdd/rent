@@ -130,37 +130,42 @@ export function renderAdminSettings(user: any) {
     </div>
 
     <script>
-      // 初始化 Quill 编辑器
-      const rentalTermsEditor = new Quill('#rentalTermsEditor', {
-        theme: 'snow',
-        modules: {
-          toolbar: [
-            [{ 'header': [1, 2, 3, false] }],
-            ['bold', 'italic', 'underline'],
-            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-            ['link', 'image'],
-            ['clean']
-          ]
-        }
-      });
-      const emailTemplateEditor = new Quill('#emailTemplateEditor', {
-        theme: 'snow',
-        modules: {
-          toolbar: [['bold', 'italic'], ['link']]
-        }
-      });
+      document.addEventListener('DOMContentLoaded', function() {
+        // 初始化 Quill 编辑器
+        const rentalTermsEditor = new Quill('#rentalTermsEditor', {
+          theme: 'snow',
+          modules: {
+            toolbar: [
+              [{ 'header': [1, 2, 3, false] }],
+              ['bold', 'italic', 'underline'],
+              [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+              ['link', 'image'],
+              ['clean']
+            ]
+          }
+        });
+        const emailTemplateEditor = new Quill('#emailTemplateEditor', {
+          theme: 'snow',
+          modules: {
+            toolbar: [['bold', 'italic'], ['link']]
+          }
+        });
 
-      // 将数据库中的内容加载到编辑器
-      const rentalTermsContent = ${JSON.stringify(settings.rentalTerms)};
-      const emailTemplateContent = ${JSON.stringify(settings.emailTemplate)};
-      rentalTermsEditor.root.innerHTML = rentalTermsContent;
-      emailTemplateEditor.root.innerHTML = emailTemplateContent;
-      
-      // 隐藏的 textarea 用于表单提交
-      const rentalTermsTextarea = document.getElementById('rentalTerms');
-      const emailTemplateTextarea = document.getElementById('emailTemplate');
-      rentalTermsTextarea.value = rentalTermsContent;
-      emailTemplateTextarea.value = emailTemplateContent;
+        // 将数据库中的内容加载到编辑器
+        const rentalTermsContent = ${JSON.stringify(settings.rentalTerms)};
+        const emailTemplateContent = ${JSON.stringify(settings.emailTemplate)};
+        if (rentalTermsContent) {
+          rentalTermsEditor.root.innerHTML = rentalTermsContent;
+        }
+        if (emailTemplateContent) {
+          emailTemplateEditor.root.innerHTML = emailTemplateContent;
+        }
+        
+        // 隐藏的 textarea 用于表单提交
+        const rentalTermsTextarea = document.getElementById('rentalTerms');
+        const emailTemplateTextarea = document.getElementById('emailTemplate');
+        rentalTermsTextarea.value = rentalTermsContent;
+        emailTemplateTextarea.value = emailTemplateContent;
 
 
       document.getElementById('systemSettingsForm').addEventListener('submit', function(event) {
@@ -215,6 +220,7 @@ export function renderAdminSettings(user: any) {
           console.error('Error saving settings:', error);
           alert('保存失败，请查看控制台获取详情。');
         });
+      });
       });
     </script>
   `;
