@@ -38,7 +38,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     startDate: startDate,
     endDate: endDate,
     rentalPeriod: rentalPeriod, // 添加 rentalPeriod
-    status: 'pending_approval',
+    status: 'draft',
     paymentMethod: 'bank_transfer',
     totalAmount: totalAmount,
     depositAmount: depositAmount,
