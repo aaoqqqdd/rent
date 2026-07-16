@@ -240,14 +240,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 console.log('phoneNumber (raw input):', phoneNumber);
                 console.log('rawPhone (digits only):', rawPhone);
 
-                if (phoneCode === '+86') {
-                  if (rawPhone.startsWith('86') && rawPhone.length === 13) {
-                    phoneToValidate = rawPhone.slice(2);
-                  } else if (rawPhone.length === 11) {
-                    phoneToValidate = rawPhone;
-                  } else {
-                    phoneToValidate = '';
-                  }
+                if (phoneCode === '+86' && rawPhone.startsWith('86') && rawPhone.length === 13) {
+                  phoneToValidate = rawPhone.slice(2);
                 } else {
                   phoneToValidate = rawPhone;
                 }
@@ -287,7 +281,13 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                   return true;
                 }
                 
+                console.log('--- REGEX TEST ---');
+                console.log('Value to test:', phoneToValidate);
+                console.log('Pattern to use:', pattern ? pattern.toString() : 'null');
                 const testResult = pattern ? pattern.test(phoneToValidate) : false;
+                console.log('Test result:', testResult);
+                console.log('--- END REGEX TEST ---');
+
                 if (testResult) {
                   phoneError.style.display = 'none';
                   phoneError.textContent = '';
