@@ -273,32 +273,45 @@ function normalizeContractRow(contractRow: any): Contract {
 export async function getOrderById(cOrContext: Context | string, id?: string): Promise<Order | null> {
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
-  if (!actualId) return null
+  console.log('getOrderById called with actualId:', actualId); // 添加日志
+  if (!actualId) {
+    console.log('getOrderById: actualId is null or undefined, returning null.'); // 添加日志
+    return null;
+  }
 
   // 1. 直接使用传入的 id 进行查询
   let orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
   if (orderRow) {
+    console.log('getOrderById: Found order with exact ID match:', actualId); // 添加日志
     return normalizeOrderRow(orderRow)
   }
+  console.log('getOrderById: No order found with exact ID match:', actualId); // 添加日志
 
   // 2. 如果查询结果为空，并且传入的 id 不以 o- 开头，则尝试添加 o- 前缀后再次查询
   if (!actualId.startsWith('o-')) {
     const prefixedId = `o-${actualId}`
+    console.log('getOrderById: Attempting to query with prefixed ID:', prefixedId); // 添加日志
     orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(prefixedId).first()
     if (orderRow) {
+      console.log('getOrderById: Found order with prefixed ID match:', prefixedId); // 添加日志
       return normalizeOrderRow(orderRow)
     }
+    console.log('getOrderById: No order found with prefixed ID match:', prefixedId); // 添加日志
   }
 
   // 3. 如果查询结果为空，并且传入的 id 以 o- 开头，则尝试去除 o- 前缀后再次查询
   if (actualId.startsWith('o-')) {
     const unprefixedId = actualId.substring(2)
+    console.log('getOrderById: Attempting to query with unprefixed ID:', unprefixedId); // 添加日志
     orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(unprefixedId).first()
     if (orderRow) {
+      console.log('getOrderById: Found order with unprefixed ID match:', unprefixedId); // 添加日志
       return normalizeOrderRow(orderRow)
     }
+    console.log('getOrderById: No order found with unprefixed ID match:', unprefixedId); // 添加日志
   }
 
+  console.log('getOrderById: No order found after all attempts for ID:', actualId); // 添加日志
   return null
 }
 
@@ -515,6 +528,19 @@ export async function updateOrderInDB(c: Context, orderId: string, data: Partial
 export async function updateContractStatus(c: Context, contractId: string, status: string, signedAt: string | null = null): Promise<void> {
   const db = getDB(c)
   await db.prepare('UPDATE contracts SET status = ?, signedAt = ? WHERE id = ?').bind(status, signedAt, contractId).run()
+
+  // 如果合同被取消，则将关联的设备状态设置回“可用”
+  if (status === 'cancelled') {
+    const contract = await getContractById(c, contractId);
+    if (contract && (contract.rentalId || contract.rental_id)) {
+      const orderId = contract.rentalId || contract.rental_id;
+      const order = await getOrderById(c, orderId);
+      if (order && order.deviceId) {
+        await updateDeviceStatus(c, order.deviceId, 'available');
+        console.log(`Device ${order.deviceId} status set to 'available' due to contract ${contractId} cancellation.`);
+      }
+    }
+  }
 }
 
 // 定期清理过期和已取消的合同

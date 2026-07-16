@@ -2,6 +2,7 @@ import { buildLayout, getContractBySignToken, getContractByContractNumber, getOr
 import { Context } from 'hono';
 
 export async function renderContractSignPage(c: Context, tokenOrNumber: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
+  console.log('renderContractSignPage called with tokenOrNumber:', tokenOrNumber); // 添加日志
   const currentUser = await findUserBySession(c, c.req.header('cookie') ?? null);
   let contract = await getContractBySignToken(c, tokenOrNumber);
   
@@ -14,8 +15,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const token = tokenOrNumber;
   
   if (!contract) {
+    console.error('Contract not found for tokenOrNumber:', tokenOrNumber); // 添加日志
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
   }
+
+  console.log('Contract found:', contract); // 添加日志，查看合同详情
 
   // 检查合同是否已过期
   const signExpiresAt = contract.signExpiresAt || contract.sign_expires_at;
@@ -35,15 +39,17 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   }
 
   // 统一处理rentalId和rental_id字段，确保能正确获取订单ID
-  const orderId = contract.rentalId || contract.rental_id;
-  console.log('Attempting to fetch order with orderId:', orderId);
-  const order = await getOrderById(c, orderId);
-  if (!order) {
-    console.error('Order not found for orderId:', orderId);
-    return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
-  }
+  // const orderId = contract.rentalId || contract.rental_id;
+  // console.log('Attempting to fetch order with orderId:', orderId, 'from contract.rentalId:', contract.rentalId, 'or contract.rental_id:', contract.rental_id); // 添加日志
+  // const order = await getOrderById(c, orderId);
+  // if (!order) {
+  //   console.error('Order not found for orderId:', orderId);
+  //   return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
+  // }
 
-  const device = await getDeviceById(c, order.deviceId);
+  let order = null; // 声明 order 变量
+  let device = null; // 声明 device 变量
+
   const systemSettings = getSystemSettings();
   const contractTemplate = await getContractTemplate(c);
   const activeContractContent = contract.content || contractTemplate.content || systemSettings.rentalTerms;
@@ -258,6 +264,17 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       break;
     case 3:
       title = '步骤 3/3: 选择付款方式';
+
+      // 在步骤3中获取订单和设备信息
+      const orderId = contract.rentalId || contract.rental_id;
+      console.log('Attempting to fetch order with orderId:', orderId, 'from contract.rentalId:', contract.rentalId, 'or contract.rental_id:', contract.rental_id); // 添加日志
+      order = await getOrderById(c, orderId);
+      if (!order) {
+        console.error('Order not found for orderId:', orderId);
+        return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
+      }
+      device = await getDeviceById(c, order.deviceId);
+
       content = `
         <div class="panel">
           ${progressBar}
