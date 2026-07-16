@@ -36,19 +36,8 @@ export async function renderNewContractPage(c: Context, user: any) {
             <option value="30">30 天</option>
           </select>
         </div>
-        <div class="form-group" style="margin-top: 16px;">
-          <label for="validity-duration" class="form-label">合同有效期</label>
-          <select id="validity-duration" name="validityDuration" class="select-control">
-            <option value="1">1 天</option>
-            <option value="3">3 天</option>
-            <option value="5">5 天</option>
-            <option value="7" selected>7 天 (默认)</option>
-            <option value="10">10 天</option>
-            <option value="30">30 天</option>
-          </select>
-          <input type="hidden" id="valid-from" name="validFrom">
-          <input type="hidden" id="valid-until" name="validUntil">
-        </div>
+        <input type="hidden" id="valid-from" name="validFrom">
+        <input type="hidden" id="valid-until" name="validUntil">
         <div style="margin-top: 24px;">
           <button type="submit" class="button">生成签约链接</button>
         </div>
@@ -62,27 +51,33 @@ export async function renderNewContractPage(c: Context, user: any) {
         alert(decodeURIComponent(error));
       }
 
-      const expiryDurationSelect = document.getElementById('expiry-duration');
-      const validityDurationSelect = document.getElementById('validity-duration');
       const validFromInput = document.getElementById('valid-from');
       const validUntilInput = document.getElementById('valid-until');
 
+      // 默认设置合同有效期为租赁期限，与租赁开始/结束日期保持一致
+      const startDateInput = document.getElementById('start-date');
+      const endDateInput = document.getElementById('end-date');
+      
       function updateValidityDates() {
-        const duration = parseInt(validityDurationSelect.value);
-        const today = new Date();
-        const validFrom = today.toISOString().split('T')[0]; // YYYY-MM-DD
-
-        const validUntilDate = new Date(today);
-        validUntilDate.setDate(today.getDate() + duration);
-        const validUntil = validUntilDate.toISOString().split('T')[0]; // YYYY-MM-DD
-
-        validFromInput.value = validFrom;
-        validUntilInput.value = validUntil;
+        if (startDateInput.value && endDateInput.value) {
+          validFromInput.value = startDateInput.value;
+          validUntilInput.value = endDateInput.value;
+        } else {
+          // 如果还没有选择日期，默认设置为从今天开始7天
+          const today = new Date();
+          const validFrom = today.toISOString().split('T')[0];
+          const validUntilDate = new Date(today);
+          validUntilDate.setDate(today.getDate() + 7);
+          const validUntil = validUntilDate.toISOString().split('T')[0];
+          validFromInput.value = validFrom;
+          validUntilInput.value = validUntil;
+        }
       }
 
-      // Set initial values and update on change
+      // 当初始化和日期选择变化时更新有效期
       updateValidityDates();
-      validityDurationSelect.addEventListener('change', updateValidityDates);
+      startDateInput.addEventListener('change', updateValidityDates);
+      endDateInput.addEventListener('change', updateValidityDates);
     </script>
   `;
 

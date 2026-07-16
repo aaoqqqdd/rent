@@ -350,8 +350,9 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
 
 export async function insertContract(c: Context, contract: Contract): Promise<void> {
   const db = getDB(c);
-  await db.prepare('INSERT INTO contracts (id, orderId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil, signExpiresAt, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
-    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil, contract.signExpiresAt, contract.createdBy
+  // 同时插入驼峰和下划线格式的字段，确保兼容性
+  await db.prepare('INSERT INTO contracts (id, orderId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil, signExpiresAt, created_by, sign_expires_at, sign_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
+    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil, contract.signExpiresAt, contract.createdBy, contract.signExpiresAt, contract.signToken
   ).run();
 }
 
