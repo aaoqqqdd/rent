@@ -13,21 +13,61 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
       ${successMessage ? `<div class="alert alert-success">${successMessage}</div>` : ''}
 
       <h3>修改密码</h3>
-      <form method="POST" action="/customer/security">
+      <form method="POST" action="/customer/security" id="passwordChangeForm">
         <div class="form-group">
           <label class="form-label" for="currentPassword">当前密码</label>
           <input type="password" id="currentPassword" name="currentPassword" class="form-control" required />
         </div>
         <div class="form-group">
           <label class="form-label" for="newPassword">新密码</label>
-          <input type="password" id="newPassword" name="newPassword" class="form-control" required />
+          <input type="password" id="newPassword" name="newPassword" class="form-control" required maxlength="7" inputmode="numeric" oninput="formatPassword(this)" />
         </div>
         <div class="form-group">
           <label class="form-label" for="confirmNewPassword">确认新密码</label>
-          <input type="password" id="confirmNewPassword" name="confirmNewPassword" class="form-control" required />
+          <input type="password" id="confirmNewPassword" name="confirmNewPassword" class="form-control" required maxlength="7" inputmode="numeric" oninput="formatPassword(this)" />
         </div>
+        <div id="passwordMismatchError" class="alert alert-error" style="display:none; margin-bottom: 15px;"></div>
         <button type="submit" class="button button-primary">修改密码</button>
       </form>
+
+      <script>
+        function formatPassword(input) {
+          let value = input.value.replace(/\D/g, ''); // Remove non-digits
+          if (value.length > 3) {
+            value = value.substring(0, 3) + '-' + value.substring(3, 6);
+          } else {
+            value = value.substring(0, 6); // Max 6 digits if no hyphen
+          }
+          input.value = value;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+          const form = document.getElementById('passwordChangeForm');
+          const newPasswordInput = document.getElementById('newPassword');
+          const confirmNewPasswordInput = document.getElementById('confirmNewPassword');
+          const passwordMismatchError = document.getElementById('passwordMismatchError');
+
+          form.addEventListener('submit', function(event) {
+            passwordMismatchError.style.display = 'none'; // Hide previous errors
+
+            const newPassword = newPasswordInput.value.replace(/-/g, ''); // Remove hyphen for validation
+            const confirmNewPassword = confirmNewPasswordInput.value.replace(/-/g, ''); // Remove hyphen for validation
+
+            if (newPassword.length !== 6) {
+              passwordMismatchError.textContent = '新密码必须是6位数字。';
+              passwordMismatchError.style.display = 'block';
+              event.preventDefault();
+              return;
+            }
+
+            if (newPassword !== confirmNewPassword) {
+              passwordMismatchError.textContent = '新密码和确认密码不匹配。';
+              passwordMismatchError.style.display = 'block';
+              event.preventDefault();
+            }
+          });
+        });
+      </script>
 
       <h3 style="margin-top: 40px;">登录记录</h3>
       <p>此处将显示您的近期登录活动。</p>

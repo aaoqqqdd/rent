@@ -641,7 +641,8 @@ export async function verifyUserCredentials(c: Context, account: string, passwor
 export async function findUserByReferralCode(c: Context, referralCode: string): Promise<User | null> {
   const db = getDB(c)
   const normalizedCode = referralCode.trim().toUpperCase()
-  return db.prepare('SELECT id FROM users WHERE UPPER(referral_code) = ?').bind(normalizedCode).first() as User | null
+  const userRow = await db.prepare('SELECT * FROM users WHERE UPPER(referral_code) = ?').bind(normalizedCode).first()
+  return userRow ? normalizeUserRow(userRow as any) : null
 }
 
 export async function getDeviceBySerialNumber(c: Context, serialNumber: string): Promise<Device | null> {
@@ -810,6 +811,11 @@ export async function insertUser(c: Context, user: any): Promise<User> {
     const [newSalt, newHash] = newHashedPassword.split('$');
     passwordHashToStore = newHash;
     passwordSaltToStore = newSalt;
+  } else if (user.passwordHash && user.passwordHash.includes('$')) {
+    // If passwordHash is provided and contains a salt, split it
+    const [newSalt, newHash] = user.passwordHash.split('$');
+    passwordHashToStore = newHash;
+    passwordSaltToStore = newSalt;
   }
 
   // 构建INSERT字段和值
@@ -909,7 +915,6 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     commissionBalance: 'commission_balance',
     createdAt: 'created_at',
     updatedAt: 'updated_at',
-    accountNumber: 'account_number',
     commissionRate: 'commission_rate'
   }
 

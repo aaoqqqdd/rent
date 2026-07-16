@@ -167,7 +167,9 @@ app.post('/register', async (c) => {
     }
   }
   
-  const newUserId = `u-${nanoid(8)}`
+    const numericAlphabet = '0123456789'
+  const generateNumericId = customAlphabet(numericAlphabet, 8)
+  const newUserId = `u-${generateNumericId()}`
   const newUser = {
     id: newUserId,
     name: name.trim(),
@@ -437,24 +439,12 @@ app.post('/customer/profile', async (c) => {
   const phone = form.phone?.trim() || user.phone || ''
   const bsb = form.bsb?.trim() || user.bsb || ''
   const account = form.account?.trim() || user.account || ''
-  const referralCode = form.referralCode?.trim() || user.referralCode || ''
-  const password = form.password?.trim()
-  const passwordConfirm = form.passwordConfirm?.trim()
-
-  if (password && password !== passwordConfirm) {
-    return c.html(await pages.renderCustomerProfile(c, user, '两次输入的新密码不一致'))
-  }
 
   const dataToUpdate: any = {
     name,
     phone,
     bsb,
-    account,
-    referralCode
-  }
-
-  if (password) {
-    dataToUpdate.password = password
+    account
   }
 
   const updatedUser = await updateUser(c, user.id, dataToUpdate)
@@ -517,13 +507,31 @@ app.post('/customer/referral/join', async (c) => {
     return c.html(await pages.renderCustomerReferral(c, user, '您已加入推荐计划，无需重复加入', 'info'))
   }
 
-  const newReferralCode = nanoid(8)
+  const newReferralCode = generateNumericId()
   await updateUser(c, user.id, { referralCode: newReferralCode })
 
   // 更新session中的user对象
   const updatedUser = { ...user, referralCode: newReferralCode }
 
   return c.html(await pages.renderCustomerReferral(c, updatedUser, '恭喜您成功加入推荐计划！您的推荐码已生成。', 'success'))
+})
+
+app.post('/customer/referral/leave', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') {
+    return c.redirect('/login')
+  }
+
+  if (!user.referralCode) {
+    return c.html(await pages.renderCustomerReferral(c, user, '您还未加入推荐计划', 'info'))
+  }
+
+  await updateUser(c, user.id, { referralCode: null })
+
+  // 更新session中的user对象，移除推荐码
+  const updatedUser = { ...user, referralCode: null }
+
+  return c.html(await pages.renderCustomerReferral(c, updatedUser, '您已成功退出推荐计划，推荐码已失效。', 'success'))
 })
 
 app.get('/customer/security', async (c) => {

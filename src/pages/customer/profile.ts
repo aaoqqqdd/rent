@@ -29,7 +29,7 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
           </div>
           <div>
             <label class="form-label">BSB</label>
-            <input class="form-control" name="bsb" value="${userToUse.bsb ?? ''}" />
+            <input class="form-control" name="bsb" id="bsbInput" value="${userToUse.bsb ?? ''}" maxlength="7" inputmode="numeric" pattern="[0-9]{3}-?[0-9]{3}" />
           </div>
         </div>
         <div class="grid grid-2">
@@ -38,26 +38,34 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
             <input class="form-control" name="account" value="${userToUse.account ?? ''}" />
           </div>
           <div>
-            <label class="form-label">推荐码</label>
-            <input class="form-control" name="referralCode" value="${userToUse.referralCode ?? ''}" />
-          </div>
-        </div>
-        <div class="grid grid-2">
-          <div>
-            <label class="form-label">新密码</label>
-            <input class="form-control" type="password" name="password" placeholder="留空则保持原密码" />
-          </div>
-          <div>
-            <label class="form-label">确认新密码</label>
-            <input class="form-control" type="password" name="passwordConfirm" placeholder="再次输入新密码" />
+            <label class="form-label">推荐人</label>
+            <input class="form-control" name="referrerId" value="${userToUse.referrerId ?? '无'}" ${userToUse.referrerId ? 'readonly' : ''} />
+            <p class="form-text" style="font-size: 12px; color: #6b7280; margin-top: 4px;">绑定后禁止修改推荐人</p>
           </div>
         </div>
         <div style="margin-top:20px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
           <button class="button" type="submit">保存修改</button>
-          <span class="section-note">密码为空时，不会修改当前密码。</span>
         </div>
       </form>
     </div>
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        const bsbInput = document.getElementById('bsbInput');
+        if (bsbInput) {
+          bsbInput.addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
+            let formattedValue = '';
+
+            if (value.length > 3) {
+              formattedValue = value.substring(0, 3) + '-' + value.substring(3, 7);
+            } else {
+              formattedValue = value;
+            }
+            e.target.value = formattedValue;
+          });
+        }
+      });
+    </script>
   `
   return buildLayout('个人信息 - 电脑租赁管理系统', body, userToUse)
 }

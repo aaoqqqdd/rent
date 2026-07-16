@@ -9,10 +9,7 @@ const errorStyles = `
     .error-warning::before { background: var(--warning); }
     .error-danger::before { background: var(--danger); }
     .error-info::before { background: var(--info); }
-    .error-code { font-family: var(--font-display); font-size: 5rem; font-weight: 700; line-height: 1; letter-spacing: -0.04em; margin-bottom: 16px; -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-    .error-warning .error-code { background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%); }
-    .error-danger .error-code { background: linear-gradient(135deg, var(--danger) 0%, var(--accent) 100%); }
-    .error-info .error-code { background: linear-gradient(135deg, var(--info) 0%, var(--primary) 100%); }
+    .error-code { font-family: var(--font-display); font-size: 5rem; font-weight: 700; line-height: 1; letter-spacing: -0.04em; margin-bottom: 16px; color: var(--text); }
     .error-icon { margin-bottom: 20px; opacity: 0.8; }
     .error-warning .error-icon { color: var(--warning); }
     .error-danger .error-icon { color: var(--danger); }

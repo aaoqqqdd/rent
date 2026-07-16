@@ -33,7 +33,7 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
       <div class="section-title">
         <h2>设备管理</h2>
         <span class="section-note">管理所有租赁设备信息。</span>
-        <a href="/admin/devices/new" class="button" style="margin-left: auto;">添加入库设备</a>
+        <a href="/admin/devices/new" class="button button-success" style="margin-left: auto;">添加入库设备</a>
       </div>
       ${devices.length === 0 ? `
         <div class="empty-state">
