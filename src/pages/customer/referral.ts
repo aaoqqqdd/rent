@@ -17,7 +17,7 @@ export async function renderCustomerReferral(c: Context, user: any, errorMessage
 
   // 获取该用户的所有佣金记录
   const commissionRecords = await c.env.RENT.prepare(`
-    SELECT * FROM commission_records WHERE referrer_id = ?
+    SELECT * FROM commission_records WHERE referrerId = ?
   `).bind(user.id).all();
   
   type CommissionRecord = { amount: number; status: string }

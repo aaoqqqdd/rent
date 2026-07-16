@@ -447,21 +447,21 @@ app.post('/customer/referral/withdraw', async (c) => {
   }
   const withdrawalId = `w-${nanoid(8)}`;
   await c.env.RENT.prepare(`
-    INSERT INTO commission_withdrawals (id, user_id, amount, bsb, account_number, status)
+    INSERT INTO commission_withdrawals (id, userId, amount, bsb, accountNumber, status)
     VALUES (?, ?, ?, ?, ?, 'pending')
   `).bind(withdrawalId, user.id, amount, form.bsb, form.account_number).run();
   
   // 更新用户佣金余额
   await c.env.RENT.prepare(`
-    UPDATE users SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
+    UPDATE users SET commission_balance = commission_balance - ?, updatedAt = CURRENT_TIMESTAMP
     WHERE id = ?
   `).bind(amount, user.id).run();
   
   // 更新佣金记录状态
   await c.env.RENT.prepare(`
-    UPDATE commission_records SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
-    WHERE referrer_id = ? AND status = 'pending'
-    ORDER BY created_at ASC LIMIT 1
+    UPDATE commission_records SET status = 'withdrawn', settledAt = CURRENT_TIMESTAMP
+    WHERE referrerId = ? AND status = 'pending'
+    ORDER BY createdAt ASC LIMIT 1
   `).bind(user.id).run();
   
   return c.html(await pages.renderCustomerReferral(c, user, '提现申请已提交，预计2个工作日处理'))

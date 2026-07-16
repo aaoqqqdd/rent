@@ -744,17 +744,17 @@ export async function createWithdrawalRequest(c: Context, userId: string, amount
 
     await db.batch([
       db.prepare(`
-        INSERT INTO commission_withdrawals (id, user_id, amount, bsb, account_number, status)
+        INSERT INTO commission_withdrawals (id, userId, amount, bsb, accountNumber, status)
         VALUES (?, ?, ?, ?, ?, 'pending')
       `).bind(withdrawalId, userId, amount, bsb, accountNumber),
       db.prepare(`
-        UPDATE users SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
+        UPDATE users SET commission_balance = commission_balance - ?, updatedAt = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(amount, userId),
       db.prepare(`
-        UPDATE commission_records SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
-        WHERE referrer_id = ? AND status = 'pending'
-        ORDER BY created_at ASC
+        UPDATE commission_records SET status = 'withdrawn', settledAt = CURRENT_TIMESTAMP
+        WHERE referrerId = ? AND status = 'pending'
+        ORDER BY createdAt ASC
       `).bind(userId),
       db.prepare('COMMIT'),
     ]);
@@ -816,8 +816,7 @@ export async function getStaffDashboardData(c: Context): Promise<any> {
     LEFT JOIN (
       SELECT deviceId, userId FROM orders WHERE status = 'active' OR status = 'paid'
     ) o ON d.id = o.deviceId
-    LEFT JOIN users u ON o.userId = u.id
-    ORDER BY d.updated_at DESC
+    LEFT JOIN users u ON o.userId = u.id    ORDER BY d.updatedAt DESC
     LIMIT 5
   `;
 
@@ -1896,7 +1895,7 @@ export async function logError(c: Context, level: ErrorLevel, message: string, e
     const method = c.req.method
 
     await db.prepare(`
-      INSERT INTO error_logs (id, error_level, error_message, error_stack, context_data, user_id, request_url, request_method, created_at)
+      INSERT INTO error_logs (id, errorLevel, errorMessage, errorStack, contextData, userId, requestUrl, requestMethod, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).bind(errorId, level, message, stackTrace, contextJson, userId, url, method).run()
   } catch (dbError) {
@@ -1916,7 +1915,7 @@ export async function cleanupOldErrorLogs(c: Context) {
   
   try {
     await db.prepare(`
-      DELETE FROM error_logs WHERE created_at < ?
+      DELETE FROM error_logs WHERE createdAt < ?
     `).bind(thirtyDaysAgo.toISOString()).run()
     await logError(c, 'INFO', `Cleaned up error logs older than 30 days`)
   } catch (error) {
@@ -1939,7 +1938,7 @@ export async function getOrCreateSignSession(c: Context, token: string, contract
   try {
     // 先尝试获取现有会话
     const existingSession = await db.prepare(`
-      SELECT session_data, expires_at FROM sign_sessions WHERE token = ?
+      SELECT sessionData, expiresAt FROM sign_sessions WHERE token = ?
     `).bind(token).first()
 
     if (existingSession) {
@@ -1963,7 +1962,7 @@ export async function getOrCreateSignSession(c: Context, token: string, contract
     expiresAt.setHours(expiresAt.getHours() + SESSION_EXPIRY_HOURS)
     
     await db.prepare(`
-      INSERT INTO sign_sessions (token, contract_token, session_data, expires_at, created_at, updated_at)
+      INSERT INTO sign_sessions (token, contractToken, sessionData, expiresAt, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).bind(token, contractToken, JSON.stringify(newSession), expiresAt.toISOString()).run()
     
@@ -2000,7 +1999,7 @@ export async function updateSignSession(c: Context, token: string, data: Record<
     // 更新数据库中的会话
     await db.prepare(`
       UPDATE sign_sessions 
-      SET session_data = ?, updated_at = CURRENT_TIMESTAMP 
+      SET sessionData = ?, updatedAt = CURRENT_TIMESTAMP 
       WHERE token = ?
     `).bind(JSON.stringify(updatedSession), token).run()
     
@@ -2037,7 +2036,7 @@ export async function cleanupExpiredSignSessions(c: Context): Promise<void> {
   
   try {
     const result = await db.prepare(`
-      DELETE FROM sign_sessions WHERE expires_at < ?
+      DELETE FROM sign_sessions WHERE expiresAt < ?
     `).bind(now).run()
     
     const deletedCount = (result as any).changes || 0
