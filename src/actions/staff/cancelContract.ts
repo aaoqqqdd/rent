@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getContractById, updateContractStatus, logError, findUserBySession } from '../../site';
+import { getContractById, updateContractStatus, logError, findUserBySession, getOrderById, updateDeviceStatus } from '../../site'; // 导入 getOrderById 和 updateDeviceStatus
 
 export async function handleCancelContractAction(c: Context): Promise<Response> {
   const contractId = c.req.param('id');
@@ -10,7 +10,6 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
   }
 
   try {
-    // 获取当前用户信息（传入 cookie header）
     const user = await findUserBySession(c, c.req.header('cookie') ?? null);
     if (!user) {
       await logError(c, 'WARNING', `Unauthorized attempt to cancel contract. Contract ID: ${contractId}`);
@@ -38,6 +37,16 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
     }
 
     await updateContractStatus(c, contractId, 'cancelled');
+
+    // 新增逻辑：如果合同关联了订单，则将订单中的设备状态更新为可用
+    if (contract.rentalId) {
+      const order = await getOrderById(c, contract.rentalId);
+      if (order && order.deviceId) {
+        await updateDeviceStatus(c, order.deviceId, 'available');
+        await logError(c, 'INFO', `Device ${order.deviceId} status updated to 'available' after contract ${contractId} cancellation.`);
+      }
+    }
+
     await logError(c, 'INFO', `Contract cancelled successfully. Contract ID: ${contractId}, Cancelled by: ${user.id}`);
     return c.redirect('/staff/contracts?success=Contract cancelled successfully');
   } catch (error) {

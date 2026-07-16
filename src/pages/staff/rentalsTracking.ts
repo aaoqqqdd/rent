@@ -7,14 +7,25 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
   const allUsers = await getUsers(c)
 
   const rentalStatuses = ['pending_pickup', 'pending_return', 'active', 'paid', 'approved']
-  const allStatuses = [...rentalStatuses, 'completed', 'cancelled']
+  const allStatuses = [...rentalStatuses, 'completed', 'cancelled', 'expiring']
   
   // 根据URL参数筛选订单
   let filteredOrders = allOrders
   if (status && allStatuses.includes(status)) {
     filteredOrders = allOrders.filter((r: any) => r.status === status)
-  } else {
-    filteredOrders = allOrders.filter((r: any) => rentalStatuses.includes(r.status));
+  } else if (status === 'expiring') {
+    const now = new Date();
+    const sevenDaysLater = new Date();
+    sevenDaysLater.setDate(now.getDate() + 7);
+
+    filteredOrders = allOrders.filter((order: any) => {
+      if (order.endDate) {
+        const endDate = new Date(order.endDate);
+        // 订单状态不是已完成或已取消，并且结束日期在未来7天内
+        return order.status !== 'completed' && order.status !== 'cancelled' && endDate > now && endDate <= sevenDaysLater;
+      }
+      return false;
+    });
   }
 
   const ordersWithDetails = await Promise.all(
@@ -43,10 +54,10 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
       <!-- 筛选按钮 - 和合同页面保持一致的设计 -->
       <h3 style="margin-top: 0; margin-bottom: 16px;">租赁设备管理</h3>
       <div class="filter-tabs" style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
-        <a href="/staff/rentals/tracking" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
+        <a href="/staff/rentals/tracking" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部订单</a>
         <a href="/staff/rentals/tracking?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
         <a href="/staff/rentals/tracking?status=pending_return" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
-        <a href="/staff/rentals/tracking?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
+        <a href="/staff/rentals/tracking?status=expiring" class="button ${status === 'expiring' ? 'button-primary' : 'button-secondary'}">即将到期</a>
         <a href="/staff/rentals/tracking?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
       </div>
       
