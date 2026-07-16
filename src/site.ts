@@ -607,7 +607,7 @@ export async function verifyUserCredentials(c: Context, account: string, passwor
 export async function findUserByReferralCode(c: Context, referralCode: string): Promise<User | null> {
   const db = getDB(c)
   const normalizedCode = referralCode.trim().toUpperCase()
-  return db.prepare('SELECT id FROM users WHERE UPPER(referralCode) = ?').bind(normalizedCode).first() as User | null
+  return db.prepare('SELECT id FROM users WHERE UPPER(referral_code) = ?').bind(normalizedCode).first() as User | null
 }
 
 export async function getDeviceBySerialNumber(c: Context, serialNumber: string): Promise<Device | null> {
@@ -754,11 +754,19 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
 export async function insertUser(c: Context, user: any): Promise<User> {
   const db = getDB(c)
 
-  // 检查数据库中存在哪些密码相关的列
+  // 检查数据库中存在哪些列
   const hasPasswordHashSnake = await userHasColumn(c, 'password_hash')
   const hasPasswordHashCamel = await userHasColumn(c, 'passwordHash')
   const hasPasswordSaltSnake = await userHasColumn(c, 'password_salt')
   const hasPasswordSaltCamel = await userHasColumn(c, 'passwordSalt')
+  const hasReferrerIdSnake = await userHasColumn(c, 'referrer_id')
+  const hasReferrerIdCamel = await userHasColumn(c, 'referrerId')
+  const hasReferralCodeSnake = await userHasColumn(c, 'referral_code')
+  const hasReferralCodeCamel = await userHasColumn(c, 'referralCode')
+  const hasCreatedAtSnake = await userHasColumn(c, 'created_at')
+  const hasCreatedAtCamel = await userHasColumn(c, 'createdAt')
+  const hasCommissionBalanceSnake = await userHasColumn(c, 'commission_balance')
+  const hasCommissionBalanceCamel = await userHasColumn(c, 'commissionBalance')
 
   let passwordHashToStore = user.passwordHash ?? null;
   let passwordSaltToStore = user.passwordSalt ?? null;
@@ -771,8 +779,44 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   }
 
   // 构建INSERT字段和值
-  const insertFields = ['id', 'name', 'email', 'role', 'status', 'balance', 'commissionBalance', 'referralCode', 'referrerId', 'createdAt'];
-  const insertValues = [user.id, user.name, user.email, user.role, user.status ?? 'active', user.balance ?? 0, user.commissionBalance ?? 0, user.referralCode ?? null, user.referrerId ?? null, user.createdAt ?? new Date().toISOString()];
+  const insertFields = ['id', 'name', 'email', 'role', 'status', 'balance'];
+  const insertValues = [user.id, user.name, user.email, user.role, user.status ?? 'active', user.balance ?? 0];
+  
+  // 处理commission_balance / commissionBalance
+  if (hasCommissionBalanceSnake) {
+    insertFields.push('commission_balance');
+    insertValues.push(user.commissionBalance ?? 0);
+  } else if (hasCommissionBalanceCamel) {
+    insertFields.push('commissionBalance');
+    insertValues.push(user.commissionBalance ?? 0);
+  }
+  
+  // 处理referral_code / referralCode
+  if (hasReferralCodeSnake) {
+    insertFields.push('referral_code');
+    insertValues.push(user.referralCode ?? null);
+  } else if (hasReferralCodeCamel) {
+    insertFields.push('referralCode');
+    insertValues.push(user.referralCode ?? null);
+  }
+  
+  // 处理referrer_id / referrerId
+  if (hasReferrerIdSnake) {
+    insertFields.push('referrer_id');
+    insertValues.push(user.referrerId ?? null);
+  } else if (hasReferrerIdCamel) {
+    insertFields.push('referrerId');
+    insertValues.push(user.referrerId ?? null);
+  }
+  
+  // 处理created_at / createdAt
+  if (hasCreatedAtSnake) {
+    insertFields.push('created_at');
+    insertValues.push(user.createdAt ?? new Date().toISOString());
+  } else if (hasCreatedAtCamel) {
+    insertFields.push('createdAt');
+    insertValues.push(user.createdAt ?? new Date().toISOString());
+  }
 
   // 根据数据库存在的列添加密码相关字段
   if (passwordHashToStore !== null) {
@@ -849,7 +893,7 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   const { nanoid } = await import('nanoid')
   const deviceId = device.id || `d-${nanoid(8)}`
   await db.prepare(
-    'INSERT INTO devices (id, name, model, serialNumber, pricePerDay, depositAmount, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO devices (id, name, model, serial_number, price_per_day, deposit_amount, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(
     deviceId,
     device.name,
@@ -871,16 +915,15 @@ export async function updatePassword(c: Context, userId: string, newPassword: st
 }
 
 export async function bindReferrer(c: Context, userId: string, referrerId: string): Promise<User | null> {
-  // 绑定后不可更改：如果 referrerId 已存在则不更新
+  // 绑定后不可更改：如果 referrer_id 已存在则不更新
   const db = getDB(c)
-  await db.prepare('UPDATE users SET referrerId = ? WHERE id = ? AND referrerId IS NULL').bind(referrerId, userId).run()
+  await db.prepare('UPDATE users SET referrer_id = ? WHERE id = ? AND referrer_id IS NULL').bind(referrerId, userId).run()
   return getUserById(c, userId)
 }
 
 export async function unbindReferrer(c: Context, userId: string): Promise<User | null> {
-  // 允许解除（如果你不允许，删除该函数或改成 no-op）
   const db = getDB(c)
-  await db.prepare('UPDATE users SET referrerId = NULL WHERE id = ?').bind(userId).run()
+  await db.prepare('UPDATE users SET referrer_id = NULL WHERE id = ?').bind(userId).run()
   return getUserById(c, userId)
 }
 
@@ -925,7 +968,13 @@ export async function updateContractTemplateInDB(c: Context, newTemplate: { id: 
 
 
 
-export async function createWithdrawalRequest(c: Context, userId: string, amount: number, bsb: string, accountNumber: string): Promise<{ success: boolean; message: string }> {
+export async function createWithdrawalRequest(
+  c: Context, 
+  userId: string, 
+  amount: number, 
+  withdrawMethod: 'balance' | 'bank_transfer',
+  bankDetails?: { bsb?: string; accountNumber?: string; accountName?: string }
+): Promise<{ success: boolean; message: string }> {
   const db = getDB(c)
   const { nanoid } = await import('nanoid')
 
@@ -937,32 +986,61 @@ export async function createWithdrawalRequest(c: Context, userId: string, amount
     ]);
 
     const user = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User;
+    const currentCommissionBalance = user.commission_balance ?? user.commissionBalance ?? 0;
 
-    if (!user || user.commissionBalance < amount) {
+    if (!user || currentCommissionBalance < amount) {
       await db.prepare('ROLLBACK').run();
       return { success: false, message: '提现金额不能超过可提现余额' };
     }
+    
+    // 银行转账需要最低100澳元
+    if (withdrawMethod === 'bank_transfer' && amount < 100) {
+      await db.prepare('ROLLBACK').run();
+      return { success: false, message: '银行转账最低提现金额为100澳元' };
+    }
 
-    const withdrawalId = `w-${nanoid(8)}`;
-
+    // 首先扣除佣金余额
     await db.batch([
       db.prepare(`
-        INSERT INTO commission_withdrawals (id, userId, amount, bsb, accountNumber, status)
-        VALUES (?, ?, ?, ?, ?, 'pending')
-      `).bind(withdrawalId, userId, amount, bsb, accountNumber),
-      db.prepare(`
-        UPDATE users SET commission_balance = commission_balance - ?, updatedAt = CURRENT_TIMESTAMP
+        UPDATE users SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(amount, userId),
       db.prepare(`
-        UPDATE commission_records SET status = 'withdrawn', settledAt = CURRENT_TIMESTAMP
-        WHERE referrerId = ? AND status = 'pending'
-        ORDER BY createdAt ASC
+        UPDATE commission_records SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
+        WHERE referrer_id = ? AND status = 'pending'
+        ORDER BY created_at ASC
       `).bind(userId),
-      db.prepare('COMMIT'),
     ]);
-
-    return { success: true, message: '提现申请已提交' };
+    
+    if (withdrawMethod === 'balance') {
+      // 划入账户余额
+      await db.batch([
+        db.prepare(`
+          UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(amount, userId),
+        db.prepare('COMMIT'),
+      ]);
+      return { success: true, message: '提现成功！金额已划入您的账户余额' };
+    } else {
+      // 银行转账：创建提现申请记录
+      const withdrawalId = `w-${nanoid(8)}`;
+      await db.batch([
+        db.prepare(`
+          INSERT INTO commission_withdrawals (id, user_id, amount, bsb, account_number, account_name, status)
+          VALUES (?, ?, ?, ?, ?, ?, 'pending')
+        `).bind(
+          withdrawalId, 
+          userId, 
+          amount, 
+          bankDetails?.bsb ?? null, 
+          bankDetails?.accountNumber ?? null,
+          bankDetails?.accountName ?? null
+        ),
+        db.prepare('COMMIT'),
+      ]);
+      return { success: true, message: '提现申请已提交，预计2个工作日处理' };
+    }
   } catch (error) {
     await db.prepare('ROLLBACK').run();
     console.error('Withdrawal failed:', error);
@@ -1499,7 +1577,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
     '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
     '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
-    '/admin/devices': '▣', '/admin/settings': '⚙'
+    '/admin/withdrawals': '💳', '/admin/devices': '▣', '/admin/settings': '⚙'
   }
 
   const renderNavLink = (href: string, text: string) => {
@@ -1533,6 +1611,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/admin/refunds', '退款处理')}
             ${renderNavLink('/admin/contracts', '合同管理')}
             ${renderNavLink('/admin/finance', '财务中心')}
+            ${renderNavLink('/admin/withdrawals', '佣金提现')}
             ${renderNavLink('/admin/devices', '设备管理')}
             ${renderNavLink('/admin/settings', '系统设置')}
           ` : ''}

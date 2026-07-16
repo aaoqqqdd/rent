@@ -447,32 +447,49 @@ app.post('/customer/referral/withdraw', async (c) => {
   }
   const form = await c.req.parseBody()
   const amount = Number(form.amount)
+  const withdrawMethod = form.withdrawMethod as string;
+  
   if (!amount || amount <= 0) {
     return c.html(await pages.renderCustomerReferral(c, user, '请输入正确的提现金额'))
   }
   if (amount > user.commissionBalance) {
     return c.html(await pages.renderCustomerReferral(c, user, '提现金额不能超过可提现余额'))
   }
-  const withdrawalId = `w-${nanoid(8)}`;
-  await c.env.RENT.prepare(`
-    INSERT INTO commission_withdrawals (id, userId, amount, bsb, accountNumber, status)
-    VALUES (?, ?, ?, ?, ?, 'pending')
-  `).bind(withdrawalId, user.id, amount, form.bsb, form.account_number).run();
   
-  // 更新用户佣金余额
+  // 银行转账需要满足最低100澳元要求
+  if (withdrawMethod === 'bank_transfer' && amount < 100) {
+    return c.html(await pages.renderCustomerReferral(c, user, '银行转账最低提现金额为100澳元'))
+  }
+  
+  // 更新用户佣金余额（无论哪种方式都先扣除佣金余额）
   await c.env.RENT.prepare(`
-    UPDATE users SET commission_balance = commission_balance - ?, updatedAt = CURRENT_TIMESTAMP
+    UPDATE users SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).bind(amount, user.id).run();
   
   // 更新佣金记录状态
   await c.env.RENT.prepare(`
-    UPDATE commission_records SET status = 'withdrawn', settledAt = CURRENT_TIMESTAMP
-    WHERE referrerId = ? AND status = 'pending'
-    ORDER BY createdAt ASC LIMIT 1
+    UPDATE commission_records SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
+    WHERE referrer_id = ? AND status = 'pending'
+    ORDER BY created_at ASC LIMIT 1
   `).bind(user.id).run();
   
-  return c.html(await pages.renderCustomerReferral(c, user, '提现申请已提交，预计2个工作日处理'))
+  if (withdrawMethod === 'balance') {
+    // 划入账户余额：直接添加到用户的账户余额中
+    await c.env.RENT.prepare(`
+      UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(amount, user.id).run();
+    return c.html(await pages.renderCustomerReferral(c, user, '提现成功！金额已划入您的账户余额'));
+  } else {
+    // 银行转账：创建提现申请记录，等待人工处理
+    const withdrawalId = `w-${nanoid(8)}`;
+    await c.env.RENT.prepare(`
+      INSERT INTO commission_withdrawals (id, user_id, amount, bsb, account_number, account_name, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending')
+    `).bind(withdrawalId, user.id, amount, form.bsb, form.account_number, form.account_name).run();
+    return c.html(await pages.renderCustomerReferral(c, user, '提现申请已提交，预计2个工作日处理'));
+  }
 })
 
 app.post('/customer/referral/join', async (c) => {
@@ -621,6 +638,37 @@ app.get('/admin/refunds', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderAdminRefunds(c, user))
+})
+
+app.get('/admin/withdrawals', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.html(await pages.renderAdminWithdrawals(c, user))
+})
+
+app.post('/admin/withdrawals/:id/status', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+
+  const withdrawalId = c.req.param('id')
+  const form = await c.req.parseBody()
+  const status = String(form.status || 'pending')
+
+  if (!['completed', 'rejected', 'approved'].includes(status)) {
+    return c.redirect('/admin/withdrawals')
+  }
+
+  await c.env.RENT.prepare(`
+    UPDATE commission_withdrawals
+    SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(status, user.id, withdrawalId).run();
+
+  return c.redirect('/admin/withdrawals')
 })
 
 app.get('/admin/contracts/signing-status', async (c) => {

@@ -195,7 +195,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           let referrerId = null;
           if (userInfo.referrer) {
             const normalizedReferrerCode = userInfo.referrer.toUpperCase();
-            const referrerUser = await c.env.RENT.prepare('SELECT * FROM users WHERE UPPER(referralCode) = ?').bind(normalizedReferrerCode).first();
+            const referrerUser = await c.env.RENT.prepare('SELECT * FROM users WHERE UPPER(referral_code) = ?').bind(normalizedReferrerCode).first();
             if (referrerUser) {
               referrerId = referrerUser.id;
               await logError(c, 'INFO', `Valid referrer found`, undefined, { token, referrerId, referrerCode: normalizedReferrerCode });
@@ -237,16 +237,41 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         // 2. 更新订单信息
+        // 处理余额支付
+        let orderStatus: Order['status'] = 'pending_payment';
+        if (paymentMethod === 'balance') {
+          // 获取用户当前余额
+          const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any;
+          const currentBalance = user?.balance || 0;
+          // 获取订单总金额
+          const rental = await c.env.RENT.prepare('SELECT total_amount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
+          const totalAmount = rental?.total_amount || 0;
+          
+          if (currentBalance >= totalAmount) {
+            // 扣除余额
+            await c.env.RENT.prepare(`
+              UPDATE users SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(totalAmount, userId).run();
+            orderStatus = 'paid'; // 余额支付成功，直接标记为已支付
+            await logError(c, 'INFO', `Balance payment processed successfully`, undefined, { token, userId, amount: totalAmount, remainingBalance: currentBalance - totalAmount });
+          } else {
+            await logError(c, 'WARNING', `Insufficient balance for payment`, undefined, { token, userId, balance: currentBalance, required: totalAmount });
+            throw new Error('账户余额不足，无法使用余额支付');
+          }
+        }
+
         await updateOrderInDB(c, contract.rentalId, {
           userId: userId,
           paymentMethod: paymentMethod as Order['paymentMethod'],
-          status: 'pending_payment',
+          status: orderStatus,
         });
         await logError(c, 'INFO', `Order updated with user and payment method`, undefined, { 
           token, 
           orderId: contract.rentalId, 
           userId, 
-          paymentMethod 
+          paymentMethod,
+          status: orderStatus
         });
 
         // 3. 更新合同状态
@@ -276,16 +301,16 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               rentalTotal: rental.total_amount
             });
 
-            // 创建佣金记录
+            // 创建佣金记录 - 使用snake_case列名匹配数据库schema
             const commissionId = `c-${nanoid(8)}`;
             await c.env.RENT.prepare(`
-              INSERT INTO commission_records (id, referrerId, orderId, userId, amount, rate, status)
+              INSERT INTO commission_records (id, referrer_id, rental_id, customer_id, amount, rate, status)
               VALUES (?, ?, ?, ?, ?, ?, 'pending')
             `).bind(commissionId, referrerId, contract.rentalId, newUserId, commissionAmount, commissionRate).run();
             
             // 更新推荐人的佣金余额
             await c.env.RENT.prepare(`
-              UPDATE users SET commission_balance = commission_balance + ?, updatedAt = CURRENT_TIMESTAMP
+              UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP
               WHERE id = ?
             `).bind(commissionAmount, referrerId).run();
             

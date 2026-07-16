@@ -284,6 +284,13 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 <p class="text-muted" style="margin: 4px 0 0 24px;">请转账至 BSB: ${systemSettings.bankDetails.bsb}, Account: ${systemSettings.bankDetails.account}。转账后请上传凭证。</p>
               </label>
               ` : ''}
+              ${systemSettings.paymentMethods.balancePayment && currentUser ? `
+              <label class="card" style="cursor: pointer; padding: 16px;">
+                <input type="radio" name="paymentMethod" value="balance" required ${currentUser.balance >= order.totalAmount ? '' : 'disabled'} />
+                <strong style="margin-left: 8px;">账户余额支付</strong>
+                <p class="text-muted" style="margin: 4px 0 0 24px;">当前账户余额: ${formatCurrency(currentUser.balance || 0)} ${currentUser.balance >= order.totalAmount ? '' : '（余额不足）'}</p>
+              </label>
+              ` : ''}
             </div>
             <div style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
               <a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=2" class="button-secondary">返回上一步</a>

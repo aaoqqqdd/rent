@@ -48,9 +48,9 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
     })
   )
 
-  // 处理租赁订单详情（用于租赁进度部分）
+  // 处理租赁订单详情（仅用于显示租赁中的订单）
   let filteredOrders = allOrders
-  if (status && ['active', 'completed', 'cancelled'].includes(status)) {
+  if (status === 'active') {
     filteredOrders = allOrders.filter((r: any) => r.status === status)
   }
   const ordersWithDetails = await Promise.all(
@@ -61,24 +61,13 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
     })
   )
 
-  // 根据筛选状态显示对应的租赁部分
+  // 根据筛选状态显示租赁中的订单
   let activeRentals = []
-  let completedRentals = []
-  let cancelledRentals = []
-  let otherHistoricalRentals = []
-  
   if (status === 'active') {
     activeRentals = ordersWithDetails
-  } else if (status === 'completed') {
-    completedRentals = ordersWithDetails
-  } else if (status === 'cancelled') {
-    cancelledRentals = ordersWithDetails
   } else {
-    // 无状态筛选时显示所有分类
+    // 无状态筛选时只显示租赁中的订单
     activeRentals = ordersWithDetails.filter((r: any) => r.status === 'active')
-    completedRentals = ordersWithDetails.filter((r: any) => r.status === 'completed')
-    cancelledRentals = ordersWithDetails.filter((r: any) => r.status === 'cancelled')
-    otherHistoricalRentals = ordersWithDetails.filter((r: any) => r.status !== 'active' && r.status !== 'completed' && r.status !== 'cancelled')
   }
 
   const body = `

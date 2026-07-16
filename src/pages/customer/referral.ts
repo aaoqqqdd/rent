@@ -17,7 +17,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
 
   // 获取该用户的所有佣金记录
   const commissionRecords = await c.env.RENT.prepare(`
-    SELECT * FROM commission_records WHERE referrerId = ?
+    SELECT * FROM commission_records WHERE referrer_id = ?
   `).bind(user.id).all();
   
   type CommissionRecord = { amount: number; status: string }
@@ -44,9 +44,9 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
       COUNT(r.id) as orderCount,
       SUM(cr.amount) as contributedCommission
     FROM users u
-    LEFT JOIN orders r ON u.id = r.userId
-    LEFT JOIN commission_records cr ON u.id = cr.userId
-    WHERE u.referrerId = ?
+          LEFT JOIN orders r ON u.id = r.userId
+          LEFT JOIN commission_records cr ON u.id = cr.customer_id
+          WHERE u.referrer_id = ?
     GROUP BY u.id
   `).bind(user.id).all();
 
@@ -99,22 +99,71 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
 
       <div style="margin-top: 30px;">
         <h3>佣金提现</h3>
-        <form method="POST" action="/customer/referral/withdraw">
+        <form method="POST" action="/customer/referral/withdraw" id="withdrawForm">
           <div class="form-group">
             <label class="form-label" for="withdrawAmount">提现金额</label>
             <input type="number" id="withdrawAmount" name="amount" class="form-control" min="1" max="${currentUser.commission_balance}" step="0.01" required />
             <p class="form-text">当前可提现余额: ${formatCurrency(currentUser.commission_balance)}</p>
           </div>
+          
           <div class="form-group">
-            <label class="form-label" for="bsb">BSB (银行代码)</label>
-            <input type="text" id="bsb" name="bsb" class="form-control" value="${currentUser.bsb || ''}" required />
+            <label class="form-label">提现方式</label>
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 8px;">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 12px; border: 1px solid var(--border); border-radius: 8px;">
+                <input type="radio" name="withdrawMethod" value="balance" checked onchange="toggleBankDetails()" />
+                <div>
+                  <strong>划入账户余额</strong>
+                  <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 14px;">无最低金额限制，即时到账</p>
+                </div>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 12px; border: 1px solid var(--border); border-radius: 8px;">
+                <input type="radio" name="withdrawMethod" value="bank_transfer" onchange="toggleBankDetails()" ${currentUser.commission_balance >= 100 ? '' : 'disabled'} />
+                <div>
+                  <strong>银行转账</strong>
+                  <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 14px;">最低提现金额100澳元，1-2个工作日到账</p>
+                </div>
+              </label>
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="accountNumber">Account Number (银行账号)</label>
-            <input type="text" id="accountNumber" name="account_number" class="form-control" value="${currentUser.account_number || ''}" required />
+          
+          <div id="bankDetailsSection" style="display: none;">
+            <div class="form-group">
+              <label class="form-label" for="accountName">银行账户名称</label>
+              <input type="text" id="accountName" name="account_name" class="form-control" value="${currentUser.account_name || ''}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="bsb">BSB (银行代码)</label>
+              <input type="text" id="bsb" name="bsb" class="form-control" value="${currentUser.bsb || ''}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="accountNumber">Account Number (银行账号)</label>
+              <input type="text" id="accountNumber" name="account_number" class="form-control" value="${currentUser.account_number || ''}" />
+            </div>
           </div>
+          
           <button type="submit" class="button button-primary" ${currentUser.commission_balance <= 0 ? 'disabled' : ''}>申请提现</button>
         </form>
+        <script>
+          function toggleBankDetails() {
+            const method = document.querySelector('input[name="withdrawMethod"]:checked').value;
+            const bankSection = document.getElementById('bankDetailsSection');
+            const amountInput = document.getElementById('withdrawAmount');
+            const bankInputs = bankSection.querySelectorAll('input');
+            
+            if (method === 'bank_transfer') {
+              bankSection.style.display = 'block';
+              // 银行转账需要最低100澳元
+              amountInput.min = 100;
+              // 添加必填属性
+              bankInputs.forEach(input => input.required = true);
+            } else {
+              bankSection.style.display = 'none';
+              amountInput.min = 1;
+              // 移除必填属性
+              bankInputs.forEach(input => input.required = false);
+            }
+          }
+        </script>
       </div>
 
       <div style="margin-top: 30px;">

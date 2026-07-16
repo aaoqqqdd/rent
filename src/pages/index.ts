@@ -49,3 +49,4 @@ export * from './admin/userDetail';
 export * from './admin/userNew';
 export * from './admin/userEdit';
 export * from './admin/refunds';
+export * from './admin/withdrawals';
