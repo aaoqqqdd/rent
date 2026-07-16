@@ -2,44 +2,46 @@ import { buildLayout, getAllContracts, getOrderById, getUserById, getOrders, get
 import type { Context } from 'hono'
 
 export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string) {
-  // 获取所有合同和订单数据，融合合同管理和租赁进度管理
   let allContracts = await getAllContracts(c)
   const allOrders = await getOrders(c)
-  const allUsers = await getUsers(c) // 获取所有用户用于搜索
+  const allUsers = await getUsers(c)
 
-  // 根据状态筛选合同
-  if (status) {
-    // 如果是合同状态（pending_sign/signed/completed/cancelled），只筛选合同
-    if (status === 'pending_sign' || status === 'signed' || status === 'completed' || status === 'cancelled') {
-      allContracts = allContracts.filter((ct) => ct.status === status)
-    } else {
-      // 如果是租赁状态（active），合同部分不显示，只筛选租赁订单
-      allContracts = []
-    }
+  const contractStatuses = ['pending_sign', 'signed', 'cancelled', 'completed']
+  const rentalStatuses = ['active', 'pending_pickup', 'pending_return', 'completed', 'cancelled']
+
+  if (status && contractStatuses.includes(status)) {
+    allContracts = allContracts.filter((ct) => ct.status === status)
   }
 
-  // 如果有搜索关键词，过滤合同
+  let filteredOrders = allOrders
+  if (status && rentalStatuses.includes(status)) {
+    filteredOrders = allOrders.filter((r: any) => r.status === status)
+  } else if (!status) {
+    filteredOrders = allOrders.filter((r: any) => ['active', 'pending_pickup', 'pending_return'].includes(r.status))
+  }
+
   if (searchTerm && searchTerm.trim()) {
     const searchLower = searchTerm.toLowerCase().trim()
-    allContracts = allContracts.filter(contract => {
-      // 检查合同编号
+    allContracts = allContracts.filter((contract) => {
       if (contract.contractNumber?.toLowerCase().includes(searchLower)) return true
-      
-      // 关联订单，检查订单编号
-      const order = allOrders.find(o => o.id === contract.rentalId)
+      const order = allOrders.find((o) => o.id === contract.rentalId)
       if (order?.orderNo?.toLowerCase().includes(searchLower)) return true
-      
-      // 关联用户，检查姓名、邮箱、电话
-      const customer = order ? allUsers.find(u => u.id === order.userId) : null
+      const customer = order ? allUsers.find((u) => u.id === order.userId) : null
       if (customer?.name?.toLowerCase().includes(searchLower)) return true
       if (customer?.email?.toLowerCase().includes(searchLower)) return true
       if (customer?.phone?.toLowerCase().includes(searchLower)) return true
-      
       return false
+    })
+
+    filteredOrders = filteredOrders.filter((order: any) => {
+      const customer = allUsers.find((u) => u.id === order.userId)
+      const device = order.deviceId ? allOrders.find((o) => o.id === order.deviceId) : null
+      return [order.orderNo, order.id, customer?.name, customer?.email, device?.deviceName, order.startDate, order.endDate]
+        .filter(Boolean)
+        .some((value: any) => String(value).toLowerCase().includes(searchLower))
     })
   }
 
-  // 处理合同详情
   const contractsWithDetails = await Promise.all(
     allContracts.map(async (contract) => {
       const order = await getOrderById(c, contract.rentalId)
@@ -48,11 +50,6 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
     })
   )
 
-  // 处理租赁订单详情（仅用于显示租赁中的订单）
-  let filteredOrders = allOrders
-  if (status === 'active') {
-    filteredOrders = allOrders.filter((r: any) => r.status === status)
-  }
   const ordersWithDetails = await Promise.all(
     filteredOrders.map(async (order: any) => {
       const customer = await getUserById(c, order.userId)
@@ -61,14 +58,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
     })
   )
 
-  // 根据筛选状态显示租赁中的订单
-  let activeRentals = []
-  if (status === 'active') {
-    activeRentals = ordersWithDetails
-  } else {
-    // 无状态筛选时只显示租赁中的订单
-    activeRentals = ordersWithDetails.filter((r: any) => r.status === 'active')
-  }
+  const activeRentals = ordersWithDetails
 
   const body = `
     <div class="panel">
@@ -78,13 +68,16 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
 
       <!-- 统一的筛选按钮 - 包含合同和租赁状态 -->
-      <h3 style="margin-top: 0; margin-bottom: 16px;">合同与租赁管理</h3>
+      <h3 style="margin-top: 0; margin-bottom: 16px;">合同管理</h3>
       <div class="filter-tabs" style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
         <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
         <a href="/staff/contracts?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
         <a href="/staff/contracts?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
         <a href="/staff/contracts?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
         <a href="/staff/contracts?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
+        <a href="/staff/contracts?status=active" class="button ${status === 'active' ? 'button-primary' : 'button-secondary'}">当前租赁中</a>
+        <a href="/staff/contracts?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
+        <a href="/staff/contracts?status=pending_return" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
       </div>
       
       <!-- 搜索功能 -->
@@ -113,16 +106,18 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           <tbody>
             ${contractsWithDetails
               .map(({ contract, order, customer }) => {
-                const canCancel = user && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id)
+                const canCancel = user && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id || contract.status === 'pending_sign');
+                const statusLabel = contract.status === 'pending_sign' ? '待签署' : contract.status === 'signed' ? '已签署' : contract.status === 'cancelled' ? '已取消' : contract.status === 'draft' ? '草稿' : contract.status
+                const signedAtText = contract.signedAt ? contract.signedAt : (contract.status === 'cancelled' ? '已取消' : '未签署')
                 return `
                 <tr>
                   <td>${contract.contractNumber}</td>
                   <td>${order?.orderNo ?? 'N/A'}</td>
                   <td>${customer?.name ?? '未知客户'}</td>
-                  <td>${contract.status}</td>
-                  <td>${contract.signedAt ?? '未签署'}</td>
+                  <td>${statusLabel}</td>
+                  <td>${signedAtText}</td>
                   <td>
-                    <a class="button button-sm button-secondary" href="/staff/contract/view/${contract.id}">查看合同</a>
+                    <a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>
                     ${
                       contract.status === 'pending_sign'
                         ? `
@@ -144,37 +139,45 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           : '<p>没有找到符合条件的合同记录。</p>'
       }
 
-      <!-- 租赁进度管理部分 -->
-      <h3 style="margin-top: 48px; margin-bottom: 16px;">当前租赁中</h3>
+      <h3 style="margin-top: 48px; margin-bottom: 16px;">租赁管理</h3>
       ${
         activeRentals.length > 0
           ? `
         <table class="table">
           <thead>
             <tr>
+              <th>合同编号</th>
               <th>订单编号</th>
               <th>客户</th>
-              <th>设备</th>
-              <th>租期</th>
               <th>状态</th>
+              <th>租赁日期</th>
+              <th>归还日期</th>
+              <th>租赁天数</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             ${activeRentals
               .map((order: any) => {
+                const contract = allContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
+                const hasSignedContract = contract?.status === 'signed'
+                const statusText = order.status === 'pending_pickup' ? '待拿取' : order.status === 'pending_return' ? '待归还' : order.status === 'active' ? '当前租赁中' : order.status === 'completed' ? '已完成' : order.status === 'cancelled' ? '已取消' : order.status
+                const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
+                const actionButton = hasSignedContract
+                  ? `<a class="button button-sm button-primary" href="/staff/orders/${order.id}">待拿取</a>`
+                  : order.status === 'active' || order.status === 'pending_return'
+                    ? `<button class="button button-sm button-warning" onclick="const amount = prompt('请输入退还押金金额', '${(order.depositAmount || 0).toFixed(2)}'); if (amount !== null) { const reason = prompt('请输入扣除原因（选填）', ''); window.location.href='/staff/orders/${order.id}/refund?amount=' + encodeURIComponent(amount) + '&reason=' + encodeURIComponent(reason || '') }">退还押金</button>`
+                    : `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">待归还</a>`
                 return `
                 <tr>
+                  <td>${contract?.contractNumber ?? '—'}</td>
                   <td>${order.orderNo}</td>
                   <td>${order.customer?.name ?? '待客户填写'}</td>
-                  <td>${order.device?.name ?? '未知设备'}</td>
-                  <td>${order.startDate} 至 ${order.endDate}</td>
-                  <td>${order.status}</td>
-                  <td>
-                    <a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看详情</a>
-                    <a class="button button-sm button-primary" href="/staff/orders/${order.id}/return-check">归还验收</a>
-                    <a class="button button-sm button-danger" href="/staff/orders/${order.id}/overdue">逾期处理</a>
-                  </td>
+                  <td>${statusText}</td>
+                  <td>${order.startDate ?? '—'}</td>
+                  <td>${order.endDate ?? '—'}</td>
+                  <td>${rentalDays}</td>
+                  <td>${actionButton}</td>
                 </tr>
               `
               })
@@ -182,7 +185,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           </tbody>
         </table>
       `
-          : '<p>目前没有正在租赁的设备。</p>'
+          : '<p>目前没有符合条件的租赁记录。</p>'
       }
 
 

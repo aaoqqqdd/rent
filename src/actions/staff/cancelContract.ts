@@ -29,10 +29,9 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
       return c.redirect(`/staff/contracts?error=Only pending contracts can be cancelled`);
     }
 
-    // 权限检查：只有管理员或合同创建人才能取消合同
-    const isAdmin = user.role === 'ADMIN';
+    const isAdmin = user.role === 'ADMIN' || user.role === 'STAFF';
     const isCreator = contract.created_by === user.id || contract.createdBy === user.id;
-    
+
     if (!isAdmin && !isCreator) {
       await logError(c, 'WARNING', `Permission denied: User ${user.id} attempted to cancel contract ${contractId} created by ${contract.created_by}`);
       return c.redirect(`/staff/contracts?error=You don't have permission to cancel this contract`);

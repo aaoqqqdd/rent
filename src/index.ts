@@ -272,6 +272,28 @@ app.get('/staff/orders/:id', async (c) => {
   return c.html(await pages.renderStaffOrderDetail(c, user, c.req.param('id')))
 })
 
+// 新增：员工操作 - 标记订单为已拿取
+app.post('/staff/orders/:orderId/pickup', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+    return c.json({ success: false, message: 'Unauthorized' }, 401)
+  }
+  const orderId = c.req.param('orderId')
+  await updateOrderStatus(c, orderId, 'pending_return') // 从待拿取变为待归还
+  return c.json({ success: true, message: '订单已标记为已拿取' })
+})
+
+// 新增：员工操作 - 标记订单为已归还
+app.post('/staff/orders/:orderId/return', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+    return c.json({ success: false, message: 'Unauthorized' }, 401)
+  }
+  const orderId = c.req.param('orderId')
+  await updateOrderStatus(c, orderId, 'completed') // 从待归还变为已完成
+  return c.json({ success: true, message: '订单已标记为已归还' })
+})
+
 app.get('/staff/contracts', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
@@ -287,9 +309,10 @@ app.get('/staff/rentals/tracking', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  // 获取查询参数中的status
+  // 获取查询参数中的status和searchTerm
   const status = c.req.query('status')
-  return c.html(await pages.renderStaffRentalsTracking(c, user, status))
+  const searchTerm = c.req.query('searchTerm')
+  return c.html(await pages.renderStaffRentalsTracking(c, user, status, searchTerm))
 })
 
 app.get('/staff/devices', async (c) => {

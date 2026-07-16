@@ -203,14 +203,9 @@ function normalizeUserRow(row: any): User {
   } as User
 }
 
-export async function getOrderById(cOrContext: Context | string, id?: string): Promise<Order | null> {
-  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
-  const actualId = typeof cOrContext === 'string' ? cOrContext : id
-  if (!actualId) return null
-  const orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
-  if (!orderRow) return null
-  
-  // 统一处理snake_case和camelCase字段
+function normalizeOrderRow(orderRow: any): Order {
+  if (!orderRow) return null as any
+
   const deviceId = orderRow.deviceId ?? orderRow.device_id
   const startDate = orderRow.startDate ?? orderRow.start_date
   const endDate = orderRow.endDate ?? orderRow.end_date
@@ -218,8 +213,7 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
   const totalAmount = orderRow.totalAmount ?? orderRow.total_amount
   const depositAmount = orderRow.depositAmount ?? orderRow.deposit_amount
   const createdAt = orderRow.createdAt ?? orderRow.created_at
-  
-  // 确保返回的订单对象同时包含两种格式的字段，兼容所有调用方
+
   return {
     ...orderRow,
     deviceId,
@@ -235,8 +229,48 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
     depositAmount,
     deposit_amount: depositAmount,
     createdAt,
-    created_at: createdAt
+    created_at: createdAt,
+    status: orderRow.status ?? orderRow.order_status
   } as Order
+}
+
+function normalizeContractRow(contractRow: any): Contract {
+  if (!contractRow) return null as any
+
+  const validFrom = contractRow.validFrom ?? contractRow.valid_from
+  const validUntil = contractRow.validUntil ?? contractRow.valid_until
+  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
+  const rentalId = contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
+  const valid_from = contractRow.valid_from ?? contractRow.validFrom
+  const valid_until = contractRow.valid_until ?? contractRow.validUntil
+  const createdBy = contractRow.createdBy ?? contractRow.created_by
+  const created_by = contractRow.created_by ?? contractRow.createdBy
+
+  return {
+    ...contractRow,
+    validFrom,
+    validUntil,
+    signExpiresAt,
+    rentalId,
+    rental_id,
+    sign_expires_at,
+    valid_from,
+    valid_until,
+    createdBy,
+    created_by
+  } as Contract
+}
+
+export async function getOrderById(cOrContext: Context | string, id?: string): Promise<Order | null> {
+  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
+  const actualId = typeof cOrContext === 'string' ? cOrContext : id
+  if (!actualId) return null
+  const orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
+  if (!orderRow) return null
+
+  return normalizeOrderRow(orderRow)
 }
 
 export async function getDeviceById(cOrContext: Context | string, id?: string): Promise<Device | null> {
@@ -338,13 +372,13 @@ export async function getContractByOrderId(cOrContext: Context | string, orderId
 export async function getAllContracts(c?: Context): Promise<Contract[]> {
   const db = getDB(c)
   const result = await db.prepare('SELECT * FROM contracts').all()
-  return (result.results as Contract[]) || []
+  return ((result.results || []) as any[]).map(normalizeContractRow) || []
 }
 
 export async function getOrders(c?: Context): Promise<Order[]> {
   const db = getDB(c)
   const result = await db.prepare('SELECT * FROM orders').all()
-  return (result.results as Order[]) || []
+  return ((result.results || []) as any[]).map(normalizeOrderRow) || []
 }
 
 export async function getOrdersForUser(cOrContext: Context | string, userId?: string): Promise<Order[]> {
@@ -352,7 +386,7 @@ export async function getOrdersForUser(cOrContext: Context | string, userId?: st
   const actualUserId = typeof cOrContext === 'string' ? cOrContext : userId
   if (!actualUserId) return []
   const result = await db.prepare('SELECT * FROM orders WHERE userId = ?').bind(actualUserId).all()
-  return (result.results as Order[]) || []
+  return ((result.results || []) as any[]).map(normalizeOrderRow) || []
 }
 
 export async function getOrdersWithDetailsForUser(c: Context, userId: string): Promise<any[]> {

@@ -1,68 +1,123 @@
-import { buildLayout, getOrders, getUserById, getDeviceById } from '../../site'
+import { buildLayout, getOrders, getUserById, getDeviceById, getAllContracts, getUsers } from '../../site'
 import type { Context } from 'hono'
 
-export async function renderStaffRentalsTracking(c: Context, user: any, status?: string) {
+export async function renderStaffRentalsTracking(c: Context, user: any, status?: string, searchTerm?: string) {
   const allOrders = await getOrders(c)
+  const allContracts = await getAllContracts(c)
+  const allUsers = await getUsers(c)
+
+  const rentalStatuses = ['pending_pickup', 'pending_return', 'active', 'paid', 'approved']
+  const allStatuses = [...rentalStatuses, 'completed', 'cancelled']
+  
+  // 根据URL参数筛选订单
+  let filteredOrders = allOrders
+  if (status && allStatuses.includes(status)) {
+    filteredOrders = allOrders.filter((r: any) => r.status === status)
+  } else {
+    filteredOrders = allOrders.filter((r: any) => rentalStatuses.includes(r.status));
+  }
 
   const ordersWithDetails = await Promise.all(
-    allOrders.map(async (order: any) => {
+    filteredOrders.map(async (order: any) => {
       const customer = await getUserById(c, order.userId)
-      const device = await getDeviceById(c, order.deviceId)
+      const device = order.deviceId ? await getDeviceById(c, order.deviceId) : null
       return { ...order, customer, device }
     })
   )
 
-  // 根据URL参数筛选订单
-  const filteredOrders = status 
-    ? ordersWithDetails.filter((r: any) => r.status === status)
-    : ordersWithDetails.filter((r: any) => ['active', 'paid', 'approved'].includes(r.status));
+  // 搜索功能
+  let finalOrders = ordersWithDetails;
+  if (searchTerm && searchTerm.trim()) {
+    const searchLower = searchTerm.toLowerCase().trim()
+    finalOrders = ordersWithDetails.filter((order: any) => {
+      return [order.orderNo, order.id, order.customer?.name, order.customer?.email, order.device?.name, order.startDate, order.endDate]
+        .filter(Boolean)
+        .some((value: any) => String(value).toLowerCase().includes(searchLower))
+    })
+  }
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>租赁进度管理</h2><span class="section-note">追踪租赁中订单，处理到期提醒和归还。</span></div>
+      <div class="section-title"><h2>当前租赁中</h2><span class="section-note">追踪租赁中订单，处理到期提醒和归还。</span></div>
 
       <!-- 筛选按钮 - 和合同页面保持一致的设计 -->
+      <h3 style="margin-top: 0; margin-bottom: 16px;">租赁设备管理</h3>
       <div class="filter-tabs" style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
-        <a href="/staff/rentals/tracking" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部租赁中</a>
-        <a href="/staff/rentals/tracking?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
+        <a href="/staff/rentals/tracking" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
+        <a href="/staff/rentals/tracking?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
+        <a href="/staff/rentals/tracking?status=pending_return" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
         <a href="/staff/rentals/tracking?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
+        <a href="/staff/rentals/tracking?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
+      </div>
+      
+      <!-- 搜索功能 -->
+      <div class="search-bar" style="margin-bottom: 24px;">
+        <form action="/staff/rentals/tracking" method="GET" style="display: flex; gap: 10px;">
+          <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" style="flex-grow: 1;" />
+          ${status ? `<input type="hidden" name="status" value="${status}" />` : ''}
+          <button type="submit" class="button button-primary">搜索</button>
+        </form>
       </div>
 
       ${
-        filteredOrders.length > 0
+        finalOrders.length > 0
           ? `
         <table class="table">
           <thead>
             <tr>
+              <th>合同编号</th>
               <th>订单编号</th>
               <th>客户</th>
-              <th>设备</th>
-              <th>租期</th>
               <th>状态</th>
+              <th>租赁日期</th>
+              <th>归还日期</th>
+              <th>租赁天数</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            ${filteredOrders
+            ${finalOrders
               .map((order: any) => {
-                // 显示友好的中文状态标签
-                const statusText = order.status === 'completed' ? '已完成' : 
+                const contract = allContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
+                const hasSignedContract = contract?.status === 'signed'
+                const statusText = order.status === 'pending_pickup' ? '待拿取' : 
+                                  order.status === 'pending_return' ? '待归还' : 
+                                  order.status === 'active' ? '当前租赁中' : 
+                                  order.status === 'completed' ? '已完成' : 
                                   order.status === 'cancelled' ? '已取消' : 
                                   order.status;
+                const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
+                const actionButton = (() => {
+                  // 合同已签署
+                  if (hasSignedContract) {
+                    // 订单状态为待拿取
+                    if (order.status === 'pending_pickup') {
+                      return `<button class="button button-sm button-primary" onclick="fetch('/staff/orders/${order.id}/pickup', { method: 'POST' }).then(() => window.location.reload())">已拿取</button>`;
+                    }
+                    // 订单状态为待归还
+                    if (order.status === 'pending_return') {
+                      return `<button class="button button-sm button-info" onclick="fetch('/staff/orders/${order.id}/return', { method: 'POST' }).then(() => window.location.reload())">已归还</button>`;
+                    }
+                    // 订单状态为已完成
+                    if (order.status === 'completed') {
+                      return `<button class="button button-sm button-warning" onclick="const amount = prompt('请输入退还押金金额', '${(order.depositAmount || 0).toFixed(2)}'); if (amount !== null) { const reason = prompt('请输入扣除原因（选填）', ''); window.location.href='/staff/orders/${order.id}/refund?amount=' + encodeURIComponent(amount) + '&reason=' + encodeURIComponent(reason || '') }">退还押金</button>`;
+                    }
+                    // 其他已签署状态，例如刚签署完成，但订单状态还未更新为pending_pickup
+                    return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
+                   }
+                   // 合同未签署或已取消等情况
+                   return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
+                 })();
                 return `
                 <tr>
+                  <td>${contract?.contractNumber ?? '—'}</td>
                   <td>${order.orderNo}</td>
-                  <td>${order.customer?.role === 'CUSTOMER' ? order.customer?.name : '待客户填写'}</td>
-                  <td>${order.device?.name ?? '未知设备'}</td>
-                  <td>${order.startDate} 至 ${order.endDate}</td>
+                  <td>${order.customer?.name ?? '待客户填写'}</td>
                   <td>${statusText}</td>
-                  <td>
-                    <a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看详情</a>
-                    ${['active', 'paid', 'approved'].includes(order.status) ? `
-                    <a class="button button-sm button-primary" href="/staff/orders/${order.id}/return-check">归还验收</a>
-                    <a class="button button-sm button-danger" href="/staff/orders/${order.id}/overdue">逾期处理</a>
-                    ` : ''}
-                  </td>
+                  <td>${order.startDate ?? '—'}</td>
+                  <td>${order.endDate ?? '—'}</td>
+                  <td>${rentalDays}</td>
+                  <td>${actionButton}</td>
                 </tr>
               `
               })
@@ -75,5 +130,5 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
     </div>
   `
 
-  return buildLayout('租赁进度管理 - 电脑租赁管理系统', body, user)
+  return buildLayout('当前租赁中 - 电脑租赁管理系统', body, user)
 }
