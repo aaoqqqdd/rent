@@ -58,6 +58,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     status: 'pending_sign',
     signedAt: null,
     signToken: signToken,
+    createdAt: new Date().toISOString(),
     validFrom: validFrom || null, // Add validFrom
     validUntil: validUntil || null, // Add validUntil
   };
