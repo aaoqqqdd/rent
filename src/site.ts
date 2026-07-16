@@ -6,7 +6,7 @@ export interface User {
   id: string
   name: string
   email: string
-  password_hash?: string
+  passwordHash?: string
   password_salt?: string // 添加 password_salt 字段
   password?: string // 添加password属性以兼容旧代码
   role: Role
@@ -166,15 +166,39 @@ export async function getUserById(cOrContext: Context | string, id?: string): Pr
   const userRow = await db.prepare('SELECT * FROM users WHERE id = ?').bind(actualId).first()
   if (!userRow) return null
   
-  // 统一处理snake_case和camelCase字段
-  const account_number = userRow.account_number ?? userRow.accountNumber
-  const accountNumber = userRow.accountNumber ?? userRow.account_number
-  
-  // 确保返回的用户对象同时包含两种格式的字段，兼容所有调用方
+  return normalizeUserRow(userRow)
+}
+
+// 将数据库行归一化为同时包含 snake_case 和 camelCase 字段的 User 对象
+function normalizeUserRow(row: any): User {
+  if (!row) return null as any
+  const account_number = row.account_number ?? row.accountNumber ?? row.account
+  const accountNumber = row.accountNumber ?? row.account_number ?? row.account
+
+  const commissionBalance = Number(row.commissionBalance ?? row.commission_balance ?? 0)
+  const balance = Number(row.balance ?? 0)
+
+  const createdAt = row.createdAt ?? row.created_at ?? row.registrationDate ?? row.created_at
+  const created_at = row.created_at ?? row.createdAt ?? row.registrationDate ?? row.createdAt
+  const updatedAt = row.updatedAt ?? row.updated_at ?? null
+  const updated_at = row.updated_at ?? row.updatedAt ?? null
+
+  const referralCode = row.referralCode ?? row.referral_code ?? null
+  const referrerId = row.referrerId ?? row.referrer_id ?? row.referrerId
+
   return {
-    ...userRow,
+    ...row,
     account_number,
-    accountNumber
+    accountNumber,
+    commissionBalance,
+    commission_balance: commissionBalance,
+    balance,
+    createdAt,
+    created_at,
+    updatedAt,
+    updated_at,
+    referralCode,
+    referrerId
   } as User
 }
 
@@ -537,17 +561,7 @@ export async function findUserByEmail(c: Context, email: string): Promise<User |
   const db = getDB(c)
   const userRow = await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
   if (!userRow) return null
-  
-  // 统一处理snake_case和camelCase字段
-  const account_number = userRow.account_number ?? userRow.accountNumber
-  const accountNumber = userRow.accountNumber ?? userRow.account_number
-  
-  // 确保返回的用户对象同时包含两种格式的字段，兼容所有调用方
-  return {
-    ...userRow,
-    account_number,
-    accountNumber
-  } as User
+  return normalizeUserRow(userRow)
 }
 
 export async function findUserByReferralCode(c: Context, referralCode: string): Promise<User | null> {
@@ -590,7 +604,8 @@ export async function getDevices(c?: Context): Promise<Device[]> {
 export async function getUsers(c?: Context): Promise<User[]> {
   const db = getDB(c)
   const result = await db.prepare('SELECT * FROM users').all()
-  return (result.results as User[]) || []
+  if (!result.results) return []
+  return (result.results as any[]).map(normalizeUserRow) || []
 }
 
 export async function getUsersByIds(c: Context, ids: string[]): Promise<User[]> {
@@ -598,7 +613,8 @@ export async function getUsersByIds(c: Context, ids: string[]): Promise<User[]> 
   const db = getDB(c)
   const placeholders = ids.map(() => '?').join(', ')
   const result = await db.prepare(`SELECT * FROM users WHERE id IN (${placeholders})`).bind(...ids).all()
-  return (result.results as User[]) || []
+  if (!result.results) return []
+  return (result.results as any[]).map(normalizeUserRow) || []
 }
 
 export async function getDevicesByIds(c: Context, ids: string[]): Promise<Device[]> {
@@ -743,11 +759,14 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   const sql = `INSERT INTO users (${insertFields.join(', ')}) VALUES (${placeholders})`;
   
   await db.prepare(sql).bind(...insertValues).run()
-  const inserted = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as User | null
-  if (inserted && (inserted as any).passwordHash) delete (inserted as any).passwordHash
-  if (inserted && (inserted as any).passwordSalt) delete (inserted as any).passwordSalt
-  if (inserted && (inserted as any).password_hash) delete (inserted as any).password_hash
-  if (inserted && (inserted as any).password_salt) delete (inserted as any).password_salt
+  const insertedRow = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as any | null
+  if (!insertedRow) return null as any
+  const inserted = normalizeUserRow(insertedRow)
+  delete (inserted as any).passwordHash
+  delete (inserted as any).passwordSalt
+  delete (inserted as any).password_hash
+  delete (inserted as any).password_salt
+  delete (inserted as any).password
   return inserted as User
 }
 
@@ -773,9 +792,12 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
 
   await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).bind(...values, userId).run()
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
-  if (updated && (updated as any).passwordHash) delete (updated as any).passwordHash
-  if (updated && (updated as any).passwordSalt) delete (updated as any).passwordSalt
-  return updated
+  if (!updated) return null
+  const normalized = normalizeUserRow(updated as any)
+  delete (normalized as any).passwordHash
+  delete (normalized as any).passwordSalt
+  delete (normalized as any).password
+  return normalized
 }
 
 export async function getDevicesAsync(c: Context): Promise<Device[]> {
@@ -1359,117 +1381,6 @@ export async function loadDatabaseData(c: Context): Promise<void> {
   await seedDatabaseIfEmpty(c)
 }
 
-export async function verifyUserCredentials(c: Context, emailOrName: string, password: string): Promise<User | null> {
-  console.log(`[DEBUG] verifyUserCredentials: Attempting login for ${emailOrName}`);
-  const db = getDB(c)
-
-  // 检查数据库中存在哪些密码相关的列，避免 D1_ERROR: no such column
-  const hasPasswordHashSnake = await userHasColumn(c, 'password_hash')
-  const hasPasswordHashCamel = await userHasColumn(c, 'passwordHash')
-  const hasPasswordSaltSnake = await userHasColumn(c, 'password_salt')
-  const hasPasswordSaltCamel = await userHasColumn(c, 'passwordSalt')
-
-  // 动态构建 SELECT 语句，只选择存在的列
-  const passwordHashSelect = hasPasswordHashSnake 
-    ? 'password_hash' 
-    : hasPasswordHashCamel 
-      ? 'passwordHash' 
-      : 'NULL as password_hash'
-      
-  const passwordSaltSelect = hasPasswordSaltSnake 
-    ? 'password_salt' 
-    : hasPasswordSaltCamel 
-      ? 'passwordSalt' 
-      : 'NULL as password_salt'
-
-  const userRow: any = await db
-    .prepare(`SELECT id, name, email, role, ${passwordHashSelect}, ${passwordSaltSelect} FROM users WHERE email = ? OR name = ?`)
-    .bind(emailOrName, emailOrName)
-    .first()
-
-  if (!userRow) {
-    console.log(`[DEBUG] verifyUserCredentials: User ${emailOrName} not found.`);
-    return null;
-  }
-  console.log(`[DEBUG] verifyUserCredentials: User found. ID: ${userRow.id}, Email: ${userRow.email}`);
-
-  const passwordHash = userRow.password_hash || userRow.passwordHash;
-  const passwordSalt = userRow.password_salt || userRow.passwordSalt; // 获取盐值
-  console.log(`[DEBUG] verifyUserCredentials: Retrieved passwordHash: ${passwordHash ? 'exists' : 'null'}, passwordSalt: ${passwordSalt ? 'exists' : 'null'}`);
-
-
-  if (!passwordHash) {
-    console.log(`[DEBUG] verifyUserCredentials: No passwordHash found for user ${emailOrName}.`);
-    return null;
-  }
-
-  let isPasswordValid = false;
-  let needsMigration = false;
-  if (passwordSalt) {
-    // 场景 1: 新用户，password_salt 列中明确存储了盐值
-    isPasswordValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`);
-    console.log(`[DEBUG] verifyUserCredentials: Using salted hash verification. isPasswordValid: ${isPasswordValid}`);
-  } else {
-    // 场景 2 & 3: password_salt 列为 NULL (可能是旧用户或过渡期用户)
-    console.log(`[DEBUG] verifyUserCredentials: passwordSalt is null. Attempting old/transition verification.`);
-
-    // 首先尝试使用旧的无盐 SHA-256 验证
-    const oldHash = await oldSha256Hash(password);
-    console.log(`[DEBUG] verifyUserCredentials: Old SHA-256 hash generated.`);
-    if (oldHash === passwordHash) {
-      isPasswordValid = true;
-      needsMigration = true; // 标记需要迁移到新的加盐哈希
-      console.log(`[DEBUG] verifyUserCredentials: Old SHA-256 hash matched. isPasswordValid: ${isPasswordValid}, needsMigration: ${needsMigration}`);
-    } else {
-      // 如果旧的无盐验证失败，尝试作为过渡期用户处理
-      // 场景 3: password_hash 列本身可能包含完整的 'salt$hash' 字符串
-      console.log(`[DEBUG] verifyUserCredentials: Old SHA-256 hash did not match. Checking for salt$hash in passwordHash.`);
-      const parts = passwordHash.split('$');
-      if (parts.length === 2) {
-        const potentialSalt = parts[0];
-        const actualHashedPassword = parts[1];
-        isPasswordValid = await verifyPassword(password, `${potentialSalt}$${actualHashedPassword}`);
-        if (isPasswordValid) {
-          needsMigration = true; // 标记需要迁移，将盐值正确存储到 password_salt 列
-        }
-        console.log(`[DEBUG] verifyUserCredentials: Attempted salt$hash in passwordHash. isPasswordValid: ${isPasswordValid}, needsMigration: ${needsMigration}`);
-      } else {
-        console.log(`[DEBUG] verifyUserCredentials: passwordHash does not contain salt$hash format.`);
-      }
-    }
-  }
-
-  if (!isPasswordValid) {
-    console.log(`[DEBUG] verifyUserCredentials: Final isPasswordValid is false. Returning null.`);
-    return null;
-  }
-
-  console.log(`[DEBUG] verifyUserCredentials: Password is valid. needsMigration: ${needsMigration}`);
-  if (needsMigration) {
-    console.log(`[DEBUG] verifyUserCredentials: Performing password migration.`);
-    // 密码迁移：使用新的加盐 SHA-256 重新哈希并更新数据库
-    const newHashedPassword = await hashPassword(password);
-    const [newSalt, newHash] = newHashedPassword.split('$');
-
-    await db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
-      .bind(newHash, newSalt, userRow.id)
-      .run();
-    
-    // 更新 userRow 以反映新的哈希和盐值，避免在后续操作中再次触发迁移
-    userRow.password_hash = newHash;
-    userRow.password_salt = newSalt;
-    console.log(`[DEBUG] verifyUserCredentials: Password migration complete for user ${userRow.id}.`);
-  }
-
-  // 清理返回体里的 hash 和 salt 字段
-  delete userRow.password_hash
-  delete userRow.passwordHash
-  delete userRow.password_salt
-  delete userRow.passwordSalt
-  console.log(`[DEBUG] verifyUserCredentials: Returning user object for ${userRow.id}.`);
-
-  return userRow as User
-}
 
 async function userHasColumn(c: Context, columnName: string): Promise<boolean> {
   const db = getDB(c)
@@ -1515,9 +1426,12 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
     .bind(id, role.toUpperCase())
     .first()
 
-  if (user && !hasReferralCode) {
-    user.referralCode = ''
+  if (!user) return null
+  const normalized = normalizeUserRow(user as any)
+  if (!hasReferralCode) {
+    normalized.referralCode = ''
   }
+  return normalized
 
   return user
 }

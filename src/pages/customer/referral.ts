@@ -7,7 +7,7 @@ function desensitizeName(name: string): string {
   return `${n[0]}${'*'.repeat(Math.min(2, n.length - 1))}`
 }
 
-export async function renderCustomerReferral(c: Context, user: any, errorMessage?: string) {
+export async function renderCustomerReferral(c: Context, user: any, message?: string, type?: 'success' | 'error' | 'info') {
   // 从数据库获取完整的用户信息和佣金统计
   const currentUser = await c.env.RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
   
@@ -40,7 +40,7 @@ export async function renderCustomerReferral(c: Context, user: any, errorMessage
   const referredUsers = await c.env.RENT.prepare(`
     SELECT 
       u.name, 
-      u.createdAt as registeredAt,
+      u.created_at as registeredAt,
       COUNT(r.id) as orderCount,
       SUM(cr.amount) as contributedCommission
     FROM users u
@@ -53,7 +53,7 @@ export async function renderCustomerReferral(c: Context, user: any, errorMessage
   const body = `
     <div class="panel">
       <div class="section-title"><h2>我的推荐</h2><span class="section-note">邀请好友，赚取佣金。</span></div>
-      ${errorMessage ? `<div class="alert alert-error">${errorMessage}</div>` : ''}
+      ${message ? `<div class="alert alert-${type || 'info'}">${message}</div>` : ''}
 
       ${!currentUser.referralCode ? `
         <div style="margin-bottom: 30px; padding: 24px; background: var(--surface-secondary); border-radius: 12px; text-align: center;">

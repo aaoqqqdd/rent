@@ -146,8 +146,7 @@ app.post('/register', async (c) => {
     if (referrerUser) {
       referrerId = referrerUser.id;
     } else {
-      // 如果推荐码无效，可以选择返回错误或忽略
-      // return c.html(pages.renderRegister('无效的推荐码'))
+      return c.html(pages.renderRegister('无效的推荐码'))
     }
   }
   
@@ -160,7 +159,7 @@ app.post('/register', async (c) => {
     role: 'CUSTOMER' as const,
     balance: 0,
     commissionBalance: 0,
-    referrer_id: referrerId,
+    referrerId: referrerId,
     createdAt: new Date().toISOString(),
     status: 'active' as const
   }
@@ -471,6 +470,25 @@ app.post('/customer/referral/withdraw', async (c) => {
   return c.html(await pages.renderCustomerReferral(c, user, '提现申请已提交，预计2个工作日处理'))
 })
 
+app.post('/customer/referral/join', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') {
+    return c.redirect('/login')
+  }
+
+  if (user.referralCode) {
+    return c.html(await pages.renderCustomerReferral(c, user, '您已加入推荐计划，无需重复加入', 'info'))
+  }
+
+  const newReferralCode = nanoid(8)
+  await updateUser(c, user.id, { referralCode: newReferralCode })
+
+  // 更新session中的user对象
+  const updatedUser = { ...user, referralCode: newReferralCode }
+
+  return c.html(await pages.renderCustomerReferral(c, updatedUser, '恭喜您成功加入推荐计划！您的推荐码已生成。', 'success'))
+})
+
 app.get('/customer/security', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
@@ -495,11 +513,11 @@ app.post('/customer/security', async (c) => {
 
   const fullUser = await (c.env as any).RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first()
     
-  if (!fullUser || !fullUser.password_hash) {
+  if (!fullUser || !fullUser.passwordHash) {
     return c.html(await pages.renderCustomerSecurity(c, user, '无法验证当前密码'))
   }
 
-  const isPasswordValid = await verifyPassword(currentPassword, fullUser.password_hash)
+  const isPasswordValid = await verifyPassword(currentPassword, fullUser.passwordHash)
   
   if (!isPasswordValid) {
     return c.html(await pages.renderCustomerSecurity(c, user, '当前密码不正确'))
