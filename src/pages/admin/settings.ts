@@ -12,27 +12,29 @@ export function renderAdminSettings(user: any) {
           <label for="rentalTerms">租赁条款</label>
           <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
              <strong style="color: #155e75; display: block; margin-bottom: 12px;">📋 租赁条款模板可用变量：</strong>
-             <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 6px; overflow: hidden;">
-               <thead>
-                 <tr style="background: var(--primary-light);">
-                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
-                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">数据来源</th>
-                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">说明</th>
-                 </tr>
-               </thead>
-               <tbody>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${contract_number}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同编号</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_address}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司地址</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_phone}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司电话</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_contact}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司联系人</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${customer_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">承租方姓名</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${device_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备表</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备名称</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${start_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁起始日</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${end_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁结束日</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${total_rent}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统计算</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租金总额</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace;">\${deposit_amount}</td><td style="padding: 6px 12px;">员工填写</td><td style="padding: 6px 12px;">押金金额</td></tr>
-               </tbody>
-             </table>
+             <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
+               <table style="width: 100%; border-collapse: collapse; background: white;">
+                 <thead>
+                   <tr style="background: var(--primary-light);">
+                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
+                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">数据来源</th>
+                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">说明</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${contract_number}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同编号</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_address}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司地址</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_phone}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司电话</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_contact}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司联系人</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${customer_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">承租方姓名</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${device_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备表</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备名称</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${start_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁起始日</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${end_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁结束日</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${total_rent}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统计算</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租金总额</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace;">\${deposit_amount}</td><td style="padding: 6px 12px;">员工填写</td><td style="padding: 6px 12px;">押金金额</td></tr>
+                 </tbody>
+               </table>
+             </div>
            </div>
           <div id="rentalTermsEditor" style="height: 250px;"></div>
           <textarea id="rentalTerms" name="rentalTerms" style="display:none;"></textarea>
@@ -87,24 +89,26 @@ export function renderAdminSettings(user: any) {
           <label for="emailTemplate">邮件通知模板</label>
           <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
              <strong style="color: #155e75; display: block; margin-bottom: 12px;">📧 邮件通知模板可用变量：</strong>
-             <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 6px; overflow: hidden;">
-               <thead>
-                 <tr style="background: var(--primary-light);">
-                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
-                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">数据来源</th>
-                   <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">说明</th>
-                 </tr>
-               </thead>
-               <tbody>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${user_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">收件人姓名</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${user_email}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">收件人邮箱</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${order_no}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">订单编号</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${contract_number}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同编号</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${device_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备表</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁设备名称</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${sign_link}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同签署链接</td></tr>
-                 <tr><td style="padding: 6px 12px; font-family: monospace;">\${expire_time}</td><td style="padding: 6px 12px;">系统设置</td><td style="padding: 6px 12px;">签署链接有效期</td></tr>
-               </tbody>
-             </table>
+             <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
+               <table style="width: 100%; border-collapse: collapse; background: white;">
+                 <thead>
+                   <tr style="background: var(--primary-light);">
+                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
+                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">数据来源</th>
+                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">说明</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${user_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">收件人姓名</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${user_email}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">收件人邮箱</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${order_no}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">订单编号</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${contract_number}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同编号</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${device_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备表</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁设备名称</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${sign_link}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同签署链接</td></tr>
+                   <tr><td style="padding: 6px 12px; font-family: monospace;">\${expire_time}</td><td style="padding: 6px 12px;">系统设置</td><td style="padding: 6px 12px;">签署链接有效期</td></tr>
+                 </tbody>
+               </table>
+             </div>
            </div>
           <div id="emailTemplateEditor" style="height: 150px;"></div>
           <textarea id="emailTemplate" name="emailTemplate" style="display:none;"></textarea>

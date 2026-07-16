@@ -1094,15 +1094,34 @@ export async function loadDatabaseData(c: Context): Promise<void> {
 export async function verifyUserCredentials(c: Context, emailOrName: string, password: string): Promise<User | null> {
   const db = getDB(c)
 
+  // 检查数据库中存在哪些密码相关的列，避免 D1_ERROR: no such column
+  const hasPasswordHashSnake = await userHasColumn(c, 'password_hash')
+  const hasPasswordHashCamel = await userHasColumn(c, 'passwordHash')
+  const hasPasswordSaltSnake = await userHasColumn(c, 'password_salt')
+  const hasPasswordSaltCamel = await userHasColumn(c, 'passwordSalt')
+
+  // 动态构建 SELECT 语句，只选择存在的列
+  const passwordHashSelect = hasPasswordHashSnake 
+    ? 'password_hash' 
+    : hasPasswordHashCamel 
+      ? 'passwordHash' 
+      : 'NULL as password_hash'
+      
+  const passwordSaltSelect = hasPasswordSaltSnake 
+    ? 'password_salt' 
+    : hasPasswordSaltCamel 
+      ? 'passwordSalt' 
+      : 'NULL as password_salt'
+
   const userRow: any = await db
-    .prepare('SELECT * FROM users WHERE email = ? OR name = ?')
+    .prepare(`SELECT id, name, email, role, ${passwordHashSelect}, ${passwordSaltSelect} FROM users WHERE email = ? OR name = ?`)
     .bind(emailOrName, emailOrName)
     .first()
 
   if (!userRow) return null
 
-  const passwordHash = userRow.password_hash ?? userRow.passwordHash
-  const passwordSalt = userRow.password_salt ?? userRow.passwordSalt // 获取盐值
+  const passwordHash = userRow.password_hash
+  const passwordSalt = userRow.password_salt // 获取盐值
 
   if (!passwordHash) return null
 
@@ -1727,7 +1746,7 @@ export type ErrorLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
 export async function logError(c: Context, level: ErrorLevel, message: string, error?: Error, contextData?: Record<string, any>) {
   const user = c.get('user')
   const db = getDB(c)
-  const errorId = `err-${nanoid(8)}
+  const errorId = `err-${nanoid(8)}`
   
   // 控制台输出，包含时间戳和级别
   const timestamp = new Date().toISOString()
