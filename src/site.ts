@@ -968,83 +968,129 @@ export async function updateContractTemplateInDB(c: Context, newTemplate: { id: 
 
 
 
+async function getTableColumns(c: Context, tableName: string): Promise<string[]> {
+  const db = getDB(c)
+  const result = await db.prepare(`PRAGMA table_info(${tableName})`).all() as any
+  return (result.results || []).map((column: any) => column.name)
+}
+
 export async function createWithdrawalRequest(
-  c: Context, 
-  userId: string, 
-  amount: number, 
+  c: Context,
+  userId: string,
+  amount: number,
   withdrawMethod: 'balance' | 'bank_transfer',
   bankDetails?: { bsb?: string; accountNumber?: string; accountName?: string }
 ): Promise<{ success: boolean; message: string }> {
   const db = getDB(c)
   const { nanoid } = await import('nanoid')
 
+  const normalizedAmount = Number(amount)
+
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+    return { success: false, message: '请输入正确的提现金额，金额必须大于 0' }
+  }
+
+  if (withdrawMethod === 'bank_transfer' && (!Number.isInteger(normalizedAmount) || normalizedAmount < 100)) {
+    return { success: false, message: '银行转账提现金额必须大于 100 且为整数' }
+  }
+
   try {
-    // 使用事务确保数据一致性
-    await db.batch([
-      db.prepare('BEGIN'),
-      db.prepare('SELECT * FROM users WHERE id = ? FOR UPDATE').bind(userId),
-    ]);
+    await db.prepare('BEGIN IMMEDIATE').run()
 
-    const user = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User;
-    const currentCommissionBalance = user.commission_balance ?? user.commissionBalance ?? 0;
-
-    if (!user || currentCommissionBalance < amount) {
-      await db.prepare('ROLLBACK').run();
-      return { success: false, message: '提现金额不能超过可提现余额' };
-    }
-    
-    // 银行转账需要最低100澳元
-    if (withdrawMethod === 'bank_transfer' && amount < 100) {
-      await db.prepare('ROLLBACK').run();
-      return { success: false, message: '银行转账最低提现金额为100澳元' };
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
+    if (!user) {
+      await db.prepare('ROLLBACK').run()
+      return { success: false, message: '用户不存在' }
     }
 
-    // 首先扣除佣金余额
-    await db.batch([
-      db.prepare(`
-        UPDATE users SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(amount, userId),
-      db.prepare(`
-        UPDATE commission_records SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
-        WHERE referrer_id = ? AND status = 'pending'
-        ORDER BY created_at ASC
-      `).bind(userId),
-    ]);
-    
+    const currentCommissionBalance = Number(user.commission_balance ?? user.commissionBalance ?? 0)
+    if (currentCommissionBalance < normalizedAmount) {
+      await db.prepare('ROLLBACK').run()
+      return { success: false, message: '提现金额不能超过可提现余额' }
+    }
+
+    const pendingRecords = await db.prepare(`
+      SELECT id, amount
+      FROM commission_records
+      WHERE referrer_id = ? AND status = 'pending'
+      ORDER BY created_at ASC
+    `).bind(userId).all() as any
+
+    const pendingTotal = (pendingRecords.results || []).reduce((sum: number, record: any) => sum + Number(record.amount || 0), 0)
+    if (pendingTotal < normalizedAmount) {
+      await db.prepare('ROLLBACK').run()
+      return { success: false, message: '暂无足够的待结算佣金可提取' }
+    }
+
+    let remainingAmount = normalizedAmount
+    for (const record of pendingRecords.results || []) {
+      if (remainingAmount <= 0) break
+      const recordAmount = Number(record.amount || 0)
+      if (recordAmount <= 0) continue
+
+      await db.prepare(`
+        UPDATE commission_records
+        SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'pending'
+      `).bind(record.id).run()
+      remainingAmount -= recordAmount
+    }
+
+    await db.prepare(`
+      UPDATE users
+      SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(normalizedAmount, userId).run()
+
     if (withdrawMethod === 'balance') {
-      // 划入账户余额
-      await db.batch([
-        db.prepare(`
-          UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).bind(amount, userId),
-        db.prepare('COMMIT'),
-      ]);
-      return { success: true, message: '提现成功！金额已划入您的账户余额' };
-    } else {
-      // 银行转账：创建提现申请记录
-      const withdrawalId = `w-${nanoid(8)}`;
-      await db.batch([
-        db.prepare(`
-          INSERT INTO commission_withdrawals (id, user_id, amount, bsb, account_number, account_name, status)
-          VALUES (?, ?, ?, ?, ?, ?, 'pending')
-        `).bind(
-          withdrawalId, 
-          userId, 
-          amount, 
-          bankDetails?.bsb ?? null, 
-          bankDetails?.accountNumber ?? null,
-          bankDetails?.accountName ?? null
-        ),
-        db.prepare('COMMIT'),
-      ]);
-      return { success: true, message: '提现申请已提交，预计2个工作日处理' };
+      await db.prepare(`
+        UPDATE users
+        SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(normalizedAmount, userId).run()
+      await db.prepare('COMMIT').run()
+      return { success: true, message: '提现成功！金额已划入您的账户余额' }
     }
+
+    const withdrawalId = `w-${nanoid(8)}`
+    const withdrawalColumns = await getTableColumns(c, 'commission_withdrawals')
+    const hasAccountNameColumn = withdrawalColumns.includes('account_name') || withdrawalColumns.includes('accountName')
+    const hasAccountNumberColumn = withdrawalColumns.includes('account_number') || withdrawalColumns.includes('accountNumber')
+    const bsbColumn = withdrawalColumns.includes('bsb') ? 'bsb' : null
+    const accountNumberColumn = hasAccountNumberColumn ? (withdrawalColumns.includes('account_number') ? 'account_number' : 'accountNumber') : null
+    const accountNameColumn = hasAccountNameColumn ? (withdrawalColumns.includes('account_name') ? 'account_name' : 'accountName') : null
+
+    const insertColumns = ['id', 'user_id', 'amount']
+    const insertValues: any[] = [withdrawalId, userId, normalizedAmount]
+
+    if (bsbColumn) {
+      insertColumns.push(bsbColumn)
+      insertValues.push(bankDetails?.bsb ?? null)
+    }
+
+    if (accountNumberColumn) {
+      insertColumns.push(accountNumberColumn)
+      insertValues.push(bankDetails?.accountNumber ?? null)
+    }
+
+    if (accountNameColumn) {
+      insertColumns.push(accountNameColumn)
+      insertValues.push(bankDetails?.accountName ?? null)
+    }
+
+    insertColumns.push('status')
+    insertValues.push('pending')
+
+    const placeholders = insertColumns.map(() => '?').join(', ')
+    const insertSql = `INSERT INTO commission_withdrawals (${insertColumns.join(', ')}) VALUES (${placeholders})`
+
+    await db.prepare(insertSql).bind(...insertValues).run()
+    await db.prepare('COMMIT').run()
+    return { success: true, message: '提现申请已提交，预计2个工作日处理' }
   } catch (error) {
-    await db.prepare('ROLLBACK').run();
-    console.error('Withdrawal failed:', error);
-    return { success: false, message: '提现失败，请稍后重试' };
+    await db.prepare('ROLLBACK').run()
+    console.error('Withdrawal failed:', error)
+    return { success: false, message: '提现失败，请稍后重试' }
   }
 }
 

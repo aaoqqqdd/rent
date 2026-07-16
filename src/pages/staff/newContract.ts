@@ -3,7 +3,22 @@ import type { Context } from 'hono'
 
 export async function renderNewContractPage(c: Context, user: any) {
   const allDevices = await getDevices(c);
-  const devices = allDevices.filter(d => d.status === 'available');
+  const activeOrderDevices = new Set(
+    (await c.env.RENT.prepare(`
+      SELECT deviceId FROM orders WHERE status IN ('active', 'paid')
+    `).all()).results?.map((row: any) => row.deviceId) || []
+  );
+
+  const devices = allDevices.filter((device) => {
+    const normalizedStatus = String(device.status || '').toLowerCase();
+    if (normalizedStatus === 'available') {
+      return true;
+    }
+    if (normalizedStatus === 'rented' || normalizedStatus === 'active') {
+      return false;
+    }
+    return !activeOrderDevices.has(device.id);
+  });
 
   const formHtml = `
     <div class="panel">

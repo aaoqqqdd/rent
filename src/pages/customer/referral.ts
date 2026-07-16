@@ -37,7 +37,12 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
     .reduce((sum, record) => sum + (record.amount || 0), 0)
   
   // 获取已推荐的好友列表
-  const referredUsers = await c.env.RENT.prepare(`
+  const tableInfo = await c.env.RENT.prepare('PRAGMA table_info(users)').all() as any;
+  const userColumns = (tableInfo.results || []).map((column: any) => column.name);
+  const hasReferrerIdSnake = userColumns.includes('referrer_id');
+  const hasReferrerIdCamel = userColumns.includes('referrerId');
+
+  let referredUsersQuery = `
     SELECT 
       u.name, 
       u.created_at as registeredAt,
@@ -46,9 +51,25 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
     FROM users u
           LEFT JOIN orders r ON u.id = r.userId
           LEFT JOIN commission_records cr ON u.id = cr.customer_id
-          WHERE u.referrer_id = ?
-    GROUP BY u.id
-  `).bind(user.id).all();
+  `;
+
+  const whereClauses: string[] = [];
+  if (hasReferrerIdSnake) whereClauses.push('u.referrer_id = ?');
+  if (hasReferrerIdCamel) whereClauses.push('u.referrerId = ?');
+
+  if (whereClauses.length > 0) {
+    referredUsersQuery += `WHERE ${whereClauses.join(' OR ')} `;
+  } else {
+    referredUsersQuery += 'WHERE 1 = 0 ';
+  }
+
+  referredUsersQuery += 'GROUP BY u.id';
+
+  const referredUserBindings = hasReferrerIdSnake && hasReferrerIdCamel
+    ? [user.id, user.id]
+    : [user.id];
+
+  const referredUsers = await c.env.RENT.prepare(referredUsersQuery).bind(...referredUserBindings).all();
 
   const body = `
     <div class="panel">
@@ -71,7 +92,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
               <input type="text" class="form-control" value="${currentUser.referralCode}" readonly id="referrerCodeInput" />
               <button class="button button-secondary" onclick="copyReferrerCode()">复制</button>
             </div>
-            <p class="form-text">分享此推荐码给您的朋友，他们在签署合同时填写您的推荐码，您将获得系统自动计算的佣金分成。</p>
+            <p class="form-text">分享此推荐码给您的朋友，他们在签署合同或注册时填写您的推荐码，您将获得系统自动计算的佣金分成。</p>
           </div>
           
           <form method="POST" action="/customer/referral/leave" style="margin-top: 16px;">
@@ -102,7 +123,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
         <form method="POST" action="/customer/referral/withdraw" id="withdrawForm">
           <div class="form-group">
             <label class="form-label" for="withdrawAmount">提现金额</label>
-            <input type="number" id="withdrawAmount" name="amount" class="form-control" min="1" max="${currentUser.commission_balance}" step="0.01" required />
+            <input type="number" id="withdrawAmount" name="amount" class="form-control" min="0.01" max="${currentUser.commission_balance}" step="0.01" required />
             <p class="form-text">当前可提现余额: ${formatCurrency(currentUser.commission_balance)}</p>
           </div>
           
@@ -152,17 +173,54 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
             
             if (method === 'bank_transfer') {
               bankSection.style.display = 'block';
-              // 银行转账需要最低100澳元
               amountInput.min = 100;
-              // 添加必填属性
+              amountInput.step = 1;
+              amountInput.setAttribute('placeholder', '请输入整数金额');
               bankInputs.forEach(input => input.required = true);
             } else {
               bankSection.style.display = 'none';
-              amountInput.min = 1;
-              // 移除必填属性
+              amountInput.min = 0.01;
+              amountInput.step = 0.01;
+              amountInput.removeAttribute('placeholder');
               bankInputs.forEach(input => input.required = false);
             }
           }
+
+          function validateWithdrawAmount() {
+            const method = document.querySelector('input[name="withdrawMethod"]:checked').value;
+            const amountInput = document.getElementById('withdrawAmount');
+            const amount = Number(amountInput.value);
+            const isInteger = Number.isInteger(amount);
+
+            if (method === 'bank_transfer') {
+              if (!isInteger || amount < 100) {
+                amountInput.setCustomValidity('银行转账提现金额必须为大于 100 的整数');
+                return false;
+              }
+            } else if (!Number.isFinite(amount) || amount <= 0) {
+              amountInput.setCustomValidity('余额提现金额必须大于 0');
+              return false;
+            }
+
+            amountInput.setCustomValidity('');
+            return true;
+          }
+
+          document.getElementById('withdrawForm').addEventListener('submit', function (event) {
+            if (!validateWithdrawAmount()) {
+              event.preventDefault();
+            }
+          });
+
+          document.getElementById('withdrawAmount').addEventListener('input', validateWithdrawAmount);
+          document.querySelectorAll('input[name="withdrawMethod"]').forEach((input) => {
+            input.addEventListener('change', toggleBankDetails);
+          });
+
+          window.addEventListener('load', function () {
+            toggleBankDetails();
+            validateWithdrawAmount();
+          });
         </script>
       </div>
 

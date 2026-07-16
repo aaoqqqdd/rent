@@ -30,6 +30,23 @@ import {
 } from './site'
 import { nanoid } from 'nanoid'
 
+function parseFormBody(body: string | null | undefined): Record<string, string> {
+  const form: Record<string, string> = {}
+  if (!body) return form
+
+  const params = new URLSearchParams(body)
+  for (const [key, value] of params.entries()) {
+    form[key] = value
+  }
+
+  return form
+}
+
+async function getTableColumns(c: any, tableName: string): Promise<string[]> {
+  const result = await c.env.RENT.prepare(`PRAGMA table_info(${tableName})`).all() as any
+  return (result.results || []).map((column: any) => column.name)
+}
+
 const app = new Hono()
 
 app.use('*', async (c, next) => {
@@ -445,51 +462,26 @@ app.post('/customer/referral/withdraw', async (c) => {
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
+
   const form = await c.req.parseBody()
   const amount = Number(form.amount)
-  const withdrawMethod = form.withdrawMethod as string;
-  
-  if (!amount || amount <= 0) {
-    return c.html(await pages.renderCustomerReferral(c, user, '请输入正确的提现金额'))
+  const withdrawMethod = (form.withdrawMethod as string | undefined)?.trim() === 'bank_transfer' ? 'bank_transfer' : 'balance'
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return c.html(await pages.renderCustomerReferral(c, user, '请输入正确的提现金额，金额必须大于 0'))
   }
-  if (amount > user.commissionBalance) {
-    return c.html(await pages.renderCustomerReferral(c, user, '提现金额不能超过可提现余额'))
+
+  if (withdrawMethod === 'bank_transfer' && (!Number.isInteger(amount) || amount < 100)) {
+    return c.html(await pages.renderCustomerReferral(c, user, '银行转账提现金额必须大于 100 且为整数'))
   }
-  
-  // 银行转账需要满足最低100澳元要求
-  if (withdrawMethod === 'bank_transfer' && amount < 100) {
-    return c.html(await pages.renderCustomerReferral(c, user, '银行转账最低提现金额为100澳元'))
-  }
-  
-  // 更新用户佣金余额（无论哪种方式都先扣除佣金余额）
-  await c.env.RENT.prepare(`
-    UPDATE users SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).bind(amount, user.id).run();
-  
-  // 更新佣金记录状态
-  await c.env.RENT.prepare(`
-    UPDATE commission_records SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
-    WHERE referrer_id = ? AND status = 'pending'
-    ORDER BY created_at ASC LIMIT 1
-  `).bind(user.id).run();
-  
-  if (withdrawMethod === 'balance') {
-    // 划入账户余额：直接添加到用户的账户余额中
-    await c.env.RENT.prepare(`
-      UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(amount, user.id).run();
-    return c.html(await pages.renderCustomerReferral(c, user, '提现成功！金额已划入您的账户余额'));
-  } else {
-    // 银行转账：创建提现申请记录，等待人工处理
-    const withdrawalId = `w-${nanoid(8)}`;
-    await c.env.RENT.prepare(`
-      INSERT INTO commission_withdrawals (id, user_id, amount, bsb, account_number, account_name, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending')
-    `).bind(withdrawalId, user.id, amount, form.bsb, form.account_number, form.account_name).run();
-    return c.html(await pages.renderCustomerReferral(c, user, '提现申请已提交，预计2个工作日处理'));
-  }
+
+  const result = await createWithdrawalRequest(c, user.id, amount, withdrawMethod, {
+    bsb: form.bsb?.toString(),
+    accountNumber: (form.account_number || form.account || form.accountNumber)?.toString(),
+    accountName: (form.account_name || form.accountName)?.toString(),
+  })
+
+  return c.html(await pages.renderCustomerReferral(c, user, result.message, result.success ? 'success' : 'error'))
 })
 
 app.post('/customer/referral/join', async (c) => {

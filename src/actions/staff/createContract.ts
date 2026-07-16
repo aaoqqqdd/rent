@@ -14,8 +14,17 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   const device = await getDeviceById(c, deviceId);
 
-  if (!device || device.status !== 'available') {
+  const normalizedStatus = String(device?.status || '').toLowerCase();
+  const activeOrder = await c.env.RENT.prepare(`
+    SELECT id FROM orders WHERE deviceId = ? AND status IN ('active', 'paid')
+  `).bind(deviceId).first();
+
+  if (!device || activeOrder) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备不存在或当前不可用')}`);
+  }
+
+  if (normalizedStatus !== 'available' && normalizedStatus !== 'new' && normalizedStatus !== 'idle') {
+    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备当前不可用于新建合同')}`);
   }
 
   const start = new Date(startDate);
