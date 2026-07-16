@@ -1067,9 +1067,28 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
   if (!role || !id) return null
 
   const hasReferralCode = await userHasColumn(c, 'referralCode')
+
+  // users 表字段：兼容 snake_case / camelCase
+  const hasAccountNumberSnake = await userHasColumn(c, 'account_number')
+  const hasAccountNumberCamel = await userHasColumn(c, 'accountNumber')
+  const hasCommissionBalanceSnake = await userHasColumn(c, 'commission_balance')
+  const hasCommissionBalanceCamel = await userHasColumn(c, 'commissionBalance')
+
+  const accountSelect = hasAccountNumberSnake
+    ? 'account_number AS account'
+    : hasAccountNumberCamel
+      ? 'accountNumber AS account'
+      : 'NULL AS account'
+
+  const commissionSelect = hasCommissionBalanceSnake
+    ? 'commission_balance AS commissionBalance'
+    : hasCommissionBalanceCamel
+      ? 'commissionBalance AS commissionBalance'
+      : '0 AS commissionBalance'
+
   const selectClause = hasReferralCode
-    ? 'id, name, email, role, phone, bsb, account_number AS account, commission_balance AS commissionBalance, referralCode'
-    : 'id, name, email, role, phone, bsb, account_number AS account, commission_balance AS commissionBalance'
+    ? `id, name, email, role, phone, bsb, ${accountSelect}, ${commissionSelect}, referralCode`
+    : `id, name, email, role, phone, bsb, ${accountSelect}, ${commissionSelect}`
 
   const user: User | null = await db
     .prepare(`SELECT ${selectClause} FROM users WHERE id = ? AND role = ?`)
