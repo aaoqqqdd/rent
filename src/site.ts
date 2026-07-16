@@ -14,6 +14,7 @@ export interface User {
   bsb?: string
   account?: string
   account_number?: string
+  accountNumber?: string // camelCase兼容前端代码
   balance: number
   status?: 'active' | 'inactive'
   commissionRate?: number
@@ -98,6 +99,10 @@ export interface Contract {
   createdAt?: string
   signToken?: string
   status: 'draft' | 'pending_sign' | 'signed' | 'cancelled'
+  validFrom?: string | null // New field for contract validity start date
+  validUntil?: string | null // New field for contract validity end date
+  signExpiresAt?: string | null
+  sign_expires_at?: string | null
 
   // snake_case 兼容旧页面
   rental_id?: string
@@ -170,7 +175,13 @@ export async function getDeviceById(cOrContext: Context | string, id?: string): 
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
   if (!actualId) return null
-  return db.prepare('SELECT * FROM devices WHERE id = ?').bind(actualId).first() as Device | null
+  const deviceRow = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(actualId).first()
+  if (!deviceRow) return null
+  // Add type validation for required fields
+  if (typeof deviceRow.pricePerDay !== 'number' || typeof deviceRow.depositAmount !== 'number') {
+    throw new Error(`Device ${actualId} has missing or invalid pricePerDay or depositAmount`)
+  }
+  return deviceRow as Device
 }
 
 export async function getContractById(cOrContext: Context | string, id?: string): Promise<Contract | null> {
@@ -254,8 +265,8 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
 
 export async function insertContract(c: Context, contract: Contract): Promise<void> {
   const db = getDB(c);
-  await db.prepare('INSERT INTO contracts (id, rentalId, contractNumber, content, signedAt, createdAt, signToken, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(
-    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status
+  await db.prepare('INSERT INTO contracts (id, rentalId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
+    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil
   ).run();
 }
 
@@ -579,13 +590,7 @@ export async function updateContractTemplateInDB(c: Context, newTemplate: { id: 
   return updateContractTemplate(c, newTemplate)
 }
 
-export function joinReferralProgram() {
-  return Promise.resolve(undefined)
-}
 
-export function leaveReferralProgram() {
-  return Promise.resolve(undefined)
-}
 
 export async function createWithdrawalRequest(c: Context, userId: string, amount: number, bsb: string, accountNumber: string): Promise<{ success: boolean; message: string }> {
   const db = getDB(c)
@@ -632,10 +637,6 @@ export async function createWithdrawalRequest(c: Context, userId: string, amount
   }
 }
 
-export function getPendingOrders() {
-  return [] as Order[]
-}
-
 export async function getPendingOrdersWithDetails(c: Context): Promise<any[]> {
   const db = getDB(c);
   const query = `
@@ -656,10 +657,6 @@ export async function getPendingOrdersWithDetails(c: Context): Promise<any[]> {
   `;
   const result = await db.prepare(query).all();
   return result.results || [];
-}
-
-export function getAllRentals() {
-  return [] as Order[]
 }
 
 export async function getStaffDashboardData(c: Context): Promise<any> {
@@ -1127,7 +1124,6 @@ export async function verifyUserCredentials(c: Context, emailOrName: string, pas
 
   let isPasswordValid = false;
   let needsMigration = false;
-
   if (passwordSalt) {
     // 新的加盐 SHA-256 验证
     isPasswordValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`);
@@ -1746,6 +1742,7 @@ export type ErrorLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
 export async function logError(c: Context, level: ErrorLevel, message: string, error?: Error, contextData?: Record<string, any>) {
   const user = c.get('user')
   const db = getDB(c)
+  const { nanoid } = await import('nanoid')
   const errorId = `err-${nanoid(8)}`
   
   // 控制台输出，包含时间戳和级别

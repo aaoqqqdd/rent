@@ -24,8 +24,6 @@ import {
   getDevicesAsync,
   getStaffDashboardData,
   hashPassword,
-  joinReferralProgram,
-  leaveReferralProgram,
   findUserByEmail,
   findUserByReferralCode,
   createWithdrawalRequest
@@ -432,31 +430,7 @@ app.get('/customer/referral/withdraw', async (c) => {
   return c.html(await pages.renderCustomerReferral(c, user))
 })
 
-app.post('/customer/referral/join', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') {
-    return c.redirect('/login')
-  }
-  const updatedUser = await joinReferralProgram(c, user.id)
-  if (updatedUser) {
-    return c.html(await pages.renderCustomerReferral(c, updatedUser, '成功加入推荐计划，您的专属推荐码已生成！'))
-  } else {
-    return c.html(await pages.renderCustomerReferral(c, user, '加入推荐计划失败，请稍后重试'))
-  }
-})
 
-app.post('/customer/referral/leave', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') {
-    return c.redirect('/login')
-  }
-  const updatedUser = await leaveReferralProgram(c, user.id)
-  if (updatedUser) {
-    return c.html(await pages.renderCustomerReferral(c, updatedUser, '已成功退出推荐计划'))
-  } else {
-    return c.html(await pages.renderCustomerReferral(c, user, '退出推荐计划失败，请稍后重试'))
-  }
-})
 
 app.post('/customer/referral/withdraw', async (c) => {
   const user = c.get('user')

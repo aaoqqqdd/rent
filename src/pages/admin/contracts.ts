@@ -133,6 +133,25 @@ export async function renderAdminContracts(c: Context, user: any) {
             alert('保存失败: ' + error.message);
           });
         });
+
+        // 添加变量复制功能
+        document.querySelectorAll('td[style*="font-family: monospace"]').forEach(item => {
+          item.style.cursor = 'pointer'; // 添加手型光标
+          item.title = '点击复制'; // 添加提示
+          item.addEventListener('click', function() {
+            const variableName = this.innerText;
+            navigator.clipboard.writeText(variableName).then(() => {
+              // 简单的视觉反馈
+              this.style.backgroundColor = 'var(--primary-light)';
+              setTimeout(() => {
+                this.style.backgroundColor = '';
+              }, 300);
+            }).catch(err => {
+              console.error('复制失败:', err);
+              alert('复制失败，请手动复制。');
+            });
+          });
+        });
       });
     </script>
   `;

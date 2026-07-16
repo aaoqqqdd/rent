@@ -3,22 +3,22 @@ import { User, getDeviceById, Order, Contract, buildLayout, insertOrder, insertC
 import { nanoid } from 'nanoid';
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
-  const { deviceId, startDate, endDate } = body;
+  const { deviceId, startDate, endDate, validFrom, validUntil } = body;
 
   if (!deviceId || !startDate || !endDate) {
-    return new Response('设备、开始日期和结束日期均为必填项', { status: 400 });
+    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备、开始日期和结束日期均为必填项')}`);
   }
 
   const device = await getDeviceById(c, deviceId);
 
   if (!device || device.status !== 'available') {
-    return new Response('设备不存在或当前不可用', { status: 400 });
+    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备不存在或当前不可用')}`);
   }
 
   const start = new Date(startDate);
   const end = new Date(endDate);
   if (start >= end) {
-    return new Response('租赁结束日期必须晚于开始日期', { status: 400 });
+    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
   }
 
   const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
@@ -57,6 +57,8 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     status: 'pending_sign',
     signedAt: null,
     signToken: signToken,
+    validFrom: validFrom || null, // Add validFrom
+    validUntil: validUntil || null, // Add validUntil
   };
 
   await insertOrder(c, newOrder);

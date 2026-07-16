@@ -28,7 +28,6 @@ export * from './staff/customers';
 export * from './staff/customerDetail';
 export * from './staff/customerEdit';
 export * from './staff/newContract';
-export * from './staff/contractNew';
 export * from './staff/ordersPending';
 export * from './staff/rentalsTracking';
 export * from './staff/contracts';

@@ -1,7 +1,7 @@
 import { buildLayout, getAllContracts, getOrderById, getUserById } from '../../site'
 import type { Context } from 'hono'
 
-export async function renderStaffContracts(c: Context, user: any, status?: string) {
+export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string) {
   let allContracts = await getAllContracts(c)
 
   if (status) {
