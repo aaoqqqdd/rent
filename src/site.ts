@@ -2337,9 +2337,9 @@ export async function getOrCreateSignSession(c: Context, token: string, contract
   const db = getDB(c)
   
   try {
-    // 先尝试获取现有会话
+    // 先尝试获取现有会话 - 使用正确的snake_case列名匹配数据库schema
     const existingSession = await db.prepare(`
-      SELECT sessionData, expiresAt FROM sign_sessions WHERE token = ?
+      SELECT session_data, expires_at FROM sign_sessions WHERE token = ?
     `).bind(token).first()
 
     if (existingSession) {
@@ -2357,13 +2357,13 @@ export async function getOrCreateSignSession(c: Context, token: string, contract
       }
     }
 
-    // 创建新会话
+    // 创建新会话 - 使用正确的snake_case列名匹配数据库schema
     const newSession: Record<string, any> = {}
     const expiresAt = new Date()
     expiresAt.setHours(expiresAt.getHours() + SESSION_EXPIRY_HOURS)
     
     await db.prepare(`
-      INSERT INTO sign_sessions (token, contractToken, sessionData, expiresAt, createdAt, updatedAt)
+      INSERT INTO sign_sessions (token, contract_token, session_data, expires_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).bind(token, contractToken, JSON.stringify(newSession), expiresAt.toISOString()).run()
     
@@ -2397,10 +2397,10 @@ export async function updateSignSession(c: Context, token: string, data: Record<
     const sessionData = JSON.parse((currentSession as any).session_data)
     const updatedSession = { ...sessionData, ...data }
     
-    // 更新数据库中的会话
+    // 更新数据库中的会话 - 使用正确的snake_case列名匹配数据库schema
     await db.prepare(`
       UPDATE sign_sessions 
-      SET sessionData = ?, updatedAt = CURRENT_TIMESTAMP 
+      SET session_data = ?, updated_at = CURRENT_TIMESTAMP 
       WHERE token = ?
     `).bind(JSON.stringify(updatedSession), token).run()
     

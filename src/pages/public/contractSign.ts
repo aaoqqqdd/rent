@@ -52,7 +52,35 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
 
   const systemSettings = getSystemSettings();
   const contractTemplate = await getContractTemplate(c);
-  const activeContractContent = contract.content || contractTemplate.content || systemSettings.rentalTerms;
+  
+  // 替换 activeContractContent 中的变量
+  const replaceVariables = (content: string, order: any, device: any, user: any) => {
+    if (!content) return '';
+    let replacedContent = content;
+    if (order) {
+      replacedContent = replacedContent.replace(/{{orderNo}}/g, order.orderNo);
+      replacedContent = replacedContent.replace(/{{startDate}}/g, new Date(order.startDate).toLocaleDateString());
+      replacedContent = replacedContent.replace(/{{endDate}}/g, new Date(order.endDate).toLocaleDateString());
+      replacedContent = replacedContent.replace(/{{rentalPeriod}}/g, order.rentalPeriod);
+      replacedContent = replacedContent.replace(/{{totalAmount}}/g, formatCurrency(order.totalAmount));
+      replacedContent = replacedContent.replace(/{{depositAmount}}/g, formatCurrency(order.depositAmount));
+      replacedContent = replacedContent.replace(/{{dailyRate}}/g, formatCurrency(order.dailyRate));
+    }
+    if (device) {
+      replacedContent = replacedContent.replace(/{{deviceName}}/g, device.name);
+      replacedContent = replacedContent.replace(/{{deviceModel}}/g, device.model);
+      replacedContent = replacedContent.replace(/{{deviceSerial}}/g, device.serialNumber);
+    }
+    if (user) {
+      replacedContent = replacedContent.replace(/{{userName}}/g, user.name);
+      replacedContent = replacedContent.replace(/{{userEmail}}/g, user.email);
+      replacedContent = replacedContent.replace(/{{userPhone}}/g, user.phone);
+    }
+    return replacedContent;
+  };
+
+  const activeContractContent = replaceVariables(contract.content || contractTemplate.content || systemSettings.rentalTerms, order, device, currentUser);
+  
   const contractHtml = /<[^>]+>/.test(activeContractContent)
     ? activeContractContent
     : activeContractContent.replace(/\n/g, '<br>');
@@ -75,12 +103,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       content = `
         <div class="panel">
           ${progressBar}
-          <h2>${title}</h2>
+          <h2>阅读并同意租赁协议</h2>
           ${errorMessage ? `<div class="alert" style="background:#fee2e2;border-color:#fecaca;">${errorMessage}</div>` : ''}
           
-          <h3>${contractTemplate?.name ?? '租赁合同模板'}</h3>
           <div class="contract-content" style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; max-height: 360px; overflow-y: auto; margin-bottom: 20px; background: #f9fafb;">
-            ${rentalTerms}
+            ${contractHtml}
           </div>
           
 

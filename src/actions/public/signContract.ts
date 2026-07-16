@@ -153,7 +153,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         // 检查邮箱是否存在，并抛出特定错误以便前端处理
         if (existingUser && !body.force_continue) {
           await logError(c, 'INFO', `Email exists and user not forced to continue, returning EMAIL_EXISTS`, undefined, { token, email });
-          throw new Error('EMAIL_EXISTS');
+          throw new Error('该邮箱已注册，请直接登录或使用其他邮箱。');
         }
 
         // 保存用户信息到会话
