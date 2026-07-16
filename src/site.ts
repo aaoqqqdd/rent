@@ -900,13 +900,28 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     delete fields.password;
   }
 
+  // 字段名映射：前端驼峰 -> 数据库蛇形列名
+  const fieldMapping: Record<string, string> = {
+    referralCode: 'referral_code',
+    referrerId: 'referrer_id',
+    passwordHash: 'password_hash',
+    passwordSalt: 'password_salt',
+    commissionBalance: 'commission_balance',
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+    accountNumber: 'account_number',
+    commissionRate: 'commission_rate'
+  }
+
   const setEntries = Object.entries(fields).filter(([k]) => k !== 'id' && fields[k] !== undefined)
   if (setEntries.length === 0) {
     return db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
   }
 
-  const setClause = setEntries.map(([k]) => `${k} = ?`).join(', ')
-  const values = setEntries.map(([, v]) => v)
+  // 应用字段名映射，确保使用数据库中存在的列名
+  const mappedSetEntries = setEntries.map(([k, v]) => [fieldMapping[k] || k, v])
+  const setClause = mappedSetEntries.map(([k]) => `${k} = ?`).join(', ')
+  const values = mappedSetEntries.map(([, v]) => v)
 
   await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).bind(...values, userId).run()
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
@@ -926,18 +941,53 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   const db = getDB(c)
   const { nanoid } = await import('nanoid')
   const deviceId = device.id || `d-${nanoid(8)}`
-  await db.prepare(
-    'INSERT INTO devices (id, name, model, serial_number, price_per_day, deposit_amount, status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(
-    deviceId,
-    device.name,
-    device.model,
-    device.serialNumber,
-    device.pricePerDay,
-    device.depositAmount,
-    device.status || 'available',
-    device.description || ''
-  ).run()
+  
+  // 先检查devices表中存在哪些列，避免硬编码列名导致错误
+  const tableInfo = await db.prepare('PRAGMA table_info(devices)').all() as any;
+  const deviceColumns = (tableInfo.results || []).map((column: any) => column.name);
+  
+  const hasSerialNumberSnake = deviceColumns.includes('serial_number');
+  const hasSerialNumberCamel = deviceColumns.includes('serialNumber');
+  const hasPricePerDaySnake = deviceColumns.includes('price_per_day');
+  const hasPricePerDayCamel = deviceColumns.includes('pricePerDay');
+  const hasDepositAmountSnake = deviceColumns.includes('deposit_amount');
+  const hasDepositAmountCamel = deviceColumns.includes('depositAmount');
+  
+  // 构建插入字段和值
+  const insertFields = ['id', 'name', 'model', 'status', 'description'];
+  const insertValues = [deviceId, device.name, device.model, device.status || 'available', device.description || ''];
+  
+  // 处理序列号字段
+  if (hasSerialNumberCamel) {
+    insertFields.push('serialNumber');
+    insertValues.push(device.serialNumber);
+  } else if (hasSerialNumberSnake) {
+    insertFields.push('serial_number');
+    insertValues.push(device.serialNumber);
+  }
+  
+  // 处理日租金字段
+  if (hasPricePerDayCamel) {
+    insertFields.push('pricePerDay');
+    insertValues.push(device.pricePerDay.toString());
+  } else if (hasPricePerDaySnake) {
+    insertFields.push('price_per_day');
+    insertValues.push(device.pricePerDay.toString());
+  }
+  
+  // 处理押金字段
+  if (hasDepositAmountCamel) {
+    insertFields.push('depositAmount');
+    insertValues.push(device.depositAmount.toString());
+  } else if (hasDepositAmountSnake) {
+    insertFields.push('deposit_amount');
+    insertValues.push(device.depositAmount.toString());
+  }
+  
+  const placeholders = insertFields.map(() => '?').join(', ');
+  const sql = `INSERT INTO devices (${insertFields.join(', ')}) VALUES (${placeholders})`;
+  
+  await db.prepare(sql).bind(...insertValues).run()
   const inserted = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
   return inserted
 }
