@@ -964,18 +964,61 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   const countResult = await db.prepare('SELECT COUNT(*) AS count FROM users').all()
   const count = Number(countResult.results?.[0]?.count ?? 0)
   if (count > 0) return
+
   const usersToSeed = [
-    { id: 'u-admin', name: 'Admin User', email: 'admin@example.com', password: 'Admin123', role: 'ADMIN' },
-    { id: 'u-staff', name: 'Staff User', email: 'staff@example.com', password: 'Staff123', role: 'STAFF' },
-    { id: 'u-customer', name: 'Customer User', email: 'customer@example.com', password: 'Customer123', role: 'CUSTOMER' },
+    { id: 'u-admin', name: 'Admin User', email: 'admin@example.com', password: 'Admin123', role: 'ADMIN', accountNumber: '00000000' },
+    { id: 'u-staff', name: 'Staff User', email: 'staff@example.com', password: 'Staff123', role: 'STAFF', accountNumber: '00000001' },
+    { id: 'u-customer', name: 'Customer User', email: 'customer@example.com', password: 'Customer123', role: 'CUSTOMER', accountNumber: '00000002' },
   ]
 
-  const userInsert = db.prepare('INSERT INTO users (id, name, email, password_hash, role, status, balance, commission_balance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-  const userInserts = []
+  // users 表字段：兼容 snake_case / camelCase（防止插入时引用不存在的列）
+  const hasReferralCode = await userHasColumn(c, 'referralCode') // reuse helper if needed elsewhere
+  const hasAccountNumberSnake = await userHasColumn(c, 'account_number')
+  const hasAccountNumberCamel = await userHasColumn(c, 'accountNumber')
+  const hasCommissionBalanceSnake = await userHasColumn(c, 'commission_balance')
+  const hasCommissionBalanceCamel = await userHasColumn(c, 'commissionBalance')
+
+  // 动态构建 INSERT 语句
+  const baseCols = ['id', 'name', 'email', 'password_hash', 'role', 'status', 'balance']
+  const baseVals: any[] = []
+
+  const colNames: string[] = [...baseCols]
+  const colValues: any[] = []
+
+  // 只有在目标列存在时才写入对应字段
+  if (hasAccountNumberSnake || hasAccountNumberCamel) {
+    colNames.push(hasAccountNumberSnake ? 'account_number' : 'accountNumber')
+  }
+  if (hasCommissionBalanceSnake || hasCommissionBalanceCamel) {
+    colNames.push(hasCommissionBalanceSnake ? 'commission_balance' : 'commissionBalance')
+  }
+  if (hasReferralCode) {
+    colNames.push('referralCode')
+  }
+
+  const valuesPlaceholders = colNames.map(() => '?').join(', ')
+  const userInsert = db.prepare(`INSERT INTO users (${colNames.join(', ')}) VALUES (${valuesPlaceholders})`)
+
+  const userInserts: any[] = []
   for (const user of usersToSeed) {
     const hash = await hashPassword(user.password)
-    userInserts.push(userInsert.bind(user.id, user.name, user.email, hash, user.role, 'active', 0, 0))
+
+    colValues.length = 0
+    colValues.push(user.id, user.name, user.email, hash, user.role, 'active', 0)
+
+    if (hasAccountNumberSnake || hasAccountNumberCamel) {
+      colValues.push(user.accountNumber)
+    }
+    if (hasCommissionBalanceSnake || hasCommissionBalanceCamel) {
+      colValues.push(0)
+    }
+    if (hasReferralCode) {
+      colValues.push(null) // 默认：不填 referralCode
+    }
+
+    userInserts.push(userInsert.bind(...colValues))
   }
+
   await db.batch(userInserts)
 
   // Seed示例设备
