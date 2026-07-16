@@ -1,10 +1,27 @@
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate, rentalTerms } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate, rentalTerms, findUserBySession } from '../../site';
 import { Context } from 'hono';
 
 export async function renderContractSignPage(c: Context, token: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
   const contract = await getContractBySignToken(c, token);
   if (!contract) {
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
+  }
+
+  // 检查合同是否已过期
+  const signExpiresAt = contract.signExpiresAt || contract.sign_expires_at;
+  if (signExpiresAt && contract.status === 'pending_sign') {
+    const now = new Date();
+    const expiryDate = new Date(signExpiresAt);
+    if (now > expiryDate) {
+      // 将过期合同状态更新为已取消
+      await import('../../site').then(site => site.updateContractStatusInDB(c, contract.id, 'cancelled'));
+      return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接已过期</h2><p>该签约链接已超过有效期，请联系工作人员重新生成新的签约链接。</p></div>');
+    }
+  }
+
+  // 如果合同已经被取消，也显示过期提示
+  if (contract.status === 'cancelled') {
+    return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接已失效</h2><p>该合同已被取消或已过期，请联系工作人员获取新的签约链接。</p></div>');
   }
 
   const order = await getOrderById(c, contract.rentalId);
@@ -267,5 +284,5 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
       break;
   }
 
-  return buildLayout(title, content);
+  return buildLayout(title, content, currentUser);
 }

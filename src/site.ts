@@ -7,6 +7,7 @@ export interface User {
   name: string
   email: string
   password_hash?: string
+  password_salt?: string // 添加 password_salt 字段
   password?: string // 添加password属性以兼容旧代码
   role: Role
   phone?: string
@@ -110,17 +111,45 @@ export interface ContractTemplate {
   updatedAt?: string
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(password)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+// 生成一个随机的盐值
+function generateSalt(length: number = 16): string {
+  const randomBytes = new Uint8Array(length);
+  crypto.getRandomValues(randomBytes);
+  return Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  const passwordHash = await hashPassword(password)
-  return passwordHash === hash
+export async function hashPassword(password: string): Promise<string> {
+  const salt = generateSalt(); // 生成一个随机盐值
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password + salt); // 将密码和盐值拼接后进行哈希
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${salt}$${hash}`; // 返回盐值和哈希值拼接的字符串
+}
+
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const parts = storedHash.split('$');
+  if (parts.length !== 2) {
+    // 如果存储的哈希值格式不正确，则验证失败
+    return false;
+  }
+  const salt = parts[0];
+  const hash = parts[1];
+
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password + salt); // 使用存储的盐值和用户输入的密码进行哈希
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const newHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+  return newHash === hash; // 比较新生成的哈希值与存储的哈希值
+}
+
+// 旧的 SHA-256 散列函数 (无盐值)
+async function oldSha256Hash(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export async function getUserById(cOrContext: Context | string, id?: string): Promise<User | null> {
@@ -420,11 +449,23 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
 
 export async function insertUser(c: Context, user: any): Promise<User> {
   const db = getDB(c)
-  await db.prepare('INSERT INTO users (id, name, email, password_hash, role, status, balance, commissionBalance, referralCode, referrerId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(user.id, user.name, user.email, user.password_hash ?? null, user.role, user.status ?? 'active', user.balance ?? 0, user.commissionBalance ?? 0, user.referralCode ?? null, user.referrerId ?? null, user.createdAt ?? new Date().toISOString())
+
+  let passwordHashToStore = user.password_hash ?? null;
+  let passwordSaltToStore = user.password_salt ?? null;
+
+  if (user.password) {
+    const newHashedPassword = await hashPassword(user.password);
+    const [newSalt, newHash] = newHashedPassword.split('$');
+    passwordHashToStore = newHash;
+    passwordSaltToStore = newSalt;
+  }
+
+  await db.prepare('INSERT INTO users (id, name, email, password_hash, password_salt, role, status, balance, commissionBalance, referralCode, referrerId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(user.id, user.name, user.email, passwordHashToStore, passwordSaltToStore, user.role, user.status ?? 'active', user.balance ?? 0, user.commissionBalance ?? 0, user.referralCode ?? null, user.referrerId ?? null, user.createdAt ?? new Date().toISOString())
     .run()
   const inserted = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as User | null
   if (inserted && inserted.password_hash) delete (inserted as any).password_hash
+  if (inserted && inserted.password_salt) delete (inserted as any).password_salt
   return inserted as User
 }
 
@@ -433,8 +474,11 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
   const fields: Record<string, any> = { ...data }
 
   if (fields.password) {
-    fields.password_hash = await hashPassword(fields.password)
-    delete fields.password
+    const newHashedPassword = await hashPassword(fields.password);
+    const [newSalt, newHash] = newHashedPassword.split('$');
+    fields.password_hash = newHash;
+    fields.password_salt = newSalt;
+    delete fields.password;
   }
 
   const setEntries = Object.entries(fields).filter(([k]) => k !== 'id' && fields[k] !== undefined)
@@ -448,6 +492,7 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
   await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).bind(...values, userId).run()
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
   if (updated && (updated as any).password_hash) delete (updated as any).password_hash
+  if (updated && (updated as any).password_salt) delete (updated as any).password_salt
   return updated
 }
 
@@ -1049,7 +1094,6 @@ export async function loadDatabaseData(c: Context): Promise<void> {
 export async function verifyUserCredentials(c: Context, emailOrName: string, password: string): Promise<User | null> {
   const db = getDB(c)
 
-  // 兼容 users.password_hash / users.passwordHash（取决于是否已执行迁移 0005）
   const userRow: any = await db
     .prepare('SELECT * FROM users WHERE email = ? OR name = ?')
     .bind(emailOrName, emailOrName)
@@ -1057,18 +1101,47 @@ export async function verifyUserCredentials(c: Context, emailOrName: string, pas
 
   if (!userRow) return null
 
-  const passwordHash =
-    userRow.password_hash ?? // snake_case
-    userRow.passwordHash // camelCase
+  const passwordHash = userRow.password_hash ?? userRow.passwordHash
+  const passwordSalt = userRow.password_salt ?? userRow.passwordSalt // 获取盐值
 
   if (!passwordHash) return null
 
-  const isPasswordValid = await verifyPassword(password, passwordHash)
+  let isPasswordValid = false;
+  let needsMigration = false;
+
+  if (passwordSalt) {
+    // 新的加盐 SHA-256 验证
+    isPasswordValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`);
+  } else {
+    // 旧的无盐 SHA-256 验证
+    const oldHash = await oldSha256Hash(password);
+    isPasswordValid = oldHash === passwordHash;
+    if (isPasswordValid) {
+      needsMigration = true; // 标记需要迁移
+    }
+  }
+
   if (!isPasswordValid) return null
 
-  // 清理返回体里的 hash 字段（两种命名都清掉）
+  if (needsMigration) {
+    // 密码迁移：使用新的加盐 SHA-256 重新哈希并更新数据库
+    const newHashedPassword = await hashPassword(password);
+    const [newSalt, newHash] = newHashedPassword.split('$');
+
+    await db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
+      .bind(newHash, newSalt, userRow.id)
+      .run();
+    
+    // 更新 userRow 以反映新的哈希和盐值，避免在后续操作中再次触发迁移
+    userRow.password_hash = newHash;
+    userRow.password_salt = newSalt;
+  }
+
+  // 清理返回体里的 hash 和 salt 字段
   delete userRow.password_hash
   delete userRow.passwordHash
+  delete userRow.password_salt
+  delete userRow.passwordSalt
 
   return userRow as User
 }
@@ -1639,5 +1712,196 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 </body>
 </html>`
 }
+
+// ==================== 错误日志记录系统 ====================
+export type ErrorLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
+
+/**
+ * 记录错误到数据库和控制台
+ * @param c Hono上下文对象
+ * @param level 错误级别
+ * @param message 错误消息
+ * @param error 错误对象（可选）
+ * @param contextData 额外的上下文数据（可选）
+ */
+export async function logError(c: Context, level: ErrorLevel, message: string, error?: Error, contextData?: Record<string, any>) {
+  const user = c.get('user')
+  const db = getDB(c)
+  const errorId = `err-${nanoid(8)}
+  
+  // 控制台输出，包含时间戳和级别
+  const timestamp = new Date().toISOString()
+  const consolePrefix = `[${timestamp}] [${level}]`
+  
+  if (level === 'ERROR' || level === 'CRITICAL') {
+    console.error(`${consolePrefix} ${message}`, error?.stack || '')
+  } else if (level === 'WARNING') {
+    console.warn(`${consolePrefix} ${message}`)
+  } else {
+    console.log(`${consolePrefix} ${message}`)
+  }
+
+  try {
+    // 保存到数据库
+    const contextJson = contextData ? JSON.stringify(contextData) : null
+    const stackTrace = error?.stack || null
+    const userId = user?.id || null
+    const url = c.req.url
+    const method = c.req.method
+
+    await db.prepare(`
+      INSERT INTO error_logs (id, error_level, error_message, error_stack, context_data, user_id, request_url, request_method, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).bind(errorId, level, message, stackTrace, contextJson, userId, url, method).run()
+  } catch (dbError) {
+    // 如果数据库日志记录失败，至少保证控制台有日志
+    console.error('Failed to write error to database:', dbError)
+  }
+}
+
+/**
+ * 清理过期的错误日志（保留30天）
+ * @param c Hono上下文对象
+ */
+export async function cleanupOldErrorLogs(c: Context) {
+  const db = getDB(c)
+  const thirtyDaysAgo = new Date()
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+  
+  try {
+    await db.prepare(`
+      DELETE FROM error_logs WHERE created_at < ?
+    `).bind(thirtyDaysAgo.toISOString()).run()
+    await logError(c, 'INFO', `Cleaned up error logs older than 30 days`)
+  } catch (error) {
+    await logError(c, 'WARNING', 'Failed to cleanup old error logs', error as Error)
+  }
+}
+
+// ==================== 签约会话持久化管理 ====================
+const SESSION_EXPIRY_HOURS = 24 // 会话24小时过期
+
+/**
+ * 获取或创建签约会话
+ * @param c Hono上下文对象
+ * @param token 会话token
+ * @param contractToken 关联的合同token
+ */
+export async function getOrCreateSignSession(c: Context, token: string, contractToken: string): Promise<Record<string, any>> {
+  const db = getDB(c)
+  
+  try {
+    // 先尝试获取现有会话
+    const existingSession = await db.prepare(`
+      SELECT session_data, expires_at FROM sign_sessions WHERE token = ?
+    `).bind(token).first()
+
+    if (existingSession) {
+      const sessionData = JSON.parse((existingSession as any).session_data)
+      const expiresAt = new Date((existingSession as any).expires_at)
+      
+      // 检查会话是否过期
+      if (expiresAt > new Date()) {
+        await logError(c, 'DEBUG', `Retrieved existing sign session`, undefined, { token, contractToken })
+        return sessionData
+      } else {
+        // 会话已过期，删除并创建新的
+        await db.prepare('DELETE FROM sign_sessions WHERE token = ?').bind(token).run()
+        await logError(c, 'INFO', `Removed expired sign session`, undefined, { token, contractToken })
+      }
+    }
+
+    // 创建新会话
+    const newSession: Record<string, any> = {}
+    const expiresAt = new Date()
+    expiresAt.setHours(expiresAt.getHours() + SESSION_EXPIRY_HOURS)
+    
+    await db.prepare(`
+      INSERT INTO sign_sessions (token, contract_token, session_data, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).bind(token, contractToken, JSON.stringify(newSession), expiresAt.toISOString()).run()
+    
+    await logError(c, 'INFO', `Created new sign session`, undefined, { token, contractToken })
+    return newSession
+  } catch (error) {
+    await logError(c, 'ERROR', `Failed to get or create sign session`, error as Error, { token, contractToken })
+    throw error
+  }
+}
+
+/**
+ * 更新签约会话数据
+ * @param c Hono上下文对象
+ * @param token 会话token
+ * @param data 要更新的会话数据
+ */
+export async function updateSignSession(c: Context, token: string, data: Record<string, any>): Promise<void> {
+  const db = getDB(c)
+  
+  try {
+    // 先获取当前会话
+    const currentSession = await db.prepare(`
+      SELECT session_data FROM sign_sessions WHERE token = ?
+    `).bind(token).first()
+
+    if (!currentSession) {
+      throw new Error(`Sign session not found: ${token}`)
+    }
+
+    const sessionData = JSON.parse((currentSession as any).session_data)
+    const updatedSession = { ...sessionData, ...data }
+    
+    // 更新数据库中的会话
+    await db.prepare(`
+      UPDATE sign_sessions 
+      SET session_data = ?, updated_at = CURRENT_TIMESTAMP 
+      WHERE token = ?
+    `).bind(JSON.stringify(updatedSession), token).run()
+    
+    await logError(c, 'DEBUG', `Updated sign session`, undefined, { token, updates: Object.keys(data) })
+  } catch (error) {
+    await logError(c, 'ERROR', `Failed to update sign session`, error as Error, { token, updates: Object.keys(data) })
+    throw error
+  }
+}
+
+/**
+ * 删除签约会话（签约完成后清理）
+ * @param c Hono上下文对象
+ * @param token 会话token
+ */
+export async function deleteSignSession(c: Context, token: string): Promise<void> {
+  const db = getDB(c)
+  
+  try {
+    await db.prepare('DELETE FROM sign_sessions WHERE token = ?').bind(token).run()
+    await logError(c, 'INFO', `Deleted sign session successfully`, undefined, { token })
+  } catch (error) {
+    await logError(c, 'WARNING', `Failed to delete sign session`, error as Error, { token })
+  }
+}
+
+/**
+ * 清理所有过期的签约会话
+ * @param c Hono上下文对象
+ */
+export async function cleanupExpiredSignSessions(c: Context): Promise<void> {
+  const db = getDB(c)
+  const now = new Date().toISOString()
+  
+  try {
+    const result = await db.prepare(`
+      DELETE FROM sign_sessions WHERE expires_at < ?
+    `).bind(now).run()
+    
+    const deletedCount = (result as any).changes || 0
+    if (deletedCount > 0) {
+      await logError(c, 'INFO', `Cleaned up ${deletedCount} expired sign sessions`)
+    }
+  } catch (error) {
+    await logError(c, 'WARNING', 'Failed to cleanup expired sign sessions', error as Error)
+  }
+}
+
 
 // Legacy/local in-memory helpers have been removed to avoid shadowing DB-backed exports.

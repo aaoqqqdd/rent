@@ -1,6 +1,11 @@
-import { buildLayout } from '../../site';
+import { buildLayout, getUserById } from '../../site';
+import { Context } from 'hono';
 
-export function renderCustomerProfile(user: any, message?: string, type: 'success' | 'error' = 'error') {
+export async function renderCustomerProfile(c: Context, user: any, message?: string, type: 'success' | 'error' = 'error') {
+  // 从数据库获取最新的用户信息
+  const currentUser = await getUserById(c, user.id);
+  const userToUse = currentUser || user;
+  
   const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
   const body = `
     <div class="panel">
@@ -10,31 +15,31 @@ export function renderCustomerProfile(user: any, message?: string, type: 'succes
         <div class="grid grid-2">
           <div>
             <label class="form-label">姓名</label>
-            <input class="form-control" name="name" value="${user.name}" />
+            <input class="form-control" name="name" value="${userToUse.name}" />
           </div>
           <div>
             <label class="form-label">邮箱</label>
-            <input class="form-control" name="email" value="${user.email}" readonly />
+            <input class="form-control" name="email" value="${userToUse.email}" readonly />
           </div>
         </div>
         <div class="grid grid-2">
           <div>
             <label class="form-label">手机</label>
-            <input class="form-control" name="phone" value="${user.phone ?? ''}" />
+            <input class="form-control" name="phone" value="${userToUse.phone ?? ''}" />
           </div>
           <div>
             <label class="form-label">BSB</label>
-            <input class="form-control" name="bsb" value="${user.bsb ?? ''}" />
+            <input class="form-control" name="bsb" value="${userToUse.bsb ?? ''}" />
           </div>
         </div>
         <div class="grid grid-2">
           <div>
             <label class="form-label">Account</label>
-            <input class="form-control" name="account" value="${user.account ?? ''}" />
+            <input class="form-control" name="account" value="${userToUse.account ?? ''}" />
           </div>
           <div>
             <label class="form-label">推荐码</label>
-            <input class="form-control" name="referralCode" value="${user.referralCode ?? ''}" />
+            <input class="form-control" name="referralCode" value="${userToUse.referralCode ?? ''}" />
           </div>
         </div>
         <div class="grid grid-2">
@@ -54,5 +59,5 @@ export function renderCustomerProfile(user: any, message?: string, type: 'succes
       </form>
     </div>
   `
-  return buildLayout('个人信息 - 电脑租赁管理系统', body, user)
+  return buildLayout('个人信息 - 电脑租赁管理系统', body, userToUse)
 }

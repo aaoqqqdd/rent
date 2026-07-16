@@ -20,6 +20,9 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
     <div class="panel">
       <div class="section-title"><h2>合同管理</h2><span class="section-note">管理所有租赁合同的签署状态和文件。</span></div>
 
+      ${successMessage ? `<div class="alert alert-success">${successMessage}</div>` : ''}
+      ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
+
       <div class="filter-tabs" style="margin-bottom: 24px; display: flex; gap: 8px;">
         <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部</a>
         <a href="/staff/contracts?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
@@ -51,11 +54,15 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                   <td>${customer?.name ?? '未知客户'}</td>
                   <td>${contract.status}</td>
                   <td>${contract.signedAt ?? '未签署'}</td>
+                  <td>${order?.startDate ?? 'N/A'} - ${order?.endDate ?? 'N/A'}</td>
                   <td>
                     <a class="button button-sm button-secondary" href="/staff/contract/view/${contract.id}">查看</a>
                     ${
                       contract.status === 'pending_sign'
-                        ? `<a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>`
+                        ? `<a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>
+                          <form action="/staff/contract/${contract.id}/cancel" method="post" style="display:inline;">
+                            <button type="submit" class="button button-sm button-danger" onclick="return confirm('确定要取消这份合同吗？');">取消</button>
+                          </form>`
                         : ''
                     }
                     <a class="button button-sm button-info" href="/staff/contract/${contract.id}/upload">上传/更新文件</a>

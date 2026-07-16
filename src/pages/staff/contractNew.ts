@@ -39,13 +39,18 @@ export async function renderStaffContractNew(c: Context, user: any, orderId: str
   const body = `
     <div class="panel">
       <div class="section-title"><h2>为订单 #${order.orderNo} 创建租赁合同</h2><span class="section-note">编辑合同内容并生成。</span></div>
-      ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
       <form method="POST" action="/staff/orders/${order.id}/generate-contract">
         <label class="form-label">合同内容</label>
         <textarea class="form-control" name="contractContent" rows="20">${defaultContractContent}</textarea>
         <button class="button button-primary" type="submit" style="margin-top: 20px;">生成并发送合同</button>
       </form>
     </div>
+    <script>
+      const errorMessage = "${errorMessage}";
+      if (errorMessage && errorMessage !== 'undefined') {
+        alert(errorMessage);
+      }
+    </script>
   `
   return buildLayout('新建合同 - 电脑租赁管理系统', body, user)
 }

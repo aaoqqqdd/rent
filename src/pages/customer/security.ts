@@ -1,6 +1,11 @@
-import { buildLayout } from '../../site';
+import { buildLayout, getUserById } from '../../site';
+import { Context } from 'hono';
 
-export function renderCustomerSecurity(user: any, errorMessage?: string, successMessage?: string) {
+export async function renderCustomerSecurity(c: Context, user: any, errorMessage?: string, successMessage?: string) {
+  // 从数据库获取最新的用户信息
+  const currentUser = await getUserById(c, user.id);
+  const userToUse = currentUser || user;
+  
   const body = `
     <div class="panel">
       <div class="section-title"><h2>安全设置</h2><span class="section-note">管理您的账户安全。</span></div>
@@ -8,7 +13,7 @@ export function renderCustomerSecurity(user: any, errorMessage?: string, success
       ${successMessage ? `<div class="alert alert-success">${successMessage}</div>` : ''}
 
       <h3>修改密码</h3>
-      <form method="POST" action="/customer/security/change-password">
+      <form method="POST" action="/customer/security">
         <div class="form-group">
           <label class="form-label" for="currentPassword">当前密码</label>
           <input type="password" id="currentPassword" name="currentPassword" class="form-control" required />
@@ -54,5 +59,5 @@ export function renderCustomerSecurity(user: any, errorMessage?: string, success
     </div>
   `;
 
-  return buildLayout('安全设置 - 电脑租赁管理系统', body, user);
+  return buildLayout('安全设置 - 电脑租赁管理系统', body, userToUse);
 }

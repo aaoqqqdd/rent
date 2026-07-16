@@ -255,7 +255,7 @@ app.get('/staff/orders/:id', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffOrderDetail(user, c.req.param('id')))
+  return c.html(await pages.renderStaffOrderDetail(c, user, c.req.param('id')))
 })
 
 app.get('/staff/contracts', async (c) => {
@@ -272,7 +272,7 @@ app.get('/staff/rentals/tracking', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffRentalsTracking(user))
+  return c.html(await pages.renderStaffRentalsTracking(c, user))
 })
 
 app.get('/staff/devices', async (c) => {
@@ -307,7 +307,15 @@ app.get('/staff/contracts/:id/progress', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffContractProgress(user, c.req.param('id')))
+  return c.html(await pages.renderStaffContractProgress(c, user, c.req.param('id')))
+})
+
+app.post('/staff/contract/:id/cancel', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+    return c.redirect('/login')
+  }
+  return actions.handleCancelContractAction(c)
 })
 
 app.get('/staff/contract/view', async (c) => {
@@ -315,7 +323,7 @@ app.get('/staff/contract/view', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(pages.renderStaffContractView(user, c.req.query('orderId') || ''))
+  return c.html(await pages.renderStaffContractView(c, user, c.req.query('orderId') || ''))
 })
 
 app.get('/contract/sign', async (c) => {
@@ -349,12 +357,12 @@ app.post('/admin/contracts/template', async (c) => {
 });
 
 app.get('/contract/view/:id', async (c) => {
-  return c.html(pages.renderContractView(c.req.param('id'), c.get('user')))
+  return c.html(await pages.renderContractView(c, c.req.param('id'), c.get('user')))
 })
 
 app.get('/payment/result', async (c) => {
   const status = c.req.query('status') === 'fail' ? 'fail' : 'success'
-  return c.html(pages.renderPaymentResult(c.req.query('orderId') || '', status, c.get('user')))
+  return c.html(await pages.renderPaymentResult(c, c.req.query('orderId') || '', status, c.get('user')))
 })
 
 app.get('/customer/rentals', async (c) => {
@@ -585,7 +593,25 @@ app.post('/admin/users/:id/edit', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.redirect('/admin/users')
+  const targetUserId = c.req.param('id')
+  const form = await c.req.parseBody()
+  
+  const dataToUpdate: any = {
+    name: form.name?.toString() || '',
+    phone: form.phone?.toString() || '',
+    bsb: form.bsb?.toString() || '',
+    account_number: form.account_number?.toString() || '',
+    balance: parseFloat(form.balance?.toString() || '0'),
+    role: form.role?.toString() || 'CUSTOMER'
+  }
+  
+  // 如果提供了密码，更新密码
+  if (form.password && form.password.toString().length > 0) {
+    dataToUpdate.password = form.password.toString()
+  }
+  
+  await updateUser(c, targetUserId, dataToUpdate)
+  return c.redirect(`/admin/users/${targetUserId}`)
 })
 
 app.get('/admin/refunds', async (c) => {
@@ -642,7 +668,7 @@ app.get('/admin/contracts/:id', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminContractDetail(user, c.req.param('id')))
+  return c.html(await pages.renderAdminContractDetail(c, user, c.req.param('id')))
 })
 
 app.get('/admin/orders/:id', async (c) => {
@@ -650,7 +676,7 @@ app.get('/admin/orders/:id', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminOrderDetail(user, c.req.param('id')))
+  return c.html(await pages.renderAdminOrderDetail(c, user, c.req.param('id')))
 })
 
 app.get('/admin/finance', async (c) => {
@@ -660,7 +686,7 @@ app.get('/admin/finance', async (c) => {
   }
   const { getOrdersAsync } = await import('./site')
   const orders = await getOrdersAsync(c)
-  return c.html(pages.renderAdminFinance(user, orders))
+  return c.html(await pages.renderAdminFinance(c, user, orders))
 })
 
 app.get('/admin/devices', async (c) => {
@@ -670,7 +696,7 @@ app.get('/admin/devices', async (c) => {
   }
   const { getDevicesAsync } = await import('./site')
   const devices = await getDevicesAsync(c)
-  return c.html(pages.renderAdminDevices(user, devices))
+  return c.html(await pages.renderAdminDevices(c, user, devices))
 })
 
 app.get('/admin/devices/new', async (c) => {

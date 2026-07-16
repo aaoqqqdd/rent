@@ -1,20 +1,54 @@
 import { Context } from 'hono';
-import { getContractBySignToken, insertUser, updateOrderInDB, Order, User, getDeviceById, updateContractStatusInDB, hashPassword } from '../../site';
+import { 
+  getContractBySignToken, insertUser, updateOrderInDB, Order, User, 
+  updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
+  updateSignSession, deleteSignSession 
+} from '../../site';
 import { nanoid } from 'nanoid';
 
-// 这是一个临时的、内存中的会话存储，用于在签约步骤之间保存用户输入。
-// 在生产环境中，应该使用更持久的会话管理机制，例如 Redis 或数据库支持的 session。
-const signSessions: Record<string, Record<string, any>> = {};
-
 export async function handleSignContractStep(c: Context, token: string, step: number, body: Record<string, string>): Promise<Response> {
+  // 记录进入签约流程的日志
+  await logError(c, 'DEBUG', `Entering contract signing process`, undefined, { 
+    token, 
+    step, 
+    requestBody: Object.keys(body) 
+  });
+
   const contract = await getContractBySignToken(c, token);
   if (!contract) {
+    await logError(c, 'WARNING', `Contract not found for signing token`, undefined, { token });
     return new Response('合同链接无效或已过期', { status: 404 });
   }
 
-  // 初始化会话
-  if (!signSessions[token]) {
-    signSessions[token] = {};
+  // 检查合同是否已过期
+  const signExpiresAt = contract.signExpiresAt || contract.sign_expires_at;
+  if (signExpiresAt && contract.status === 'pending_sign') {
+    const now = new Date();
+    const expiryDate = new Date(signExpiresAt);
+    if (now > expiryDate) {
+      await logError(c, 'WARNING', `Contract signing link has expired`, undefined, { 
+        token, 
+        contractId: contract.id,
+        expiresAt: signExpiresAt,
+        currentTime: now.toISOString()
+      });
+      // 将过期合同状态更新为已取消
+      await updateContractStatusInDB(c, contract.id, 'cancelled');
+      return new Response('合同链接已过期，请联系管理员重新生成签约链接', { status: 400 });
+    }
+  }
+
+  // 获取或创建数据库持久化的签约会话
+  let signSession: Record<string, any>;
+  try {
+    signSession = await getOrCreateSignSession(c, token, contract.signToken || token);
+  } catch (error) {
+    await logError(c, 'ERROR', `Failed to initialize sign session`, error as Error, { token });
+    const redirectUrl = `/contract/sign?token=${token}&step=1&error=${encodeURIComponent('系统错误，请稍后重试')}`;
+    return new Response(null, {
+      status: 302,
+      headers: { 'Location': redirectUrl },
+    });
   }
 
   let redirectUrl = '';
@@ -24,31 +58,51 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
     switch (step) {
       case 1:
         // Step 1: 同意协议
+        await logError(c, 'DEBUG', `Processing step 1: Agreement acceptance`, undefined, { token, body });
+        
         if (!body.agreeTerms) {
+          await logError(c, 'INFO', `User did not agree to terms`, undefined, { token });
           throw new Error('您必须同意租赁协议才能继续。');
         }
-        signSessions[token].agreedToTerms = true;
+        
+        // 更新会话数据
+        await updateSignSession(c, token, { agreedToTerms: true });
+        await logError(c, 'INFO', `User agreed to terms, proceeding to step 2`, undefined, { token });
+        
         redirectUrl = `/contract/sign?token=${token}&step=2`;
         break;
 
       case 2:
         // Step 2: 填写用户信息并创建账户
-        if (!signSessions[token].agreedToTerms) {
+        await logError(c, 'DEBUG', `Processing step 2: User information submission`, undefined, { token });
+        
+        if (!signSession.agreedToTerms) {
+          await logError(c, 'WARNING', `User attempted to access step 2 without agreeing to terms`, undefined, { token });
           throw new Error('请先同意租赁协议。');
         }
+
         const { name, email, password, passwordConfirm, phoneCode, phone, createAccount, referrer } = body;
         
         // 验证必填字段
         if (!name || !email || !phoneCode || !phone) {
+          await logError(c, 'INFO', `Missing required fields in step 2`, undefined, { 
+            token, 
+            hasName: !!name, 
+            hasEmail: !!email, 
+            hasPhoneCode: !!phoneCode, 
+            hasPhone: !!phone 
+          });
           throw new Error('姓名、邮箱和联系电话是必填项。');
         }
         
         // 如果选择创建账户，密码是必填的
         if (createAccount && (!password || !passwordConfirm)) {
+          await logError(c, 'INFO', `Missing password for account creation`, undefined, { token });
           throw new Error('创建账户时密码和确认密码是必填项。');
         }
         
         if (createAccount && password !== passwordConfirm) {
+          await logError(c, 'INFO', `Password mismatch in account creation`, undefined, { token });
           throw new Error('两次输入的密码不一致。');
         }
         
@@ -67,54 +121,69 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
         
         const pattern = phonePatterns[phoneCode];
         if (pattern && !pattern.test(phone)) {
+          await logError(c, 'INFO', `Invalid phone number format`, undefined, { token, phoneCode, phone });
           throw new Error('电话号码格式不正确，请检查国家代码和手机号。');
         }
         
         // 从数据库检查邮箱是否已存在
         const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
         if (existingUser) {
+          await logError(c, 'INFO', `Existing user found with email, will link account`, undefined, { token, email, existingUserId: existingUser.id });
           // 如果邮箱已存在，我们不会立即报错，而是将现有用户的ID存入会话
           // 在步骤3中，我们会用这个ID来关联合同，而不是创建新用户
-          signSessions[token].userIdToLink = existingUser.id;
+          await updateSignSession(c, token, { userIdToLink: existingUser.id });
         } else {
           // 仅当用户不存在时，才处理创建账户的逻辑
           if (createAccount && (!password || !passwordConfirm)) {
+            await logError(c, 'INFO', `Missing password for new user creation`, undefined, { token });
             throw new Error('创建账户时密码和确认密码是必填项。');
           }
           if (createAccount && password !== passwordConfirm) {
+            await logError(c, 'INFO', `Password mismatch for new user creation`, undefined, { token });
             throw new Error('两次输入的密码不一致。');
           }
         }
 
         // 检查邮箱是否存在，并抛出特定错误以便前端处理
         if (existingUser && !body.force_continue) {
+          await logError(c, 'INFO', `Email exists and user not forced to continue, returning EMAIL_EXISTS`, undefined, { token, email });
           throw new Error('EMAIL_EXISTS');
         }
 
         // 保存用户信息到会话
-        signSessions[token].userInfo = { ...body, fullPhone: `${phoneCode}${phone}` };
+        await updateSignSession(c, token, { 
+          userInfo: { ...body, fullPhone: `${phoneCode}${phone}` } 
+        });
+        await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
+        
         redirectUrl = `/contract/sign?token=${token}&step=3`;
         break;
 
       case 3:
         // Step 3: 选择支付方式并完成签约
-        if (!signSessions[token].userInfo) {
+        await logError(c, 'DEBUG', `Processing step 3: Payment method selection and contract finalization`, undefined, { token });
+        
+        if (!signSession.userInfo) {
+          await logError(c, 'WARNING', `User attempted to access step 3 without providing user info`, undefined, { token });
           throw new Error('请先填写您的个人信息。');
         }
+        
         const { paymentMethod } = body;
         if (!paymentMethod) {
+          await logError(c, 'INFO', `No payment method selected in step 3`, undefined, { token });
           throw new Error('请选择一种支付方式。');
         }
 
         // **核心签约逻辑**
-        const userInfo = signSessions[token].userInfo;
-        const userIdToLink = signSessions[token].userIdToLink;
+        const userInfo = signSession.userInfo;
+        const userIdToLink = signSession.userIdToLink;
         let userId = userIdToLink; // 默认使用已存在的用户ID
 
         // 1. 如果没有已存在的用户ID，则创建新用户
         if (!userId) {
           const newUserId = `u-${nanoid(8)}`;
           userId = newUserId;
+          await logError(c, 'INFO', `Creating new user for contract`, undefined, { token, newUserId, email: userInfo.email });
           
           // 处理推荐人关系
           let referrerId = null;
@@ -123,20 +192,27 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
             const referrerUser = await c.env.RENT.prepare('SELECT * FROM users WHERE UPPER(referralCode) = ?').bind(normalizedReferrerCode).first();
             if (referrerUser) {
               referrerId = referrerUser.id;
+              await logError(c, 'INFO', `Valid referrer found`, undefined, { token, referrerId, referrerCode: normalizedReferrerCode });
+            } else {
+              await logError(c, 'INFO', `Invalid referral code provided`, undefined, { token, referrerCode: normalizedReferrerCode });
             }
           }
           
+          // 将referrerId保存到会话中，以便后续处理佣金
+          await updateSignSession(c, token, { referrerId });
+          
           // 仅当用户选择创建账户时才处理密码
-          let password_hash = null;
-          if (userInfo.createAccount && userInfo.password) {
-            password_hash = await hashPassword(userInfo.password);
-          }
+          // let password_hash = null;
+          // if (userInfo.createAccount && userInfo.password) {
+          //   password_hash = await hashPassword(userInfo.password);
+          // }
           
           const newUser: User = {
             id: newUserId,
             name: userInfo.name,
             email: userInfo.email,
-            password_hash: password_hash ?? undefined,
+            password: userInfo.createAccount ? userInfo.password : undefined, // 直接传递 password
+            // password_hash: password_hash ?? undefined,
             role: 'CUSTOMER',
             phone: userInfo.fullPhone,
             balance: 0,
@@ -149,6 +225,9 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
             registrationDate: new Date().toISOString(),
           };
           await insertUser(c, newUser);
+          await logError(c, 'INFO', `New user created successfully`, undefined, { token, newUserId });
+        } else {
+          await logError(c, 'INFO', `Linking existing user to contract`, undefined, { token, userId });
         }
 
         // 2. 更新订单信息
@@ -157,16 +236,24 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
           paymentMethod: paymentMethod as Order['paymentMethod'],
           status: 'pending_payment',
         });
+        await logError(c, 'INFO', `Order updated with user and payment method`, undefined, { 
+          token, 
+          orderId: contract.rentalId, 
+          userId, 
+          paymentMethod 
+        });
 
         // 3. 更新合同状态
         await updateContractStatusInDB(c, contract.id, 'signed');
+        await logError(c, 'INFO', `Contract signed successfully`, undefined, { token, contractId: contract.id });
 
         
         // 4. 如果有推荐人，计算并记录佣金
-        const referrerId = signSessions[token].referrerId as string | null;
+        const referrerId = signSession.referrerId as string | null;
         const newUserId = userId;
 
         if (referrerId) {
+          await logError(c, 'DEBUG', `Processing referral commission`, undefined, { token, referrerId, newUserId });
           // 获取租赁订单的总金额
           const rental = await c.env.RENT.prepare('SELECT total_amount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
           if (rental) {
@@ -175,7 +262,14 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
             const commissionRate = referrer?.commission_rate || 25.0; // 默认25%
             const commissionAmount = (rental.total_amount * commissionRate) / 100;
 
-            
+            await logError(c, 'INFO', `Calculated commission for referrer`, undefined, { 
+              token, 
+              referrerId, 
+              commissionAmount, 
+              commissionRate,
+              rentalTotal: rental.total_amount
+            });
+
             // 创建佣金记录
             const commissionId = `c-${nanoid(8)}`;
             await c.env.RENT.prepare(`
@@ -188,22 +282,43 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
               UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP
               WHERE id = ?
             `).bind(commissionAmount, referrerId).run();
+            
+            await logError(c, 'INFO', `Commission recorded and referrer balance updated`, undefined, { 
+              token, 
+              commissionId, 
+              referrerId, 
+              commissionAmount 
+            });
           }
         }
         
         // 5. 清理会话
-        delete signSessions[token];
+        await deleteSignSession(c, token);
+        await logError(c, 'INFO', `Sign session deleted after successful completion`, undefined, { token });
 
         // 5. 重定向到支付页面或成功页面
         // 这里我们假设支付是下一步，并重定向到一个支付结果页
         redirectUrl = `/payment/result?orderId=${contract.rentalId}&status=success`;
+        await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, { 
+          token, 
+          contractId: contract.id, 
+          orderId: contract.rentalId,
+          redirectUrl
+        });
         break;
 
       default:
+        await logError(c, 'WARNING', `Invalid step encountered`, undefined, { token, step });
         throw new Error('无效的步骤。');
     }
   } catch (e: any) {
     errorMessage = e.message;
+    await logError(c, 'ERROR', `Error in contract signing process`, e as Error, { 
+      token, 
+      step, 
+      errorMessage 
+    });
+    
     // 如果出错，重定向回当前步骤并显示错误消息
     const stepToRedirect = (step > 1 && step <= 3) ? step : 1;
     redirectUrl = `/contract/sign?token=${token}&step=${stepToRedirect}&error=${encodeURIComponent(errorMessage || '')}`;
