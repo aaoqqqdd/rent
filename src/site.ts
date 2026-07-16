@@ -961,9 +961,9 @@ function toNumber(value: any): number {
 
 export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   const db = getDB(c)
+
   const countResult = await db.prepare('SELECT COUNT(*) AS count FROM users').all()
   const count = Number(countResult.results?.[0]?.count ?? 0)
-  if (count > 0) return
 
   const usersToSeed = [
     { id: 'u-admin', name: 'Admin User', email: 'admin@example.com', password: 'Admin123', role: 'ADMIN', accountNumber: '00000000' },
@@ -971,55 +971,57 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
     { id: 'u-customer', name: 'Customer User', email: 'customer@example.com', password: 'Customer123', role: 'CUSTOMER', accountNumber: '00000002' },
   ]
 
-  // users 表字段：兼容 snake_case / camelCase（防止插入时引用不存在的列）
-  const hasReferralCode = await userHasColumn(c, 'referralCode') // reuse helper if needed elsewhere
+  // users 表字段：兼容 snake_case / camelCase（同时避免插入时引用不存在的列）
+  const hasReferralCode = await userHasColumn(c, 'referralCode')
   const hasAccountNumberSnake = await userHasColumn(c, 'account_number')
   const hasAccountNumberCamel = await userHasColumn(c, 'accountNumber')
   const hasCommissionBalanceSnake = await userHasColumn(c, 'commission_balance')
   const hasCommissionBalanceCamel = await userHasColumn(c, 'commissionBalance')
 
-  // 动态构建 INSERT 语句
-  const baseCols = ['id', 'name', 'email', 'password_hash', 'role', 'status', 'balance']
-  const baseVals: any[] = []
+  const hasPasswordHashSnake = await userHasColumn(c, 'password_hash')
+  const hasPasswordHashCamel = await userHasColumn(c, 'passwordHash')
 
-  const colNames: string[] = [...baseCols]
-  const colValues: any[] = []
+  const passwordHashCol = hasPasswordHashSnake ? 'password_hash' : 'passwordHash'
+  const accountNumberCol = hasAccountNumberSnake ? 'account_number' : 'accountNumber'
+  const commissionBalanceCol = hasCommissionBalanceSnake ? 'commission_balance' : 'commissionBalance'
 
-  // 只有在目标列存在时才写入对应字段
-  if (hasAccountNumberSnake || hasAccountNumberCamel) {
-    colNames.push(hasAccountNumberSnake ? 'account_number' : 'accountNumber')
-  }
-  if (hasCommissionBalanceSnake || hasCommissionBalanceCamel) {
-    colNames.push(hasCommissionBalanceSnake ? 'commission_balance' : 'commissionBalance')
-  }
-  if (hasReferralCode) {
-    colNames.push('referralCode')
-  }
+  const hasUsersTableCols = (arr: string[]) => arr.every((col) => {
+    // 只在已确认列存在时才写入（避免不同库状态混乱）
+    return true
+  })
 
-  const valuesPlaceholders = colNames.map(() => '?').join(', ')
-  const userInsert = db.prepare(`INSERT INTO users (${colNames.join(', ')}) VALUES (${valuesPlaceholders})`)
-
-  const userInserts: any[] = []
+  // 仅在 users 已存在时也要“修正默认用户密码/字段”，否则会出现你现在看到的“账号或密码错误”
+  const userUpserts: any[] = []
   for (const user of usersToSeed) {
     const hash = await hashPassword(user.password)
 
-    colValues.length = 0
-    colValues.push(user.id, user.name, user.email, hash, user.role, 'active', 0)
+    const cols: string[] = ['id', 'name', 'email', 'role', 'status', 'balance', passwordHashCol]
+    const vals: any[] = [user.id, user.name, user.email, user.role, 'active', 0, hash]
 
     if (hasAccountNumberSnake || hasAccountNumberCamel) {
-      colValues.push(user.accountNumber)
+      cols.push(accountNumberCol)
+      vals.push(user.accountNumber)
     }
     if (hasCommissionBalanceSnake || hasCommissionBalanceCamel) {
-      colValues.push(0)
+      cols.push(commissionBalanceCol)
+      vals.push(0)
     }
     if (hasReferralCode) {
-      colValues.push(null) // 默认：不填 referralCode
+      cols.push('referralCode')
+      vals.push(null)
     }
 
-    userInserts.push(userInsert.bind(...colValues))
-  }
+    const setParts: string[] = cols
+      .filter((col) => col !== 'id')
+      .map((col) => `${col} = EXCLUDED.${col}`)
 
-  await db.batch(userInserts)
+    const placeholders = cols.map(() => '?').join(', ')
+    const sql = `INSERT INTO users (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${setParts.join(', ')}`
+    userUpserts.push(db.prepare(sql).bind(...vals))
+  }
+  await db.batch(userUpserts)
+
+  if (count > 0) return
 
   // Seed示例设备
   const devicesToSeed = [
@@ -1078,20 +1080,29 @@ export async function loadDatabaseData(c: Context): Promise<void> {
 
 export async function verifyUserCredentials(c: Context, emailOrName: string, password: string): Promise<User | null> {
   const db = getDB(c)
-  const user: User | null =
-    await db.prepare('SELECT * FROM users WHERE email = ? OR name = ?').bind(emailOrName, emailOrName).first()
 
-  if (!user || !user.password_hash) {
-    return null
-  }
+  // 兼容 users.password_hash / users.passwordHash（取决于是否已执行迁移 0005）
+  const userRow: any = await db
+    .prepare('SELECT * FROM users WHERE email = ? OR name = ?')
+    .bind(emailOrName, emailOrName)
+    .first()
 
-  const isPasswordValid = await verifyPassword(password, user.password_hash)
-  if (!isPasswordValid) {
-    return null
-  }
+  if (!userRow) return null
 
-  delete user.password_hash
-  return user
+  const passwordHash =
+    userRow.password_hash ?? // snake_case
+    userRow.passwordHash // camelCase
+
+  if (!passwordHash) return null
+
+  const isPasswordValid = await verifyPassword(password, passwordHash)
+  if (!isPasswordValid) return null
+
+  // 清理返回体里的 hash 字段（两种命名都清掉）
+  delete userRow.password_hash
+  delete userRow.passwordHash
+
+  return userRow as User
 }
 
 async function userHasColumn(c: Context, columnName: string): Promise<boolean> {
