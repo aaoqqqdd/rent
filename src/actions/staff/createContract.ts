@@ -1,9 +1,9 @@
 import { Context } from 'hono';
 import { User, getDeviceById, Order, Contract, buildLayout, insertOrder, insertContract, updateDeviceStatus } from '../../site';
-import { nanoid } from 'nanoid';
+import { nanoid, customAlphabet } from 'nanoid';
 
 // 自定义nanoid，只使用大写字母和数字，确保合同编号只包含大写字母和数字
-const uppercaseAlphanumericNanoid = nanoid.customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 16);
+const uppercaseAlphanumericNanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 16);
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
   const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration } = body;
