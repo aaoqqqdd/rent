@@ -923,7 +923,8 @@ export async function getStaffDashboardData(c: Context): Promise<any> {
     LEFT JOIN (
       SELECT deviceId, userId FROM orders WHERE status = 'active' OR status = 'paid'
     ) o ON d.id = o.deviceId
-    LEFT JOIN users u ON o.userId = u.id    ORDER BY d.updatedAt DESC
+    LEFT JOIN users u ON o.userId = u.id
+    ORDER BY d.createdAt DESC
     LIMIT 5
   `;
 
