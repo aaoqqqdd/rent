@@ -1,6 +1,18 @@
 import { buildLayout } from '../../site';
 
 export function renderRegister(errorMessage?: string) {
+  const countryCodes = [
+    { code: '+61', name: 'AU' },
+    { code: '+86', name: 'CN' },
+    { code: '+852', name: 'HK' },
+    { code: '+853', name: 'MO' },
+    { code: '+886', name: 'TW' }
+  ];
+
+  const countryCodeOptions = countryCodes.map(country =>
+    `<option value="${country.code}">${country.name} (${country.code})</option>`
+  ).join('');
+
   const body = `
     <div class="page-centered">
       <div class="login-container" style="max-width: 480px;">
@@ -13,6 +25,13 @@ export function renderRegister(errorMessage?: string) {
             <input class="form-control" name="name" placeholder="请输入姓名" required />
             <label class="form-label">邮箱地址</label>
             <input class="form-control" type="email" name="email" placeholder="name@example.com" required />
+            <label class="form-label">手机号</label>
+            <div class="input-group">
+              <select name="countryCode" class="form-control" style="flex: 0 0 auto; width: auto; border-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0;">
+                ${countryCodeOptions}
+              </select>
+              <input class="form-control" type="tel" name="phone" placeholder="请输入手机号" required />
+            </div>
             <label class="form-label">登录密码</label>
             <input class="form-control" type="password" name="password" placeholder="至少8位，包含字母和数字" required />
             <label class="form-label">确认密码</label>

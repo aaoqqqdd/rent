@@ -126,6 +126,13 @@ function generateSalt(length: number = 16): string {
   return Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+export async function generateReferralCode(length: number = 6): Promise<string> {
+  const { customAlphabet } = await import('nanoid');
+  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const nanoid = customAlphabet(alphabet, length);
+  return nanoid();
+}
+
 export async function hashPassword(password: string): Promise<string> {
   const salt = generateSalt(); // 生成一个随机盐值
   const encoder = new TextEncoder();
@@ -267,10 +274,32 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
   if (!actualId) return null
-  const orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
-  if (!orderRow) return null
 
-  return normalizeOrderRow(orderRow)
+  // 1. 直接使用传入的 id 进行查询
+  let orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
+  if (orderRow) {
+    return normalizeOrderRow(orderRow)
+  }
+
+  // 2. 如果查询结果为空，并且传入的 id 不以 o- 开头，则尝试添加 o- 前缀后再次查询
+  if (!actualId.startsWith('o-')) {
+    const prefixedId = `o-${actualId}`
+    orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(prefixedId).first()
+    if (orderRow) {
+      return normalizeOrderRow(orderRow)
+    }
+  }
+
+  // 3. 如果查询结果为空，并且传入的 id 以 o- 开头，则尝试去除 o- 前缀后再次查询
+  if (actualId.startsWith('o-')) {
+    const unprefixedId = actualId.substring(2)
+    orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(unprefixedId).first()
+    if (orderRow) {
+      return normalizeOrderRow(orderRow)
+    }
+  }
+
+  return null
 }
 
 export async function getDeviceById(cOrContext: Context | string, id?: string): Promise<Device | null> {

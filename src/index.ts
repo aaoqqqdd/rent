@@ -26,7 +26,8 @@ import {
   hashPassword,
   findUserByEmail,
   findUserByReferralCode,
-  createWithdrawalRequest
+  createWithdrawalRequest,
+  generateReferralCode
 } from './site'
 import { nanoid } from 'nanoid'
 
@@ -141,9 +142,9 @@ app.get('/register', async (c) => {
 
 app.post('/register', async (c) => {
   const form = await c.req.parseBody()
-  const { name, email, password, passwordConfirm, referrer } = form
+  const { name, email, password, passwordConfirm, referrer, countryCode, phone } = form
 
-  if (!name?.trim() || !email?.trim() || !password?.trim() || !passwordConfirm?.trim()) {
+  if (!name?.trim() || !email?.trim() || !password?.trim() || !passwordConfirm?.trim() || !phone?.trim()) {
     return c.html(pages.renderRegister('请输入完整注册信息'))
   }
   if (password !== passwordConfirm) {
@@ -170,10 +171,12 @@ app.post('/register', async (c) => {
     const numericAlphabet = '0123456789'
   const generateNumericId = customAlphabet(numericAlphabet, 8)
   const newUserId = `u-${generateNumericId()}`
+  const fullPhone = `${countryCode}${phone}`
   const newUser = {
     id: newUserId,
     name: name.trim(),
     email: email.trim(),
+    phone: fullPhone,
     passwordHash: await hashPassword(password),
     role: 'CUSTOMER' as const,
     balance: 0,
@@ -436,7 +439,9 @@ app.post('/customer/profile', async (c) => {
   }
   const form = await c.req.parseBody()
   const name = form.name?.trim() || user.name
-  const phone = form.phone?.trim() || user.phone || ''
+  const countryCode = form.countryCode?.toString() ?? '+61'
+  const localPhone = form.phone?.toString().trim() ?? ''
+  const phone = localPhone ? `${countryCode}${localPhone}` : ''
   const bsb = form.bsb?.trim() || user.bsb || ''
   const account = form.account?.trim() || user.account || ''
 
@@ -507,7 +512,7 @@ app.post('/customer/referral/join', async (c) => {
     return c.html(await pages.renderCustomerReferral(c, user, '您已加入推荐计划，无需重复加入', 'info'))
   }
 
-  const newReferralCode = generateNumericId()
+  const newReferralCode = await generateReferralCode()
   await updateUser(c, user.id, { referralCode: newReferralCode })
 
   // 更新session中的user对象

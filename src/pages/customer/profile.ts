@@ -5,6 +5,37 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
   // 从数据库获取最新的用户信息
   const currentUser = await getUserById(c, user.id);
   const userToUse = currentUser || user;
+
+  const countryCodes = [
+    { code: '+61', name: 'AU' },
+    { code: '+86', name: 'CN' },
+    { code: '+852', name: 'HK' },
+    { code: '+853', name: 'MO' },
+    { code: '+886', name: 'TW' }
+  ];
+
+  const fullPhone = userToUse.phone ?? '';
+  let selectedCountryCode = '';
+  let localPhoneNumber = fullPhone;
+
+  // 检查并设置默认区号
+  if (!countryCodes.some(country => fullPhone.startsWith(country.code))) {
+    // 如果号码不以任何已知区号开头，则默认+61，并将整个号码视为本地号码
+    selectedCountryCode = '+61';
+    localPhoneNumber = fullPhone;
+  } else {
+    for (const country of countryCodes) {
+      if (fullPhone.startsWith(country.code)) {
+        selectedCountryCode = country.code;
+        localPhoneNumber = fullPhone.substring(country.code.length);
+        break;
+      }
+    }
+  }
+  
+  const countryCodeOptions = countryCodes.map(country =>
+    `<option value="${country.code}" ${country.code === selectedCountryCode ? 'selected' : ''}>${country.name} (${country.code})</option>`
+  ).join('');
   
   const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
   const body = `
@@ -25,7 +56,12 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
         <div class="grid grid-2">
           <div>
             <label class="form-label">手机</label>
-            <input class="form-control" name="phone" value="${userToUse.phone ?? ''}" />
+            <div class="input-group">
+              <select name="countryCode" class="form-control" style="flex: 0 0 auto; width: auto; border-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0;">
+                ${countryCodeOptions}
+              </select>
+              <input class="form-control" name="phone" value="${localPhoneNumber}" />
+            </div>
           </div>
           <div>
             <label class="form-label">BSB</label>
@@ -39,7 +75,7 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
           </div>
           <div>
             <label class="form-label">推荐人</label>
-            <input class="form-control" name="referrerId" value="${userToUse.referrerId ?? '无'}" ${userToUse.referrerId ? 'readonly' : ''} />
+            <input class="form-control" name="referrerId" value="${userToUse.referrerId ?? ''}" ${userToUse.referrerId ? 'readonly' : ''} />
             <p class="form-text" style="font-size: 12px; color: #6b7280; margin-top: 4px;">绑定后禁止修改推荐人</p>
           </div>
         </div>
@@ -57,7 +93,7 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
             let formattedValue = '';
 
             if (value.length > 3) {
-              formattedValue = value.substring(0, 3) + '-' + value.substring(3, 7);
+              formattedValue = value.substring(0, 3) + '-' + value.substring(3, 6);
             } else {
               formattedValue = value;
             }

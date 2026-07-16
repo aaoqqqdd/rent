@@ -75,9 +75,6 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         <a href="/staff/contracts?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
         <a href="/staff/contracts?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
         <a href="/staff/contracts?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
-        <a href="/staff/contracts?status=active" class="button ${status === 'active' ? 'button-primary' : 'button-secondary'}">当前租赁中</a>
-        <a href="/staff/contracts?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
-        <a href="/staff/contracts?status=pending_return" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
       </div>
       
       <!-- 搜索功能 -->
@@ -140,6 +137,24 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       }
 
       <h3 style="margin-top: 48px; margin-bottom: 16px;">租赁管理</h3>
+
+            <div class="filter-tabs" style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+        <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部租赁</a>
+        <a href="/staff/contracts?status=active" class="button ${status === 'active' ? 'button-primary' : 'button-secondary'}">当前租赁中</a>
+        <a href="/staff/contracts?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
+        <a href="/staff/contracts?status=pending_return" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
+        <a href="/staff/contracts?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
+      </div>
+      
+      <!-- 搜索功能 -->
+      <div class="search-bar" style="margin-bottom: 24px;">
+        <form action="/staff/contracts" method="GET" style="display: flex; gap: 10px;">
+          <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" style="flex-grow: 1;" />
+          ${status ? `<input type="hidden" name="status" value="${status}" />` : ''}
+          <button type="submit" class="button button-primary">搜索</button>
+        </form>
+      </div>
+
       ${
         activeRentals.length > 0
           ? `
