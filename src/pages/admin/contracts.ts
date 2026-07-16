@@ -20,9 +20,10 @@ export async function renderAdminContracts(c: Context, user: any) {
               <input type="text" id="templateName" name="templateName" class="form-control" value="${currentTemplate?.name ?? ''}">
             </div>
             <div class="form-group">
-              <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info); max-height: 200px; overflow-y: auto;">
+              <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
                 <strong style="color: #155e75; display: block; margin-bottom: 12px;">📋 合同模板可用变量（点击变量可复制）：</strong>
-                <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 6px;">
+                <div style="max-height: 200px; overflow-y: auto;">
+                  <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 6px;">
                   <thead>
                     <tr style="background: var(--primary-light);">
                       <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
