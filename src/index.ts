@@ -262,15 +262,13 @@ app.get('/staff/contracts', async (c) => {
     return c.redirect('/login')
   }
   const status = c.req.query('status');
-  return c.html(await pages.renderStaffContracts(c, user, status))
+  const searchTerm = c.req.query('searchTerm');
+  return c.html(await pages.renderStaffContracts(c, user, status, undefined, undefined, searchTerm))
 })
 
 app.get('/staff/rentals/tracking', async (c) => {
-  const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
-    return c.redirect('/login')
-  }
-  return c.html(await pages.renderStaffRentalsTracking(c, user))
+  // 旧的租赁追踪页面已融合到合同管理页面，自动重定向
+  return c.redirect('/staff/contracts')
 })
 
 app.get('/staff/devices', async (c) => {
@@ -325,17 +323,23 @@ app.get('/staff/contract/view', async (c) => {
 })
 
 app.get('/contract/sign', async (c) => {
+  // 支持两种参数：token（旧格式）和number（新格式：contract/sign?number=合同编号&step=1）
   const token = c.req.query('token') || '';
+  const number = c.req.query('number') || '';
+  const identifier = token || number; // 优先使用token，否则使用合同编号
   const step = Number(c.req.query('step') || '1');
   const error = c.req.query('error');
-  return c.html(await pages.renderContractSignPage(c, token, step, error));
+  return c.html(await pages.renderContractSignPage(c, identifier, step, error));
 });
 
 app.post('/contract/sign', async (c) => {
+  // 同样支持两种参数
   const token = c.req.query('token') || '';
+  const number = c.req.query('number') || '';
+  const identifier = token || number;
   const step = Number(c.req.query('step') || '1');
   const form = await c.req.parseBody();
-  return actions.handleSignContractStep(c, token, step, form);
+  return actions.handleSignContractStep(c, identifier, step, form);
 });
 
 app.post('/admin/contracts/template', async (c) => {

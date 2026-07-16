@@ -438,9 +438,42 @@ export async function updateContractStatusInDB(c: Context, contractId: string, s
 }
 
 
+export async function getContractByContractNumber(c: Context, contractNumber: string): Promise<Contract | null> {
+  const db = getDB(c)
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE contractNumber = ?').bind(contractNumber).first()
+  if (!contractRow) return null
+  
+  // 统一处理snake_case和camelCase字段
+  const validFrom = contractRow.validFrom ?? contractRow.valid_from
+  const validUntil = contractRow.validUntil ?? contractRow.valid_until
+  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
+  const rentalId = contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
+  const valid_from = contractRow.valid_from ?? contractRow.validFrom
+  const valid_until = contractRow.valid_until ?? contractRow.validUntil
+  const createdBy = contractRow.createdBy ?? contractRow.created_by
+  const created_by = contractRow.created_by ?? contractRow.createdBy
+  
+  // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
+  return {
+    ...contractRow,
+    validFrom,
+    validUntil,
+    signExpiresAt,
+    rentalId,
+    rental_id,
+    sign_expires_at,
+    valid_from,
+    valid_until,
+    createdBy,
+    created_by
+  } as Contract
+}
+
 export async function getContractBySignToken(c: Context, signToken: string): Promise<Contract | null> {
   const db = getDB(c)
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE signToken = ? OR sign_token = ?').bind(signToken, signToken).first()
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(signToken).first()
   if (!contractRow) return null
   
   // 统一处理snake_case和camelCase字段
@@ -1434,9 +1467,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'STAFF' ? `
             ${renderNavLink('/staff/dashboard', '工作台')}
             ${renderNavLink('/staff/orders/pending', '待审订单')}
-            ${renderNavLink('/staff/contracts', '合同管理')}
+            ${renderNavLink('/staff/contracts', '合同与租赁管理')}
             ${renderNavLink('/staff/contracts/new', '新建合同')}
-            ${renderNavLink('/staff/rentals/tracking', '租赁追踪')}
             ${renderNavLink('/staff/devices', '设备管理')}
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `

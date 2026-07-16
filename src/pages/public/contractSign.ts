@@ -1,9 +1,15 @@
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate, rentalTerms, findUserBySession } from '../../site';
+import { buildLayout, getContractBySignToken, getContractByContractNumber, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate, rentalTerms, findUserBySession } from '../../site';
 import { Context } from 'hono';
 
-export async function renderContractSignPage(c: Context, token: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
+export async function renderContractSignPage(c: Context, tokenOrNumber: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
   const currentUser = await findUserBySession(c, c.req.header('cookie') ?? null);
-  const contract = await getContractBySignToken(c, token);
+  let contract = await getContractBySignToken(c, tokenOrNumber);
+  
+  // 如果通过token找不到，尝试用合同编号查找（支持新的链接格式）
+  if (!contract) {
+    contract = await getContractByContractNumber(c, tokenOrNumber);
+  }
+  
   if (!contract) {
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
   }
@@ -66,7 +72,7 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
           
 
 
-          <form method="POST" action="/contract/sign?token=${token}&step=1">
+          <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=1">
             <label class="form-check" style="display: flex; align-items: center; gap: 8px;">
               <input type="checkbox" name="agreeTerms" required style="width: auto;"/> 
               <span>我已仔细阅读并完全同意上述所有租赁条款。</span>
@@ -255,7 +261,7 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
             <strong>应付总额: ${formatCurrency(order.totalAmount)}</strong> (租金 + 押金)
           </div>
 
-          <form method="POST" action="/contract/sign?token=${token}&step=3">
+          <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=3">
             <div class="payment-options" style="display: flex; flex-direction: column; gap: 15px;">
               ${systemSettings.paymentMethods.square ? `
               <label class="card" style="cursor: pointer; padding: 16px;">
@@ -273,7 +279,7 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
               ` : ''}
             </div>
             <div style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
-              <a href="/contract/sign?token=${token}&step=2" class="button-secondary">返回上一步</a>
+              <a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=2" class="button-secondary">返回上一步</a>
               <button class="button" type="submit">确认并完成签约</button>
             </div>
           </form>
@@ -281,7 +287,7 @@ export async function renderContractSignPage(c: Context, token: string, step: nu
       `;
       break;
     default:
-      content = '<div class="panel"><h2>无效的步骤</h2><p>请从第一步开始签署合同。 <a href="/contract/sign?token=${token}&step=1">点击这里返回第一步</a></p></div>';
+      content = '<div class="panel"><h2>无效的步骤</h2><p>请从第一步开始签署合同。 <a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=1">点击这里返回第一步</a></p></div>';
       break;
   }
 

@@ -1,22 +1,28 @@
 import { Context } from 'hono';
 import { 
-  getContractBySignToken, insertUser, updateOrderInDB, Order, User, 
+  getContractBySignToken, getContractByContractNumber, insertUser, updateOrderInDB, Order, User, 
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
   updateSignSession, deleteSignSession 
 } from '../../site';
 import { nanoid } from 'nanoid';
 
-export async function handleSignContractStep(c: Context, token: string, step: number, body: Record<string, string>): Promise<Response> {
+export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
+  const token = identifier; // 明确定义 token
+
   // 记录进入签约流程的日志
   await logError(c, 'DEBUG', `Entering contract signing process`, undefined, { 
-    token, 
+    identifier: token, // 使用明确定义的 token
     step, 
     requestBody: Object.keys(body) 
   });
 
-  const contract = await getContractBySignToken(c, token);
+  let contract = await getContractBySignToken(c, token); // 使用明确定义的 token
+  // 如果通过token找不到，尝试用合同编号查找（支持新的链接格式）
   if (!contract) {
-    await logError(c, 'WARNING', `Contract not found for signing token`, undefined, { token });
+    contract = await getContractByContractNumber(c, token); // 使用明确定义的 token
+  }
+  if (!contract) {
+    await logError(c, 'WARNING', `Contract not found for signing identifier`, undefined, { identifier: token }); // 使用明确定义的 token
     return new Response('合同链接无效或已过期', { status: 404 });
   }
 
@@ -34,7 +40,7 @@ export async function handleSignContractStep(c: Context, token: string, step: nu
       });
       // 将过期合同状态更新为已取消
       await updateContractStatusInDB(c, contract.id, 'cancelled');
-      return new Response('合同链接已过期，请联系管理员重新生成签约链接', { status: 400 });
+      return new Response('合同链接已过期，请联系工作人员重新生成签约链接', { status: 400 });
     }
   }
 

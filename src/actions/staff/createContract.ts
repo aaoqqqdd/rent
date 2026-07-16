@@ -74,7 +74,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   await insertContract(c, newContract);
   await updateDeviceStatus(c, device.id, 'rented');
 
-  const fullSignUrl = `${new URL(c.req.url).origin}/contract/sign?token=${signToken}`;
+  const fullSignUrl = `${new URL(c.req.url).origin}/contract/sign?number=${newContract.contractNumber}&step=1`;
   const successPage = `
     <div class="panel">
       <h2>签约链接已生成</h2>
