@@ -1,2 +1,2 @@
 -- migrations/0012_add_password_salt_to_users.sql
--- ALTER TABLE users ADD COLUMN password_salt TEXT;
+ALTER TABLE users ADD COLUMN password_salt TEXT;

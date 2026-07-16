@@ -698,6 +698,12 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
 export async function insertUser(c: Context, user: any): Promise<User> {
   const db = getDB(c)
 
+  // 检查数据库中存在哪些密码相关的列
+  const hasPasswordHashSnake = await userHasColumn(c, 'password_hash')
+  const hasPasswordHashCamel = await userHasColumn(c, 'passwordHash')
+  const hasPasswordSaltSnake = await userHasColumn(c, 'password_salt')
+  const hasPasswordSaltCamel = await userHasColumn(c, 'passwordSalt')
+
   let passwordHashToStore = user.passwordHash ?? null;
   let passwordSaltToStore = user.passwordSalt ?? null;
 
@@ -708,12 +714,40 @@ export async function insertUser(c: Context, user: any): Promise<User> {
     passwordSaltToStore = newSalt;
   }
 
-  await db.prepare('INSERT INTO users (id, name, email, passwordHash, passwordSalt, role, status, balance, commissionBalance, referralCode, referrerId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(user.id, user.name, user.email, passwordHashToStore, passwordSaltToStore, user.role, user.status ?? 'active', user.balance ?? 0, user.commissionBalance ?? 0, user.referralCode ?? null, user.referrerId ?? null, user.createdAt ?? new Date().toISOString())
-    .run()
+  // 构建INSERT字段和值
+  const insertFields = ['id', 'name', 'email', 'role', 'status', 'balance', 'commissionBalance', 'referralCode', 'referrerId', 'createdAt'];
+  const insertValues = [user.id, user.name, user.email, user.role, user.status ?? 'active', user.balance ?? 0, user.commissionBalance ?? 0, user.referralCode ?? null, user.referrerId ?? null, user.createdAt ?? new Date().toISOString()];
+
+  // 根据数据库存在的列添加密码相关字段
+  if (passwordHashToStore !== null) {
+    if (hasPasswordHashSnake) {
+      insertFields.push('password_hash');
+      insertValues.push(passwordHashToStore);
+    } else if (hasPasswordHashCamel) {
+      insertFields.push('passwordHash');
+      insertValues.push(passwordHashToStore);
+    }
+  }
+
+  if (passwordSaltToStore !== null) {
+    if (hasPasswordSaltSnake) {
+      insertFields.push('password_salt');
+      insertValues.push(passwordSaltToStore);
+    } else if (hasPasswordSaltCamel) {
+      insertFields.push('passwordSalt');
+      insertValues.push(passwordSaltToStore);
+    }
+  }
+
+  const placeholders = insertFields.map(() => '?').join(', ');
+  const sql = `INSERT INTO users (${insertFields.join(', ')}) VALUES (${placeholders})`;
+  
+  await db.prepare(sql).bind(...insertValues).run()
   const inserted = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as User | null
   if (inserted && (inserted as any).passwordHash) delete (inserted as any).passwordHash
   if (inserted && (inserted as any).passwordSalt) delete (inserted as any).passwordSalt
+  if (inserted && (inserted as any).password_hash) delete (inserted as any).password_hash
+  if (inserted && (inserted as any).password_salt) delete (inserted as any).password_salt
   return inserted as User
 }
 
@@ -1354,22 +1388,36 @@ export async function verifyUserCredentials(c: Context, emailOrName: string, pas
 
   if (!userRow) return null
 
-  const passwordHash = userRow.password_hash
-  const passwordSalt = userRow.password_salt // 获取盐值
+  const passwordHash = userRow.password_hash || userRow.passwordHash;
+  const passwordSalt = userRow.password_salt || userRow.passwordSalt; // 获取盐值
 
   if (!passwordHash) return null
 
   let isPasswordValid = false;
   let needsMigration = false;
   if (passwordSalt) {
-    // 新的加盐 SHA-256 验证
+    // 场景 1: 新用户，password_salt 列中明确存储了盐值
     isPasswordValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`);
   } else {
-    // 旧的无盐 SHA-256 验证
+    // 场景 2 & 3: password_salt 列为 NULL (可能是旧用户或过渡期用户)
+
+    // 首先尝试使用旧的无盐 SHA-256 验证
     const oldHash = await oldSha256Hash(password);
-    isPasswordValid = oldHash === passwordHash;
-    if (isPasswordValid) {
-      needsMigration = true; // 标记需要迁移
+    if (oldHash === passwordHash) {
+      isPasswordValid = true;
+      needsMigration = true; // 标记需要迁移到新的加盐哈希
+    } else {
+      // 如果旧的无盐验证失败，尝试作为过渡期用户处理
+      // 场景 3: password_hash 列本身可能包含完整的 'salt$hash' 字符串
+      const parts = passwordHash.split('$');
+      if (parts.length === 2) {
+        const potentialSalt = parts[0];
+        const actualHashedPassword = parts[1];
+        isPasswordValid = await verifyPassword(password, `${potentialSalt}$${actualHashedPassword}`);
+        if (isPasswordValid) {
+          needsMigration = true; // 标记需要迁移，将盐值正确存储到 password_salt 列
+        }
+      }
     }
   }
 
