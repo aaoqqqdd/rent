@@ -41,7 +41,6 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     paymentMethod: 'bank_transfer',
     totalAmount: totalAmount,
     depositAmount: depositAmount,
-    dailyRate: dailyRate,
     contractId: contractId,
     signedAt: null,
     createdAt: new Date().toISOString(),

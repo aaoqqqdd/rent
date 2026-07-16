@@ -660,7 +660,7 @@ app.get('/admin/finance', async (c) => {
   }
   const { getOrdersAsync } = await import('./site')
   const orders = await getOrdersAsync(c)
-  return c.html(await pages.renderAdminFinance(c, user, orders))
+  return c.html(pages.renderAdminFinance(user, orders))
 })
 
 app.get('/admin/devices', async (c) => {
@@ -670,7 +670,7 @@ app.get('/admin/devices', async (c) => {
   }
   const { getDevicesAsync } = await import('./site')
   const devices = await getDevicesAsync(c)
-  return c.html(await pages.renderAdminDevices(c, user, devices))
+  return c.html(pages.renderAdminDevices(user, devices))
 })
 
 app.get('/admin/devices/new', async (c) => {

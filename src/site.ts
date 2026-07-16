@@ -317,7 +317,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
   const db = getDB(c)
   await db
     .prepare(
-      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, status, paymentMethod, totalAmount, depositAmount, dailyRate, contractId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, status, paymentMethod, totalAmount, depositAmount, contractId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .bind(
       order.id,
@@ -330,7 +330,6 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
       order.paymentMethod,
       order.totalAmount,
       order.depositAmount,
-      order.dailyRate,
       order.contractId,
       order.createdAt
     )
@@ -359,7 +358,7 @@ export async function updateOrder(c: Context, order: Order): Promise<void> {
   const db = getDB(c)
   await db
     .prepare(
-      'UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, dailyRate = ?, contractId = ?, signedAt = ? WHERE id = ?'
+      'UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, contractId = ?, signedAt = ? WHERE id = ?'
     )
     .bind(
       order.orderNo,
@@ -371,7 +370,6 @@ export async function updateOrder(c: Context, order: Order): Promise<void> {
       order.paymentMethod,
       order.totalAmount,
       order.depositAmount,
-      order.dailyRate,
       order.contractId,
       order.signedAt,
       order.id
@@ -669,16 +667,16 @@ export async function updatePassword(c: Context, userId: string, newPassword: st
 }
 
 export async function bindReferrer(c: Context, userId: string, referrerId: string): Promise<User | null> {
-  // 绑定后不可更改：如果 referrer_id 已存在则不更新
+  // 绑定后不可更改：如果 referrerId 已存在则不更新
   const db = getDB(c)
-  await db.prepare('UPDATE users SET referrer_id = ? WHERE id = ? AND referrer_id IS NULL').bind(referrerId, userId).run()
+  await db.prepare('UPDATE users SET referrerId = ? WHERE id = ? AND referrerId IS NULL').bind(referrerId, userId).run()
   return getUserById(c, userId)
 }
 
-export async function unbindReferrer(c: Context, userId: string): Promise<User | null> {
+export async function unbindReferrer(c: Context, userId: string, referrerId: string): Promise<User | null> {
   // 允许解除（如果你不允许，删除该函数或改成 no-op）
   const db = getDB(c)
-  await db.prepare('UPDATE users SET referrer_id = NULL WHERE id = ?').bind(userId).run()
+  await db.prepare('UPDATE users SET referrerId = NULL WHERE id = ?').bind(userId).run()
   return getUserById(c, userId)
 }
 
