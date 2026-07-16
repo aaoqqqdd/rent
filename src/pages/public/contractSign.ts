@@ -175,7 +175,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 </div>
                 <div style="flex: 1;">
                   <input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" oninput="validatePhoneNumber(); updatePlaceholder()" required placeholder="请输入手机号码" />
-                  <span id="phoneError" style="color: #ef4444; font-size: 14px; display: none;">电话号码格式不正确，请检查输入</span>
+                  <span id="phoneError" style="color: #ef4444; font-size: 14px; display: none;"></span>
                 </div>
               </div>
             </div>
@@ -234,28 +234,51 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 const phoneError = document.getElementById('phoneError');
                 let isValid = false;
                 
+                // 每个国家的详细手机号格式要求
                 const phonePatterns = {
-                  '+86': /^1[3-9]\d{9}$/, // 中国：11位手机号
-                  '+61': /^\d{9,10}$/, // 澳大利亚：9-10位，支持固定电话和手机
-                  '+1': /^\d{10,11}$/, // 美国/加拿大：10-11位
-                  '+44': /^\d{10,11}$/, // 英国：10-11位
-                  '+852': /^\d{8,9}$/, // 香港：8-9位
-                  '+886': /^\d{9,10}$/, // 台湾：9-10位
-                  '+65': /^\d{8,9}$/, // 新加坡：8-9位
-                  '+82': /^\d{9,11}$/, // 韩国：9-11位
-                  '+81': /^\d{10,11}$/ // 日本：10-11位
+                  '+86': /^1[3-9]\d{9}$/, // 中国：11位，必须以13-19开头
+                  '+61': /^0\d{9}$/, // 澳大利亚：手机以4开头，共9位
+                  '+1': /^\d{10}$/, // 美国/加拿大：10位手机号
+                  '+44': /^7\d{9}$/, // 英国：手机以7开头，共10位
+                  '+852': /^[4-9]\d{7}$/, // 香港：手机以5/6/9开头，共8位
+                  '+886': /^9\d{8}$/, // 台湾：手机以9开头，共9位
+                  '+65': /^[89]\d{7}$/, // 新加坡：手机以8/9开头，共8位
+                  '+82': /^1[0-9]\d{7,8}$/, // 韩国：手机以1开头，共9-10位
+                  '+81': /^[789]0\d{8}$/ // 日本：手机以70/80/90开头，共10位
+                };
+                
+                // 错误提示信息
+                const errorMessages = {
+                  '+86': '中国手机号需要11位，必须以13-19开头',
+                  '+61': '澳大利亚手机号需要9位，必须以4开头',
+                  '+1': '美国/加拿大手机号需要10位数字',
+                  '+44': '英国手机号需要10位，必须以7开头',
+                  '+852': '香港手机号需要8位，必须以5/6/9开头',
+                  '+886': '台湾手机号需要9位，必须以9开头',
+                  '+65': '新加坡手机号需要8位，必须以8/9开头',
+                  '+82': '韩国手机号需要9-10位，必须以1开头',
+                  '+81': '日本手机号需要10位，必须以70/80/90开头'
                 };
                 
                 const pattern = phonePatterns[phoneCode];
+                console.log('验证手机号:', phoneCode, phoneNumber, '长度:', phoneNumber.length, '正则:', pattern);
+                
+                if (phoneNumber === '') {
+                  phoneError.style.display = 'none';
+                  return true;
+                }
+                
                 if (pattern && pattern.test(phoneNumber)) {
                   isValid = true;
                 }
                 
-                if (isValid || phoneNumber === '') {
+                if (isValid) {
                   phoneError.style.display = 'none';
+                  phoneError.textContent = '';
                   return true;
                 } else {
                   phoneError.style.display = 'block';
+                  phoneError.textContent = errorMessages[phoneCode] || '电话号码格式不正确';
                   return false;
                 }
               }
@@ -277,15 +300,15 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 const phoneCode = document.getElementById('phoneCode').value;
                 const phoneInput = document.getElementById('phone');
                 const placeholders = {
-                  '+86': '请输入11位手机号码',
-                  '+61': '请输入9-10位电话号码',
-                  '+1': '请输入10-11位电话号码',
-                  '+44': '请输入10-11位电话号码',
-                  '+852': '请输入8-9位电话号码',
-                  '+886': '请输入9-10位电话号码',
-                  '+65': '请输入8-9位电话号码',
-                  '+82': '请输入9-11位电话号码',
-                  '+81': '请输入10-11位电话号码'
+                  '+86': '请输入11位手机号（以13-19开头）',
+                  '+61': '请输入9位手机号（以4开头）',
+                  '+1': '请输入10位手机号码',
+                  '+44': '请输入10位手机号（以7开头）',
+                  '+852': '请输入8位手机号（以5/6/9开头）',
+                  '+886': '请输入9位手机号（以9开头）',
+                  '+65': '请输入8位手机号（以8/9开头）',
+                  '+82': '请输入9-10位手机号（以1开头）',
+                  '+81': '请输入10位手机号（以70/80/90开头）'
                 };
                 phoneInput.placeholder = placeholders[phoneCode] || '请输入电话号码';
               }
