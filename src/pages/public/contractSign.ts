@@ -235,6 +235,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 const rawPhone = phoneNumber.replace(/\D/g, '');
                 let phoneToValidate = rawPhone;
 
+                console.log('validatePhoneNumber called');
+                console.log('phoneCode:', phoneCode);
+                console.log('phoneNumber (raw input):', phoneNumber);
+                console.log('rawPhone (digits only):', rawPhone);
+
                 if (phoneCode === '+86') {
                   if (rawPhone.startsWith('86') && rawPhone.length === 13) {
                     phoneToValidate = rawPhone.slice(2);
