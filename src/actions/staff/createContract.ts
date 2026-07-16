@@ -33,7 +33,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const newOrder: Order = {
     id: orderId,
     orderNo: `OR${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}${new Date().getDate().toString().padStart(2, '0')}${nanoid(4)}`,
-    userId: 'temp-user', // 临时用户ID，将在客户签署时更新
+    userId: user.id, // 临时用户ID，将在客户签署时更新
     deviceId: deviceId,
     startDate: startDate,
     endDate: endDate,
@@ -45,9 +45,9 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     dailyRate: dailyRate,
     contractId: contractId,
     signedAt: null,
-    createdAt: new Date().toISOString(),
+    createdAt: new Date().toISOString()
     // created_by 在部分旧代码/表结构中存在，这里与 Order 类型对齐使用 createdAt
-    createdAtBy: user.id,
+    // createdAtBy: user.id,
   } as any;
 
   const newContract: Contract = {
