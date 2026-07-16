@@ -31,11 +31,12 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接已失效</h2><p>该合同已被取消或已过期，请联系工作人员获取新的签约链接。</p></div>');
   }
 
-  // 调试：记录 contract.rentalId
-  console.log('Attempting to fetch order with rentalId:', contract.rentalId);
-  const order = await getOrderById(c, contract.rentalId);
+  // 统一处理rentalId和rental_id字段，确保能正确获取订单ID
+  const orderId = contract.rentalId || contract.rental_id;
+  console.log('Attempting to fetch order with orderId:', orderId);
+  const order = await getOrderById(c, orderId);
   if (!order) {
-    console.error('Order not found for rentalId:', contract.rentalId); // 调试：记录未找到订单的 rentalId
+    console.error('Order not found for orderId:', orderId);
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
   }
 

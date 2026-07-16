@@ -184,7 +184,34 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
   if (!actualId) return null
   const orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
   if (!orderRow) return null
-  return orderRow as Order
+  
+  // 统一处理snake_case和camelCase字段
+  const deviceId = orderRow.deviceId ?? orderRow.device_id
+  const startDate = orderRow.startDate ?? orderRow.start_date
+  const endDate = orderRow.endDate ?? orderRow.end_date
+  const rentalPeriod = orderRow.rentalPeriod ?? orderRow.rental_period
+  const totalAmount = orderRow.totalAmount ?? orderRow.total_amount
+  const depositAmount = orderRow.depositAmount ?? orderRow.deposit_amount
+  const createdAt = orderRow.createdAt ?? orderRow.created_at
+  
+  // 确保返回的订单对象同时包含两种格式的字段，兼容所有调用方
+  return {
+    ...orderRow,
+    deviceId,
+    device_id: deviceId,
+    startDate,
+    start_date: startDate,
+    endDate,
+    end_date: endDate,
+    rentalPeriod,
+    rental_period: rentalPeriod,
+    totalAmount,
+    total_amount: totalAmount,
+    depositAmount,
+    deposit_amount: depositAmount,
+    createdAt,
+    created_at: createdAt
+  } as Order
 }
 
 export async function getDeviceById(cOrContext: Context | string, id?: string): Promise<Device | null> {
@@ -440,7 +467,9 @@ export async function updateContractStatusInDB(c: Context, contractId: string, s
 
 export async function getContractByContractNumber(c: Context, contractNumber: string): Promise<Contract | null> {
   const db = getDB(c)
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE contractNumber = ?').bind(contractNumber).first()
+  // 将输入的合同编号转为大写，数据库中存储的都是大写字母和数字，实现大小写不敏感查询
+  const upperCaseContractNumber = contractNumber.toUpperCase()
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE contractNumber = ?').bind(upperCaseContractNumber).first()
   if (!contractRow) return null
   
   // 统一处理snake_case和camelCase字段
