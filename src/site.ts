@@ -1360,6 +1360,7 @@ export async function loadDatabaseData(c: Context): Promise<void> {
 }
 
 export async function verifyUserCredentials(c: Context, emailOrName: string, password: string): Promise<User | null> {
+  console.log(`[DEBUG] verifyUserCredentials: Attempting login for ${emailOrName}`);
   const db = getDB(c)
 
   // 检查数据库中存在哪些密码相关的列，避免 D1_ERROR: no such column
@@ -1386,29 +1387,43 @@ export async function verifyUserCredentials(c: Context, emailOrName: string, pas
     .bind(emailOrName, emailOrName)
     .first()
 
-  if (!userRow) return null
+  if (!userRow) {
+    console.log(`[DEBUG] verifyUserCredentials: User ${emailOrName} not found.`);
+    return null;
+  }
+  console.log(`[DEBUG] verifyUserCredentials: User found. ID: ${userRow.id}, Email: ${userRow.email}`);
 
   const passwordHash = userRow.password_hash || userRow.passwordHash;
   const passwordSalt = userRow.password_salt || userRow.passwordSalt; // 获取盐值
+  console.log(`[DEBUG] verifyUserCredentials: Retrieved passwordHash: ${passwordHash ? 'exists' : 'null'}, passwordSalt: ${passwordSalt ? 'exists' : 'null'}`);
 
-  if (!passwordHash) return null
+
+  if (!passwordHash) {
+    console.log(`[DEBUG] verifyUserCredentials: No passwordHash found for user ${emailOrName}.`);
+    return null;
+  }
 
   let isPasswordValid = false;
   let needsMigration = false;
   if (passwordSalt) {
     // 场景 1: 新用户，password_salt 列中明确存储了盐值
     isPasswordValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`);
+    console.log(`[DEBUG] verifyUserCredentials: Using salted hash verification. isPasswordValid: ${isPasswordValid}`);
   } else {
     // 场景 2 & 3: password_salt 列为 NULL (可能是旧用户或过渡期用户)
+    console.log(`[DEBUG] verifyUserCredentials: passwordSalt is null. Attempting old/transition verification.`);
 
     // 首先尝试使用旧的无盐 SHA-256 验证
     const oldHash = await oldSha256Hash(password);
+    console.log(`[DEBUG] verifyUserCredentials: Old SHA-256 hash generated.`);
     if (oldHash === passwordHash) {
       isPasswordValid = true;
       needsMigration = true; // 标记需要迁移到新的加盐哈希
+      console.log(`[DEBUG] verifyUserCredentials: Old SHA-256 hash matched. isPasswordValid: ${isPasswordValid}, needsMigration: ${needsMigration}`);
     } else {
       // 如果旧的无盐验证失败，尝试作为过渡期用户处理
       // 场景 3: password_hash 列本身可能包含完整的 'salt$hash' 字符串
+      console.log(`[DEBUG] verifyUserCredentials: Old SHA-256 hash did not match. Checking for salt$hash in passwordHash.`);
       const parts = passwordHash.split('$');
       if (parts.length === 2) {
         const potentialSalt = parts[0];
@@ -1417,13 +1432,21 @@ export async function verifyUserCredentials(c: Context, emailOrName: string, pas
         if (isPasswordValid) {
           needsMigration = true; // 标记需要迁移，将盐值正确存储到 password_salt 列
         }
+        console.log(`[DEBUG] verifyUserCredentials: Attempted salt$hash in passwordHash. isPasswordValid: ${isPasswordValid}, needsMigration: ${needsMigration}`);
+      } else {
+        console.log(`[DEBUG] verifyUserCredentials: passwordHash does not contain salt$hash format.`);
       }
     }
   }
 
-  if (!isPasswordValid) return null
+  if (!isPasswordValid) {
+    console.log(`[DEBUG] verifyUserCredentials: Final isPasswordValid is false. Returning null.`);
+    return null;
+  }
 
+  console.log(`[DEBUG] verifyUserCredentials: Password is valid. needsMigration: ${needsMigration}`);
   if (needsMigration) {
+    console.log(`[DEBUG] verifyUserCredentials: Performing password migration.`);
     // 密码迁移：使用新的加盐 SHA-256 重新哈希并更新数据库
     const newHashedPassword = await hashPassword(password);
     const [newSalt, newHash] = newHashedPassword.split('$');
@@ -1435,6 +1458,7 @@ export async function verifyUserCredentials(c: Context, emailOrName: string, pas
     // 更新 userRow 以反映新的哈希和盐值，避免在后续操作中再次触发迁移
     userRow.password_hash = newHash;
     userRow.password_salt = newSalt;
+    console.log(`[DEBUG] verifyUserCredentials: Password migration complete for user ${userRow.id}.`);
   }
 
   // 清理返回体里的 hash 和 salt 字段
@@ -1442,6 +1466,7 @@ export async function verifyUserCredentials(c: Context, emailOrName: string, pas
   delete userRow.passwordHash
   delete userRow.password_salt
   delete userRow.passwordSalt
+  console.log(`[DEBUG] verifyUserCredentials: Returning user object for ${userRow.id}.`);
 
   return userRow as User
 }
