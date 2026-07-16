@@ -317,7 +317,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
   const db = getDB(c)
   await db
     .prepare(
-      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, status, paymentMethod, totalAmount, depositAmount, contractId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, rentalPeriod, status, paymentMethod, totalAmount, depositAmount, contractId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .bind(
       order.id,
@@ -326,6 +326,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
       order.deviceId,
       order.startDate,
       order.endDate,
+      order.rentalPeriod, // Add rentalPeriod here
       order.status,
       order.paymentMethod,
       order.totalAmount,
