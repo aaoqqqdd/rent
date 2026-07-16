@@ -37,10 +37,12 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     deviceId: deviceId,
     startDate: startDate,
     endDate: endDate,
+    rentalPeriod: rentalPeriod, // 添加 rentalPeriod
     status: 'pending_approval',
     paymentMethod: 'bank_transfer',
     totalAmount: totalAmount,
     depositAmount: depositAmount,
+    dailyRate: dailyRate,
     contractId: contractId,
     signedAt: null,
     createdAt: new Date().toISOString(),
