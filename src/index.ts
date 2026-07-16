@@ -156,7 +156,7 @@ app.post('/register', async (c) => {
     id: newUserId,
     name: name.trim(),
     email: email.trim(),
-    password_hash: await hashPassword(password),
+    passwordHash: await hashPassword(password),
     role: 'CUSTOMER' as const,
     balance: 0,
     commissionBalance: 0,
