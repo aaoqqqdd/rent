@@ -7,8 +7,15 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
   const allOrders = await getOrders(c)
   const allUsers = await getUsers(c) // 获取所有用户用于搜索
 
+  // 根据状态筛选合同
   if (status) {
-    allContracts = allContracts.filter((ct) => ct.status === status)
+    // 如果是合同状态（pending_sign/signed/completed/cancelled），只筛选合同
+    if (status === 'pending_sign' || status === 'signed' || status === 'completed' || status === 'cancelled') {
+      allContracts = allContracts.filter((ct) => ct.status === status)
+    } else {
+      // 如果是租赁状态（active），合同部分不显示，只筛选租赁订单
+      allContracts = []
+    }
   }
 
   // 如果有搜索关键词，过滤合同
@@ -42,16 +49,37 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
   )
 
   // 处理租赁订单详情（用于租赁进度部分）
+  let filteredOrders = allOrders
+  if (status && ['active', 'completed', 'cancelled'].includes(status)) {
+    filteredOrders = allOrders.filter((r: any) => r.status === status)
+  }
   const ordersWithDetails = await Promise.all(
-    allOrders.map(async (order: any) => {
+    filteredOrders.map(async (order: any) => {
       const customer = await getUserById(c, order.userId)
       const device = await getDeviceById(c, order.deviceId)
       return { ...order, customer, device }
     })
   )
 
-  const activeRentals = ordersWithDetails.filter((r: any) => r.status === 'active')
-  const historicalRentals = ordersWithDetails.filter((r: any) => r.status !== 'active')
+  // 根据筛选状态显示对应的租赁部分
+  let activeRentals = []
+  let completedRentals = []
+  let cancelledRentals = []
+  let otherHistoricalRentals = []
+  
+  if (status === 'active') {
+    activeRentals = ordersWithDetails
+  } else if (status === 'completed') {
+    completedRentals = ordersWithDetails
+  } else if (status === 'cancelled') {
+    cancelledRentals = ordersWithDetails
+  } else {
+    // 无状态筛选时显示所有分类
+    activeRentals = ordersWithDetails.filter((r: any) => r.status === 'active')
+    completedRentals = ordersWithDetails.filter((r: any) => r.status === 'completed')
+    cancelledRentals = ordersWithDetails.filter((r: any) => r.status === 'cancelled')
+    otherHistoricalRentals = ordersWithDetails.filter((r: any) => r.status !== 'active' && r.status !== 'completed' && r.status !== 'cancelled')
+  }
 
   const body = `
     <div class="panel">
@@ -60,13 +88,14 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       ${successMessage ? `<div class="alert alert-success">${successMessage}</div>` : ''}
       ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
 
-      <!-- 合同管理部分 -->
-      <h3 style="margin-top: 0; margin-bottom: 16px;">合同管理</h3>
+      <!-- 统一的筛选按钮 - 包含合同和租赁状态 -->
+      <h3 style="margin-top: 0; margin-bottom: 16px;">合同与租赁管理</h3>
       <div class="filter-tabs" style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
         <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
         <a href="/staff/contracts?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
         <a href="/staff/contracts?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
         <a href="/staff/contracts?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
+        <a href="/staff/contracts?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
       </div>
       
       <!-- 搜索功能 -->
@@ -95,6 +124,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           <tbody>
             ${contractsWithDetails
               .map(({ contract, order, customer }) => {
+                const canCancel = user && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id)
                 return `
                 <tr>
                   <td>${contract.contractNumber}</td>
@@ -106,11 +136,11 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                     <a class="button button-sm button-secondary" href="/staff/contract/view/${contract.id}">查看合同</a>
                     ${
                       contract.status === 'pending_sign'
-                        ? `<a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>
+                        ? `
+                          <a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>
                           <button class="button button-sm button-success" onclick="navigator.clipboard.writeText(window.location.origin + '/contract/sign?number=${contract.contractNumber}&step=1').then(()=>alert('合同签署链接已复制到剪贴板！'))">复制签署链接</button>
-                          <form action="/staff/contract/${contract.id}/cancel" method="post" style="display:inline;">
-                            <button type="submit" class="button button-sm button-danger" onclick="return confirm('确定要取消这份合同吗？');">取消</button>
-                          </form>`
+                          ${canCancel ? `<form action="/staff/contract/${contract.id}/cancel" method="post" style="display:inline;"><button type="submit" class="button button-sm button-danger" onclick="return confirm('确定要取消这份合同吗？');">取消</button></form>` : ''}
+                        `
                         : ''
                     }
                     ${order?.status === 'active' ? `<a class="button button-sm button-info" href="/staff/orders/${contract.rentalId}">租赁详情</a>` : ''}
@@ -166,43 +196,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           : '<p>目前没有正在租赁的设备。</p>'
       }
 
-      <h3 style="margin-top: 40px; margin-bottom: 16px;">已完成/已取消租赁</h3>
-      ${
-        historicalRentals.length > 0
-          ? `
-        <table class="table">
-          <thead>
-            <tr>
-              <th>订单编号</th>
-              <th>客户</th>
-              <th>设备</th>
-              <th>租期</th>
-              <th>状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${historicalRentals
-              .map((order: any) => {
-                return `
-                <tr>
-                  <td>${order.orderNo}</td>
-                  <td>${order.customer?.name ?? '待客户填写'}</td>
-                  <td>${order.device?.name ?? '未知设备'}</td>
-                  <td>${order.startDate} 至 ${order.endDate}</td>
-                  <td>${order.status}</td>
-                  <td>
-                    <a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看详情</a>
-                  </td>
-                </tr>
-              `
-              })
-              .join('')}
-          </tbody>
-        </table>
-      `
-          : '<p>没有历史租赁记录。</p>'
-      }
+
     </div>
   `
 

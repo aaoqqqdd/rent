@@ -10,8 +10,8 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
   }
 
   try {
-    // 获取当前用户信息
-    const user = await findUserBySession(c);
+    // 获取当前用户信息（传入 cookie header）
+    const user = await findUserBySession(c, c.req.header('cookie') ?? null);
     if (!user) {
       await logError(c, 'WARNING', `Unauthorized attempt to cancel contract. Contract ID: ${contractId}`);
       return c.redirect('/login?error=Please log in first');

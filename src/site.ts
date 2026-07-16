@@ -104,6 +104,7 @@ export interface Contract {
   signExpiresAt?: string | null
   sign_expires_at?: string | null
   created_by?: string | null // 记录合同创建人ID
+  createdBy?: string | null // camelCase 兼容：合同创建人ID
   deleted_at?: string | null // 软删除时间戳
 
   // snake_case 兼容旧页面
@@ -493,7 +494,7 @@ export async function getContractByContractNumber(c: Context, contractNumber: st
   const db = getDB(c)
   // 将输入的合同编号转为大写，数据库中存储的都是大写字母和数字，实现大小写不敏感查询
   const upperCaseContractNumber = contractNumber.toUpperCase()
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE contractNumber = ?').bind(upperCaseContractNumber).first()
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE UPPER(contractNumber) = ?').bind(upperCaseContractNumber).first()
   if (!contractRow) return null
   
   // 统一处理snake_case和camelCase字段
@@ -562,6 +563,45 @@ export async function findUserByEmail(c: Context, email: string): Promise<User |
   const userRow = await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
   if (!userRow) return null
   return normalizeUserRow(userRow)
+}
+
+export async function verifyUserCredentials(c: Context, account: string, password: string): Promise<User | null> {
+  const db = getDB(c)
+  // Find user by email first
+  const userRow = await db.prepare('SELECT * FROM users WHERE email = ?').bind(account).first()
+  if (userRow) {
+    // Check password
+    const normalizedUser = normalizeUserRow(userRow)
+    // Get password hash (handle both camelCase and snake_case)
+    const passwordHash = userRow.passwordHash || userRow.password_hash
+    const passwordSalt = userRow.passwordSalt || userRow.password_salt
+    if (passwordHash && passwordSalt) {
+      const isValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`)
+      if (isValid) {
+        delete (normalizedUser as any).passwordHash
+        delete (normalizedUser as any).passwordSalt
+        delete (normalizedUser as any).password
+        return normalizedUser
+      }
+    }
+  }
+  // If not found by email, try phone number as account
+  const phoneRow = await db.prepare('SELECT * FROM users WHERE phone = ?').bind(account).first()
+  if (phoneRow) {
+    const normalizedUser = normalizeUserRow(phoneRow)
+    const passwordHash = phoneRow.passwordHash || phoneRow.password_hash
+    const passwordSalt = phoneRow.passwordSalt || phoneRow.password_salt
+    if (passwordHash && passwordSalt) {
+      const isValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`)
+      if (isValid) {
+        delete (normalizedUser as any).passwordHash
+        delete (normalizedUser as any).passwordSalt
+        delete (normalizedUser as any).password
+        return normalizedUser
+      }
+    }
+  }
+  return null
 }
 
 export async function findUserByReferralCode(c: Context, referralCode: string): Promise<User | null> {
@@ -1432,8 +1472,6 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
     normalized.referralCode = ''
   }
   return normalized
-
-  return user
 }
 
 export function buildLayout(title: string, body: string, currentUser?: User | null): string {

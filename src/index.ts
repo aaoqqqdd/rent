@@ -266,8 +266,13 @@ app.get('/staff/contracts', async (c) => {
 })
 
 app.get('/staff/rentals/tracking', async (c) => {
-  // 旧的租赁追踪页面已融合到合同管理页面，自动重定向
-  return c.redirect('/staff/contracts')
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+    return c.redirect('/login')
+  }
+  // 获取查询参数中的status
+  const status = c.req.query('status')
+  return c.html(await pages.renderStaffRentalsTracking(c, user, status))
 })
 
 app.get('/staff/devices', async (c) => {
