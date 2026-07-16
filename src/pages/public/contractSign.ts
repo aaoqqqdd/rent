@@ -232,15 +232,18 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 const phoneCode = document.getElementById('phoneCode').value;
                 const phoneNumber = document.getElementById('phone').value.trim();
                 const phoneError = document.getElementById('phoneError');
-                let isValid = false;
+                const rawPhone = phoneNumber.replace(/\D/g, '');
+                const normalizedPhone = phoneCode === '+86' && rawPhone.startsWith('86') && rawPhone.length > 11
+                  ? rawPhone.slice(2)
+                  : rawPhone;
                 
                 // 每个国家的详细手机号格式要求
                 const phonePatterns = {
                   '+86': /^1[3-9]\d{9}$/, // 中国：11位，必须以13-19开头
-                  '+61': /^0\d{9}$/, // 澳大利亚：手机以4开头，共9位
+                  '+61': /^0\d{10}$/, // 澳大利亚：手机以4开头，共10位
                   '+1': /^\d{10}$/, // 美国/加拿大：10位手机号
                   '+44': /^7\d{9}$/, // 英国：手机以7开头，共10位
-                  '+852': /^[4-9]\d{7}$/, // 香港：手机以5/6/9开头，共8位
+                  '+852': /^[5689]\d{7}$/, // 香港：手机以5/6/8/9开头，共8位
                   '+886': /^9\d{8}$/, // 台湾：手机以9开头，共9位
                   '+65': /^[89]\d{7}$/, // 新加坡：手机以8/9开头，共8位
                   '+82': /^1[0-9]\d{7,8}$/, // 韩国：手机以1开头，共9-10位
@@ -253,7 +256,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                   '+61': '澳大利亚手机号需要10位，必须以0开头',
                   '+1': '美国/加拿大手机号需要10位数字',
                   '+44': '英国手机号需要10位，必须以7开头',
-                  '+852': '香港手机号需要8位，必须以4-9开头',
+                  '+852': '香港手机号需要8位，必须以5、6、8或9开头',
                   '+886': '台湾手机号需要9位，必须以9开头',
                   '+65': '新加坡手机号需要8位，必须以8/9开头',
                   '+82': '韩国手机号需要9-10位，必须以1开头',
@@ -261,18 +264,15 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 };
                 
                 const pattern = phonePatterns[phoneCode];
-                console.log('验证手机号:', phoneCode, phoneNumber, '长度:', phoneNumber.length, '正则:', pattern);
+                const phoneToValidate = phoneCode === '+86' ? normalizedPhone : rawPhone;
                 
                 if (phoneNumber === '') {
                   phoneError.style.display = 'none';
                   return true;
                 }
                 
-                if (pattern && pattern.test(phoneNumber)) {
-                  isValid = true;
-                }
-                
-                if (isValid) {
+                const testResult = pattern ? pattern.test(phoneToValidate) : false;
+                if (testResult) {
                   phoneError.style.display = 'none';
                   phoneError.textContent = '';
                   return true;
@@ -301,10 +301,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 const phoneInput = document.getElementById('phone');
                 const placeholders = {
                   '+86': '请输入11位手机号（以13-19开头）',
-                  '+61': '请输入9位手机号（以4开头）',
+                  '+61': '请输入10位手机号（以0开头）',
                   '+1': '请输入10位手机号码',
                   '+44': '请输入10位手机号（以7开头）',
-                  '+852': '请输入8位手机号（以5/6/9开头）',
+                  '+852': '请输入8位手机号（以4-9开头）',
                   '+886': '请输入9位手机号（以9开头）',
                   '+65': '请输入8位手机号（以8/9开头）',
                   '+82': '请输入9-10位手机号（以1开头）',
@@ -321,7 +321,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               document.getElementById('sign-form').addEventListener('submit', function(e) {
                 if (!validatePhoneNumber()) {
                   e.preventDefault();
-                  alert('请输入正确格式的电话号码');
+                  // 错误信息已在 validatePhoneNumber 中显示，无需额外 alert
                 }
               });
             </script>

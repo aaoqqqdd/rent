@@ -112,13 +112,17 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('两次输入的密码不一致。');
         }
         
-        // 验证电话号码格式 - 严格按照各国手机号格式
+        // 验证电话号码格式 - 先清理空格、连字符和国际前缀，再按各国规则校验
+        const normalizedPhone = String(phone || '').replace(/\D/g, '');
+        const normalizedPhoneForChina = normalizedPhone.startsWith('86') && normalizedPhone.length > 11
+          ? normalizedPhone.slice(2)
+          : normalizedPhone;
         const phonePatterns: Record<string, RegExp> = {
           '+86': /^1[3-9]\d{9}$/, // 中国：11位，必须以13-19开头
-          '+61': /^0\d{9}$/, // 澳大利亚：手机以4开头，共9位
+          '+61': /^0\d{10}$/, // 澳大利亚：手机以0开头，共10位
           '+1': /^\d{10}$/, // 美国/加拿大：10位手机号
           '+44': /^7\d{9}$/, // 英国：手机以7开头，共10位
-          '+852': /^[4-9]\d{7}$/, // 香港：手机以5/6/9开头，共8位
+          '+852': /^[5689]\d{7}$/, // 香港：手机以5/6/8/9开头，共8位
           '+886': /^9\d{8}$/, // 台湾：手机以9开头，共9位
           '+65': /^[89]\d{7}$/, // 新加坡：手机以8/9开头，共8位
           '+82': /^1[0-9]\d{7,8}$/, // 韩国：手机以1开头，共9-10位
@@ -126,14 +130,15 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         };
         
         const pattern = phonePatterns[phoneCode];
-        if (pattern && !pattern.test(phone)) {
+        const phoneToValidate = phoneCode === '+86' ? normalizedPhoneForChina : normalizedPhone;
+        if (pattern && !pattern.test(phoneToValidate)) {
           // 详细的错误提示信息
           const errorMessages: Record<string, string> = {
             '+86': '中国手机号需要11位，必须以13-19开头',
             '+61': '澳大利亚手机号需要10位，必须以0开头',
             '+1': '美国/加拿大手机号需要10位数字',
             '+44': '英国手机号需要10位，必须以7开头',
-            '+852': '香港手机号需要8位，必须以4-9开头',
+            '+852': '香港手机号需要8位，必须以5、6、8或9开头',
             '+886': '台湾手机号需要9位，必须以9开头',
             '+65': '新加坡手机号需要8位，必须以8/9开头',
             '+82': '韩国手机号需要9-10位，必须以1开头',
@@ -171,7 +176,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         // 保存用户信息到会话
         await updateSignSession(c, token, { 
-          userInfo: { ...body, fullPhone: `${phoneCode}${phone}` } 
+          userInfo: { ...body, phone: phoneToValidate, fullPhone: `${phoneCode}${phoneToValidate}` } 
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
         
