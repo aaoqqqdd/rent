@@ -590,8 +590,8 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
 export async function insertUser(c: Context, user: any): Promise<User> {
   const db = getDB(c)
 
-  let passwordHashToStore = user.password_hash ?? null;
-  let passwordSaltToStore = user.password_salt ?? null;
+  let passwordHashToStore = user.passwordHash ?? null;
+  let passwordSaltToStore = user.passwordSalt ?? null;
 
   if (user.password) {
     const newHashedPassword = await hashPassword(user.password);
@@ -600,12 +600,12 @@ export async function insertUser(c: Context, user: any): Promise<User> {
     passwordSaltToStore = newSalt;
   }
 
-  await db.prepare('INSERT INTO users (id, name, email, password_hash, password_salt, role, status, balance, commissionBalance, referralCode, referrerId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  await db.prepare('INSERT INTO users (id, name, email, passwordHash, passwordSalt, role, status, balance, commissionBalance, referralCode, referrerId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .bind(user.id, user.name, user.email, passwordHashToStore, passwordSaltToStore, user.role, user.status ?? 'active', user.balance ?? 0, user.commissionBalance ?? 0, user.referralCode ?? null, user.referrerId ?? null, user.createdAt ?? new Date().toISOString())
     .run()
   const inserted = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as User | null
-  if (inserted && inserted.password_hash) delete (inserted as any).password_hash
-  if (inserted && inserted.password_salt) delete (inserted as any).password_salt
+  if (inserted && (inserted as any).passwordHash) delete (inserted as any).passwordHash
+  if (inserted && (inserted as any).passwordSalt) delete (inserted as any).passwordSalt
   return inserted as User
 }
 
@@ -616,8 +616,8 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
   if (fields.password) {
     const newHashedPassword = await hashPassword(fields.password);
     const [newSalt, newHash] = newHashedPassword.split('$');
-    fields.password_hash = newHash;
-    fields.password_salt = newSalt;
+    fields.passwordHash = newHash;
+    fields.passwordSalt = newSalt;
     delete fields.password;
   }
 
@@ -631,8 +631,8 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
 
   await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).bind(...values, userId).run()
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
-  if (updated && (updated as any).password_hash) delete (updated as any).password_hash
-  if (updated && (updated as any).password_salt) delete (updated as any).password_salt
+  if (updated && (updated as any).passwordHash) delete (updated as any).passwordHash
+  if (updated && (updated as any).passwordSalt) delete (updated as any).passwordSalt
   return updated
 }
 
@@ -673,7 +673,7 @@ export async function bindReferrer(c: Context, userId: string, referrerId: strin
   return getUserById(c, userId)
 }
 
-export async function unbindReferrer(c: Context, userId: string, referrerId: string): Promise<User | null> {
+export async function unbindReferrer(c: Context, userId: string): Promise<User | null> {
   // 允许解除（如果你不允许，删除该函数或改成 no-op）
   const db = getDB(c)
   await db.prepare('UPDATE users SET referrerId = NULL WHERE id = ?').bind(userId).run()
