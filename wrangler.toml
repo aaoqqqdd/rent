@@ -7,3 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 binding = "RENT"
 database_name = "rent"
 database_id = "65a5ded3-ffd8-4627-8ea4-9d8ced480b93"
+
+# Cron job to clean up expired and cancelled contracts - runs daily at midnight
+[triggers]
+crons = ["0 0 * * *"]

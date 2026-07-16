@@ -4,7 +4,17 @@ import { Context } from 'hono';
 export async function renderAdminContractDetail(c: Context, user: any, contractId: string) {
   const contract = await getContractById(c, contractId);
   if (!contract) {
-    return buildLayout('合同未找到 - 电脑租赁管理系统', `<div class="panel"><h2>合同未找到</h2><p>指定的合同不存在。</p><a href="/admin/contracts" class="button">返回合同列表</a></div>`, user);
+    return buildLayout('合同未找到 - 电脑租赁管理系统', `<div class="panel"><h2>合同未找到</h2><p>指定的合同不存在。<a href="/admin/contracts" class="button">返回合同列表</a></div>`, user);
+  }
+
+  // 检查合同是否已过期且未签署
+  const signExpiresAt = contract.signExpiresAt || contract.sign_expires_at;
+  if (signExpiresAt && contract.status === 'pending_sign') {
+    const now = new Date();
+    const expiryDate = new Date(signExpiresAt);
+    if (now > expiryDate) {
+      return buildLayout('合同查看 - 电脑租赁管理系统', '<div class="panel"><h2>合同已过期</h2><p>该合同已超过签署有效期，无法查看或签署。</p></div>', user);
+    }
   }
 
   const orderId = contract.rental_id || contract.rentalId

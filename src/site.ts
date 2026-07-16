@@ -103,6 +103,8 @@ export interface Contract {
   validUntil?: string | null // New field for contract validity end date
   signExpiresAt?: string | null
   sign_expires_at?: string | null
+  created_by?: string | null // 记录合同创建人ID
+  deleted_at?: string | null // 软删除时间戳
 
   // snake_case 兼容旧页面
   rental_id?: string
@@ -227,6 +229,8 @@ export async function getContractById(cOrContext: Context | string, id?: string)
   const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
   const valid_from = contractRow.valid_from ?? contractRow.validFrom
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
+  const createdBy = contractRow.createdBy ?? contractRow.created_by
+  const created_by = contractRow.created_by ?? contractRow.createdBy
   
   // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
   return {
@@ -238,7 +242,9 @@ export async function getContractById(cOrContext: Context | string, id?: string)
     rental_id,
     sign_expires_at,
     valid_from,
-    valid_until
+    valid_until,
+    createdBy,
+    created_by
   } as Contract
 }
 
@@ -258,6 +264,8 @@ export async function getContractByOrderId(cOrContext: Context | string, orderId
   const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
   const valid_from = contractRow.valid_from ?? contractRow.validFrom
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
+  const createdBy = contractRow.createdBy ?? contractRow.created_by
+  const created_by = contractRow.created_by ?? contractRow.createdBy
   
   // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
   return {
@@ -269,7 +277,9 @@ export async function getContractByOrderId(cOrContext: Context | string, orderId
     rental_id,
     sign_expires_at,
     valid_from,
-    valid_until
+    valid_until,
+    createdBy,
+    created_by
   } as Contract
 }
 
@@ -340,8 +350,8 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
 
 export async function insertContract(c: Context, contract: Contract): Promise<void> {
   const db = getDB(c);
-  await db.prepare('INSERT INTO contracts (id, orderId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
-    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil
+  await db.prepare('INSERT INTO contracts (id, orderId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil, signExpiresAt, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
+    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil, contract.signExpiresAt, contract.createdBy
   ).run();
 }
 
@@ -391,6 +401,36 @@ export async function updateContractStatus(c: Context, contractId: string, statu
   await db.prepare('UPDATE contracts SET status = ?, signedAt = ? WHERE id = ?').bind(status, signedAt, contractId).run()
 }
 
+// 定期清理过期和已取消的合同
+export async function cleanupExpiredAndCancelledContracts(c: Context): Promise<number> {
+  const db = getDB(c)
+  const now = new Date().toISOString()
+  
+  // 删除条件：
+  // 1. 已过期且未签署的合同 (status = 'pending_sign' 且 signExpiresAt < 当前时间)
+  // 2. 已被取消的合同，且取消时间超过7天 (status = 'cancelled' 且 updatedAt < 7天前)
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+  const sevenDaysAgoISO = sevenDaysAgo.toISOString()
+  
+  try {
+    const result = await db.prepare(`
+      DELETE FROM contracts 
+      WHERE (status = 'pending_sign' AND (signExpiresAt < ? OR sign_expires_at < ?))
+         OR (status = 'cancelled' AND (updatedAt < ? OR updated_at < ?))
+    `).bind(now, now, sevenDaysAgoISO, sevenDaysAgoISO).run()
+    
+    const deletedCount = result.meta?.changes || 0
+    if (deletedCount > 0) {
+      await logError(c, 'INFO', `Cleaned up ${deletedCount} expired/cancelled contracts`)
+    }
+    return deletedCount
+  } catch (error) {
+    await logError(c, 'ERROR', 'Failed to cleanup expired/cancelled contracts', error as Error)
+    return 0
+  }
+}
+
 // Compatibility alias expected by legacy code
 export async function updateContractStatusInDB(c: Context, contractId: string, status: string, signedAt: string | null = null): Promise<void> {
   await updateContractStatus(c, contractId, status, signedAt)
@@ -411,6 +451,8 @@ export async function getContractBySignToken(c: Context, signToken: string): Pro
   const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
   const valid_from = contractRow.valid_from ?? contractRow.validFrom
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
+  const createdBy = contractRow.createdBy ?? contractRow.created_by
+  const created_by = contractRow.created_by ?? contractRow.createdBy
   
   // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
   return {
@@ -422,7 +464,9 @@ export async function getContractBySignToken(c: Context, signToken: string): Pro
     rental_id,
     sign_expires_at,
     valid_from,
-    valid_until
+    valid_until,
+    createdBy,
+    created_by
   } as Contract
 }
 

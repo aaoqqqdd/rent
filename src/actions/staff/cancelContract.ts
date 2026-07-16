@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getContractById, updateContractStatus, logError } from '../../site';
+import { getContractById, updateContractStatus, logError, findUserBySession } from '../../site';
 
 export async function handleCancelContractAction(c: Context): Promise<Response> {
   const contractId = c.req.param('id');
@@ -10,6 +10,13 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
   }
 
   try {
+    // 获取当前用户信息
+    const user = await findUserBySession(c);
+    if (!user) {
+      await logError(c, 'WARNING', `Unauthorized attempt to cancel contract. Contract ID: ${contractId}`);
+      return c.redirect('/login?error=Please log in first');
+    }
+
     const contract = await getContractById(c, contractId);
 
     if (!contract) {
@@ -22,8 +29,17 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
       return c.redirect(`/staff/contracts?error=Only pending contracts can be cancelled`);
     }
 
+    // 权限检查：只有管理员或合同创建人才能取消合同
+    const isAdmin = user.role === 'ADMIN';
+    const isCreator = contract.created_by === user.id || contract.createdBy === user.id;
+    
+    if (!isAdmin && !isCreator) {
+      await logError(c, 'WARNING', `Permission denied: User ${user.id} attempted to cancel contract ${contractId} created by ${contract.created_by}`);
+      return c.redirect(`/staff/contracts?error=You don't have permission to cancel this contract`);
+    }
+
     await updateContractStatus(c, contractId, 'cancelled');
-    await logError(c, 'INFO', `Contract cancelled successfully. Contract ID: ${contractId}`);
+    await logError(c, 'INFO', `Contract cancelled successfully. Contract ID: ${contractId}, Cancelled by: ${user.id}`);
     return c.redirect('/staff/contracts?success=Contract cancelled successfully');
   } catch (error) {
     await logError(c, 'ERROR', `Failed to cancel contract. Contract ID: ${contractId}`, error as Error);

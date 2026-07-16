@@ -12,6 +12,16 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
     return buildLayout('合同查看 - 电脑租赁管理系统', `<div class="panel"><h2>合同未找到</h2><p>该订单没有关联的合同。</p></div>`, user);
   }
 
+  // 检查合同是否已过期且未签署
+  const signExpiresAt = contract.signExpiresAt || contract.sign_expires_at;
+  if (signExpiresAt && contract.status === 'pending_sign') {
+    const now = new Date();
+    const expiryDate = new Date(signExpiresAt);
+    if (now > expiryDate) {
+      return buildLayout('合同查看 - 电脑租赁管理系统', '<div class="panel"><h2>合同已过期</h2><p>该合同已超过签署有效期，无法查看或签署。</p></div>', user);
+    }
+  }
+
   const customer = await getUserById(c, order.userId);
 
   // 客户信息脱敏处理

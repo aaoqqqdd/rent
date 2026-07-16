@@ -27,6 +27,16 @@ export async function renderNewContractPage(c: Context, user: any) {
           </div>
         </div>
         <div class="form-group" style="margin-top: 16px;">
+          <label for="expiry-duration" class="form-label">合同签署过期时间（过期后无法签署或查看）</label>
+          <select id="expiry-duration" name="expiryDuration" class="select-control">
+            <option value="1">1 天</option>
+            <option value="3">3 天</option>
+            <option value="7" selected>7 天 (默认)</option>
+            <option value="15">15 天</option>
+            <option value="30">30 天</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-top: 16px;">
           <label for="validity-duration" class="form-label">合同有效期</label>
           <select id="validity-duration" name="validityDuration" class="select-control">
             <option value="1">1 天</option>
@@ -52,6 +62,7 @@ export async function renderNewContractPage(c: Context, user: any) {
         alert(decodeURIComponent(error));
       }
 
+      const expiryDurationSelect = document.getElementById('expiry-duration');
       const validityDurationSelect = document.getElementById('validity-duration');
       const validFromInput = document.getElementById('valid-from');
       const validUntilInput = document.getElementById('valid-until');

@@ -767,4 +767,35 @@ app.get('*', async (c) => {
   return c.html(pages.renderNotFound(user))
 })
 
-export default app
+// Handle scheduled events (cron jobs) for Cloudflare Workers
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: any, ctx: ExecutionContext) {
+    // Create a minimal context object that implements what our cleanup function needs
+    const c = {
+      env,
+      get: (key: string) => undefined,
+      set: () => {},
+      req: { url: 'https://scheduled-event' },
+      // Expose getDB function that the site.ts functions expect
+      ...(() => {
+        const getDB = () => env.RENT
+        return { getDB }
+      })()
+    } as any
+    
+    // Import and run the cleanup function
+    const { cleanupExpiredAndCancelledContracts, logError } = await import('./site')
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const deletedCount = await cleanupExpiredAndCancelledContracts(c)
+          console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
+        } catch (error) {
+          await logError(c, 'ERROR', 'Failed to run scheduled contract cleanup', error as Error)
+          console.error('Scheduled contract cleanup failed:', error)
+        }
+      })()
+    )
+  }
+}
