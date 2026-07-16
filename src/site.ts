@@ -161,14 +161,28 @@ export async function getUserById(cOrContext: Context | string, id?: string): Pr
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
   if (!actualId) return null
-  return db.prepare('SELECT * FROM users WHERE id = ?').bind(actualId).first() as User | null
+  const userRow = await db.prepare('SELECT * FROM users WHERE id = ?').bind(actualId).first()
+  if (!userRow) return null
+  
+  // 统一处理snake_case和camelCase字段
+  const account_number = userRow.account_number ?? userRow.accountNumber
+  const accountNumber = userRow.accountNumber ?? userRow.account_number
+  
+  // 确保返回的用户对象同时包含两种格式的字段，兼容所有调用方
+  return {
+    ...userRow,
+    account_number,
+    accountNumber
+  } as User
 }
 
 export async function getOrderById(cOrContext: Context | string, id?: string): Promise<Order | null> {
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
   if (!actualId) return null
-  return db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first() as Order | null
+  const orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
+  if (!orderRow) return null
+  return orderRow as Order
 }
 
 export async function getDeviceById(cOrContext: Context | string, id?: string): Promise<Device | null> {
@@ -177,25 +191,86 @@ export async function getDeviceById(cOrContext: Context | string, id?: string): 
   if (!actualId) return null
   const deviceRow = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(actualId).first()
   if (!deviceRow) return null
+  
+  // 统一处理snake_case和camelCase字段
+  const pricePerDay = deviceRow.pricePerDay ?? deviceRow.price_per_day
+  const depositAmount = deviceRow.depositAmount ?? deviceRow.deposit_amount
+  
   // Add type validation for required fields
-  if (typeof deviceRow.pricePerDay !== 'number' || typeof deviceRow.depositAmount !== 'number') {
+  if (typeof pricePerDay !== 'number' || typeof depositAmount !== 'number') {
     throw new Error(`Device ${actualId} has missing or invalid pricePerDay or depositAmount`)
   }
-  return deviceRow as Device
+  
+  // 确保返回的设备对象同时包含两种格式的字段，兼容所有调用方
+  return {
+    ...deviceRow,
+    pricePerDay,
+    price_per_day: pricePerDay,
+    depositAmount,
+    deposit_amount: depositAmount
+  } as Device
 }
 
 export async function getContractById(cOrContext: Context | string, id?: string): Promise<Contract | null> {
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
   if (!actualId) return null
-  return db.prepare('SELECT * FROM contracts WHERE id = ?').bind(actualId).first() as Contract | null
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE id = ?').bind(actualId).first()
+  if (!contractRow) return null
+  
+  // 统一处理snake_case和camelCase字段
+  const validFrom = contractRow.validFrom ?? contractRow.valid_from
+  const validUntil = contractRow.validUntil ?? contractRow.valid_until
+  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
+  const rentalId = contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
+  const valid_from = contractRow.valid_from ?? contractRow.validFrom
+  const valid_until = contractRow.valid_until ?? contractRow.validUntil
+  
+  // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
+  return {
+    ...contractRow,
+    validFrom,
+    validUntil,
+    signExpiresAt,
+    rentalId,
+    rental_id,
+    sign_expires_at,
+    valid_from,
+    valid_until
+  } as Contract
 }
 
 export async function getContractByOrderId(cOrContext: Context | string, orderId?: string): Promise<Contract | null> {
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualOrderId = typeof cOrContext === 'string' ? cOrContext : orderId
   if (!actualOrderId) return null
-  return db.prepare('SELECT * FROM contracts WHERE rentalId = ?').bind(actualOrderId).first() as Contract | null
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE rentalId = ? OR rental_id = ?').bind(actualOrderId, actualOrderId).first()
+  if (!contractRow) return null
+  
+  // 统一处理snake_case和camelCase字段
+  const validFrom = contractRow.validFrom ?? contractRow.valid_from
+  const validUntil = contractRow.validUntil ?? contractRow.valid_until
+  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
+  const rentalId = contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
+  const valid_from = contractRow.valid_from ?? contractRow.validFrom
+  const valid_until = contractRow.valid_until ?? contractRow.validUntil
+  
+  // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
+  return {
+    ...contractRow,
+    validFrom,
+    validUntil,
+    signExpiresAt,
+    rentalId,
+    rental_id,
+    sign_expires_at,
+    valid_from,
+    valid_until
+  } as Contract
 }
 
 export async function getAllContracts(c?: Context): Promise<Contract[]> {
@@ -325,12 +400,48 @@ export async function updateContractStatusInDB(c: Context, contractId: string, s
 
 export async function getContractBySignToken(c: Context, signToken: string): Promise<Contract | null> {
   const db = getDB(c)
-  return db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(signToken).first() as Contract | null
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE signToken = ? OR sign_token = ?').bind(signToken, signToken).first()
+  if (!contractRow) return null
+  
+  // 统一处理snake_case和camelCase字段
+  const validFrom = contractRow.validFrom ?? contractRow.valid_from
+  const validUntil = contractRow.validUntil ?? contractRow.valid_until
+  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
+  const rentalId = contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
+  const valid_from = contractRow.valid_from ?? contractRow.validFrom
+  const valid_until = contractRow.valid_until ?? contractRow.validUntil
+  
+  // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
+  return {
+    ...contractRow,
+    validFrom,
+    validUntil,
+    signExpiresAt,
+    rentalId,
+    rental_id,
+    sign_expires_at,
+    valid_from,
+    valid_until
+  } as Contract
 }
 
 export async function findUserByEmail(c: Context, email: string): Promise<User | null> {
   const db = getDB(c)
-  return db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() as User | null
+  const userRow = await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
+  if (!userRow) return null
+  
+  // 统一处理snake_case和camelCase字段
+  const account_number = userRow.account_number ?? userRow.accountNumber
+  const accountNumber = userRow.accountNumber ?? userRow.account_number
+  
+  // 确保返回的用户对象同时包含两种格式的字段，兼容所有调用方
+  return {
+    ...userRow,
+    account_number,
+    accountNumber
+  } as User
 }
 
 export async function findUserByReferralCode(c: Context, referralCode: string): Promise<User | null> {
@@ -347,7 +458,27 @@ export async function getDeviceBySerialNumber(c: Context, serialNumber: string):
 export async function getDevices(c?: Context): Promise<Device[]> {
   const db = getDB(c)
   const result = await db.prepare('SELECT * FROM devices').all()
-  return (result.results as Device[]) || []
+  if (!result.results) return []
+  
+  // 为每个设备统一处理snake_case和camelCase字段
+  return (result.results as any[]).map(deviceRow => {
+    const pricePerDay = deviceRow.pricePerDay ?? deviceRow.price_per_day
+    const depositAmount = deviceRow.depositAmount ?? deviceRow.deposit_amount
+    const serialNumber = deviceRow.serialNumber ?? deviceRow.serial_number
+    const serial_number = deviceRow.serial_number ?? deviceRow.serialNumber
+    const price_per_day = deviceRow.price_per_day ?? deviceRow.pricePerDay
+    const deposit_amount = deviceRow.deposit_amount ?? deviceRow.depositAmount
+    
+    return {
+      ...deviceRow,
+      pricePerDay,
+      depositAmount,
+      serialNumber,
+      serial_number,
+      price_per_day,
+      deposit_amount
+    } as Device
+  }) || []
 }
 
 export async function getUsers(c?: Context): Promise<User[]> {
