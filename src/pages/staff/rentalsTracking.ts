@@ -38,7 +38,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any) {
                 return `
                 <tr>
                   <td>${order.orderNo}</td>
-                  <td>${order.customer?.name ?? '未知客户'}</td>
+                  <td>${order.customer?.role === 'CUSTOMER' ? order.customer?.name : '待客户填写'}</td>
                   <td>${order.device?.name ?? '未知设备'}</td>
                   <td>${order.startDate} 至 ${order.endDate}</td>
                   <td>${order.status}</td>
@@ -79,7 +79,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any) {
                 return `
                 <tr>
                   <td>${order.orderNo}</td>
-                  <td>${order.customer?.name ?? '未知客户'}}</td>
+                  <td>${order.customer?.role === 'CUSTOMER' ? order.customer?.name : '待客户填写'}</td>
                   <td>${order.device?.name ?? '未知设备'}</td>
                   <td>${order.startDate} 至 ${order.endDate}</td>
                   <td>${order.status}</td>

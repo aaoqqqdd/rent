@@ -340,7 +340,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
 
 export async function insertContract(c: Context, contract: Contract): Promise<void> {
   const db = getDB(c);
-  await db.prepare('INSERT INTO contracts (id, rentalId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
+  await db.prepare('INSERT INTO contracts (id, orderId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
     contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil
   ).run();
 }
