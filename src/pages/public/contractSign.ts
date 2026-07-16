@@ -161,7 +161,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               <label class="form-label" for="phone">联系电话</label>
               <div style="display: flex; gap: 12px; align-items: start;">
                 <div style="width: 140px;">
-                  <select id="phoneCode" name="phoneCode" class="form-control" style="width: 100%;" required onchange="validatePhoneNumber()">
+                  <select id="phoneCode" name="phoneCode" class="form-control" style="width: 100%;" required onchange="validatePhoneNumber(); updatePlaceholder()">
                     <option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option>
                     <option value="+61" ${userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option>
                     <option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option>
@@ -174,7 +174,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                   </select>
                 </div>
                 <div style="flex: 1;">
-                  <input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" oninput="validatePhoneNumber()" required placeholder="请输入手机号码" />
+                  <input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" oninput="validatePhoneNumber(); updatePlaceholder()" required placeholder="请输入手机号码" />
                   <span id="phoneError" style="color: #ef4444; font-size: 14px; display: none;">电话号码格式不正确，请检查输入</span>
                 </div>
               </div>
@@ -235,15 +235,15 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 let isValid = false;
                 
                 const phonePatterns = {
-                  '+86': /^1[3-9]\d{9}$/,
-                  '+61': /^4\d{8}$/,
-                  '+1': /^\d{10}$/,
-                  '+44': /^7\d{9}$/,
-                  '+852': /^[569]\d{7}$/,
-                  '+886': /^9\d{8}$/,
-                  '+65': /^[89]\d{7}$/,
-                  '+82': /^1[0-9]\d{7,8}$/,
-                  '+81': /^[789]0\d{8}$/
+                  '+86': /^1[3-9]\d{9}$/, // 中国：11位手机号
+                  '+61': /^\d{9,10}$/, // 澳大利亚：9-10位，支持固定电话和手机
+                  '+1': /^\d{10,11}$/, // 美国/加拿大：10-11位
+                  '+44': /^\d{10,11}$/, // 英国：10-11位
+                  '+852': /^\d{8,9}$/, // 香港：8-9位
+                  '+886': /^\d{9,10}$/, // 台湾：9-10位
+                  '+65': /^\d{8,9}$/, // 新加坡：8-9位
+                  '+82': /^\d{9,11}$/, // 韩国：9-11位
+                  '+81': /^\d{10,11}$/ // 日本：10-11位
                 };
                 
                 const pattern = phonePatterns[phoneCode];
@@ -271,6 +271,28 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                   const passwordFields = document.getElementById('passwordFields');
                   if(passwordFields) passwordFields.style.display = 'none';
                 }
+              });
+
+              function updatePlaceholder() {
+                const phoneCode = document.getElementById('phoneCode').value;
+                const phoneInput = document.getElementById('phone');
+                const placeholders = {
+                  '+86': '请输入11位手机号码',
+                  '+61': '请输入9-10位电话号码',
+                  '+1': '请输入10-11位电话号码',
+                  '+44': '请输入10-11位电话号码',
+                  '+852': '请输入8-9位电话号码',
+                  '+886': '请输入9-10位电话号码',
+                  '+65': '请输入8-9位电话号码',
+                  '+82': '请输入9-11位电话号码',
+                  '+81': '请输入10-11位电话号码'
+                };
+                phoneInput.placeholder = placeholders[phoneCode] || '请输入电话号码';
+              }
+
+              // 页面加载时初始化占位符
+              document.addEventListener('DOMContentLoaded', function() {
+                updatePlaceholder();
               });
 
               document.getElementById('sign-form').addEventListener('submit', function(e) {
