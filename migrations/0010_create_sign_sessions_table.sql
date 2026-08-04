@@ -1,6 +1,7 @@
 -- Copyright (c) 2026 jiongjiong123441. All rights reserved.
--- Source-available; modification, redistribution, deployment, and commercial use
--- are prohibited without prior written permission. See LICENSE.
+-- Licensed under PolyForm Noncommercial 1.0.0.
+-- Noncommercial use, modification, and distribution are permitted.
+-- Keep this notice and the LICENSE file with all copies and modified versions.
 
 -- 创建签约会话存储表，替换原内存存储
 -- 用于在签约步骤之间持久化保存用户输入

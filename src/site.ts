@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 jiongjiong123441. All rights reserved.
- * Source-available; modification, redistribution, deployment, and commercial use
- * are prohibited without prior written permission. See LICENSE. */
+ * Licensed under PolyForm Noncommercial 1.0.0.
+ * Noncommercial use, modification, and distribution are permitted.
+ * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
 import sanitizeHtml from 'sanitize-html'
@@ -2002,6 +2003,7 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
   if (!token) return null
 
   if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) return null
+  await ensureAuthSessionsSchema(c)
   const tokenHash = await sha256Hex(token)
   const session = await db.prepare('SELECT user_id FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP').bind(tokenHash).first() as any
   if (!session?.user_id) return null
@@ -2051,7 +2053,29 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
+let authSessionsSchemaReady: Promise<void> | null = null
+
+async function ensureAuthSessionsSchema(c: Context): Promise<void> {
+  if (!authSessionsSchemaReady) {
+    authSessionsSchemaReady = c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`).run().then(() => undefined)
+  }
+  try {
+    await authSessionsSchemaReady
+  } catch (error) {
+    authSessionsSchemaReady = null
+    throw error
+  }
+}
+
 export async function createAuthSession(c: Context, userId: string, remember = false): Promise<{ token: string; maxAge: number }> {
+  await ensureAuthSessionsSchema(c)
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
   const token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')

@@ -1,6 +1,7 @@
 -- Copyright (c) 2026 jiongjiong123441. All rights reserved.
--- Source-available; modification, redistribution, deployment, and commercial use
--- are prohibited without prior written permission. See LICENSE.
+-- Licensed under PolyForm Noncommercial 1.0.0.
+-- Noncommercial use, modification, and distribution are permitted.
+-- Keep this notice and the LICENSE file with all copies and modified versions.
 
 ALTER TABLE orders ADD COLUMN refundMethod TEXT NOT NULL DEFAULT 'balance' CHECK(refundMethod IN ('balance', 'original'));
 ALTER TABLE orders ADD COLUMN refundBsb TEXT;

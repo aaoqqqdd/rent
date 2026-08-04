@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 jiongjiong123441. All rights reserved.
- * Source-available; modification, redistribution, deployment, and commercial use
- * are prohibited without prior written permission. See LICENSE. */
+ * Licensed under PolyForm Noncommercial 1.0.0.
+ * Noncommercial use, modification, and distribution are permitted.
+ * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 // @ts-nocheck
 import { Hono } from 'hono'
@@ -75,6 +76,40 @@ async function getTableColumns(c: any, tableName: string): Promise<string[]> {
 
 const app = new Hono()
 
+let loginAttemptsSchemaReady: Promise<void> | null = null
+
+async function ensureLoginAttemptsSchema(c: any): Promise<void> {
+  if (!loginAttemptsSchemaReady) {
+    loginAttemptsSchemaReady = (async () => {
+      await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS login_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip_address TEXT NOT NULL,
+        account TEXT NOT NULL,
+        attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`).run()
+      await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup ON login_attempts(ip_address, account, attempted_at)').run()
+    })()
+  }
+  try {
+    await loginAttemptsSchemaReady
+  } catch (error) {
+    loginAttemptsSchemaReady = null
+    throw error
+  }
+}
+
+function errorDetails(error: unknown) {
+  if (!(error instanceof Error)) return error
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    cause: error.cause instanceof Error
+      ? { name: error.cause.name, message: error.cause.message, stack: error.cause.stack }
+      : error.cause
+  }
+}
+
 app.use('*', async (c, next) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
@@ -116,7 +151,7 @@ app.use('*', async (c, next) => {
   try {
     await next()
   } catch (error) {
-    console.error('Server Error:', error)
+    console.error('Server Error:', errorDetails(error))
     return c.html(renderServerError(), 500)
   }
 })
@@ -126,7 +161,7 @@ app.notFound((c) => {
 })
 
 app.onError((error, c) => {
-  console.error('Unhandled Application Error:', error)
+  console.error('Unhandled Application Error:', errorDetails(error))
   const statusCode = error.status || 500
   switch (statusCode) {
     case 401:
@@ -173,6 +208,7 @@ app.post('/login', async (c) => {
   }
   const loginIp = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim().slice(0, 64)
   const normalizedAccount = String(account).toLowerCase().slice(0, 254)
+  await ensureLoginAttemptsSchema(c)
   const recentFailures = await c.env.RENT.prepare("SELECT COUNT(*) count FROM login_attempts WHERE ip_address = ? AND account = ? AND attempted_at > datetime('now', '-15 minutes')").bind(loginIp, normalizedAccount).first() as any
   if (Number(recentFailures?.count || 0) >= 5) return c.html(pages.renderLogin('登录失败次数过多，请 15 分钟后再试'), 429)
   const user = await verifyUserCredentials(c, account, password)

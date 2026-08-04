@@ -1,6 +1,7 @@
 -- Copyright (c) 2026 jiongjiong123441. All rights reserved.
--- Source-available; modification, redistribution, deployment, and commercial use
--- are prohibited without prior written permission. See LICENSE.
+-- Licensed under PolyForm Noncommercial 1.0.0.
+-- Noncommercial use, modification, and distribution are permitted.
+-- Keep this notice and the LICENSE file with all copies and modified versions.
 
 -- 注意：Cloudflare D1 不允许在 SQL 中使用显式事务语句（BEGIN/COMMIT）
 -- 本迁移以逐条 SQL 语句执行，避免使用事务块以兼容 D1 的远程执行限制。

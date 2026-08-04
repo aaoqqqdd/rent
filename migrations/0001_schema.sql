@@ -1,6 +1,7 @@
 -- Copyright (c) 2026 jiongjiong123441. All rights reserved.
--- Source-available; modification, redistribution, deployment, and commercial use
--- are prohibited without prior written permission. See LICENSE.
+-- Licensed under PolyForm Noncommercial 1.0.0.
+-- Noncommercial use, modification, and distribution are permitted.
+-- Keep this notice and the LICENSE file with all copies and modified versions.
 
 -- 电脑租赁网站数据库 Schema (基于 requirements_note.txt)
 -- Cloudflare D1 / SQLite 兼容
