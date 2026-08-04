@@ -213,12 +213,12 @@ export async function renderAdminOrders(c: Context, user: any) {
           </thead>
           <tbody>
             ${filteredOrders.map((order: any) => {
-              const status = adminOrderStatusMap[order.status] || { text: order.status, class: 'badge-info' };
-              const totalAmount = order.total_amount || order.totalAmount || 0;
-              const startDate = order.start_date || order.startDate || '-';
-              const endDate = order.end_date || order.endDate || '-';
-              const createdAt = order.created_at || order.createdAt;
-              return `
+    const status = adminOrderStatusMap[order.status] || { text: order.status, class: 'badge-info' };
+    const totalAmount = order.total_amount || order.totalAmount || 0;
+    const startDate = order.start_date || order.startDate || '-';
+    const endDate = order.end_date || order.endDate || '-';
+    const createdAt = order.created_at || order.createdAt;
+    return `
                 <tr>
                   <td><input type="checkbox" name="orderIds" value="${order.id}" class="order-checkbox" /></td>
                   <td style="font-family: monospace;">${order.id}</td>
@@ -248,7 +248,7 @@ export async function renderAdminOrders(c: Context, user: any) {
                   </td>
                 </tr>
               `;
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
       </form>
