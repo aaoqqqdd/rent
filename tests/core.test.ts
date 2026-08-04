@@ -1,3 +1,7 @@
+/* Copyright (c) 2026 jiongjiong123441. All rights reserved.
+ * Source-available; modification, redistribution, deployment, and commercial use
+ * are prohibited without prior written permission. See LICENSE. */
+
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { canTransitionOrder, hashPassword, verifyPassword, renderContractVariables, CONTRACT_OPERATIONAL_FIELDS, CONTRACT_COMPUTED_FIELDS, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml } from '../src/site'

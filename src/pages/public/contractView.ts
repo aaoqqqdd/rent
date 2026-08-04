@@ -1,3 +1,7 @@
+/* Copyright (c) 2026 jiongjiong123441. All rights reserved.
+ * Source-available; modification, redistribution, deployment, and commercial use
+ * are prohibited without prior written permission. See LICENSE. */
+
 import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById, renderContractVariables, getContractVariableData, sanitizeRichHtml } from '../../site'
 import type { Context } from 'hono'
 

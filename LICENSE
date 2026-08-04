@@ -1,25 +1,55 @@
-PROPRIETARY SOFTWARE LICENSE
+SOURCE-AVAILABLE, NO MODIFICATION, NO COMMERCIAL USE LICENSE
 
-Copyright (c) 2026. All rights reserved.
+Copyright (c) 2026 jiongjiong123441. All rights reserved.
 
-This software and its source code, documentation, database schema, designs,
-assets, and all related materials (collectively, the "Software") are
-proprietary and confidential.
+This license applies to the source code, documentation, database schemas,
+designs, assets, and other materials in this repository (collectively, the
+"Software"). The Software is source-available and is not open-source software.
 
-No permission is granted to use, copy, reproduce, modify, adapt, translate,
-publish, distribute, sublicense, sell, lease, host, disclose, reverse engineer,
-or create derivative works from the Software, in whole or in part, without the
-prior written authorization of the copyright owner.
+1. Limited permission
 
-Access to the Software does not transfer any ownership or intellectual property
-rights. Any authorized use is limited to the scope and duration expressly stated
-in a separate written agreement with the copyright owner.
+You may access, download, and retain one copy of the Software solely for
+personal viewing, evaluation, and educational reference.
+
+2. Restrictions
+
+Unless you have prior written permission from the copyright holder, you may
+not, in whole or in part:
+
+- use, run, host, deploy, or provide the Software as a service;
+- modify, adapt, translate, or create derivative works from the Software;
+- copy or redistribute the Software, except for the single copy permitted
+  above;
+- publish, sublicense, sell, rent, lease, or otherwise transfer the Software;
+- use the Software or any part of it for commercial purposes, internal
+  business operations, revenue-generating activity, or paid services; or
+- remove or alter copyright, license, or attribution notices.
+
+Viewing the publicly available website operated by the copyright holder does
+not constitute running, hosting, or deploying the Software under this license.
+
+3. No implied rights
+
+Access to the Software does not transfer ownership or grant any patent,
+trademark, trade-secret, or other intellectual-property rights. All rights not
+expressly granted by this license are reserved by the copyright holder.
+
+4. Separate permission
+
+Permission for modification, redistribution, deployment, commercial use, or
+any other restricted activity must be obtained from the copyright holder in a
+separate written agreement.
+
+5. Termination
+
+Your permission under this license terminates automatically if you breach any
+of its terms. Upon termination, you must stop using the Software and delete all
+copies in your possession or control.
+
+6. Disclaimer
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR
-A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT
-PERMITTED BY LAW, THE COPYRIGHT OWNER SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES,
-OR OTHER LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE.
-
-Any unauthorized use, copying, modification, disclosure, or distribution of the
-Software may result in civil or criminal liability under applicable law.
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT
+PERMITTED BY LAW, THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE.

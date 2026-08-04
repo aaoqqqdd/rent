@@ -1,3 +1,7 @@
+/* Copyright (c) 2026 jiongjiong123441. All rights reserved.
+ * Source-available; modification, redistribution, deployment, and commercial use
+ * are prohibited without prior written permission. See LICENSE. */
+
 import { Context } from 'hono'
 import sanitizeHtml from 'sanitize-html'
 
@@ -1876,7 +1880,8 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   ]
 
   // users 表字段：兼容 snake_case / camelCase（同时避免插入时引用不存在的列）
-  const hasReferralCode = await userHasColumn(c, 'referralCode')
+  const hasReferralCodeSnake = await userHasColumn(c, 'referral_code')
+  const hasReferralCodeCamel = await userHasColumn(c, 'referralCode')
   const hasAccountNumberSnake = await userHasColumn(c, 'account_number')
   const hasAccountNumberCamel = await userHasColumn(c, 'accountNumber')
   const hasCommissionBalanceSnake = await userHasColumn(c, 'commission_balance')
@@ -1888,6 +1893,7 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   const passwordHashCol = hasPasswordHashSnake ? 'password_hash' : 'passwordHash'
   const accountNumberCol = hasAccountNumberSnake ? 'account_number' : 'accountNumber'
   const commissionBalanceCol = hasCommissionBalanceSnake ? 'commission_balance' : 'commissionBalance'
+  const referralCodeCol = hasReferralCodeSnake ? 'referral_code' : 'referralCode'
 
   const hasUsersTableCols = (arr: string[]) => arr.every((col) => {
     // 只在已确认列存在时才写入（避免不同库状态混乱）
@@ -1910,8 +1916,8 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
       cols.push(commissionBalanceCol)
       vals.push(0)
     }
-    if (hasReferralCode) {
-      cols.push('referralCode')
+    if (hasReferralCodeSnake || hasReferralCodeCamel) {
+      cols.push(referralCodeCol)
       vals.push(null)
     }
 
@@ -2001,7 +2007,8 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
   if (!session?.user_id) return null
   const id = String(session.user_id)
 
-  const hasReferralCode = await userHasColumn(c, 'referralCode')
+  const hasReferralCodeSnake = await userHasColumn(c, 'referral_code')
+  const hasReferralCodeCamel = await userHasColumn(c, 'referralCode')
 
   // users 表字段：兼容 snake_case / camelCase
   const hasAccountNumberSnake = await userHasColumn(c, 'account_number')
@@ -2021,9 +2028,13 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
       ? 'commissionBalance AS commissionBalance'
       : '0 AS commissionBalance'
 
-  const selectClause = hasReferralCode
-    ? `id, name, email, role, phone, bsb, ${accountSelect}, ${commissionSelect}, referralCode`
-    : `id, name, email, role, phone, bsb, ${accountSelect}, ${commissionSelect}`
+  const referralSelect = hasReferralCodeSnake
+    ? 'referral_code AS referralCode'
+    : hasReferralCodeCamel
+      ? 'referralCode AS referralCode'
+      : "'' AS referralCode"
+
+  const selectClause = `id, name, email, role, phone, bsb, ${accountSelect}, ${commissionSelect}, ${referralSelect}`
 
   const user: User | null = await db
     .prepare(`SELECT ${selectClause} FROM users WHERE id = ? AND status = 'active'`)
@@ -2032,9 +2043,6 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
 
   if (!user) return null
   const normalized = normalizeUserRow(user as any)
-  if (!hasReferralCode) {
-    normalized.referralCode = ''
-  }
   return normalized
 }
 
@@ -2286,6 +2294,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       display: flex; justify-content: center; align-items: center;
       min-height: calc(100vh - 60px);
       padding: 40px 20px;
+      width: 100%;
     }
 
     .hero {
@@ -2504,10 +2513,11 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-    .login-container { max-width: 400px; width: 100%; }
+    .login-container { max-width: 400px; width: 100%; margin: 0 auto; }
     .login-card {
       background: var(--surface); border-radius: var(--radius-lg); padding: 40px 36px;
       border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+      width: 100%;
     }
     .login-logo {
       text-align: center; font-family: var(--font-display); font-size: 1.75rem;

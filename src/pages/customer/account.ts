@@ -1,3 +1,7 @@
+/* Copyright (c) 2026 jiongjiong123441. All rights reserved.
+ * Source-available; modification, redistribution, deployment, and commercial use
+ * are prohibited without prior written permission. See LICENSE. */
+
 import { buildLayout, getUserById, updateUser, updatePassword, bindReferrer, unbindReferrer, formatCurrency } from '../../site';
 
 export async function renderCustomerAccount(user: any, message?: string, type: 'success' | 'error' = 'error') {

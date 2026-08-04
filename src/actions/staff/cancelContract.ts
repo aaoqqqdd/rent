@@ -1,3 +1,7 @@
+/* Copyright (c) 2026 jiongjiong123441. All rights reserved.
+ * Source-available; modification, redistribution, deployment, and commercial use
+ * are prohibited without prior written permission. See LICENSE. */
+
 import { Context } from 'hono';
 import { getContractById, updateContractStatus, logError, findUserBySession, getOrderById, updateDeviceStatus } from '../../site'; // 导入 getOrderById 和 updateDeviceStatus
 

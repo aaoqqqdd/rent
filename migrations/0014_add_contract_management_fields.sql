@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 -- 为contracts表添加合同管理所需的字段
 -- 添加created_by字段记录合同创建人，用于权限控制
 -- 添加deleted_at字段支持软删除，用于定期清理过期和已取消的合同

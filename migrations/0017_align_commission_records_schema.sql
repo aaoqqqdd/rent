@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 -- 为commission_records表添加驼峰命名字段，与代码保持一致
 -- 同时保留原有的snake_case字段以保持向后兼容性
 

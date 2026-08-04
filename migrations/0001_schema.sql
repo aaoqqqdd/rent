@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 -- 电脑租赁网站数据库 Schema (基于 requirements_note.txt)
 -- Cloudflare D1 / SQLite 兼容
 

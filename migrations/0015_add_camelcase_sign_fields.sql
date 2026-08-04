@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 -- 为contracts表添加驼峰格式的签约字段，与代码保持一致
 -- 添加signExpiresAt字段以支持代码中的驼峰命名约定
 -- 同时保留原有的snake_case字段以保持向后兼容性

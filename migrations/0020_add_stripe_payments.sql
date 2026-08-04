@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 ALTER TABLE payments ADD COLUMN stripe_checkout_session_id TEXT;
 ALTER TABLE payments ADD COLUMN stripe_payment_intent_id TEXT;
 

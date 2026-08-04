@@ -1,7 +1,14 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 -- This is a comprehensive migration to align the database schema with the application code's expectations (camelCase).
 -- It addresses inconsistencies across multiple tables.
 
 -- Step 1: Rename 'rentals' table to 'orders'
+-- Drop the old trigger first: SQLite updates its target table on rename but can
+-- leave the UPDATE statement inside the trigger pointing at `rentals`.
+DROP TRIGGER IF EXISTS update_rentals_updated_at;
 ALTER TABLE rentals RENAME TO orders;
 
 -- Step 2: Add 'orderNo' and 'created_by' columns to 'orders' table.
@@ -50,3 +57,10 @@ ALTER TABLE contracts RENAME COLUMN contract_number TO contractNumber;
 ALTER TABLE contracts RENAME COLUMN signed_at TO signedAt;
 ALTER TABLE contracts RENAME COLUMN created_at TO createdAt;
 ALTER TABLE contracts RENAME COLUMN updated_at TO updatedAt;
+
+CREATE TRIGGER IF NOT EXISTS update_orders_updated_at
+AFTER UPDATE ON orders
+FOR EACH ROW
+BEGIN
+  UPDATE orders SET updatedAt = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;

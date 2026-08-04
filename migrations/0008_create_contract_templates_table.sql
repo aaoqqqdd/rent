@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 CREATE TABLE IF NOT EXISTS contract_templates (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

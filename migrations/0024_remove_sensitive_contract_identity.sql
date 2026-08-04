@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 UPDATE contracts
 SET contract_data = json_remove(
   contract_data,
@@ -11,4 +15,3 @@ SET contract_data = json_remove(
 
 ALTER TABLE contracts DROP COLUMN customer_id_type;
 ALTER TABLE contracts DROP COLUMN customer_id_number;
-

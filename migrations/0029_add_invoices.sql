@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
   invoice_number TEXT NOT NULL UNIQUE,
@@ -15,4 +19,3 @@ CREATE TABLE IF NOT EXISTS invoices (
   FOREIGN KEY(related_invoice_id) REFERENCES invoices(id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_order_type ON invoices(order_id, type);
-

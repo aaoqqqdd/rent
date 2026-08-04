@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 -- 创建签约会话存储表，替换原内存存储
 -- 用于在签约步骤之间持久化保存用户输入
 

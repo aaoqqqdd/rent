@@ -1,3 +1,7 @@
+-- Copyright (c) 2026 jiongjiong123441. All rights reserved.
+-- Source-available; modification, redistribution, deployment, and commercial use
+-- are prohibited without prior written permission. See LICENSE.
+
 ALTER TABLE contracts ADD COLUMN device_condition TEXT;
 ALTER TABLE contracts ADD COLUMN device_accessories TEXT;
 ALTER TABLE contracts ADD COLUMN late_fee_per_day REAL NOT NULL DEFAULT 0;
@@ -8,4 +12,3 @@ ALTER TABLE contracts ADD COLUMN customer_id_type TEXT;
 ALTER TABLE contracts ADD COLUMN customer_id_number TEXT;
 ALTER TABLE contracts ADD COLUMN esign_ip TEXT;
 ALTER TABLE contracts ADD COLUMN esign_device TEXT;
-

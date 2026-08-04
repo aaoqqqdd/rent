@@ -10,7 +10,7 @@
     "test": "TS_NODE_TRANSPILE_ONLY=true node --loader ts-node/esm --experimental-specifier-resolution=node --test tests/*.test.ts",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
-    "db:init": "wrangler d1 execute rent --file=./db/schema.sql --local",
+    "db:init": "wrangler d1 migrations apply rent --local",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "db:create": "wrangler d1 create rent",
     "db:migrate:local": "wrangler d1 migrations apply rent --local",
