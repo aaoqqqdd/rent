@@ -83,12 +83,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
             <p><strong>账号:</strong> ${systemSettings.bankDetails.account}</p>
             <p>客户需转账 ${formatCurrency(order.totalAmount)} 到以上账户。</p>
           </div>
-          <div class="payment-card">
-            <h4>信用卡支付 (Square)</h4>
-            <p>客户通过 Square 安全支付网关使用信用卡支付。</p>
-            <p>Square Application ID: ${systemSettings.squareConfig.applicationId}</p>
-            <p>Square Location ID: ${systemSettings.squareConfig.locationId}</p>
-          </div>
+          ${systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : ''}
         </div>
       ` : ''}
     </div>

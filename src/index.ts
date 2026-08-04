@@ -1,8 +1,8 @@
- // @ts-nocheck
+// @ts-nocheck
 import { Hono } from 'hono'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
-import { 
+import {
   renderNotFound,
   renderForbidden,
   renderServerError,
@@ -10,15 +10,15 @@ import {
   renderBadGateway,
   renderServiceUnavailable
 } from './pages/public/notFound'
-import { 
-  verifyUserCredentials, 
-  findUserBySession, 
-  getDeviceById, 
-  updateUser, 
-  verifyPassword, 
-  insertUser, 
-  insertDevice, 
-  updateDevice, 
+import {
+  verifyUserCredentials,
+  findUserBySession,
+  getDeviceById,
+  updateUser,
+  verifyPassword,
+  insertUser,
+  insertDevice,
+  updateDevice,
   deleteDevice,
   getOrdersAsync,
   getDevicesAsync,
@@ -36,6 +36,8 @@ import {
   loadSystemSettingsFromDB
 } from './site'
 import { nanoid, customAlphabet } from 'nanoid'
+import { getStripeConfigSummary } from './stripe'
+import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund } from './actions/stripePayments'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
   const form: Record<string, string> = {}
@@ -160,7 +162,7 @@ app.post('/register', async (c) => {
   if (password !== passwordConfirm) {
     return c.html(pages.renderRegister('两次输入密码不一致'))
   }
-  
+
   // 检查邮箱是否已存在
   const existingUser = await findUserByEmail(c, email)
   if (existingUser) {
@@ -177,8 +179,8 @@ app.post('/register', async (c) => {
       return c.html(pages.renderRegister('无效的推荐码'))
     }
   }
-  
-    const numericAlphabet = '0123456789'
+
+  const numericAlphabet = '0123456789'
   const generateNumericId = customAlphabet(numericAlphabet, 8)
   const newUserId = `u-${generateNumericId()}`
   const fullPhone = `${countryCode}${phone}`
@@ -195,13 +197,13 @@ app.post('/register', async (c) => {
     createdAt: new Date().toISOString(),
     status: 'active' as const
   }
-  
+
   await insertUser(c, newUser)
-  
+
   // 自动登录
   const response = c.redirect('/customer/dashboard')
   response.headers.set('Set-Cookie', `session=CUSTOMER:${newUserId}; Path=/; HttpOnly; SameSite=Lax`)
-  
+
   return response
 })
 
@@ -367,6 +369,8 @@ app.post('/staff/orders/:orderId/mark-paid', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
   await updateOrderStatus(c, c.req.param('orderId'), 'paid')
+  await c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND payment_method = 'bank_transfer' AND status = 'pending'")
+    .bind(c.req.param('orderId')).run()
   return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
 })
 
@@ -511,9 +515,20 @@ app.get('/contract/view/:id', async (c) => {
 })
 
 app.get('/payment/result', async (c) => {
-  const status = c.req.query('status') === 'fail' ? 'fail' : 'success'
-  return c.html(await pages.renderPaymentResult(c, c.req.query('orderId') || '', status, c.get('user')))
+  return c.html(await pages.renderPaymentResult(c, c.req.query('orderId') || '', c.get('user')))
 })
+
+app.post('/customer/orders/:id/stripe/checkout', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
+  try {
+    return await createStripeCheckout(c, user, c.req.param('id'))
+  } catch (error: any) {
+    return c.text(error.message || '无法创建 Stripe 支付', 502)
+  }
+})
+
+app.post('/webhooks/stripe', async (c) => handleStripeWebhook(c))
 
 app.get('/customer/rentals', async (c) => {
   const user = c.get('user')
@@ -661,13 +676,13 @@ app.post('/customer/security', async (c) => {
   }
 
   const fullUser = await (c.env as any).RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first()
-    
+
   if (!fullUser || !fullUser.passwordHash) {
     return c.html(await pages.renderCustomerSecurity(c, user, '无法验证当前密码'))
   }
 
   const isPasswordValid = await verifyPassword(currentPassword, fullUser.passwordHash)
-  
+
   if (!isPasswordValid) {
     return c.html(await pages.renderCustomerSecurity(c, user, '当前密码不正确'))
   }
@@ -747,7 +762,7 @@ app.post('/admin/users/:id/edit', async (c) => {
   }
   const targetUserId = c.req.param('id')
   const form = await c.req.parseBody()
-  
+
   const dataToUpdate: any = {
     name: form.name?.toString() || '',
     phone: form.phone?.toString() || '',
@@ -756,12 +771,12 @@ app.post('/admin/users/:id/edit', async (c) => {
     balance: parseFloat(form.balance?.toString() || '0'),
     role: form.role?.toString() || 'CUSTOMER'
   }
-  
+
   // 如果提供了密码，更新密码
   if (form.password && form.password.toString().length > 0) {
     dataToUpdate.password = form.password.toString()
   }
-  
+
   await updateUser(c, targetUserId, dataToUpdate)
   return c.redirect(`/admin/users/${targetUserId}`)
 })
@@ -826,7 +841,55 @@ app.get('/admin/orders/export', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.redirect('/admin/orders')
+
+  const url = new URL(c.req.url)
+  const userIdFilter = url.searchParams.get('userId') || ''
+  const statusFilter = url.searchParams.get('status') || 'all'
+  const searchTerm = (url.searchParams.get('search') || '').trim()
+  const dateFrom = (url.searchParams.get('dateFrom') || '').trim()
+  const dateTo = (url.searchParams.get('dateTo') || '').trim()
+
+  const filteredOrders = await pages.getFilteredAdminOrders(c, {
+    userId: userIdFilter,
+    status: statusFilter,
+    search: searchTerm,
+    dateFrom,
+    dateTo,
+  })
+
+  const csvRows = [
+    ['订单号', '客户', '邮箱', '设备', '总金额', '状态', '租期', '下单日期'],
+    ...filteredOrders.map((order: any) => {
+      const totalAmount = order.total_amount || order.totalAmount || 0
+      const startDate = order.start_date || order.startDate || '-'
+      const endDate = order.end_date || order.endDate || '-'
+      const createdAt = order.created_at || order.createdAt || '-'
+      return [
+        order.id || '',
+        order.customer?.name || '未知用户',
+        order.customer?.email || '',
+        order.device?.name || '未知设备',
+        String(totalAmount),
+        order.status || '',
+        `${startDate} ~ ${endDate}`,
+        createdAt,
+      ]
+    })
+  ]
+
+  const escapeCsvValue = (value: any) => {
+    const text = String(value ?? '')
+    if (/[",\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`
+    }
+    return text
+  }
+
+  const csv = csvRows.map(row => row.map(escapeCsvValue).join(',')).join('\n')
+
+  c.header('Content-Type', 'text/csv; charset=utf-8')
+  c.header('Content-Disposition', `attachment; filename="orders-${new Date().toISOString().slice(0, 10)}.csv"`)
+  return c.body(csv)
 })
 
 app.get('/admin/orders', async (c) => {
@@ -870,15 +933,51 @@ app.post('/admin/orders/:id/update', async (c) => {
   return c.redirect(`/admin/orders/${c.req.param('id')}`)
 })
 
+app.post('/admin/orders/bulk-update', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+
+  const form = await c.req.parseBody()
+  const targetStatus = String(form.status || '')
+  const selectedIds = Array.isArray(form.orderIds) ? form.orderIds.map(String) : form.orderIds ? [String(form.orderIds)] : []
+
+  if (!['pending_payment', 'paid', 'active', 'completed', 'cancelled'].includes(targetStatus) || selectedIds.length === 0) {
+    return c.redirect('/admin/orders')
+  }
+
+  await Promise.all(selectedIds.map(async (orderId) => {
+    await updateOrderStatus(c, orderId, targetStatus)
+  }))
+
+  return c.redirect('/admin/orders')
+})
+
 app.post('/admin/orders/:id/refund', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
-  const order = await getOrderById(c, c.req.param('id'))
-  if (order && ['paid', 'active'].includes(order.status)) {
-    await updateOrderStatus(c, order.id, 'cancelled')
-    await updateDeviceStatus(c, order.deviceId, 'available')
+  return c.text('此退款入口已停用，请选择“处理押金”或“取消并全额退款”', 410)
+})
+
+app.post('/admin/orders/:id/deposit-refund', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  try {
+    return await refundDeposit(c, user, c.req.param('id'), await c.req.parseBody())
+  } catch (error: any) {
+    return c.text(error.message || '押金退款失败', 502)
   }
-  return c.redirect(`/admin/orders/${c.req.param('id')}`)
+})
+
+app.post('/admin/orders/:id/cancel-and-refund', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  try {
+    return await cancelAndRefund(c, user, c.req.param('id'))
+  } catch (error: any) {
+    return c.text(error.message || '全额退款失败', 502)
+  }
 })
 
 app.get('/admin/finance', async (c) => {
@@ -975,7 +1074,7 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c)))
 })
 
 app.post('/admin/settings/save', async (c) => {
@@ -983,7 +1082,11 @@ app.post('/admin/settings/save', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.text('无权限', 403)
   }
-  return actions.handleSaveAdminSettings(c)
+  try {
+    return await actions.handleSaveAdminSettings(c)
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message || '保存失败' }, 400)
+  }
 })
 
 
@@ -1000,7 +1103,7 @@ export default {
     const c = {
       env,
       get: (key: string) => undefined,
-      set: () => {},
+      set: () => { },
       req: { url: 'https://scheduled-event' },
       // Expose getDB function that the site.ts functions expect
       ...(() => {
@@ -1008,7 +1111,7 @@ export default {
         return { getDB }
       })()
     } as any
-    
+
     // Import and run the cleanup function
     const { cleanupExpiredAndCancelledContracts, logError } = await import('./site')
     ctx.waitUntil(

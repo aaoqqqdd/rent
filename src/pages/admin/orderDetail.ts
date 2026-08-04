@@ -1,6 +1,10 @@
 import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency } from '../../site';
 import { Context } from 'hono';
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
+}
+
 export async function renderAdminOrderDetail(c: Context, user: any, orderId: string) {
   const order = await getOrderById(c, orderId);
 
@@ -10,6 +14,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
   const customer = await getUserById(c, order.userId);
   const device = await getDeviceById(c, order.deviceId);
+  const completedRefund = await c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
 
   const statusLabels: Record<string, {label: string, color: string, bg: string, icon: string}> = {
     'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
@@ -115,13 +121,18 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         </div>
 
         <div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
-          <h4 style="margin: 0 0 16px 0; color: #c2410c; display: flex; align-items: center; gap: 8px;">💸 退款处理</h4>
-          <div style="margin-bottom: 16px; padding: 12px; background: rgba(251,146,60,0.1); border-radius: 10px; border: 1px solid rgba(251,146,60,0.3);">
-            <p style="margin: 0; font-size: 0.9rem; color: #9a3412;">退款将原路返回给客户，仅在订单已付款或租赁中时可操作。</p>
-          </div>
-          <form method="POST" action="/admin/orders/${order.id}/refund" onsubmit="return confirm('⚠️ 确定要为该订单处理退款吗？此操作不可撤销！\\n\\n订单金额：${formatCurrency(order.totalAmount)}');" style="display: flex;">
-            <button type="submit" class="button button-warning" ${order.status !== 'paid' && order.status !== 'active' ? 'disabled' : ''} style="width: 100%; padding: 14px; border-radius: 12px; font-weight: 600; ${(order.status === 'paid' || order.status === 'active') ? 'background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); box-shadow: 0 4px 14px 0 rgba(249,115,22,0.4);' : 'opacity: 0.5; cursor: not-allowed;'}">↩️ 处理退款</button>
-          </form>
+          <h4 style="margin: 0 0 16px 0; color: #c2410c;">💸 退款处理</h4>
+          <p class="section-note">客户选择：${order.refundMethod === 'original' ? `原路退回${order.paymentMethod === 'bank_transfer' ? `（${escapeHtml(order.refundAccountName)} / ${escapeHtml(order.refundBsb)} / ${escapeHtml(order.refundAccountNumber)}）` : ''}` : '退回账户余额'}</p>
+          ${completedRefund ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
+          ${order.status === 'completed' && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/deposit-refund" onsubmit="return confirm('确定提交本次押金处理吗？每笔订单只能处理一次。');">
+            ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先按上方账户信息完成银行转账，再确认本操作。</div>' : ''}
+            <label class="form-label" for="refundAmount">退还押金金额（最多 ${formatCurrency(order.depositAmount)}）</label>
+            <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${order.depositAmount}" step="0.01" value="${order.depositAmount}" required>
+            <label class="form-label" for="deductionReason">扣款原因（未全额退还时必填）</label>
+            <textarea class="form-control" id="deductionReason" name="deductionReason"></textarea>
+            <button type="submit" class="button button-warning" style="margin-top:12px;">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '确认已转账并处理押金' : '处理押金'}</button>
+          </form>` : ''}
+          ${order.status === 'paid' && order.startDate > today && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/cancel-and-refund" onsubmit="return confirm('确定取消订单并全额退还 ${formatCurrency(order.totalAmount)} 吗？');">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先完成银行转账，再确认取消订单。</div>' : ''}<button type="submit" class="button button-danger">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '确认已转账并取消订单' : '取消并全额退款'}</button></form>` : ''}
         </div>
       </div>
       <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb;">

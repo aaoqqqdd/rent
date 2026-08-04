@@ -52,58 +52,13 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
             <p>请转账 ${formatCurrency(order.totalAmount)} 到以上账户，并在备注中填写订单号 ${order.orderNo}。</p>
             <button class="button" onclick="alert('请完成银行转账后联系客服确认。')">我已转账</button>
           </div>
-          <div class="payment-card">
-            <h4>信用卡支付 (Square)</h4>
-            <p>通过 Square 安全支付网关使用信用卡支付。</p>
-            <form id="square-payment-form" method="POST" action="/customer/pay-square">
-              <input type="hidden" name="orderId" value="${order.id}" />
-              <div id="payment-form">
-                <div id="card-container"></div>
-                <button id="card-button" class="button button-primary" type="submit">支付 ${formatCurrency(order.totalAmount)}</button>
-              </div>
+          ${systemSettings.paymentMethods.stripe ? `<div class="payment-card">
+            <h4>信用卡支付（Stripe）</h4>
+            <p>前往 Stripe 安全结账页面完成支付，本站不会接触您的卡号。</p>
+            <form method="POST" action="/customer/orders/${order.id}/stripe/checkout">
+              <button class="button button-primary" type="submit">支付 ${formatCurrency(order.totalAmount)}</button>
             </form>
-            <script type="text/javascript" src="https://js.squareupsandbox.com/v2/paymentform"></script>
-            <script type="text/javascript">
-              const payments = Square.payments('${systemSettings.squareConfig.applicationId}', '${systemSettings.squareConfig.locationId}');
-              let card;
-              async function initializeCard() {
-                card = await payments.card({
-                  elementId: 'card-container'
-                });
-                await card.attach('#card-container');
-              }
-              async function tokenize(paymentMethod) {
-                const tokenResult = await paymentMethod.tokenize();
-                if (tokenResult.status === 'OK') {
-                  return tokenResult.token;
-                } else {
-                  let errorMessage = 'Tokenization failed with status: ' + tokenResult.status;
-                  if (tokenResult.errors) {
-                    errorMessage += '\\nErrors: ' + JSON.stringify(tokenResult.errors);
-                  }
-                  throw new Error(errorMessage);
-                }
-              }
-              document.addEventListener('DOMContentLoaded', async function() {
-                await initializeCard();
-                const form = document.getElementById('square-payment-form');
-                form.addEventListener('submit', async function(event) {
-                  event.preventDefault();
-                  try {
-                    const token = await tokenize(card);
-                    const hiddenInput = document.createElement('input');
-                    hiddenInput.type = 'hidden';
-                    hiddenInput.name = 'token';
-                    hiddenInput.value = token;
-                    form.appendChild(hiddenInput);
-                    form.submit();
-                  } catch (e) {
-                    alert('支付失败: ' + e.message);
-                  }
-                });
-              });
-            </script>
-          </div>
+          </div>` : ''}
         </div>
       ` : ''}
     </div>

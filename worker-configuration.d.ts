@@ -3,6 +3,7 @@
 // Runtime types generated with workerd@1.20260708.1 2026-07-10 
 interface __BaseEnv_CloudflareBindings {
 	RENT: D1Database;
+	SETTINGS_ENCRYPTION_KEY: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

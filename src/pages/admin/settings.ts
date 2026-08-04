@@ -1,6 +1,6 @@
 import { buildLayout, getSystemSettings, updateSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any) {
+export function renderAdminSettings(user: any, stripe: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
 
   const body = `
@@ -48,8 +48,21 @@ export function renderAdminSettings(user: any) {
         <div class="form-group">
           <label>支付方式配置</label>
           <div class="checkbox-group">
-            <input type="checkbox" id="enableSquare" name="enableSquare" ${settings.paymentMethods.square ? 'checked' : ''}>
-            <label for="enableSquare">启用 Square 支付</label>
+            <input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}>
+            <label for="enableStripe">启用 Stripe 信用卡支付</label>
+          </div>
+
+          <div style="margin-top: 24px; padding: 24px; background: #f8fafc; border-radius: 12px; border: 1px solid #cbd5e1;">
+            <h4 style="margin-top:0;">Stripe API 配置</h4>
+            <p class="section-note">当前状态：${stripe.configured ? `已配置（${stripe.mode === 'live' ? '正式模式' : '测试模式'}）` : '未配置'}。Webhook 地址：<code>/webhooks/stripe</code></p>
+            <label class="form-label" for="stripePublishableKey">Publishable Key</label>
+            <input class="form-control" id="stripePublishableKey" name="stripePublishableKey" value="${stripe.publishableKey || ''}" placeholder="pk_test_... 或 pk_live_...">
+            <label class="form-label" for="stripeSecretKey">Secret Key</label>
+            <input class="form-control" type="password" id="stripeSecretKey" name="stripeSecretKey" placeholder="${stripe.secretKeyMasked || 'sk_test_...'}" autocomplete="new-password">
+            <label class="form-label" for="stripeWebhookSecret">Webhook Signing Secret</label>
+            <input class="form-control" type="password" id="stripeWebhookSecret" name="stripeWebhookSecret" placeholder="${stripe.webhookSecretMasked || 'whsec_...'}" autocomplete="new-password">
+            <label style="display:flex; gap:8px; align-items:center; margin-top:12px;"><input type="checkbox" name="clearStripeConfig"> 清除已保存的 Stripe 配置</label>
+            <p class="section-note">私密密钥留空会保留现有值，保存后不会再次显示完整内容。</p>
           </div>
           <div class="checkbox-group">
             <input type="checkbox" id="enableBankTransfer" name="enableBankTransfer" ${settings.paymentMethods.bankTransfer ? 'checked' : ''}>
@@ -184,9 +197,15 @@ export function renderAdminSettings(user: any) {
           rentalTerms: formData.get('rentalTerms'),
           priceStrategy: formData.get('priceStrategy'),
           paymentMethods: {
-            square: formData.has('enableSquare'),
+            stripe: formData.has('enableStripe'),
             bankTransfer: formData.has('enableBankTransfer'),
             balancePayment: formData.has('enableBalancePayment'),
+          },
+          stripeConfig: {
+            publishableKey: formData.get('stripePublishableKey'),
+            secretKey: formData.get('stripeSecretKey'),
+            webhookSecret: formData.get('stripeWebhookSecret'),
+            clear: formData.has('clearStripeConfig'),
           },
           bankDetails: {
             accountName: formData.get('bankAccountName'),
@@ -201,17 +220,17 @@ export function renderAdminSettings(user: any) {
           },
         };
         
-        // 这里的 updateSystemSettings 是一个示意函数，实际应用中你需要实现它
-        // 它可能是一个 fetch 调用，将 newSettings 发送到后端 API
-        console.log('Saving new settings:', newSettings);
-        
         // 发送到后端API保存
         fetch('/admin/settings/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newSettings)
         })
-        .then(response => response.json())
+        .then(async response => {
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || '保存失败');
+          return data;
+        })
         .then(data => {
           if (data.success) {
             alert('系统设置已保存成功！');

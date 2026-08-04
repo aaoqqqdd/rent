@@ -88,6 +88,10 @@ export interface Order {
 
   // refunds 旧逻辑
   needsRefund?: boolean
+  refundMethod?: 'balance' | 'original'
+  refundBsb?: string
+  refundAccountNumber?: string
+  refundAccountName?: string
 }
 
 export interface Contract {
@@ -173,7 +177,7 @@ export async function getUserById(cOrContext: Context | string, id?: string): Pr
   if (!actualId) return null
   const userRow = await db.prepare('SELECT * FROM users WHERE id = ?').bind(actualId).first()
   if (!userRow) return null
-  
+
   return normalizeUserRow(userRow)
 }
 
@@ -220,6 +224,10 @@ function normalizeOrderRow(orderRow: any): Order {
   const totalAmount = orderRow.totalAmount ?? orderRow.total_amount
   const depositAmount = orderRow.depositAmount ?? orderRow.deposit_amount
   const createdAt = orderRow.createdAt ?? orderRow.created_at
+  const refundMethod = orderRow.refundMethod ?? orderRow.refund_method ?? 'balance'
+  const refundBsb = orderRow.refundBsb ?? orderRow.refund_bsb
+  const refundAccountNumber = orderRow.refundAccountNumber ?? orderRow.refund_account_number
+  const refundAccountName = orderRow.refundAccountName ?? orderRow.refund_account_name
 
   return {
     ...orderRow,
@@ -237,6 +245,10 @@ function normalizeOrderRow(orderRow: any): Order {
     deposit_amount: depositAmount,
     createdAt,
     created_at: createdAt,
+    refundMethod,
+    refundBsb,
+    refundAccountNumber,
+    refundAccountName,
     status: orderRow.status ?? orderRow.order_status
   } as Order
 }
@@ -321,16 +333,16 @@ export async function getDeviceById(cOrContext: Context | string, id?: string): 
   if (!actualId) return null
   const deviceRow = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(actualId).first()
   if (!deviceRow) return null
-  
+
   // 统一处理snake_case和camelCase字段
   const pricePerDay = deviceRow.pricePerDay ?? deviceRow.price_per_day
   const depositAmount = deviceRow.depositAmount ?? deviceRow.deposit_amount
-  
+
   // Add type validation for required fields
   if (typeof pricePerDay !== 'number' || typeof depositAmount !== 'number') {
     throw new Error(`Device ${actualId} has missing or invalid pricePerDay or depositAmount`)
   }
-  
+
   // 确保返回的设备对象同时包含两种格式的字段，兼容所有调用方
   return {
     ...deviceRow,
@@ -347,7 +359,7 @@ export async function getContractById(cOrContext: Context | string, id?: string)
   if (!actualId) return null
   const contractRow = await db.prepare('SELECT * FROM contracts WHERE id = ?').bind(actualId).first()
   if (!contractRow) return null
-  
+
   // 统一处理snake_case和camelCase字段
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
@@ -359,7 +371,7 @@ export async function getContractById(cOrContext: Context | string, id?: string)
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
   const createdBy = contractRow.createdBy ?? contractRow.created_by
   const created_by = contractRow.created_by ?? contractRow.createdBy
-  
+
   // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
   return {
     ...contractRow,
@@ -382,7 +394,7 @@ export async function getContractByOrderId(cOrContext: Context | string, orderId
   if (!actualOrderId) return null
   const contractRow = await db.prepare('SELECT * FROM contracts WHERE rentalId = ? OR rental_id = ?').bind(actualOrderId, actualOrderId).first()
   if (!contractRow) return null
-  
+
   // 统一处理snake_case和camelCase字段
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
@@ -394,7 +406,7 @@ export async function getContractByOrderId(cOrContext: Context | string, orderId
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
   const createdBy = contractRow.createdBy ?? contractRow.created_by
   const created_by = contractRow.created_by ?? contractRow.createdBy
-  
+
   // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
   return {
     ...contractRow,
@@ -547,21 +559,21 @@ export async function updateContractStatus(c: Context, contractId: string, statu
 export async function cleanupExpiredAndCancelledContracts(c: Context): Promise<number> {
   const db = getDB(c)
   const now = new Date().toISOString()
-  
+
   // 删除条件：
   // 1. 已过期且未签署的合同 (status = 'pending_sign' 且 signExpiresAt < 当前时间)
   // 2. 已被取消的合同，且取消时间超过7天 (status = 'cancelled' 且 updatedAt < 7天前)
   const sevenDaysAgo = new Date()
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
   const sevenDaysAgoISO = sevenDaysAgo.toISOString()
-  
+
   try {
     const result = await db.prepare(`
       DELETE FROM contracts 
       WHERE (status = 'pending_sign' AND (signExpiresAt < ? OR sign_expires_at < ?))
          OR (status = 'cancelled' AND (updatedAt < ? OR updated_at < ?))
     `).bind(now, now, sevenDaysAgoISO, sevenDaysAgoISO).run()
-    
+
     const deletedCount = result.meta?.changes || 0
     if (deletedCount > 0) {
       await logError(c, 'INFO', `Cleaned up ${deletedCount} expired/cancelled contracts`)
@@ -585,7 +597,7 @@ export async function getContractByContractNumber(c: Context, contractNumber: st
   const upperCaseContractNumber = contractNumber.toUpperCase()
   const contractRow = await db.prepare('SELECT * FROM contracts WHERE UPPER(contractNumber) = ?').bind(upperCaseContractNumber).first()
   if (!contractRow) return null
-  
+
   // 统一处理snake_case和camelCase字段
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
@@ -597,7 +609,7 @@ export async function getContractByContractNumber(c: Context, contractNumber: st
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
   const createdBy = contractRow.createdBy ?? contractRow.created_by
   const created_by = contractRow.created_by ?? contractRow.createdBy
-  
+
   // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
   return {
     ...contractRow,
@@ -618,7 +630,7 @@ export async function getContractBySignToken(c: Context, signToken: string): Pro
   const db = getDB(c)
   const contractRow = await db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(signToken).first()
   if (!contractRow) return null
-  
+
   // 统一处理snake_case和camelCase字段
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
@@ -630,7 +642,7 @@ export async function getContractBySignToken(c: Context, signToken: string): Pro
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
   const createdBy = contractRow.createdBy ?? contractRow.created_by
   const created_by = contractRow.created_by ?? contractRow.createdBy
-  
+
   // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
   return {
     ...contractRow,
@@ -709,7 +721,7 @@ export async function getDevices(c?: Context): Promise<Device[]> {
   const db = getDB(c)
   const result = await db.prepare('SELECT * FROM devices').all()
   if (!result.results) return []
-  
+
   // 为每个设备统一处理snake_case和camelCase字段
   return (result.results as any[]).map(deviceRow => {
     const pricePerDay = deviceRow.pricePerDay ?? deviceRow.price_per_day
@@ -718,7 +730,7 @@ export async function getDevices(c?: Context): Promise<Device[]> {
     const serial_number = deviceRow.serial_number ?? deviceRow.serialNumber
     const price_per_day = deviceRow.price_per_day ?? deviceRow.pricePerDay
     const deposit_amount = deviceRow.deposit_amount ?? deviceRow.depositAmount
-    
+
     return {
       ...deviceRow,
       pricePerDay,
@@ -810,7 +822,13 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
   const parsedReferralSettings = safeJsonParse<typeof systemSettings.referralSettings>(referralSettingsValue)
 
-  if (parsedPaymentMethods) systemSettings.paymentMethods = parsedPaymentMethods
+  if (parsedPaymentMethods) {
+    systemSettings.paymentMethods = {
+      stripe: Boolean((parsedPaymentMethods as any).stripe ?? (parsedPaymentMethods as any).square),
+      bankTransfer: Boolean((parsedPaymentMethods as any).bankTransfer),
+      balancePayment: Boolean((parsedPaymentMethods as any).balancePayment),
+    }
+  }
   if (parsedBankDetails) systemSettings.bankDetails = parsedBankDetails
   if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
 
@@ -876,7 +894,7 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   // 构建INSERT字段和值
   const insertFields = ['id', 'name', 'email', 'role', 'status', 'balance'];
   const insertValues = [user.id, user.name, user.email, user.role, user.status ?? 'active', user.balance ?? 0];
-  
+
   // 处理commission_balance / commissionBalance
   if (hasCommissionBalanceSnake) {
     insertFields.push('commission_balance');
@@ -885,7 +903,7 @@ export async function insertUser(c: Context, user: any): Promise<User> {
     insertFields.push('commissionBalance');
     insertValues.push(user.commissionBalance ?? 0);
   }
-  
+
   // 处理referral_code / referralCode
   if (hasReferralCodeSnake) {
     insertFields.push('referral_code');
@@ -894,7 +912,7 @@ export async function insertUser(c: Context, user: any): Promise<User> {
     insertFields.push('referralCode');
     insertValues.push(user.referralCode ?? null);
   }
-  
+
   // 处理referrer_id / referrerId
   if (hasReferrerIdSnake) {
     insertFields.push('referrer_id');
@@ -903,7 +921,7 @@ export async function insertUser(c: Context, user: any): Promise<User> {
     insertFields.push('referrerId');
     insertValues.push(user.referrerId ?? null);
   }
-  
+
   // 处理created_at / createdAt
   if (hasCreatedAtSnake) {
     insertFields.push('created_at');
@@ -936,7 +954,7 @@ export async function insertUser(c: Context, user: any): Promise<User> {
 
   const placeholders = insertFields.map(() => '?').join(', ');
   const sql = `INSERT INTO users (${insertFields.join(', ')}) VALUES (${placeholders})`;
-  
+
   await db.prepare(sql).bind(...insertValues).run()
   const insertedRow = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as any | null
   if (!insertedRow) return null as any
@@ -1001,22 +1019,22 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   const db = getDB(c)
   const { nanoid } = await import('nanoid')
   const deviceId = device.id || `d-${nanoid(8)}`
-  
+
   // 先检查devices表中存在哪些列，避免硬编码列名导致错误
   const tableInfo = await db.prepare('PRAGMA table_info(devices)').all() as any;
   const deviceColumns = (tableInfo.results || []).map((column: any) => column.name);
-  
+
   const hasSerialNumberSnake = deviceColumns.includes('serial_number');
   const hasSerialNumberCamel = deviceColumns.includes('serialNumber');
   const hasPricePerDaySnake = deviceColumns.includes('price_per_day');
   const hasPricePerDayCamel = deviceColumns.includes('pricePerDay');
   const hasDepositAmountSnake = deviceColumns.includes('deposit_amount');
   const hasDepositAmountCamel = deviceColumns.includes('depositAmount');
-  
+
   // 构建插入字段和值
   const insertFields = ['id', 'name', 'model', 'status', 'description'];
   const insertValues = [deviceId, device.name, device.model, device.status || 'available', device.description || ''];
-  
+
   // 处理序列号字段
   if (hasSerialNumberCamel) {
     insertFields.push('serialNumber');
@@ -1025,7 +1043,7 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     insertFields.push('serial_number');
     insertValues.push(device.serialNumber);
   }
-  
+
   // 处理日租金字段
   if (hasPricePerDayCamel) {
     insertFields.push('pricePerDay');
@@ -1034,7 +1052,7 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     insertFields.push('price_per_day');
     insertValues.push(device.pricePerDay.toString());
   }
-  
+
   // 处理押金字段
   if (hasDepositAmountCamel) {
     insertFields.push('depositAmount');
@@ -1043,10 +1061,10 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     insertFields.push('deposit_amount');
     insertValues.push(device.depositAmount.toString());
   }
-  
+
   const placeholders = insertFields.map(() => '?').join(', ');
   const sql = `INSERT INTO devices (${insertFields.join(', ')}) VALUES (${placeholders})`;
-  
+
   await db.prepare(sql).bind(...insertValues).run()
   const inserted = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
   return inserted
@@ -1075,19 +1093,19 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   const db = getDB(c)
   const existing = await getDeviceById(c, deviceId)
   if (!existing) return null
-  
+
   const setEntries: [string, any][] = []
   for (const [key, value] of Object.entries(data)) {
     if (value !== undefined && Object.keys(existing).includes(key)) {
       setEntries.push([key, value])
     }
   }
-  
+
   if (setEntries.length === 0) return existing
-  
+
   const setClause = setEntries.map(([col]) => `${col} = ?`).join(', ')
   const values = setEntries.map(([, v]) => v)
-  
+
   await db.prepare(`UPDATE devices SET ${setClause} WHERE id = ?`).bind(...values, deviceId).run()
   return db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
 }
@@ -1350,14 +1368,10 @@ export const systemSettings = {
     account: '87654321',
     accountName: '账户名',
   },
-  squareConfig: {
-    applicationId: 'sq0idp-YOUR_APPLICATION_ID',
-    locationId: 'YOUR_LOCATION_ID',
-  },
   rentalTerms,
   priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
   paymentMethods: {
-    square: true,
+    stripe: true,
     bankTransfer: true,
     balancePayment: true,
   },
@@ -1660,25 +1674,25 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   // Seed示例订单
   const now = new Date().toISOString()
   const ordersToSeed = [
-    { 
-      id: 'o-1', userId: 'u-customer', deviceId: 'd-thinkpad', 
+    {
+      id: 'o-1', userId: 'u-customer', deviceId: 'd-thinkpad',
       startDate: '2026-07-10', endDate: '2026-08-10', rentalPeriod: 31,
       totalAmount: 1178.0, depositAmount: 1800.0, status: 'active', paymentMethod: 'bank_transfer'
     },
-    { 
-      id: 'o-2', userId: 'u-customer', deviceId: 'd-mbp14', 
+    {
+      id: 'o-2', userId: 'u-customer', deviceId: 'd-mbp14',
       startDate: '2026-07-01', endDate: '2026-07-07', rentalPeriod: 7,
       totalAmount: 280.0, depositAmount: 2000.0, status: 'completed', paymentMethod: 'card'
     },
-    { 
-      id: 'o-3', userId: 'u-customer', deviceId: 'd-xps13', 
+    {
+      id: 'o-3', userId: 'u-customer', deviceId: 'd-xps13',
       startDate: '2026-07-20', endDate: '2026-07-27', rentalPeriod: 7,
       totalAmount: 245.0, depositAmount: 1500.0, status: 'pending_payment', paymentMethod: null
     },
   ]
 
   const orderInsert = db.prepare('INSERT INTO orders (id, userId, deviceId, startDate, endDate, rentalPeriod, totalAmount, depositAmount, status, paymentMethod, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-  const orderInserts = ordersToSeed.map(o => 
+  const orderInserts = ordersToSeed.map(o =>
     orderInsert.bind(o.id, o.userId, o.deviceId, o.startDate, o.endDate, o.rentalPeriod, o.totalAmount, o.depositAmount, o.status, o.paymentMethod, now, now)
   )
   await db.batch(orderInserts)
@@ -1743,6 +1757,7 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
 }
 
 export function buildLayout(title: string, body: string, currentUser?: User | null): string {
+  const normalizedTitle = title.includes('电脑租赁管理系统') ? title : `${title} - 电脑租赁管理系统`
   const isAuthPage = title.includes('登录') || title.includes('注册') || title.includes('找回密码')
   const topNav =
     currentUser || isAuthPage
@@ -1782,25 +1797,25 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'CUSTOMER' ? `
             ${renderNavLink('/customer/dashboard', '控制台')}
             ${renderNavLink('/customer/rentals', '我的租赁')}
-            ${renderNavLink('/customer/orders', '订单记录')}
-            ${renderNavLink('/customer/profile', '账户资料')}
+            ${renderNavLink('/customer/orders', '订单管理')}
+            ${renderNavLink('/customer/profile', '个人资料')}
             ${renderNavLink('/customer/security', '安全设置')}
             ${renderNavLink('/customer/referral', '推荐计划')}
           ` : ''}
           ${currentUser.role === 'STAFF' ? `
             ${renderNavLink('/staff/dashboard', '工作台')}
             ${renderNavLink('/staff/orders/pending', '待审订单')}
-            ${renderNavLink('/staff/contracts', '合同与租赁管理')}
+            ${renderNavLink('/staff/contracts', '合同管理')}
             ${renderNavLink('/staff/contracts/new', '新建合同')}
             ${renderNavLink('/staff/devices', '设备管理')}
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
-            ${renderNavLink('/admin/dashboard', '管理后台')}
+            ${renderNavLink('/admin/dashboard', '控制台')}
             ${renderNavLink('/admin/users', '用户管理')}
             ${renderNavLink('/admin/orders', '订单管理')}
-            ${renderNavLink('/admin/refunds', '退款处理')}
+            ${renderNavLink('/admin/refunds', '退款管理')}
             ${renderNavLink('/admin/contracts', '合同管理')}
-            ${renderNavLink('/admin/finance', '财务中心')}
+            ${renderNavLink('/admin/finance', '财务管理')}
             ${renderNavLink('/admin/withdrawals', '佣金提现')}
             ${renderNavLink('/admin/devices', '设备管理')}
             ${renderNavLink('/admin/settings', '系统设置')}
@@ -1820,7 +1835,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
+  <title>${normalizedTitle}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
@@ -2274,11 +2289,11 @@ export async function logError(c: Context, level: ErrorLevel, message: string, e
   const db = getDB(c)
   const { nanoid } = await import('nanoid')
   const errorId = `err-${nanoid(8)}`
-  
+
   // 控制台输出，包含时间戳和级别
   const timestamp = new Date().toISOString()
   const consolePrefix = `[${timestamp}] [${level}]`
-  
+
   if (level === 'ERROR' || level === 'CRITICAL') {
     console.error(`${consolePrefix} ${message}`, error?.stack || '')
   } else if (level === 'WARNING') {
@@ -2313,7 +2328,7 @@ export async function cleanupOldErrorLogs(c: Context) {
   const db = getDB(c)
   const thirtyDaysAgo = new Date()
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-  
+
   try {
     await db.prepare(`
       DELETE FROM error_logs WHERE createdAt < ?
@@ -2335,7 +2350,7 @@ const SESSION_EXPIRY_HOURS = 24 // 会话24小时过期
  */
 export async function getOrCreateSignSession(c: Context, token: string, contractToken: string): Promise<Record<string, any>> {
   const db = getDB(c)
-  
+
   try {
     // 先尝试获取现有会话 - 使用正确的snake_case列名匹配数据库schema
     const existingSession = await db.prepare(`
@@ -2345,7 +2360,7 @@ export async function getOrCreateSignSession(c: Context, token: string, contract
     if (existingSession) {
       const sessionData = JSON.parse((existingSession as any).session_data)
       const expiresAt = new Date((existingSession as any).expires_at)
-      
+
       // 检查会话是否过期
       if (expiresAt > new Date()) {
         await logError(c, 'DEBUG', `Retrieved existing sign session`, undefined, { token, contractToken })
@@ -2361,12 +2376,12 @@ export async function getOrCreateSignSession(c: Context, token: string, contract
     const newSession: Record<string, any> = {}
     const expiresAt = new Date()
     expiresAt.setHours(expiresAt.getHours() + SESSION_EXPIRY_HOURS)
-    
+
     await db.prepare(`
       INSERT INTO sign_sessions (token, contract_token, session_data, expires_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).bind(token, contractToken, JSON.stringify(newSession), expiresAt.toISOString()).run()
-    
+
     await logError(c, 'INFO', `Created new sign session`, undefined, { token, contractToken })
     return newSession
   } catch (error) {
@@ -2383,7 +2398,7 @@ export async function getOrCreateSignSession(c: Context, token: string, contract
  */
 export async function updateSignSession(c: Context, token: string, data: Record<string, any>): Promise<void> {
   const db = getDB(c)
-  
+
   try {
     // 先获取当前会话
     const currentSession = await db.prepare(`
@@ -2396,14 +2411,14 @@ export async function updateSignSession(c: Context, token: string, data: Record<
 
     const sessionData = JSON.parse((currentSession as any).session_data)
     const updatedSession = { ...sessionData, ...data }
-    
+
     // 更新数据库中的会话 - 使用正确的snake_case列名匹配数据库schema
     await db.prepare(`
       UPDATE sign_sessions 
       SET session_data = ?, updated_at = CURRENT_TIMESTAMP 
       WHERE token = ?
     `).bind(JSON.stringify(updatedSession), token).run()
-    
+
     await logError(c, 'DEBUG', `Updated sign session`, undefined, { token, updates: Object.keys(data) })
   } catch (error) {
     await logError(c, 'ERROR', `Failed to update sign session`, error as Error, { token, updates: Object.keys(data) })
@@ -2418,7 +2433,7 @@ export async function updateSignSession(c: Context, token: string, data: Record<
  */
 export async function deleteSignSession(c: Context, token: string): Promise<void> {
   const db = getDB(c)
-  
+
   try {
     await db.prepare('DELETE FROM sign_sessions WHERE token = ?').bind(token).run()
     await logError(c, 'INFO', `Deleted sign session successfully`, undefined, { token })
@@ -2434,12 +2449,12 @@ export async function deleteSignSession(c: Context, token: string): Promise<void
 export async function cleanupExpiredSignSessions(c: Context): Promise<void> {
   const db = getDB(c)
   const now = new Date().toISOString()
-  
+
   try {
     const result = await db.prepare(`
       DELETE FROM sign_sessions WHERE expiresAt < ?
     `).bind(now).run()
-    
+
     const deletedCount = (result as any).changes || 0
     if (deletedCount > 0) {
       await logError(c, 'INFO', `Cleaned up ${deletedCount} expired sign sessions`)

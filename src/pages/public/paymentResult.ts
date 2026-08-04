@@ -1,8 +1,11 @@
 import { buildLayout, getOrderById, getContractByOrderId, formatCurrency } from '../../site';
+import type { Context } from 'hono';
 
-export async function renderPaymentResult(orderId: string, status: 'success' | 'fail', user: any) {
-  const order = await getOrderById(orderId);
-  const contract = order ? await getContractByOrderId(order.id) : null;
+export async function renderPaymentResult(c: Context, orderId: string, user: any) {
+  const order = await getOrderById(c, orderId);
+  const contract = order ? await getContractByOrderId(c, order.id) : null;
+  const payment = order ? await c.env.RENT.prepare("SELECT status FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any : null
+  const status = payment?.status === 'paid' || order?.status === 'paid' ? 'success' : payment?.status === 'failed' ? 'fail' : 'pending'
 
   let title = '';
   let message = '';
@@ -20,7 +23,7 @@ export async function renderPaymentResult(orderId: string, status: 'success' | '
       </div>
     `;
     cardClass = 'success';
-  } else {
+  } else if (status === 'fail') {
     title = '支付失败';
     message = `您的订单 <strong>#${order?.orderNo ?? 'N/A'}</strong> 支付未能成功。请重试或选择其他支付方式。`;
     icon = `
@@ -31,6 +34,13 @@ export async function renderPaymentResult(orderId: string, status: 'success' | '
     cardClass = 'danger';
     buttonText = '返回订单支付';
     buttonLink = `/customer/orders/${orderId}`;
+  } else {
+    title = '正在确认支付';
+    message = `Stripe 正在确认订单 <strong>#${order?.orderNo ?? 'N/A'}</strong> 的付款结果，本页面会自动刷新。`;
+    icon = '<div class="icon-wrapper" style="background:#e0f2fe;color:#0369a1;">…</div>';
+    cardClass = '';
+    buttonText = '刷新支付状态';
+    buttonLink = `/payment/result?orderId=${encodeURIComponent(orderId)}`;
   }
 
   const body = `
@@ -98,6 +108,7 @@ export async function renderPaymentResult(orderId: string, status: 'success' | '
         </div>
       </div>
     </div>
+    ${status === 'pending' ? '<script>setTimeout(() => window.location.reload(), 3000)</script>' : ''}
   `;
 
   return buildLayout('支付结果 - 电脑租赁管理系统', body, user);

@@ -2,9 +2,11 @@ import { Context } from 'hono';
 import { 
   getContractBySignToken, getContractByContractNumber, insertUser, updateOrderInDB, Order, User, 
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
-  updateSignSession, deleteSignSession 
+  updateSignSession, deleteSignSession, getUserById, getSystemSettings
 } from '../../site';
 import { nanoid } from 'nanoid';
+import { createStripeCheckout } from '../stripePayments';
+import { getStripeRuntimeConfig } from '../../stripe';
 
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
   const token = identifier; // 明确定义 token
@@ -202,9 +204,25 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
         
         const { paymentMethod } = body;
+        const refundMethod = body.refundMethod === 'original' ? 'original' : 'balance'
+        const refundBsb = String(body.refundBsb || '').trim()
+        const refundAccountNumber = String(body.refundAccountNumber || '').replace(/\s/g, '')
+        const refundAccountName = String(body.refundAccountName || '').trim()
         if (!paymentMethod) {
           await logError(c, 'INFO', `No payment method selected in step 3`, undefined, { token });
           throw new Error('请选择一种支付方式。');
+        }
+        const enabledMethods = [
+          ...(getSystemSettings().paymentMethods.stripe ? ['stripe'] : []),
+          ...(getSystemSettings().paymentMethods.bankTransfer ? ['bank_transfer'] : []),
+          ...(getSystemSettings().paymentMethods.balancePayment ? ['balance'] : []),
+        ]
+        if (!enabledMethods.includes(paymentMethod)) throw new Error('所选支付方式当前不可用')
+        if (paymentMethod === 'stripe') await getStripeRuntimeConfig(c)
+        if (paymentMethod === 'bank_transfer' && refundMethod === 'original') {
+          if (!/^\d{3}-?\d{3}$/.test(refundBsb) || !/^\d{4,10}$/.test(refundAccountNumber) || !refundAccountName) {
+            throw new Error('选择银行原路退款时，请填写正确的账户名、BSB 和银行账号')
+          }
         }
 
         // **核心签约逻辑**
@@ -290,9 +308,25 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         await updateOrderInDB(c, contract.rentalId, {
           userId: userId,
-          paymentMethod: paymentMethod as Order['paymentMethod'],
+          paymentMethod: (paymentMethod === 'stripe' ? 'card' : paymentMethod) as Order['paymentMethod'],
           status: orderStatus,
         });
+        await c.env.RENT.prepare(`UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?`)
+          .bind(refundMethod, refundMethod === 'original' ? refundBsb || null : null, refundMethod === 'original' ? refundAccountNumber || null : null, refundMethod === 'original' ? refundAccountName || null : null, contract.rentalId).run()
+
+        if (paymentMethod === 'balance' || paymentMethod === 'bank_transfer') {
+          const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
+          const paymentTotal = Number(paymentOrder?.totalAmount || 0)
+          const paymentDeposit = Number(paymentOrder?.depositAmount || 0)
+          await c.env.RENT.prepare(`
+            INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, paid_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?)
+          `).bind(
+            `p-${nanoid(12)}`, contract.rentalId, userId, paymentMethod,
+            paymentTotal, paymentDeposit, paymentTotal - paymentDeposit,
+            paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? new Date().toISOString() : null
+          ).run()
+        }
         await logError(c, 'INFO', `Order updated with user and payment method`, undefined, { 
           token, 
           orderId: contract.rentalId, 
@@ -354,9 +388,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await deleteSignSession(c, token);
         await logError(c, 'INFO', `Sign session deleted after successful completion`, undefined, { token });
 
-        // 5. 重定向到支付页面或成功页面
-        // 这里我们假设支付是下一步，并重定向到一个支付结果页
-        redirectUrl = `/payment/result?orderId=${contract.rentalId}&status=success`;
+        if (paymentMethod === 'stripe') {
+          const stripeUser = await getUserById(c, userId)
+          if (!stripeUser) throw new Error('无法读取付款用户信息')
+          return createStripeCheckout(c, stripeUser, contract.rentalId)
+        }
+        redirectUrl = `/payment/result?orderId=${contract.rentalId}`;
         await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, { 
           token, 
           contractId: contract.id, 

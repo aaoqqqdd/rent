@@ -365,11 +365,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=3">
             <div class="payment-options" style="display: flex; flex-direction: column; gap: 15px;">
-              ${systemSettings.paymentMethods.square ? `
+              ${systemSettings.paymentMethods.stripe ? `
               <label class="card" style="cursor: pointer; padding: 16px;">
-                <input type="radio" name="paymentMethod" value="square" required />
-                <strong style="margin-left: 8px;">信用卡支付 (Square)</strong>
-                <p class="text-muted" style="margin: 4px 0 0 24px;">通过 Square 安全支付网关，支持 Visa, MasterCard, AMEX 等。</p>
+                <input type="radio" name="paymentMethod" value="stripe" required />
+                <strong style="margin-left: 8px;">信用卡支付（Stripe）</strong>
+                <p class="text-muted" style="margin: 4px 0 0 24px;">前往 Stripe 安全结账页面，支持主流信用卡。</p>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -387,11 +387,41 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               </label>
               ` : ''}
             </div>
+            <div class="card" style="margin-top:20px; padding:16px;">
+              <h3 style="margin-top:0;">退款接收方式</h3>
+              <label style="display:block; margin-bottom:10px;"><input type="radio" name="refundMethod" value="balance" checked> 退回账户余额（默认，到账更快）</label>
+              <label style="display:block;"><input type="radio" name="refundMethod" value="original"> 原路退回</label>
+              <p class="text-muted">信用卡原路退回 Stripe；银行转账原路退回您填写的银行账户；余额付款仍退回余额。</p>
+              <div id="bank-refund-fields" style="display:none; margin-top:14px;">
+                <label class="form-label" for="refundAccountName">账户名</label>
+                <input class="form-control" id="refundAccountName" name="refundAccountName" value="${currentUser?.name || ''}">
+                <label class="form-label" for="refundBsb">BSB</label>
+                <input class="form-control" id="refundBsb" name="refundBsb" value="${currentUser?.bsb || ''}" placeholder="062-001">
+                <label class="form-label" for="refundAccountNumber">账号</label>
+                <input class="form-control" id="refundAccountNumber" name="refundAccountNumber" value="${currentUser?.accountNumber || currentUser?.account_number || ''}" inputmode="numeric">
+              </div>
+            </div>
             <div style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
               <a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=2" class="button-secondary">返回上一步</a>
               <button class="button" type="submit">确认并完成签约</button>
             </div>
           </form>
+          <script>
+            (() => {
+              const form = document.querySelector('form[action*="step=3"]');
+              const fields = document.getElementById('bank-refund-fields');
+              const bankInputs = fields.querySelectorAll('input');
+              const update = () => {
+                const payment = form.querySelector('input[name="paymentMethod"]:checked')?.value;
+                const refund = form.querySelector('input[name="refundMethod"]:checked')?.value;
+                const show = payment === 'bank_transfer' && refund === 'original';
+                fields.style.display = show ? 'block' : 'none';
+                bankInputs.forEach(input => input.required = show);
+              };
+              form.addEventListener('change', update);
+              update();
+            })();
+          </script>
         </div>
       `;
       break;

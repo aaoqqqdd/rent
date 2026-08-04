@@ -1,5 +1,6 @@
 import { Context } from 'hono'
 import { getSystemSettings, updateSystemSettings } from '../../site'
+import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
 
 export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   // index.ts 已经完成 admin 权限校验，这里不再依赖 c.get('user')。
@@ -11,7 +12,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     rentalTerms: payload.rentalTerms ?? getSystemSettings().rentalTerms,
     priceStrategy: payload.priceStrategy ?? getSystemSettings().priceStrategy,
     paymentMethods: {
-      square: Boolean(payload.paymentMethods?.square),
+      stripe: Boolean(payload.paymentMethods?.stripe),
       bankTransfer: Boolean(payload.paymentMethods?.bankTransfer),
       balancePayment: Boolean(payload.paymentMethods?.balancePayment),
     },
@@ -28,10 +29,8 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     },
   }
 
-  // 现阶段仓库的 systemSettings 是内存对象，没有 D1 表；先把接口打通，避免前端“演示保存”。
-  // 后续如果你补了 settings 表/kv，我再把这里改成真正落库。
+  if (payload.stripeConfig) await saveStripeConfig(c, payload.stripeConfig)
   await updateSystemSettings(c, next as any)
 
-  return c.json({ success: true, settings: getSystemSettings() })
+  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c) })
 }
-

@@ -55,9 +55,9 @@ export async function renderAdminUserDetail(c: Context, user: any, targetUserId:
 
       <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
         <h3>快捷操作</h3>
-        <div style="display: flex; gap: 12px; margin-top: 16px;">
+        <div style="display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap;">
           <a href="/admin/users/${targetUser.id}/edit" class="button">✏️ 编辑用户</a>
-          <a href="/admin/orders" class="button button-secondary">📋 查看订单</a>
+          <a href="/admin/orders?userId=${targetUser.id}" class="button button-secondary">📋 查看关联订单</a>
         </div>
       </div>
     </div>

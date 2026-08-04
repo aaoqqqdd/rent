@@ -5,7 +5,7 @@ export function renderAdminFinance(user: any, orders: any[] = []) {
   const totalRevenue = orders
     .filter(o => o.status === 'completed' || o.status === 'paid' || o.status === 'active')
     .reduce((sum, order) => sum + (order.totalAmount || order.total_amount || 0), 0)
-  
+
   // 估算支出（押金退还等，暂时按收入的15%估算）
   const totalExpense = Math.round(totalRevenue * 0.15 * 100) / 100
   const netProfit = Math.round((totalRevenue - totalExpense) * 100) / 100
@@ -82,28 +82,23 @@ export function renderAdminFinance(user: any, orders: any[] = []) {
       <div class="finance-sections">
         <div class="finance-section">
           <h4>📊 收入统计</h4>
-          <p>查看收入的图表和详细列表。</p>
+          <p>查看订单收入和租赁交易明细。</p>
           <a href="/admin/orders" class="button button-sm">查看订单</a>
         </div>
         <div class="finance-section">
-          <h4>💸 支出管理</h4>
-          <p>记录和管理各项系统支出。</p>
-          <a href="/admin/orders" class="button button-sm">查看明细</a>
+          <h4>💸 退款处理</h4>
+          <p>查看和处理已支付订单的退款记录。</p>
+          <a href="/admin/refunds" class="button button-sm">查看退款</a>
         </div>
         <div class="finance-section">
-          <h4>✅ 对账记录</h4>
-          <p>查看和核对所有交易记录。</p>
-          <a href="/admin/orders" class="button button-sm">查看对账</a>
+          <h4>✅ 佣金提现</h4>
+          <p>查看佣金发放与提现审核记录。</p>
+          <a href="/admin/withdrawals" class="button button-sm">查看提现</a>
         </div>
         <div class="finance-section">
-          <h4>📄 发票管理</h4>
-          <p>生成、管理和发送客户发票。</p>
-          <a href="/admin/orders" class="button button-sm">管理发票</a>
-        </div>
-        <div class="finance-section">
-          <h4>💰 佣金发放记录</h4>
-          <p>查看推荐佣金的计算和发放历史。</p>
-          <a href="/admin/users" class="button button-sm">查看记录</a>
+          <h4>👥 用户管理</h4>
+          <p>查看用户余额和平台客户账户状态。</p>
+          <a href="/admin/users" class="button button-sm">查看用户</a>
         </div>
       </div>
     </div>
