@@ -1,25 +1,23 @@
-import { buildLayout, getContractBySignToken, getContractByContractNumber, getOrderById, getDeviceById, formatCurrency, getSystemSettings, getContractTemplate, rentalTerms, findUserBySession } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, formatCurrency, getSystemSettings, getContractTemplate, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText } from '../../site';
 import { Context } from 'hono';
 
 export async function renderContractSignPage(c: Context, tokenOrNumber: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
-  console.log('renderContractSignPage called with tokenOrNumber:', tokenOrNumber); // 添加日志
+  const escapeAttribute = (value: unknown) => sanitizePlainText(value, 500)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  tokenOrNumber = escapeAttribute(tokenOrNumber)
+  errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
+  userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
   const currentUser = await findUserBySession(c, c.req.header('cookie') ?? null);
   let contract = await getContractBySignToken(c, tokenOrNumber);
   
-  // 如果通过token找不到，尝试用合同编号查找（支持新的链接格式）
-  if (!contract) {
-    contract = await getContractByContractNumber(c, tokenOrNumber);
-  }
 
   // 在模板中使用的 `token` 变量，映射传入的 tokenOrNumber
   const token = tokenOrNumber;
   
   if (!contract) {
-    console.error('Contract not found for tokenOrNumber:', tokenOrNumber); // 添加日志
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
   }
 
-  console.log('Contract found:', contract); // 添加日志，查看合同详情
 
   // 检查合同是否已过期
   const signExpiresAt = contract.signExpiresAt || contract.sign_expires_at;
@@ -47,39 +45,17 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   //   return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
   // }
 
-  let order = null; // 声明 order 变量
-  let device = null; // 声明 device 变量
+  const orderId = contract.rentalId || contract.rental_id;
+  const order = await getOrderById(c, orderId);
+  if (!order) return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
+  const device = await getDeviceById(c, order.deviceId);
+  const contractCustomer = currentUser || (order.userId ? await getUserById(c, order.userId) : null);
 
   const systemSettings = getSystemSettings();
   const contractTemplate = await getContractTemplate(c);
   
-  // 替换 activeContractContent 中的变量
-  const replaceVariables = (content: string, order: any, device: any, user: any) => {
-    if (!content) return '';
-    let replacedContent = content;
-    if (order) {
-      replacedContent = replacedContent.replace(/{{orderNo}}/g, order.orderNo);
-      replacedContent = replacedContent.replace(/{{startDate}}/g, new Date(order.startDate).toLocaleDateString());
-      replacedContent = replacedContent.replace(/{{endDate}}/g, new Date(order.endDate).toLocaleDateString());
-      replacedContent = replacedContent.replace(/{{rentalPeriod}}/g, order.rentalPeriod);
-      replacedContent = replacedContent.replace(/{{totalAmount}}/g, formatCurrency(order.totalAmount));
-      replacedContent = replacedContent.replace(/{{depositAmount}}/g, formatCurrency(order.depositAmount));
-      replacedContent = replacedContent.replace(/{{dailyRate}}/g, formatCurrency(order.dailyRate));
-    }
-    if (device) {
-      replacedContent = replacedContent.replace(/{{deviceName}}/g, device.name);
-      replacedContent = replacedContent.replace(/{{deviceModel}}/g, device.model);
-      replacedContent = replacedContent.replace(/{{deviceSerial}}/g, device.serialNumber);
-    }
-    if (user) {
-      replacedContent = replacedContent.replace(/{{userName}}/g, user.name);
-      replacedContent = replacedContent.replace(/{{userEmail}}/g, user.email);
-      replacedContent = replacedContent.replace(/{{userPhone}}/g, user.phone);
-    }
-    return replacedContent;
-  };
-
-  const activeContractContent = replaceVariables(contract.content || contractTemplate.content || systemSettings.rentalTerms, order, device, currentUser);
+  const variableData = await getContractVariableData(c, contract, order)
+  const activeContractContent = renderContractVariables(contract.content || contractTemplate.content || systemSettings.rentalTerms, contract, order, device, contractCustomer, variableData);
   
   const contractHtml = /<[^>]+>/.test(activeContractContent)
     ? activeContractContent
@@ -178,6 +154,9 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                   <span id="phoneError" style="color: #ef4444; font-size: 14px; display: none;"></span>
                 </div>
               </div>
+            </div>
+            <div class="grid grid-2" style="margin-top:16px;">
+              <div class="form-group"><label class="form-label" for="esignSignature">电子签名（输入本人全名）</label><input id="esignSignature" name="esignSignature" class="form-control" value="${userInput.esignSignature ?? ''}" required></div>
             </div>
             
             <!-- 推荐人代码输入框 -->
@@ -344,14 +323,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       title = '步骤 3/3: 选择付款方式';
 
       // 在步骤3中获取订单和设备信息
-      const orderId = contract.rentalId || contract.rental_id;
-      console.log('Attempting to fetch order with orderId:', orderId, 'from contract.rentalId:', contract.rentalId, 'or contract.rental_id:', contract.rental_id); // 添加日志
-      order = await getOrderById(c, orderId);
-      if (!order) {
-        console.error('Order not found for orderId:', orderId);
-        return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
-      }
-      device = await getDeviceById(c, order.deviceId);
 
       content = `
         <div class="panel">

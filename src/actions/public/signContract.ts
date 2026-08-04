@@ -1,8 +1,9 @@
 import { Context } from 'hono';
 import { 
-  getContractBySignToken, getContractByContractNumber, insertUser, updateOrderInDB, Order, User, 
+  getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
-  updateSignSession, deleteSignSession, getUserById, getSystemSettings
+  updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
+  getContractVariableData, renderContractVariables, issueInvoice
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { createStripeCheckout } from '../stripePayments';
@@ -19,10 +20,6 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
   });
 
   let contract = await getContractBySignToken(c, token); // 使用明确定义的 token
-  // 如果通过token找不到，尝试用合同编号查找（支持新的链接格式）
-  if (!contract) {
-    contract = await getContractByContractNumber(c, token); // 使用明确定义的 token
-  }
   if (!contract) {
     await logError(c, 'WARNING', `Contract not found for signing identifier`, undefined, { identifier: token }); // 使用明确定义的 token
     return new Response('合同链接无效或已过期', { status: 404 });
@@ -89,10 +86,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先同意租赁协议。');
         }
 
-        const { name, email, password, passwordConfirm, phoneCode, phone, createAccount, referrer } = body;
+        const { name, email, password, passwordConfirm, phoneCode, phone, createAccount, referrer, esignSignature } = body;
         
         // 验证必填字段
-        if (!name || !email || !phoneCode || !phone) {
+        if (!name || !email || !phoneCode || !phone || esignSignature?.trim() !== name.trim()) {
           await logError(c, 'INFO', `Missing required fields in step 2`, undefined, { 
             token, 
             hasName: !!name, 
@@ -100,7 +97,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             hasPhoneCode: !!phoneCode, 
             hasPhone: !!phone 
           });
-          throw new Error('姓名、邮箱和联系电话是必填项。');
+          throw new Error('请完整填写姓名、邮箱和联系电话；电子签名必须与姓名一致。');
         }
         
         // 如果选择创建账户，密码是必填的
@@ -327,6 +324,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? new Date().toISOString() : null
           ).run()
         }
+        if (paymentMethod === 'balance') await issueInvoice(c, contract.rentalId)
         await logError(c, 'INFO', `Order updated with user and payment method`, undefined, { 
           token, 
           orderId: contract.rentalId, 
@@ -336,7 +334,23 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         });
 
         // 3. 更新合同状态
-        await updateContractStatusInDB(c, contract.id, 'signed');
+        const esignIp = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || '').trim().slice(0, 64)
+        const esignDevice = (c.req.header('User-Agent') || '').trim().slice(0, 500)
+        const browser = /Edg\//.test(esignDevice) ? 'Edge' : /Chrome\//.test(esignDevice) ? 'Chrome' : /Firefox\//.test(esignDevice) ? 'Firefox' : /Safari\//.test(esignDevice) ? 'Safari' : 'Other'
+        const os = /Windows/.test(esignDevice) ? 'Windows' : /Mac OS|Macintosh/.test(esignDevice) ? 'macOS' : /Android/.test(esignDevice) ? 'Android' : /iPhone|iPad/.test(esignDevice) ? 'iOS' : /Linux/.test(esignDevice) ? 'Linux' : 'Other'
+        const existingData = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
+        const signedData = { ...existingData, esign_signature: userInfo.esignSignature, esign_browser: browser, esign_os: os, agreement_version: existingData.agreement_version || '1.0' }
+        await c.env.RENT.prepare(`UPDATE contracts SET esign_ip = ?, esign_device = ?, contract_data = ? WHERE id = ?`)
+          .bind(esignIp || null, esignDevice || null, JSON.stringify(signedData), contract.id).run()
+        const signedAt = new Date().toISOString()
+        const signedOrder = await getOrderById(c, contract.rentalId)
+        const signedDevice = signedOrder ? await getDeviceById(c, signedOrder.deviceId) : null
+        const signedCustomer = await getUserById(c, userId)
+        const signedContract = { ...contract, contract_data: signedData, esign_ip: esignIp, esign_device: esignDevice, signedAt }
+        const signedContent = renderContractVariables(contract.content, signedContract, signedOrder, signedDevice, signedCustomer, signedOrder ? await getContractVariableData(c, signedContract, signedOrder) : {})
+        const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signedContent))), byte => byte.toString(16).padStart(2, '0')).join('')
+        await c.env.RENT.prepare('UPDATE contracts SET signed_content = ?, content_hash = ? WHERE id = ?').bind(signedContent, contentHash, contract.id).run()
+        await updateContractStatusInDB(c, contract.id, 'signed', signedAt);
         await logError(c, 'INFO', `Contract signed successfully`, undefined, { token, contractId: contract.id });
 
         

@@ -1,4 +1,32 @@
 import { Context } from 'hono'
+import sanitizeHtml from 'sanitize-html'
+
+export function sanitizeRichHtml(value: unknown): string {
+  return sanitizeHtml(String(value ?? ''), {
+    allowedTags: ['h1','h2','h3','h4','p','br','strong','b','em','i','u','s','ol','ul','li','table','thead','tbody','tr','th','td','blockquote','a','span','div','hr','code','pre'],
+    allowedAttributes: { a: ['href','target','rel'], '*': ['class','style'] },
+    allowedSchemes: ['http', 'https', 'mailto'],
+    allowedSchemesByTag: { a: ['http', 'https', 'mailto'] },
+    allowedStyles: {
+      '*': {
+        color: [/^#[0-9a-f]{3,8}$/i, /^rgb\([\d\s,.%]+\)$/i],
+        'background-color': [/^#[0-9a-f]{3,8}$/i, /^rgb\([\d\s,.%]+\)$/i],
+        'text-align': [/^(left|right|center|justify)$/],
+        'font-weight': [/^(normal|bold|[1-9]00)$/],
+        width: [/^\d+(\.\d+)?(%|px)$/],
+        margin: [/^[\d\s.%px-]+$/], padding: [/^[\d\s.%px-]+$/],
+        border: [/^[\d\s.#a-z()-]+$/i], 'border-collapse': [/^(collapse|separate)$/],
+      },
+    },
+    transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer' }, true) },
+  })
+}
+
+export function sanitizePlainText(value: unknown, maxLength = 500): string {
+  return sanitizeHtml(String(value ?? ''), { allowedTags: [], allowedAttributes: {} })
+    .trim()
+    .slice(0, maxLength)
+}
 
 export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
 
@@ -113,6 +141,17 @@ export interface Contract {
 
   // snake_case 兼容旧页面
   rental_id?: string
+  device_condition?: string | null
+  device_accessories?: string | null
+  late_fee_per_day?: number
+  repair_cost?: number | null
+  pickup_location?: string | null
+  return_location?: string | null
+  esign_ip?: string | null
+  esign_device?: string | null
+  contract_data?: string | Record<string, unknown> | null
+  signed_content?: string | null
+  content_hash?: string | null
 }
 
 export interface ContractTemplate {
@@ -138,15 +177,27 @@ export async function generateReferralCode(length: number = 6): Promise<string> 
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  const salt = generateSalt(); // 生成一个随机盐值
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + salt); // 将密码和盐值拼接后进行哈希
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
-  return `${salt}$${hash}`; // 返回盐值和哈希值拼接的字符串
+  const iterations = 210000
+  const salt = generateSalt()
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations }, key, 256)
+  const hash = Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('')
+  return `pbkdf2$${iterations}$${salt}$${hash}`
 }
 
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  if (storedHash.startsWith('pbkdf2$')) {
+    const [, iterationText, salt, expected] = storedHash.split('$')
+    const iterations = Number(iterationText)
+    if (!iterations || !salt || !expected) return false
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations }, key, 256)
+    const actual = Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('')
+    if (actual.length !== expected.length) return false
+    let difference = 0
+    for (let i = 0; i < actual.length; i++) difference |= actual.charCodeAt(i) ^ expected.charCodeAt(i)
+    return difference === 0
+  }
   const parts = storedHash.split('$');
   if (parts.length !== 2) {
     // 如果存储的哈希值格式不正确，则验证失败
@@ -285,45 +336,34 @@ function normalizeContractRow(contractRow: any): Contract {
 export async function getOrderById(cOrContext: Context | string, id?: string): Promise<Order | null> {
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
-  console.log('getOrderById called with actualId:', actualId); // 添加日志
   if (!actualId) {
-    console.log('getOrderById: actualId is null or undefined, returning null.'); // 添加日志
     return null;
   }
 
   // 1. 直接使用传入的 id 进行查询
   let orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
   if (orderRow) {
-    console.log('getOrderById: Found order with exact ID match:', actualId); // 添加日志
     return normalizeOrderRow(orderRow)
   }
-  console.log('getOrderById: No order found with exact ID match:', actualId); // 添加日志
 
   // 2. 如果查询结果为空，并且传入的 id 不以 o- 开头，则尝试添加 o- 前缀后再次查询
   if (!actualId.startsWith('o-')) {
     const prefixedId = `o-${actualId}`
-    console.log('getOrderById: Attempting to query with prefixed ID:', prefixedId); // 添加日志
     orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(prefixedId).first()
     if (orderRow) {
-      console.log('getOrderById: Found order with prefixed ID match:', prefixedId); // 添加日志
       return normalizeOrderRow(orderRow)
     }
-    console.log('getOrderById: No order found with prefixed ID match:', prefixedId); // 添加日志
   }
 
   // 3. 如果查询结果为空，并且传入的 id 以 o- 开头，则尝试去除 o- 前缀后再次查询
   if (actualId.startsWith('o-')) {
     const unprefixedId = actualId.substring(2)
-    console.log('getOrderById: Attempting to query with unprefixed ID:', unprefixedId); // 添加日志
     orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(unprefixedId).first()
     if (orderRow) {
-      console.log('getOrderById: Found order with unprefixed ID match:', unprefixedId); // 添加日志
       return normalizeOrderRow(orderRow)
     }
-    console.log('getOrderById: No order found with unprefixed ID match:', unprefixedId); // 添加日志
   }
 
-  console.log('getOrderById: No order found after all attempts for ID:', actualId); // 添加日志
   return null
 }
 
@@ -491,8 +531,10 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
 export async function insertContract(c: Context, contract: Contract): Promise<void> {
   const db = getDB(c);
   // 同时插入驼峰和下划线格式的字段，确保兼容性
-  await db.prepare('INSERT INTO contracts (id, orderId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil, signExpiresAt, created_by, sign_expires_at, sign_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
-    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil, contract.signExpiresAt, contract.createdBy, contract.signExpiresAt, contract.signToken
+  await db.prepare('INSERT INTO contracts (id, orderId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil, signExpiresAt, created_by, sign_expires_at, sign_token, device_condition, device_accessories, late_fee_per_day, repair_cost, pickup_location, return_location, contract_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
+    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil, contract.signExpiresAt, contract.createdBy, contract.signExpiresAt, contract.signToken,
+    contract.device_condition || null, contract.device_accessories || null, contract.late_fee_per_day || 0, contract.repair_cost ?? null, contract.pickup_location || null, contract.return_location || null,
+    typeof contract.contract_data === 'string' ? contract.contract_data : JSON.stringify(contract.contract_data || {})
   ).run();
 }
 
@@ -504,6 +546,46 @@ export async function updateDeviceStatus(c: Context, deviceId: string, status: s
 export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
   const db = getDB(c);
   await db.prepare('UPDATE orders SET status = ? WHERE id = ?').bind(status, orderId).run();
+}
+
+export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string): Promise<boolean> {
+  const row = await c.env.RENT.prepare(`
+    SELECT id FROM orders
+    WHERE deviceId = ? AND id != ?
+      AND status NOT IN ('completed', 'cancelled')
+      AND startDate < ? AND endDate > ?
+    LIMIT 1
+  `).bind(deviceId, excludeOrderId || '', endDate, startDate).first()
+  return Boolean(row)
+}
+
+const ORDER_TRANSITIONS: Record<string, string[]> = {
+  pending_approval: ['approved', 'cancelled'],
+  approved: ['pending_payment', 'cancelled'],
+  draft: ['pending_payment', 'cancelled'],
+  pending_payment: ['paid', 'cancelled'],
+  paid: ['active', 'cancelled'],
+  active: ['completed'],
+  pending_pickup: ['pending_return', 'cancelled'],
+  pending_return: ['completed'],
+  completed: [], cancelled: [],
+}
+
+export function canTransitionOrder(from: string, to: string): boolean {
+  return from === to || Boolean(ORDER_TRANSITIONS[from]?.includes(to))
+}
+
+export function validateHostedImageUrls(value: unknown, maxUrls = 5): string[] {
+  const urls = String(value || '').split(/[\n,]+/).map(item => item.trim()).filter(Boolean)
+  if (!urls.length || urls.length > maxUrls) throw new Error(`请提供 1-${maxUrls} 个图片链接`)
+  return urls.map(raw => {
+    let parsed: URL
+    try { parsed = new URL(raw) } catch { throw new Error('图片链接格式不正确') }
+    const host = parsed.hostname.toLowerCase()
+    const privateHost = host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || privateHost) throw new Error('图片必须使用公开的 HTTPS 图床链接')
+    return parsed.toString()
+  })
 }
 
 export async function updateOrder(c: Context, order: Order): Promise<void> {
@@ -676,9 +758,10 @@ export async function verifyUserCredentials(c: Context, account: string, passwor
     // Get password hash (handle both camelCase and snake_case)
     const passwordHash = userRow.passwordHash || userRow.password_hash
     const passwordSalt = userRow.passwordSalt || userRow.password_salt
-    if (passwordHash && passwordSalt) {
-      const isValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`)
+    if (passwordHash) {
+      const isValid = await verifyPassword(password, String(passwordHash).startsWith('pbkdf2$') ? String(passwordHash) : `${passwordSalt}$${passwordHash}`)
       if (isValid) {
+        if (!String(passwordHash).startsWith('pbkdf2$')) await updateUser(c, normalizedUser.id, { password })
         delete (normalizedUser as any).passwordHash
         delete (normalizedUser as any).passwordSalt
         delete (normalizedUser as any).password
@@ -692,9 +775,10 @@ export async function verifyUserCredentials(c: Context, account: string, passwor
     const normalizedUser = normalizeUserRow(phoneRow)
     const passwordHash = phoneRow.passwordHash || phoneRow.password_hash
     const passwordSalt = phoneRow.passwordSalt || phoneRow.password_salt
-    if (passwordHash && passwordSalt) {
-      const isValid = await verifyPassword(password, `${passwordSalt}$${passwordHash}`)
+    if (passwordHash) {
+      const isValid = await verifyPassword(password, String(passwordHash).startsWith('pbkdf2$') ? String(passwordHash) : `${passwordSalt}$${passwordHash}`)
       if (isValid) {
+        if (!String(passwordHash).startsWith('pbkdf2$')) await updateUser(c, normalizedUser.id, { password })
         delete (normalizedUser as any).passwordHash
         delete (normalizedUser as any).passwordSalt
         delete (normalizedUser as any).password
@@ -783,7 +867,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'rentalTerms' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings'
+type SystemSettingsKey = 'rentalTerms' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -813,14 +897,16 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const bankDetailsValue = await read('bankDetails')
   const emailTemplateValue = await read('emailTemplate')
   const referralSettingsValue = await read('referralSettings')
+  const companyDetailsValue = await read('companyDetails')
 
-  systemSettings.rentalTerms = rentalTermsValue ?? systemSettings.rentalTerms
+  systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
   systemSettings.priceStrategy = priceStrategyValue ?? systemSettings.priceStrategy
   systemSettings.emailTemplate = emailTemplateValue ?? systemSettings.emailTemplate
 
   const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
   const parsedReferralSettings = safeJsonParse<typeof systemSettings.referralSettings>(referralSettingsValue)
+  const parsedCompanyDetails = safeJsonParse<typeof systemSettings.companyDetails>(companyDetailsValue)
 
   if (parsedPaymentMethods) {
     systemSettings.paymentMethods = {
@@ -831,6 +917,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   }
   if (parsedBankDetails) systemSettings.bankDetails = parsedBankDetails
   if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
+  if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
 
   return systemSettings
 }
@@ -855,12 +942,23 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   await write('bankDetails', systemSettings.bankDetails)
   await write('emailTemplate', systemSettings.emailTemplate)
   await write('referralSettings', systemSettings.referralSettings)
+  await write('companyDetails', systemSettings.companyDetails)
 
   return systemSettings
 }
 
 export async function insertUser(c: Context, user: any): Promise<User> {
   const db = getDB(c)
+  user = {
+    ...user,
+    name: sanitizePlainText(user.name, 100),
+    email: String(user.email ?? '').trim().toLowerCase().slice(0, 254),
+    phone: sanitizePlainText(user.phone, 40),
+    bsb: sanitizePlainText(user.bsb, 20),
+    account: sanitizePlainText(user.account, 40),
+    accountNumber: sanitizePlainText(user.accountNumber, 40),
+    referralCode: sanitizePlainText(user.referralCode, 64) || null,
+  }
 
   // 检查数据库中存在哪些列
   const hasPasswordHashSnake = await userHasColumn(c, 'password_hash')
@@ -881,14 +979,17 @@ export async function insertUser(c: Context, user: any): Promise<User> {
 
   if (user.password) {
     const newHashedPassword = await hashPassword(user.password);
-    const [newSalt, newHash] = newHashedPassword.split('$');
-    passwordHashToStore = newHash;
-    passwordSaltToStore = newSalt;
+    passwordHashToStore = newHashedPassword;
+    passwordSaltToStore = 'v2';
   } else if (user.passwordHash && user.passwordHash.includes('$')) {
-    // If passwordHash is provided and contains a salt, split it
-    const [newSalt, newHash] = user.passwordHash.split('$');
-    passwordHashToStore = newHash;
-    passwordSaltToStore = newSalt;
+    if (user.passwordHash.startsWith('pbkdf2$')) {
+      passwordHashToStore = user.passwordHash;
+      passwordSaltToStore = 'v2';
+    } else {
+      const [newSalt, newHash] = user.passwordHash.split('$');
+      passwordHashToStore = newHash;
+      passwordSaltToStore = newSalt;
+    }
   }
 
   // 构建INSERT字段和值
@@ -973,9 +1074,8 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
 
   if (fields.password) {
     const newHashedPassword = await hashPassword(fields.password);
-    const [newSalt, newHash] = newHashedPassword.split('$');
-    fields.passwordHash = newHash;
-    fields.passwordSalt = newSalt;
+    fields.passwordHash = newHashedPassword;
+    fields.passwordSalt = 'v2';
     delete fields.password;
   }
 
@@ -990,6 +1090,19 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     updatedAt: 'updated_at',
     commissionRate: 'commission_rate'
   }
+
+  const allowedFields = new Set([
+    'name', 'email', 'role', 'status', 'balance', 'phone', 'bsb', 'account', 'accountNumber',
+    'referralCode', 'referrerId', 'passwordHash', 'passwordSalt', 'commissionBalance',
+    'createdAt', 'updatedAt', 'commissionRate',
+  ])
+  for (const key of Object.keys(fields)) {
+    if (!allowedFields.has(key)) delete fields[key]
+  }
+  for (const key of ['name', 'phone', 'bsb', 'account', 'accountNumber', 'referralCode']) {
+    if (fields[key] !== undefined) fields[key] = sanitizePlainText(fields[key], key === 'name' ? 100 : 64)
+  }
+  if (fields.email !== undefined) fields.email = String(fields.email).trim().toLowerCase().slice(0, 254)
 
   const setEntries = Object.entries(fields).filter(([k]) => k !== 'id' && fields[k] !== undefined)
   if (setEntries.length === 0) {
@@ -1033,7 +1146,13 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
 
   // 构建插入字段和值
   const insertFields = ['id', 'name', 'model', 'status', 'description'];
-  const insertValues = [deviceId, device.name, device.model, device.status || 'available', device.description || ''];
+  const insertValues = [
+    deviceId,
+    sanitizePlainText(device.name, 120),
+    sanitizePlainText(device.model, 120),
+    device.status || 'available',
+    sanitizePlainText(device.description, 2000),
+  ];
 
   // 处理序列号字段
   if (hasSerialNumberCamel) {
@@ -1094,10 +1213,18 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   const existing = await getDeviceById(c, deviceId)
   if (!existing) return null
 
+  const columnMapping: Record<string, string> = {
+    name: 'name', model: 'model', status: 'status', description: 'description',
+    serialNumber: 'serialNumber', serial_number: 'serial_number',
+    pricePerDay: 'pricePerDay', price_per_day: 'price_per_day',
+    depositAmount: 'depositAmount', deposit_amount: 'deposit_amount',
+  }
+  const plainTextFields = new Set(['name', 'model', 'description', 'serialNumber', 'serial_number'])
   const setEntries: [string, any][] = []
   for (const [key, value] of Object.entries(data)) {
-    if (value !== undefined && Object.keys(existing).includes(key)) {
-      setEntries.push([key, value])
+    const column = columnMapping[key]
+    if (value !== undefined && column) {
+      setEntries.push([column, plainTextFields.has(key) ? sanitizePlainText(value, key === 'description' ? 2000 : 120) : value])
     }
   }
 
@@ -1131,6 +1258,8 @@ export async function updateContractTemplateInDB(c: Context, newTemplate: { id: 
 
 
 async function getTableColumns(c: Context, tableName: string): Promise<string[]> {
+  const allowedTables = new Set(['commission_withdrawals'])
+  if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
   const db = getDB(c)
   const result = await db.prepare(`PRAGMA table_info(${tableName})`).all() as any
   return (result.results || []).map((column: any) => column.name)
@@ -1363,6 +1492,14 @@ PC Rental电脑租赁团队
 {register_time}`;
 
 export const systemSettings = {
+  companyDetails: {
+    abn: '',
+    gstIncluded: true,
+    address: '',
+    phone: '',
+    email: '',
+    contact: '',
+  },
   bankDetails: {
     bsb: '062-001',
     account: '87654321',
@@ -1418,6 +1555,148 @@ PC Rental电脑租赁团队
     levelLimit: 3,
     settlementPeriod: 30,
   },
+}
+
+function escapeContractValue(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
+}
+
+export function renderContractVariables(content: string, contract: Contract, order?: any, device?: any, customer?: any, extra: Record<string, unknown> = {}, includeInternal = false): string {
+  const rentOnly = Math.max(0, Number(order?.totalAmount ?? order?.total_amount ?? 0) - Number(order?.depositAmount ?? order?.deposit_amount ?? 0))
+  const stored = typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : (contract.contract_data || {})
+  const emptyOperational = Object.fromEntries(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => [name, '']))
+  const values: Record<string, unknown> = {
+    ...emptyOperational,
+    ...stored,
+    ...extra,
+    contract_number: contract.contractNumber,
+    order_no: order?.orderNo ?? order?.order_no,
+    company_address: systemSettings.companyDetails.address,
+    company_phone: systemSettings.companyDetails.phone,
+    company_email: systemSettings.companyDetails.email,
+    company_contact: systemSettings.companyDetails.contact,
+    customer_name: customer?.name,
+    customer_phone: customer?.phone,
+    customer_email: customer?.email,
+    device_name: device?.name ?? order?.deviceName,
+    device_model: device?.model,
+    device_sn: device?.serialNumber ?? device?.serial_number,
+    device_condition: contract.device_condition,
+    device_accessories: contract.device_accessories,
+    start_date: order?.startDate ?? order?.start_date,
+    end_date: order?.endDate ?? order?.end_date,
+    rental_days: order?.rentalPeriod ?? order?.rental_period,
+    daily_rate: Number(order?.dailyRate ?? order?.daily_rate ?? device?.pricePerDay ?? 0).toFixed(2),
+    total_rent: rentOnly.toFixed(2),
+    deposit_amount: Number(order?.depositAmount ?? order?.deposit_amount ?? 0).toFixed(2),
+    late_fee_per_day: Number(contract.late_fee_per_day || 0).toFixed(2),
+    repair_cost: contract.repair_cost == null ? '' : Number(contract.repair_cost).toFixed(2),
+    pickup_location: contract.pickup_location,
+    return_location: contract.return_location,
+    payment_method: order?.paymentMethod ?? order?.payment_method,
+    bank_bsb: systemSettings.bankDetails.bsb,
+    bank_account: systemSettings.bankDetails.account,
+    account_name: systemSettings.bankDetails.accountName,
+    company_abn: systemSettings.companyDetails.abn,
+    gst_included: systemSettings.companyDetails.gstIncluded ? '是' : '否',
+    signer_name: customer?.name,
+    sign_time: contract.signedAt ? new Date(contract.signedAt).toLocaleString('en-AU') : '',
+    esign_ip: contract.esign_ip,
+    esign_device: contract.esign_device,
+    device_id: device?.id ?? order?.deviceId ?? order?.device_id,
+    currency: 'AUD',
+    created_time: contract.createdAt ?? (contract as any).created_at,
+    updated_time: (contract as any).updatedAt ?? (contract as any).updated_at,
+    contract_status: contract.status,
+    deleted: contract.deleted_at ? '是' : '否',
+  }
+  if (!includeInternal) {
+    for (const name of ['created_by', 'approved_by', 'created_time', 'updated_time', 'contract_status', 'deleted', 'notes']) values[name] = ''
+  }
+  return Object.entries(values).reduce((result, [name, value]) => {
+    const safe = escapeContractValue(value)
+    return result.replace(new RegExp(`\\$\\{${name}\\}|\\{${name}\\}`, 'g'), safe)
+  }, sanitizeRichHtml(content || ''))
+}
+
+export const CONTRACT_OPERATIONAL_FIELDS = [
+  ['invoice_number','发票编号'], ['delivery_method','配送方式（Pickup / Delivery）'], ['delivery_fee','配送费'],
+  ['return_status','归还状态'], ['return_date','实际归还日期'], ['inspection_date','检查日期'], ['inspection_by','检查员工'],
+  ['device_brand','设备品牌'], ['device_cpu','CPU'], ['device_ram','内存'], ['device_storage','存储'], ['device_gpu','显卡'], ['device_os','设备操作系统'],
+  ['battery_health','电池健康'], ['charger_sn','充电器 SN'], ['asset_tag','公司资产编号'],
+  ['esign_signature','客户电子签名'], ['company_signature','公司电子签名'], ['esign_location','签约 GPS 位置'], ['esign_browser','签约浏览器'], ['esign_os','签约操作系统'], ['agreement_version','合同版本'],
+  ['discount','优惠金额'], ['coupon_code','优惠码'],
+  ['damage_description','损坏说明'], ['damage_photos','损坏照片 URL'], ['repair_invoice','维修发票'], ['replacement_cost','更换费用'],
+  ['collection_required','是否需要追回'], ['collection_date','回收日期'],
+  ['screen_condition','屏幕状况'], ['keyboard_condition','键盘状况'], ['trackpad_condition','触控板状况'], ['body_condition','外壳状况'], ['camera_condition','摄像头状况'], ['wifi_condition','WiFi 状况'], ['battery_cycles','电池循环次数'], ['power_test','开机测试'],
+  ['approved_by','审批员工'], ['notes','内部备注'],
+  ['jurisdiction','司法管辖区'], ['insurance_required','是否要求保险'], ['insurance_provider','保险公司'], ['waiver_signed','是否签署免责'], ['privacy_version','隐私政策版本'],
+] as const
+
+export const CONTRACT_COMPUTED_FIELDS = [
+  ['device_id','系统内部设备 ID'], ['currency','币种'], ['deposit_paid','已支付押金'], ['rent_paid','已支付租金'], ['amount_due','剩余应付款'], ['payment_date','付款日期'], ['payment_reference','银行 Reference'],
+  ['subtotal','小计'], ['gst_amount','GST 金额'], ['refund_amount','退款金额'], ['deposit_refund','押金退款'], ['refund_date','退款日期'], ['deduction_amount','押金扣除金额'],
+  ['late_days','逾期天数'], ['late_fee','逾期费用'], ['created_by','创建员工'], ['created_time','创建时间'], ['updated_time','更新时间'], ['contract_status','合同状态'], ['deleted','是否删除'],
+] as const
+
+export const CONTRACT_SIGNED_FIELDS = new Set([
+  'esign_signature', 'esign_location', 'esign_browser', 'esign_os', 'agreement_version',
+])
+
+export async function getContractVariableData(c: Context, contract: Contract, order: any): Promise<Record<string, unknown>> {
+  const stored = typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : (contract.contract_data || {})
+  const payments = await c.env.RENT.prepare("SELECT COALESCE(SUM(amount),0) paid, COALESCE(SUM(deposit_amount),0) deposit_paid, COALESCE(SUM(rental_amount),0) rent_paid, MAX(paid_at) payment_date, MAX(currency) currency FROM payments WHERE rental_id = ? AND status = 'paid'").bind(order.id).first() as any
+  const reference = await c.env.RENT.prepare("SELECT pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.created_at DESC LIMIT 1").bind(order.id).first() as any
+  const refund = await c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  const creator = contract.createdBy ? await getUserById(c, contract.createdBy) : null
+  const paid = Number(payments?.paid || 0)
+  const deposit = Number(order.depositAmount ?? order.deposit_amount ?? 0)
+  const total = Number(order.totalAmount ?? order.total_amount ?? 0)
+  const discount = Number(stored.discount || 0)
+  const deliveryFee = Number(stored.delivery_fee || 0)
+  const rentSubtotal = Math.max(0, total - deposit - deliveryFee + discount)
+  const returnDate = stored.return_date ? new Date(String(stored.return_date)) : null
+  const dueDate = new Date(order.endDate ?? order.end_date)
+  const lateDays = returnDate && returnDate > dueDate ? Math.ceil((returnDate.getTime() - dueDate.getTime()) / 86400000) : 0
+  const returnStatus = stored.damage_description ? 'Damaged' : stored.return_date ? (lateDays > 0 ? 'Overdue' : 'Returned') : (order.status === 'completed' ? 'Returned' : '')
+  return {
+    ...stored,
+    invoice_number: stored.invoice_number || `INV-${order.orderNo || order.id}`,
+    currency: payments?.currency || 'AUD',
+    deposit_paid: Number(payments?.deposit_paid || 0).toFixed(2),
+    rent_paid: Number(payments?.rent_paid || 0).toFixed(2),
+    amount_due: Math.max(0, total - paid).toFixed(2),
+    payment_date: payments?.payment_date || '',
+    payment_reference: reference?.reference_number || '',
+    subtotal: rentSubtotal.toFixed(2),
+    gst_amount: systemSettings.companyDetails.gstIncluded ? (rentSubtotal / 11).toFixed(2) : '0.00',
+    refund_amount: Number(refund?.refund_amount || 0).toFixed(2),
+    deposit_refund: Number(refund?.type === 'deposit' ? refund.refund_amount : 0).toFixed(2),
+    refund_date: refund?.created_at || '',
+    deduction_amount: Number(refund?.deduction_amount || 0).toFixed(2),
+    late_days: lateDays,
+    late_fee: (lateDays * Number(contract.late_fee_per_day || 0)).toFixed(2),
+    return_status: returnStatus,
+    created_by: creator?.name || contract.createdBy || '',
+  }
+}
+
+export async function issueInvoice(c: Context, orderId: string): Promise<void> {
+  const order = await getOrderById(c, orderId)
+  if (!order) return
+  const contract = await getContractByOrderId(c, orderId)
+  const data = contract && typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : ((contract?.contract_data as Record<string, unknown>) || {})
+  const taxableGross = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount))
+  const gstAmount = systemSettings.companyDetails.gstIncluded ? taxableGross / 11 : 0
+  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, total_amount, currency, status) VALUES (?, ?, ?, 'invoice', ?, ?, ?, ?, 'AUD', 'issued')`)
+    .bind(`inv-${order.id}`, String(data.invoice_number || `INV-${order.orderNo || order.id}`), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), Number(order.totalAmount)).run()
+}
+
+export async function issueCreditNote(c: Context, orderId: string, amount: number): Promise<void> {
+  const invoice = await c.env.RENT.prepare("SELECT id, invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice'").bind(orderId).first() as any
+  if (!invoice) return
+  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, total_amount, currency, status, related_invoice_id) VALUES (?, ?, ?, 'credit_note', ?, 0, 0, ?, 'AUD', 'issued', ?)`)
+    .bind(`cn-${orderId}`, `CN-${invoice.invoice_number}`, orderId, -Math.abs(amount), -Math.abs(amount), invoice.id).run()
 }
 
 export const contractTemplate = {
@@ -1478,7 +1757,7 @@ export async function getContractTemplate(c: Context): Promise<ContractTemplate>
   const db = getDB(c);
   const template = await db.prepare('SELECT * FROM contract_templates WHERE id = ?').bind('default').first() as ContractTemplate | null
   if (template) {
-    return template;
+    return { ...template, content: sanitizeRichHtml(template.content) };
   }
   // Fallback to a default in-memory template if not found in DB
   return {
@@ -1540,7 +1819,7 @@ export async function getContractTemplate(c: Context): Promise<ContractTemplate>
 export async function updateContractTemplate(c: Context, newTemplate: { id: string; name: string; content: string }): Promise<ContractTemplate> {
   const db = getDB(c);
   await db.prepare('INSERT INTO contract_templates (id, name, content, updatedAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name = EXCLUDED.name, content = EXCLUDED.content, updatedAt = EXCLUDED.updatedAt')
-    .bind(newTemplate.id, newTemplate.name, newTemplate.content)
+    .bind(newTemplate.id, String(newTemplate.name || '').slice(0, 100), sanitizeRichHtml(newTemplate.content))
     .run();
   return getContractTemplate(c);
 }
@@ -1716,8 +1995,11 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
   const token = cookies.session || ''
   if (!token) return null
 
-  const [role, id] = token.split(':')
-  if (!role || !id) return null
+  if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) return null
+  const tokenHash = await sha256Hex(token)
+  const session = await db.prepare('SELECT user_id FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP').bind(tokenHash).first() as any
+  if (!session?.user_id) return null
+  const id = String(session.user_id)
 
   const hasReferralCode = await userHasColumn(c, 'referralCode')
 
@@ -1744,8 +2026,8 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
     : `id, name, email, role, phone, bsb, ${accountSelect}, ${commissionSelect}`
 
   const user: User | null = await db
-    .prepare(`SELECT ${selectClause} FROM users WHERE id = ? AND role = ?`)
-    .bind(id, role.toUpperCase())
+    .prepare(`SELECT ${selectClause} FROM users WHERE id = ? AND status = 'active'`)
+    .bind(id)
     .first()
 
   if (!user) return null
@@ -1754,6 +2036,33 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
     normalized.referralCode = ''
   }
   return normalized
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+export async function createAuthSession(c: Context, userId: string, remember = false): Promise<{ token: string; maxAge: number }> {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  const token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  const maxAge = remember ? 60 * 60 * 24 * 30 : 60 * 60 * 12
+  const expiresAt = new Date(Date.now() + maxAge * 1000).toISOString()
+  await c.env.RENT.prepare('INSERT INTO auth_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').bind(await sha256Hex(token), userId, expiresAt).run()
+  return { token, maxAge }
+}
+
+export async function deleteAuthSession(c: Context, cookieHeader: string | null): Promise<void> {
+  const token = parseCookie(cookieHeader).session || ''
+  if (/^[A-Za-z0-9_-]{32,}$/.test(token)) await c.env.RENT.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(await sha256Hex(token)).run()
+}
+
+export async function enforceRateLimit(c: Context, scope: string, clientKey: string, limit: number, windowSeconds: number): Promise<boolean> {
+  const bucket = Math.floor(Date.now() / (windowSeconds * 1000))
+  await c.env.RENT.prepare(`INSERT INTO security_rate_limits (scope, client_key, bucket, request_count) VALUES (?, ?, ?, 1) ON CONFLICT(scope, client_key, bucket) DO UPDATE SET request_count = request_count + 1`).bind(scope, clientKey.slice(0, 200), bucket).run()
+  const row = await c.env.RENT.prepare('SELECT request_count FROM security_rate_limits WHERE scope = ? AND client_key = ? AND bucket = ?').bind(scope, clientKey.slice(0, 200), bucket).first() as any
+  return Number(row?.request_count || 0) <= limit
 }
 
 export function buildLayout(title: string, body: string, currentUser?: User | null): string {
@@ -1771,7 +2080,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     ? `
         <span class="user-label">${currentUser.name}</span>
         <div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div>
-        <a href="/logout" class="logout-button">登出</a>
+        <form method="post" action="/logout" style="display:inline"><button type="submit" class="logout-button">登出</button></form>
       `
     : ''
 
@@ -2304,10 +2613,17 @@ export async function logError(c: Context, level: ErrorLevel, message: string, e
 
   try {
     // 保存到数据库
-    const contextJson = contextData ? JSON.stringify(contextData) : null
+    const redact = (value: any): any => {
+      if (Array.isArray(value)) return value.map(redact)
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [/token|password|secret|signature|authorization/i.test(key) ? key : key, /token|password|secret|signature|authorization/i.test(key) ? '[REDACTED]' : redact(item)]))
+      return value
+    }
+    const contextJson = contextData ? JSON.stringify(redact(contextData)) : null
     const stackTrace = error?.stack || null
     const userId = user?.id || null
-    const url = c.req.url
+    const parsedUrl = new URL(c.req.url)
+    for (const key of ['token', 'number', 'session_id']) if (parsedUrl.searchParams.has(key)) parsedUrl.searchParams.set(key, '[REDACTED]')
+    const url = parsedUrl.toString()
     const method = c.req.method
 
     await db.prepare(`

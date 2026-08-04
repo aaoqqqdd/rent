@@ -78,7 +78,7 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
                 <td><span class="badge ${statusClass}">${statusText}</span></td>
                 <td>
                   <a class="link-button" href="/admin/devices/${device.id}/edit">编辑</a>
-                  <a class="link-button-danger" href="/admin/devices/${device.id}/delete" onclick="return confirm('确定要删除此设备吗？此操作不可恢复。')">删除</a>
+                  <form method="post" action="/admin/devices/${device.id}/delete" style="display:inline" onsubmit="return confirm('确定要删除此设备吗？此操作不可恢复。')"><button class="link-button-danger" type="submit">删除</button></form>
                 </td>
               </tr>
             `;

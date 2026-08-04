@@ -1,4 +1,4 @@
-import { buildLayout, getContractByOrderId, getOrderById, getUserById } from '../../site'
+import { buildLayout, getContractByOrderId, getOrderById, getUserById, getDeviceById, renderContractVariables, getContractVariableData, sanitizeRichHtml } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffContractView(c: Context, user: any, orderId: string) {
@@ -23,6 +23,8 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
   }
 
   const customer = await getUserById(c, order.userId);
+  const device = await getDeviceById(c, order.deviceId)
+  const renderedContract = contract.signed_content ? sanitizeRichHtml(contract.signed_content) : renderContractVariables(contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
 
   // 客户信息脱敏处理
   const maskedCustomerName = customer ? `${customer.name.charAt(0)}**` : '未知';
@@ -61,7 +63,7 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
       <div class="contract-section contract-content">
         <h4>合同内容</h4>
         <div class="contract-text">
-          ${contract.content}
+          ${renderedContract}
         </div>
       </div>
 

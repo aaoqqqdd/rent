@@ -1,4 +1,4 @@
-import { buildLayout, getContractById, getOrderById, getUserById, formatCurrency } from '../../site';
+import { buildLayout, getContractById, getOrderById, getUserById, getDeviceById, formatCurrency, renderContractVariables, getContractVariableData, sanitizeRichHtml } from '../../site';
 import { Context } from 'hono';
 
 export async function renderAdminContractDetail(c: Context, user: any, contractId: string) {
@@ -20,6 +20,8 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
   const orderId = contract.rental_id || contract.rentalId
   const order = orderId ? await getOrderById(c, orderId) : null;
   const customer = order ? await getUserById(c, order.userId) : null;
+  const device = order ? await getDeviceById(c, order.deviceId) : null
+  const renderedContract = contract.signed_content ? sanitizeRichHtml(contract.signed_content) : renderContractVariables(contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
 
   const body = `
     <div class="panel">
@@ -29,6 +31,7 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
         <h3>合同编号: ${contract.contractNumber}</h3>
         <p>状态: ${contract.status === 'signed' ? '已签署' : '待签署'}</p>
         <p>签署日期: ${contract.signedAt ? new Date(contract.signedAt).toLocaleString() : '未签署'}</p>
+        ${contract.content_hash ? `<p><strong>内容摘要 SHA-256：</strong><code style="word-break:break-all">${contract.content_hash}</code></p>` : ''}
       </div>
 
       <div class="contract-section">
@@ -51,11 +54,12 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
       <div class="contract-section contract-content">
         <h4>合同内容</h4>
         <div class="contract-text">
-          ${contract.content}
+          ${renderedContract}
         </div>
       </div>
 
       <div class="contract-actions">
+        <a class="button button-secondary" href="/admin/contracts/${contract.id}/data">编辑合同变量数据</a>
         <button class="button button-primary" onclick="window.print()">打印/下载PDF</button>
         <a class="button button-info" href="/admin/contracts">返回合同管理</a>
       </div>

@@ -1,4 +1,4 @@
-import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency } from '../../site';
+import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, validateHostedImageUrls } from '../../site';
 import { Context } from 'hono';
 
 function escapeHtml(value: unknown): string {
@@ -15,6 +15,9 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const customer = await getUserById(c, order.userId);
   const device = await getDeviceById(c, order.deviceId);
   const completedRefund = await c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any;
+  const transferProof = await c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any;
+  let proofImage = ''
+  try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch {}
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
 
   const statusLabels: Record<string, {label: string, color: string, bg: string, icon: string}> = {
@@ -40,6 +43,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       </div>
     </div>
 
+    ${['paid','active','completed'].includes(order.status) ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / Credit Note</a></p>` : ''}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
@@ -103,6 +107,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">⚙️ 订单管理操作</h3>
       </div>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;">
+        ${order.paymentMethod === 'bank_transfer' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>银行转账审核</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>备注：${escapeHtml(transferProof.note || '-')}</p>${proofImage ? `<a href="${escapeHtml(proofImage)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(proofImage)}" alt="转账凭证" loading="lazy" referrerpolicy="no-referrer" style="max-width:100%;max-height:320px;border-radius:8px"></a>` : '<p class="alert">凭证图片链接缺失或无效</p>'}<p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交转账 Reference。</p>'}</div>` : ''}
         <div style="padding: 24px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #1e40af; display: flex; align-items: center; gap: 8px;">🔄 更新订单状态</h4>
           <form method="POST" action="/admin/orders/${order.id}/update" style="display: flex; flex-direction: column; gap: 16px;">

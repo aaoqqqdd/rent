@@ -61,9 +61,10 @@ export function renderAdminDeviceEdit(user: any, device: any) {
         </div>
         <div style="display: flex; gap: 12px; margin-top: 24px;">
           <button class="button button-primary" type="submit">💾 保存修改</button>
-          <a href="/admin/devices/${device.id}/delete" class="button button-danger" onclick="return confirm('确定要删除此设备吗？此操作不可恢复。')">🗑️ 删除设备</a>
+          <button form="delete-device-form" type="submit" class="button button-danger">🗑️ 删除设备</button>
         </div>
       </form>
+      <form id="delete-device-form" method="post" action="/admin/devices/${device.id}/delete" onsubmit="return confirm('确定要删除此设备吗？此操作不可恢复。')"></form>
     </div>
   `;
 

@@ -107,7 +107,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
                     }
                     // 订单状态为待归还
                     if (order.status === 'pending_return') {
-                      return `<button class="button button-sm button-info" onclick="fetch('/staff/orders/${order.id}/return', { method: 'POST' }).then(() => window.location.reload())">已归还</button>`;
+                      return `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`;
                     }
                     // 订单状态为已完成
                     if (order.status === 'completed') {

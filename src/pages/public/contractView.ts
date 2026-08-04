@@ -1,4 +1,4 @@
-import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById } from '../../site'
+import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById, renderContractVariables, getContractVariableData, sanitizeRichHtml } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderContractView(c: Context, contractId: string, user: any) {
@@ -7,8 +7,12 @@ export async function renderContractView(c: Context, contractId: string, user: a
     return buildLayout('查看合同 - 电脑租赁管理系统', '<div class="panel"><h2>合同未找到</h2><p>您请求的合同不存在。</p></div>', user);
   }
   const order = await getOrderById(c, contract.rentalId);
+  if (!user || (user.role === 'CUSTOMER' && order?.userId !== user.id)) {
+    return buildLayout('无权查看合同', '<div class="panel"><h2>无权查看合同</h2><p>请登录合同所属账户后查看。</p><a class="button" href="/login">登录</a></div>', user)
+  }
   const device = order ? await getDeviceById(c, order.deviceId) : null;
   const customer = order ? await getUserById(c, order.userId) : null;
+  const renderedContract = contract.signed_content ? sanitizeRichHtml(contract.signed_content) : renderContractVariables(contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order))
 
   const body = `
     <div class="panel">
@@ -18,7 +22,7 @@ export async function renderContractView(c: Context, contractId: string, user: a
         <p><strong>签署日期:</strong> ${contract.signedAt ?? '未签署'}</p>
       </div>
       <div class="contract-content" style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-        ${contract.content}
+        ${renderedContract}
       </div>
       <div class="contract-actions" style="display: flex; gap: 12px;">
         <button class="button" onclick="window.print()">打印/下载PDF</button>

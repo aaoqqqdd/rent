@@ -1,15 +1,22 @@
 import { Context } from 'hono';
-import { User, getDeviceById, Order, Contract, buildLayout, insertOrder, insertContract, updateDeviceStatus } from '../../site';
+import { User, getDeviceById, getContractTemplate, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, updateDeviceStatus } from '../../site';
 import { nanoid, customAlphabet } from 'nanoid';
 
 // 自定义nanoid，只使用大写字母和数字，确保合同编号只包含大写字母和数字
 const uppercaseAlphanumericNanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 16);
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
-  const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration } = body;
+  const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, pickupLocation, returnLocation } = body;
+  const deliveryMethod = body.deliveryMethod === 'Delivery' ? 'Delivery' : 'Pickup'
+  const deliveryFee = Number(body.deliveryFee || 0)
 
   if (!deviceId || !startDate || !endDate) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备、开始日期和结束日期均为必填项')}`);
+  }
+  const lateFeePerDay = Number(body.lateFeePerDay)
+  const repairCost = body.repairCost === '' ? null : Number(body.repairCost)
+  if (!deviceCondition?.trim() || !pickupLocation?.trim() || !returnLocation?.trim() || !Number.isFinite(lateFeePerDay) || lateFeePerDay < 0 || !Number.isFinite(deliveryFee) || deliveryFee < 0 || (repairCost !== null && (!Number.isFinite(repairCost) || repairCost < 0))) {
+    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请填写设备状况、取还地点及有效的非负费用')}`);
   }
 
   const device = await getDeviceById(c, deviceId);
@@ -32,11 +39,12 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   if (start >= end) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
   }
+  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备在所选日期已有订单')}`)
 
   const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
   const dailyRate = device.pricePerDay;
   const depositAmount = device.depositAmount;
-  const totalAmount = rentalPeriod * dailyRate + depositAmount;
+  const totalAmount = rentalPeriod * dailyRate + depositAmount + deliveryFee;
 
   const orderId = `o-${nanoid(8)}`;
   const contractId = `ct-${nanoid(10)}`;
@@ -81,11 +89,12 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const contractRandomSuffix = uppercaseAlphanumericNanoid().slice(0, 10);
   const contractNumber = `CN${contractRandomSuffix}`;
 
+  const template = await getContractTemplate(c)
   const newContract: Contract = {
     id: contractId,
     rentalId: orderId,
     contractNumber: contractNumber,
-    content: `这是为订单 ${newOrder.orderNo} 自动生成的合同草稿。`,
+    content: template.content,
     status: 'pending_sign',
     signedAt: null,
     signToken: signToken,
@@ -94,13 +103,20 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     validFrom: validFrom || null, // Add validFrom
     validUntil: validUntil || null, // Add validUntil
     createdBy: user.id, // 记录合同创建人，用于权限控制
+    device_condition: deviceCondition.trim(),
+    device_accessories: deviceAccessories?.trim() || null,
+    late_fee_per_day: lateFeePerDay,
+    repair_cost: repairCost,
+    pickup_location: pickupLocation.trim(),
+    return_location: returnLocation.trim(),
+    contract_data: { invoice_number: `INV-${orderNo}`, delivery_method: deliveryMethod, delivery_fee: deliveryFee.toFixed(2), agreement_version: '1.0' },
   };
 
   await insertOrder(c, newOrder);
   await insertContract(c, newContract);
   await updateDeviceStatus(c, device.id, 'rented');
 
-  const fullSignUrl = `${new URL(c.req.url).origin}/contract/sign?number=${newContract.contractNumber}&step=1`;
+  const fullSignUrl = `${new URL(c.req.url).origin}/contract/sign?token=${newContract.signToken}&step=1`;
   const successPage = `
     <div class="panel">
       <h2>签约链接已生成</h2>

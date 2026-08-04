@@ -41,6 +41,34 @@ export async function renderNewContractPage(c: Context, user: any) {
             <input type="date" id="end-date" name="endDate" class="form-control" required>
           </div>
         </div>
+        <div class="grid grid-2" style="margin-top: 16px;">
+          <div class="form-group">
+            <label for="device-condition" class="form-label">出租时设备状况</label>
+            <textarea id="device-condition" name="deviceCondition" class="form-control" required placeholder="例如：外观良好，屏幕无划痕"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="device-accessories" class="form-label">配件列表</label>
+            <textarea id="device-accessories" name="deviceAccessories" class="form-control" placeholder="例如：充电器、鼠标、电脑包"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="late-fee" class="form-label">每日逾期费用（AUD）</label>
+            <input type="number" id="late-fee" name="lateFeePerDay" class="form-control" min="0" step="0.01" value="0" required>
+          </div>
+          <div class="form-group">
+            <label for="repair-cost" class="form-label">损坏维修金额（AUD，后续可留空）</label>
+            <input type="number" id="repair-cost" name="repairCost" class="form-control" min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label for="pickup-location" class="form-label">取货地点</label>
+            <input id="pickup-location" name="pickupLocation" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label for="return-location" class="form-label">归还地点</label>
+            <input id="return-location" name="returnLocation" class="form-control" required>
+          </div>
+          <div class="form-group"><label for="delivery-method" class="form-label">交付方式</label><select id="delivery-method" name="deliveryMethod" class="form-control"><option value="Pickup">Pickup</option><option value="Delivery">Delivery</option></select></div>
+          <div class="form-group"><label for="delivery-fee" class="form-label">配送费（AUD）</label><input type="number" id="delivery-fee" name="deliveryFee" class="form-control" min="0" step="0.01" value="0"></div>
+        </div>
         <div class="form-group" style="margin-top: 16px;">
           <label for="expiry-duration" class="form-label">合同签署过期时间（过期后无法签署或查看）</label>
           <select id="expiry-duration" name="expiryDuration" class="select-control">

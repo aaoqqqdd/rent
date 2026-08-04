@@ -20,11 +20,11 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
         </div>
         <div class="form-group">
           <label class="form-label" for="newPassword">新密码</label>
-          <input type="password" id="newPassword" name="newPassword" class="form-control" required maxlength="7" inputmode="numeric" oninput="formatPassword(this)" />
+          <input type="password" id="newPassword" name="newPassword" class="form-control" required minlength="10" autocomplete="new-password" />
         </div>
         <div class="form-group">
           <label class="form-label" for="confirmNewPassword">确认新密码</label>
-          <input type="password" id="confirmNewPassword" name="confirmNewPassword" class="form-control" required maxlength="7" inputmode="numeric" oninput="formatPassword(this)" />
+          <input type="password" id="confirmNewPassword" name="confirmNewPassword" class="form-control" required minlength="10" autocomplete="new-password" />
         </div>
         <div id="passwordMismatchError" class="alert alert-error" style="display:none; margin-bottom: 15px;"></div>
         <button type="submit" class="button button-primary">修改密码</button>
@@ -50,11 +50,11 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
           form.addEventListener('submit', function(event) {
             passwordMismatchError.style.display = 'none'; // Hide previous errors
 
-            const newPassword = newPasswordInput.value.replace(/-/g, ''); // Remove hyphen for validation
-            const confirmNewPassword = confirmNewPasswordInput.value.replace(/-/g, ''); // Remove hyphen for validation
+            const newPassword = newPasswordInput.value;
+            const confirmNewPassword = confirmNewPasswordInput.value;
 
-            if (newPassword.length !== 6) {
-              passwordMismatchError.textContent = '新密码必须是6位数字。';
+            if (newPassword.length < 10) {
+              passwordMismatchError.textContent = '新密码至少需要10位。';
               passwordMismatchError.style.display = 'block';
               event.preventDefault();
               return;

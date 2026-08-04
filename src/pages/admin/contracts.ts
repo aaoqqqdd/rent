@@ -1,10 +1,10 @@
-import { buildLayout, getContractTemplate } from '../../site';
+import { buildLayout, getContractTemplate, CONTRACT_OPERATIONAL_FIELDS, CONTRACT_COMPUTED_FIELDS } from '../../site';
 import { Context } from 'hono';
 
 export async function renderAdminContracts(c: Context, user: any) {
   const currentTemplate = await getContractTemplate(c);
-
-
+  const safeTemplateName = String(currentTemplate?.name ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeTemplateContent = String(currentTemplate?.content ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   const body = `
     <div class="panel">
@@ -17,7 +17,7 @@ export async function renderAdminContracts(c: Context, user: any) {
           <form id="contractTemplateForm">
             <div class="form-group">
               <label for="templateName">模板名称</label>
-              <input type="text" id="templateName" name="templateName" class="form-control" value="${currentTemplate?.name ?? ''}">
+              <input type="text" id="templateName" name="templateName" class="form-control" value="${safeTemplateName}">
             </div>
             <div class="form-group">
               <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
@@ -49,17 +49,29 @@ export async function renderAdminContracts(c: Context, user: any) {
                     <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${total_rent}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统计算</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租金总额</td></tr>
                     <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${deposit_amount}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">押金金额</td></tr>
                     <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${payment_method}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户选择</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">支付方式</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${device_condition}</td><td>员工填写</td><td>出租时设备状况</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${device_accessories}</td><td>员工填写</td><td>配件列表</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${late_fee_per_day}</td><td>员工填写</td><td>每日逾期费用</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${repair_cost}</td><td>员工后续填写</td><td>损坏维修金额</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${pickup_location}</td><td>员工填写</td><td>取货地点</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${return_location}</td><td>员工填写</td><td>归还地点</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${company_abn}</td><td>系统设置</td><td>公司 ABN</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${gst_included}</td><td>系统设置</td><td>是否含 GST</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${esign_ip}</td><td>系统记录</td><td>电子签约 IP</td></tr>
+                    <tr><td style="padding:6px 12px;font-family:monospace;">\${esign_device}</td><td>系统记录</td><td>签约设备</td></tr>
                     <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${bank_bsb}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">银行BSB</td></tr>
                     <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${bank_account}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">银行账号</td></tr>
                     <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${account_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">账户名</td></tr>
                     <tr><td style="padding: 6px 12px; font-family: monospace;">\${signer_name}</td><td style="padding: 6px 12px;">客户填写</td><td style="padding: 6px 12px;">签署人姓名</td></tr>
                     <tr><td style="padding: 6px 12px; font-family: monospace;">\${sign_time}</td><td style="padding: 6px 12px;">系统记录</td><td style="padding: 6px 12px;">签署时间</td></tr>
+                    ${CONTRACT_COMPUTED_FIELDS.map(([name, description]) => `<tr><td style="padding:6px 12px;font-family:monospace;">\${${name}}</td><td>系统自动</td><td>${description}</td></tr>`).join('')}
+                    ${CONTRACT_OPERATIONAL_FIELDS.map(([name, description]) => `<tr><td style="padding:6px 12px;font-family:monospace;">\${${name}}</td><td>合同资料</td><td>${description}</td></tr>`).join('')}
                   </tbody>
                 </table>
               </div>
               <label for="templateContentEditor">模板内容</label>
               <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;">${currentTemplate?.content ?? ''}</div>
-              <input type="hidden" id="templateContent" name="templateContent" value="${(currentTemplate?.content ?? '').replace(/&/g, '&amp;').replace(/"/g, '"').replace(/</g, '<').replace(/>/g, '>').replace(/\n/g, '&#10;')}">
+              <input type="hidden" id="templateContent" name="templateContent" value="${safeTemplateContent}">
               <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们。</small>
             </div>
             <button type="submit" class="button button-primary">保存模板</button>

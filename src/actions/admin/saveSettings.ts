@@ -1,5 +1,5 @@
 import { Context } from 'hono'
-import { getSystemSettings, updateSystemSettings } from '../../site'
+import { getSystemSettings, updateSystemSettings, sanitizeRichHtml } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
 
 export async function handleSaveAdminSettings(c: Context): Promise<Response> {
@@ -7,9 +7,27 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   const bodyText = await c.req.text()
   const payload = JSON.parse(bodyText || '{}')
 
+  const stripeConfigInput = payload.stripeConfig
+  const shouldSaveStripeConfig = Boolean(
+    stripeConfigInput &&
+    (
+      stripeConfigInput.publishableKey ||
+      stripeConfigInput.secretKey ||
+      stripeConfigInput.webhookSecret ||
+      stripeConfigInput.clear === true
+    )
+  )
 
   const next = {
-    rentalTerms: payload.rentalTerms ?? getSystemSettings().rentalTerms,
+    companyDetails: {
+      abn: String(payload.companyDetails?.abn ?? getSystemSettings().companyDetails.abn).trim(),
+      gstIncluded: Boolean(payload.companyDetails?.gstIncluded),
+      address: String(payload.companyDetails?.address ?? getSystemSettings().companyDetails.address).trim(),
+      contact: String(payload.companyDetails?.contact ?? getSystemSettings().companyDetails.contact).trim(),
+      phone: String(payload.companyDetails?.phone ?? getSystemSettings().companyDetails.phone).trim(),
+      email: String(payload.companyDetails?.email ?? getSystemSettings().companyDetails.email).trim(),
+    },
+    rentalTerms: sanitizeRichHtml(payload.rentalTerms ?? getSystemSettings().rentalTerms),
     priceStrategy: payload.priceStrategy ?? getSystemSettings().priceStrategy,
     paymentMethods: {
       stripe: Boolean(payload.paymentMethods?.stripe),
@@ -29,7 +47,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     },
   }
 
-  if (payload.stripeConfig) await saveStripeConfig(c, payload.stripeConfig)
+  if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)
   await updateSystemSettings(c, next as any)
 
   return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c) })

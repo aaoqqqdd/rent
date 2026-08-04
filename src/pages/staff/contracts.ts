@@ -119,7 +119,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                       contract.status === 'pending_sign'
                         ? `
                           <a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>
-                          <button class="button button-sm button-success" onclick="navigator.clipboard.writeText(window.location.origin + '/contract/sign?number=${contract.contractNumber}&step=1').then(()=>alert('合同签署链接已复制到剪贴板！'))">复制签署链接</button>
+                          <button class="button button-sm button-success" onclick="navigator.clipboard.writeText(window.location.origin + '/contract/sign?token=${contract.signToken}&step=1').then(()=>alert('合同签署链接已复制到剪贴板！'))">复制签署链接</button>
                           ${canCancel ? `<form action="/staff/contract/${contract.id}/cancel" method="post" style="display:inline;"><button type="submit" class="button button-sm button-danger" onclick="return confirm('确定要取消这份合同吗？');">取消</button></form>` : ''}
                         `
                         : ''

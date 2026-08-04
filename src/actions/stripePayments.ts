@@ -1,6 +1,6 @@
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { getOrderById, getSystemSettings, loadSystemSettingsFromDB } from '../site'
+import { getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 
 function cents(value: number): number {
@@ -68,10 +68,12 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
 
   const session = event.data?.object
   const statements: any[] = []
+  let paidOrderId = ''
   if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
     const orderId = String(session?.metadata?.order_id || '')
     const customerId = String(session?.metadata?.customer_id || '')
     const order = await getOrderById(c, orderId)
+    paidOrderId = orderId
     const payment = await c.env.RENT.prepare('SELECT rental_id, customer_id, amount FROM payments WHERE stripe_checkout_session_id = ?').bind(session.id).first() as any
     if (!order || !payment || payment.rental_id !== order.id || payment.customer_id !== customerId || cents(payment.amount) !== cents(order.totalAmount) || order.userId !== customerId || String(session.currency).toLowerCase() !== 'aud' || Number(session.amount_total) !== cents(order.totalAmount) || session.payment_status !== 'paid') {
       return c.text('Stripe 支付数据与订单不匹配', 400)
@@ -91,6 +93,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     if (String(error.message).includes('UNIQUE')) return c.json({ received: true, duplicate: true })
     throw error
   }
+  if (paidOrderId) await issueInvoice(c, paidOrderId)
   return c.json({ received: true })
 }
 
@@ -152,6 +155,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
     ...(refundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(refundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
+  if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount)
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 
@@ -183,5 +187,6 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
     c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
+  await issueCreditNote(c, order.id, order.totalAmount)
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }

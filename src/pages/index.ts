@@ -5,6 +5,7 @@ export * from './public/notFound';
 export * from './public/contractSign';
 export * from './public/contractView';
 export * from './public/paymentResult';
+export * from './invoice';
 
 export * from './customer/dashboard';
 export * from './customer/orders';
@@ -33,6 +34,7 @@ export * from './staff/rentalsTracking';
 export * from './staff/contracts';
 export * from './staff/contractView';
 export * from './staff/contractProgress';
+export * from './staff/inspection';
 
 export * from './admin/dashboard';
 export * from './admin/finance';
@@ -41,6 +43,7 @@ export * from './admin/deviceNew';
 export * from './admin/deviceEdit';
 export * from './admin/settings';
 export * from './admin/contractDetail';
+export * from './admin/contractData';
 export * from './admin/contracts';
 export * from './admin/orders';
 export * from './admin/orderDetail';

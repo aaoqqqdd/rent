@@ -9,6 +9,17 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
 
       <form id="systemSettingsForm">
         <div class="form-group">
+          <label>公司税务信息</label>
+          <div class="grid grid-2">
+            <div><label class="form-label" for="companyAbn">公司 ABN</label><input id="companyAbn" name="companyAbn" class="form-control" value="${settings.companyDetails.abn}" placeholder="11 位 ABN"></div>
+            <div><label class="form-label" for="gstIncluded">GST 设置</label><select id="gstIncluded" name="gstIncluded" class="form-control"><option value="true" ${settings.companyDetails.gstIncluded ? 'selected' : ''}>价格包含 GST</option><option value="false" ${!settings.companyDetails.gstIncluded ? 'selected' : ''}>价格不含 GST</option></select></div>
+            <div><label class="form-label" for="companyAddress">公司地址</label><input id="companyAddress" name="companyAddress" class="form-control" value="${settings.companyDetails.address}"></div>
+            <div><label class="form-label" for="companyContact">公司联系人</label><input id="companyContact" name="companyContact" class="form-control" value="${settings.companyDetails.contact}"></div>
+            <div><label class="form-label" for="companyPhone">公司电话</label><input id="companyPhone" name="companyPhone" class="form-control" value="${settings.companyDetails.phone}"></div>
+            <div><label class="form-label" for="companyEmail">公司邮箱</label><input type="email" id="companyEmail" name="companyEmail" class="form-control" value="${settings.companyDetails.email}"></div>
+          </div>
+        </div>
+        <div class="form-group">
           <label for="rentalTerms">租赁条款</label>
           <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
              <strong style="color: #155e75; display: block; margin-bottom: 12px;">📋 租赁条款模板可用变量：</strong>
@@ -32,6 +43,16 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
                    <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${end_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁结束日</td></tr>
                    <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${total_rent}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统计算</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租金总额</td></tr>
                    <tr><td style="padding: 6px 12px; font-family: monospace;">\${deposit_amount}</td><td style="padding: 6px 12px;">员工填写</td><td style="padding: 6px 12px;">押金金额</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${device_condition}</td><td>员工填写</td><td>出租时设备状况</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${device_accessories}</td><td>员工填写</td><td>配件列表</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${late_fee_per_day}</td><td>员工填写</td><td>每日逾期费用</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${repair_cost}</td><td>员工后续填写</td><td>损坏维修金额</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${pickup_location}</td><td>员工填写</td><td>取货地点</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${return_location}</td><td>员工填写</td><td>归还地点</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${company_abn}</td><td>系统设置</td><td>公司 ABN</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${gst_included}</td><td>系统设置</td><td>是否含 GST</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${esign_ip}</td><td>系统记录</td><td>电子签约 IP</td></tr>
+                   <tr><td style="padding:6px 12px;font-family:monospace;">\${esign_device}</td><td>系统记录</td><td>签约设备</td></tr>
                  </tbody>
                </table>
              </div>
@@ -212,6 +233,14 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
             bsb: formData.get('bankBSB'),
             account: formData.get('bankAccount'),
           },
+          companyDetails: {
+            abn: formData.get('companyAbn'),
+            gstIncluded: formData.get('gstIncluded') === 'true',
+            address: formData.get('companyAddress'),
+            contact: formData.get('companyContact'),
+            phone: formData.get('companyPhone'),
+            email: formData.get('companyEmail'),
+          },
           emailTemplate: formData.get('emailTemplate'),
           referralSettings: {
             defaultRate: parseInt(formData.get('defaultReferralRate')),
@@ -227,7 +256,13 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
           body: JSON.stringify(newSettings)
         })
         .then(async response => {
-          const data = await response.json();
+          const rawText = await response.text();
+          let data: any = {};
+          try {
+            data = rawText ? JSON.parse(rawText) : {};
+          } catch {
+            data = { error: rawText || '保存失败' };
+          }
           if (!response.ok) throw new Error(data.error || '保存失败');
           return data;
         })
@@ -241,7 +276,7 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         })
         .catch(error => {
           console.error('Error saving settings:', error);
-          alert('保存失败，请查看控制台获取详情。');
+          alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。'));
         });
       });
       });

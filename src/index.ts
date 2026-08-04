@@ -31,7 +31,18 @@ import {
   getOrderById,
   insertOrder,
   updateOrderStatus,
+  hasDeviceBookingConflict,
+  canTransitionOrder,
+  validateHostedImageUrls,
+  enforceRateLimit,
+  sanitizeRichHtml,
   updateDeviceStatus,
+  getContractById,
+  CONTRACT_OPERATIONAL_FIELDS,
+  CONTRACT_SIGNED_FIELDS,
+  issueInvoice,
+  createAuthSession,
+  deleteAuthSession,
   getSystemSettings,
   loadSystemSettingsFromDB
 } from './site'
@@ -52,6 +63,8 @@ function parseFormBody(body: string | null | undefined): Record<string, string> 
 }
 
 async function getTableColumns(c: any, tableName: string): Promise<string[]> {
+  const allowedTables = new Set(['users', 'commission_withdrawals'])
+  if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
   const result = await c.env.RENT.prepare(`PRAGMA table_info(${tableName})`).all() as any
   return (result.results || []).map((column: any) => column.name)
 }
@@ -64,6 +77,33 @@ app.use('*', async (c, next) => {
     c.set('user', user)
   }
   await next()
+})
+
+app.use('*', async (c, next) => {
+  const contentLength = Number(c.req.header('Content-Length') || 0)
+  const maxBody = c.req.path === '/webhooks/stripe' ? 512 * 1024 : 128 * 1024
+  if (contentLength > maxBody) return c.text('Request body too large', 413)
+  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe') {
+    const origin = c.req.header('Origin')
+    const fetchSite = c.req.header('Sec-Fetch-Site')
+    if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
+  }
+  const ip = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim()
+  const rateRule = c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
+    : c.req.path === '/forgot-password' && c.req.method === 'POST' ? ['forgot', 5, 3600] as const
+    : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
+    : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
+    : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const : null
+  if (rateRule && !await enforceRateLimit(c, rateRule[0], ip, rateRule[1], rateRule[2])) return c.text('请求过于频繁，请稍后再试', 429)
+  await next()
+  c.header('X-Content-Type-Options', 'nosniff')
+  c.header('X-Frame-Options', 'DENY')
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  c.header('Cross-Origin-Opener-Policy', 'same-origin')
+  c.header('Cross-Origin-Resource-Policy', 'same-origin')
+  if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.quilljs.com; style-src 'self' 'unsafe-inline' https://cdn.quilljs.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'")
 })
 
 
@@ -127,15 +167,20 @@ app.post('/login', async (c) => {
   if (!account || !password) {
     return c.html(pages.renderLogin('请输入账号和密码'))
   }
+  const loginIp = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim().slice(0, 64)
+  const normalizedAccount = String(account).toLowerCase().slice(0, 254)
+  const recentFailures = await c.env.RENT.prepare("SELECT COUNT(*) count FROM login_attempts WHERE ip_address = ? AND account = ? AND attempted_at > datetime('now', '-15 minutes')").bind(loginIp, normalizedAccount).first() as any
+  if (Number(recentFailures?.count || 0) >= 5) return c.html(pages.renderLogin('登录失败次数过多，请 15 分钟后再试'), 429)
   const user = await verifyUserCredentials(c, account, password)
   if (!user) {
+    await c.env.RENT.prepare('INSERT INTO login_attempts (ip_address, account) VALUES (?, ?)').bind(loginIp, normalizedAccount).run()
     return c.html(pages.renderLogin('账号或密码错误'))
   }
+  await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()
   const response = c.redirect(user.role === 'CUSTOMER' ? '/customer/dashboard' : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
-  let cookieOptions = `session=${user.role}:${user.id}; Path=/; HttpOnly`;
-  if (form.remember === 'on') {
-    cookieOptions += `; Max-Age=${60 * 60 * 24 * 30}`; // 30 days
-  }
+  const session = await createAuthSession(c, user.id, form.remember === 'on')
+  let cookieOptions = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`;
+  if (new URL(c.req.url).protocol === 'https:') cookieOptions += '; Secure'
   response.headers.set('Set-Cookie', cookieOptions)
   return response
 })
@@ -149,7 +194,7 @@ app.get('/register', async (c) => {
 })
 
 app.get('/terms', (c) => {
-  return c.html(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>租赁条款</title><link rel="stylesheet" href="/styles.css"></head><body><main class="container"><div class="panel"><h1>租赁条款</h1>${getSystemSettings().rentalTerms}<p><a class="button" href="/register">返回注册</a></p></div></main></body></html>`)
+  return c.html(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>租赁条款</title><link rel="stylesheet" href="/styles.css"></head><body><main class="container"><div class="panel"><h1>租赁条款</h1>${sanitizeRichHtml(getSystemSettings().rentalTerms)}<p><a class="button" href="/register">返回注册</a></p></div></main></body></html>`)
 })
 
 app.post('/register', async (c) => {
@@ -162,6 +207,7 @@ app.post('/register', async (c) => {
   if (password !== passwordConfirm) {
     return c.html(pages.renderRegister('两次输入密码不一致'))
   }
+  if (String(password).length < 10) return c.html(pages.renderRegister('密码至少需要 10 位'))
 
   // 检查邮箱是否已存在
   const existingUser = await findUserByEmail(c, email)
@@ -202,7 +248,8 @@ app.post('/register', async (c) => {
 
   // 自动登录
   const response = c.redirect('/customer/dashboard')
-  response.headers.set('Set-Cookie', `session=CUSTOMER:${newUserId}; Path=/; HttpOnly; SameSite=Lax`)
+  const session = await createAuthSession(c, newUserId)
+  response.headers.set('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
 
   return response
 })
@@ -220,7 +267,8 @@ app.post('/forgot-password', async (c) => {
   return c.html(pages.renderForgotPassword('重置链接已发送至您的邮箱，请查收'))
 })
 
-app.get('/logout', async (c) => {
+app.post('/logout', async (c) => {
+  await deleteAuthSession(c, c.req.header('cookie') ?? null)
   const response = c.redirect('/')
   response.headers.set('Set-Cookie', 'session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT')
   return response
@@ -282,7 +330,7 @@ app.post('/customer/rent/:id', async (c) => {
   const endDate = String(form.endDate || '')
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
-  if (!device || device.status !== 'available' || !startDate || !endDate || !Number.isFinite(start.getTime()) || start >= end) {
+  if (!device || device.status !== 'available' || !startDate || !endDate || !Number.isFinite(start.getTime()) || start >= end || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate)) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
   const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
@@ -332,6 +380,8 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
     return c.json({ success: false, message: 'Unauthorized' }, 401)
   }
   const orderId = c.req.param('orderId')
+  const pickupOrder = await getOrderById(c, orderId)
+  if (!pickupOrder || !canTransitionOrder(pickupOrder.status, 'pending_return')) return c.json({ success: false, message: '当前订单状态不能标记为已拿取' }, 409)
   await updateOrderStatus(c, orderId, 'pending_return') // 从待拿取变为待归还
   return c.json({ success: true, message: '订单已标记为已拿取' })
 })
@@ -342,15 +392,15 @@ app.post('/staff/orders/:orderId/return', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.json({ success: false, message: 'Unauthorized' }, 401)
   }
-  const orderId = c.req.param('orderId')
-  await updateOrderStatus(c, orderId, 'completed') // 从待归还变为已完成
-  return c.json({ success: true, message: '订单已标记为已归还' })
+  return c.json({ success: false, message: '请先完成归还验机', inspectionUrl: `/staff/orders/${c.req.param('orderId')}/inspection` }, 409)
 })
 
 app.post('/staff/orders/:orderId/approve', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
-  await updateOrderStatus(c, c.req.param('orderId'), 'approved')
+  const order = await getOrderById(c, c.req.param('orderId'))
+  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id)) return c.text('订单状态无效或设备档期冲突', 409)
+  await updateOrderStatus(c, order.id, 'approved')
   return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
 })
 
@@ -368,21 +418,54 @@ app.post('/staff/orders/:orderId/reject', async (c) => {
 app.post('/staff/orders/:orderId/mark-paid', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
-  await updateOrderStatus(c, c.req.param('orderId'), 'paid')
-  await c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND payment_method = 'bank_transfer' AND status = 'pending'")
-    .bind(c.req.param('orderId')).run()
-  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+  return c.text('银行转账必须由管理员审核客户提交的 Reference', 409)
 })
 
 app.post('/staff/orders/:orderId/complete', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  return c.text('请通过归还验机流程完成订单', 409)
+})
+
+app.get('/staff/orders/:orderId/inspection', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderStaffInspection(c, user, c.req.param('orderId')))
+})
+
+app.post('/staff/orders/:orderId/inspection', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
-  if (order) {
-    await updateOrderStatus(c, order.id, 'completed')
-    await updateDeviceStatus(c, order.deviceId, 'available')
+  if (!order || !['active', 'pending_return'].includes(order.status)) return c.text('当前订单不能验机', 409)
+  const form = await c.req.parseBody()
+  const allowedCheck = new Set(['正常', '异常', '未测试'])
+  const checks: Record<string, string> = {}
+  for (const [input, field] of [['screenCondition','screen_condition'],['keyboardCondition','keyboard_condition'],['trackpadCondition','trackpad_condition'],['bodyCondition','body_condition'],['cameraCondition','camera_condition'],['wifiCondition','wifi_condition'],['powerTest','power_test']]) {
+    const value = String(form[input] || '')
+    if (!allowedCheck.has(value)) return c.text(`${input} 检查结果无效`, 400)
+    checks[field] = value
   }
-  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+  const replacementCost = Number(form.replacementCost || 0)
+  const batteryCycles = form.batteryCycles ? Number(form.batteryCycles) : null
+  if (!Number.isFinite(replacementCost) || replacementCost < 0 || (batteryCycles !== null && (!Number.isInteger(batteryCycles) || batteryCycles < 0))) return c.text('费用或电池循环次数无效', 400)
+  const damageDescription = String(form.damageDescription || '').trim().slice(0, 2000)
+  const now = new Date().toISOString()
+  const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
+  if (!contract) return c.text('订单缺少合同', 409)
+  const data = JSON.parse(contract.contract_data || '{}')
+  let damagePhotos = ''
+  if (String(form.damagePhotos || '').trim()) {
+    try { damagePhotos = validateHostedImageUrls(form.damagePhotos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
+  }
+  if (damageDescription && !damagePhotos) return c.text('记录损坏时必须提供至少一张损坏照片链接', 400)
+  Object.assign(data, checks, { battery_cycles: batteryCycles ?? '', battery_health: String(form.batteryHealth || '').trim().slice(0, 100), damage_description: damageDescription, damage_photos: damagePhotos, replacement_cost: replacementCost.toFixed(2), return_status: damageDescription ? 'Damaged' : 'Returned', return_date: now.slice(0,10), inspection_date: now.slice(0,10), inspection_by: user.name || user.id })
+  await c.env.RENT.batch([
+    c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(data), contract.id),
+    c.env.RENT.prepare("UPDATE orders SET status = 'completed', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
+    c.env.RENT.prepare('UPDATE devices SET status = ? WHERE id = ?').bind(damageDescription ? 'maintenance' : 'available', order.deviceId),
+  ])
+  return c.redirect(`/staff/orders/${order.id}`)
 })
 
 app.post('/staff/orders/:orderId/cancel', async (c) => {
@@ -475,23 +558,17 @@ app.get('/staff/contract/view', async (c) => {
 })
 
 app.get('/contract/sign', async (c) => {
-  // 支持两种参数：token（旧格式）和number（新格式：contract/sign?number=合同编号&step=1）
   const token = c.req.query('token') || '';
-  const number = c.req.query('number') || '';
-  const identifier = token || number; // 优先使用token，否则使用合同编号
   const step = Number(c.req.query('step') || '1');
   const error = c.req.query('error');
-  return c.html(await pages.renderContractSignPage(c, identifier, step, error));
+  return c.html(await pages.renderContractSignPage(c, token, step, error));
 });
 
 app.post('/contract/sign', async (c) => {
-  // 同样支持两种参数
   const token = c.req.query('token') || '';
-  const number = c.req.query('number') || '';
-  const identifier = token || number;
   const step = Number(c.req.query('step') || '1');
   const form = await c.req.parseBody();
-  return actions.handleSignContractStep(c, identifier, step, form);
+  return actions.handleSignContractStep(c, token, step, form);
 });
 
 app.post('/admin/contracts/template', async (c) => {
@@ -518,6 +595,12 @@ app.get('/payment/result', async (c) => {
   return c.html(await pages.renderPaymentResult(c, c.req.query('orderId') || '', c.get('user')))
 })
 
+app.get('/orders/:id/invoice', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.redirect('/login')
+  return c.html(await pages.renderInvoice(c, user, c.req.param('id')))
+})
+
 app.post('/customer/orders/:id/stripe/checkout', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
@@ -526,6 +609,24 @@ app.post('/customer/orders/:id/stripe/checkout', async (c) => {
   } catch (error: any) {
     return c.text(error.message || '无法创建 Stripe 支付', 502)
   }
+})
+
+app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || order.userId !== user.id || order.status !== 'pending_payment' || order.paymentMethod !== 'bank_transfer') return c.text('订单不能提交转账信息', 409)
+  const form = await c.req.parseBody()
+  const reference = String(form.referenceNumber || '').trim().slice(0, 100)
+  const note = String(form.note || '').trim().slice(0, 500)
+  let proofImageUrl = ''
+  try { proofImageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) }
+  if (!reference) return c.text('请填写银行 Reference', 400)
+  const payment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'bank_transfer' AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!payment) return c.text('未找到待审核的转账付款记录', 409)
+  await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'superseded' WHERE payment_id = ? AND status = 'submitted'").bind(payment.id).run()
+  await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')").bind(`proof-${nanoid(12)}`, payment.id, reference, note || null, proofImageUrl).run()
+  return c.redirect(`/customer/orders/${order.id}`)
 })
 
 app.post('/webhooks/stripe', async (c) => handleStripeWebhook(c))
@@ -670,27 +771,25 @@ app.post('/customer/security', async (c) => {
   const form = parseFormBody(body)
   const currentPassword = form.currentPassword?.trim()
   const newPassword = form.newPassword?.trim()
-  const confirmPassword = form.confirmPassword?.trim()
+  const confirmPassword = (form.confirmPassword || form.confirmNewPassword)?.trim()
   if (!currentPassword || !newPassword || !confirmPassword) {
     return c.html(await pages.renderCustomerSecurity(c, user, '请输入完整密码信息'))
   }
 
-  const fullUser = await (c.env as any).RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first()
-
-  if (!fullUser || !fullUser.passwordHash) {
-    return c.html(await pages.renderCustomerSecurity(c, user, '无法验证当前密码'))
-  }
-
-  const isPasswordValid = await verifyPassword(currentPassword, fullUser.passwordHash)
-
-  if (!isPasswordValid) {
+  const verifiedUser = await verifyUserCredentials(c, user.email, currentPassword)
+  if (!verifiedUser || verifiedUser.id !== user.id) {
     return c.html(await pages.renderCustomerSecurity(c, user, '当前密码不正确'))
   }
   if (newPassword !== confirmPassword) {
     return c.html(await pages.renderCustomerSecurity(c, user, '两次输入的新密码不一致'))
   }
+  if (newPassword.length < 10) return c.html(await pages.renderCustomerSecurity(c, user, '新密码至少需要 10 位'))
   await updateUser(c, user.id, { password: newPassword })
-  return c.html(await pages.renderCustomerSecurity(c, user, '密码已更新', 'success'))
+  await c.env.RENT.prepare('DELETE FROM auth_sessions WHERE user_id = ?').bind(user.id).run()
+  const session = await createAuthSession(c, user.id)
+  const response = c.html(await pages.renderCustomerSecurity(c, user, '密码已更新，其他设备已退出登录', 'success'))
+  response.headers.set('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
+  return response
 })
 
 app.get('/admin/dashboard', async (c) => {
@@ -878,7 +977,8 @@ app.get('/admin/orders/export', async (c) => {
   ]
 
   const escapeCsvValue = (value: any) => {
-    const text = String(value ?? '')
+    let text = String(value ?? '')
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
     if (/[",\n]/.test(text)) {
       return `"${text.replace(/"/g, '""')}"`
     }
@@ -917,6 +1017,36 @@ app.get('/admin/contracts/:id', async (c) => {
   return c.html(await pages.renderAdminContractDetail(c, user, c.req.param('id')))
 })
 
+app.get('/admin/contracts/:id/data', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminContractData(c, user, c.req.param('id')))
+})
+
+app.post('/admin/contracts/:id/data', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const contract = await getContractById(c, c.req.param('id'))
+  if (!contract) return c.notFound()
+  const form = parseFormBody(await c.req.text())
+  const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
+  const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
+  const submitted = Object.entries(form).filter(([name]) => allowed.has(name as any) && (contract.status !== 'signed' || !CONTRACT_SIGNED_FIELDS.has(name))).map(([name, value]) => [name, String(value).trim().slice(0, 4000)])
+  const submittedData = Object.fromEntries(submitted)
+  if (submittedData.damage_photos) {
+    try { submittedData.damage_photos = validateHostedImageUrls(submittedData.damage_photos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
+  }
+  for (const name of ['delivery_fee', 'discount', 'replacement_cost', 'battery_cycles']) {
+    const value = submittedData[name]
+    if (value && (!Number.isFinite(Number(value)) || Number(value) < 0)) return c.text(`${name} 必须是非负数字`, 400)
+  }
+  const allowedOptions: Record<string, string[]> = { delivery_method: ['', 'Pickup', 'Delivery'], return_status: ['', 'Returned', 'Overdue', 'Damaged'], collection_required: ['', '否', '是'], power_test: ['', '通过', '失败'], insurance_required: ['', '否', '是'], waiver_signed: ['', '否', '是'], jurisdiction: ['', 'VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'] }
+  for (const [name, options] of Object.entries(allowedOptions)) if (!options.includes(submittedData[name] || '')) return c.text(`${name} 的值无效`, 400)
+  const data = { ...existing, ...submittedData }
+  await c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
+  return c.redirect(`/admin/contracts/${contract.id}`)
+})
+
 app.get('/admin/orders/:id', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -929,7 +1059,38 @@ app.post('/admin/orders/:id/update', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const status = String((await c.req.parseBody()).status || '')
-  if (['pending_payment', 'paid', 'active', 'completed', 'cancelled'].includes(status)) await updateOrderStatus(c, c.req.param('id'), status)
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || !['pending_payment', 'paid', 'active', 'completed', 'cancelled'].includes(status) || !canTransitionOrder(order.status, status)) return c.text('不允许的订单状态转换', 409)
+  if (status === 'completed') {
+    const contract = await c.env.RENT.prepare('SELECT contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
+    if (!JSON.parse(contract?.contract_data || '{}').inspection_date) return c.text('完成订单前必须提交归还验机', 409)
+  }
+  await updateOrderStatus(c, order.id, status)
+  return c.redirect(`/admin/orders/${c.req.param('id')}`)
+})
+
+app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || order.status !== 'pending_payment' || order.paymentMethod !== 'bank_transfer') return c.text('订单状态不允许审核', 409)
+  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!proof) return c.text('没有待审核的转账信息', 409)
+  await c.env.RENT.batch([
+    c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
+    c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.payment_id),
+    c.env.RENT.prepare("UPDATE orders SET status = 'paid', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
+  ])
+  await issueInvoice(c, order.id)
+  return c.redirect(`/admin/orders/${order.id}`)
+})
+
+app.post('/admin/orders/:id/transfer-proof/reject', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const reason = String((await c.req.parseBody()).reason || '').trim().slice(0, 300)
+  if (!reason) return c.text('请填写驳回原因', 400)
+  await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'rejected', rejection_reason = ?, rejected_at = CURRENT_TIMESTAMP, rejected_by = ? WHERE id = (SELECT pp.id FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1)").bind(reason, user.id, c.req.param('id')).run()
   return c.redirect(`/admin/orders/${c.req.param('id')}`)
 })
 
@@ -947,9 +1108,10 @@ app.post('/admin/orders/bulk-update', async (c) => {
     return c.redirect('/admin/orders')
   }
 
-  await Promise.all(selectedIds.map(async (orderId) => {
-    await updateOrderStatus(c, orderId, targetStatus)
-  }))
+  const selectedOrders = await Promise.all(selectedIds.map(orderId => getOrderById(c, orderId)))
+  if (selectedOrders.some(order => !order || !canTransitionOrder(order.status, targetStatus))) return c.text('批量操作包含不允许的状态转换', 409)
+  if (targetStatus === 'completed') return c.text('完成订单必须逐笔执行归还验机', 409)
+  await Promise.all(selectedOrders.map(order => updateOrderStatus(c, order!.id, targetStatus)))
 
   return c.redirect('/admin/orders')
 })
@@ -1058,7 +1220,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   return c.redirect('/admin/devices')
 })
 
-app.get('/admin/devices/:id/delete', async (c) => {
+app.post('/admin/devices/:id/delete', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
