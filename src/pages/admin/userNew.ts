@@ -20,7 +20,7 @@ export function renderAdminUserNew(user: any) {
           <li><strong>ADMIN（管理员）</strong> - 拥有系统所有权限，包括用户管理和系统设置</li>
         </ul>
       </div>
-      <form method="POST" action="/admin/users/create" class="form-grid" style="gap: 24px;">
+      <form method="POST" action="/admin/users/new" class="form-grid" style="gap: 24px;">
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px;">
           <div class="form-group" style="margin: 0;">
             <label for="name" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">👤 用户姓名</label>

@@ -27,9 +27,15 @@ import {
   findUserByEmail,
   findUserByReferralCode,
   createWithdrawalRequest,
-  generateReferralCode
+  generateReferralCode,
+  getOrderById,
+  insertOrder,
+  updateOrderStatus,
+  updateDeviceStatus,
+  getSystemSettings,
+  loadSystemSettingsFromDB
 } from './site'
-import { nanoid } from 'nanoid'
+import { nanoid, customAlphabet } from 'nanoid'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
   const form: Record<string, string> = {}
@@ -140,6 +146,10 @@ app.get('/register', async (c) => {
   return c.html(pages.renderRegister())
 })
 
+app.get('/terms', (c) => {
+  return c.html(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>租赁条款</title><link rel="stylesheet" href="/styles.css"></head><body><main class="container"><div class="panel"><h1>租赁条款</h1>${getSystemSettings().rentalTerms}<p><a class="button" href="/register">返回注册</a></p></div></main></body></html>`)
+})
+
 app.post('/register', async (c) => {
   const form = await c.req.parseBody()
   const { name, email, password, passwordConfirm, referrer, countryCode, phone } = form
@@ -246,7 +256,43 @@ app.get('/customer/orders/:id', async (c) => {
   if (user.role !== 'CUSTOMER') {
     return c.html(renderForbidden(), 403)
   }
-  return c.html(pages.renderCustomerOrderDetail(user, c.req.param('id')))
+  return c.html(await pages.renderCustomerOrderDetail(c, user, c.req.param('id')))
+})
+
+app.get('/customer/devices', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  return c.html(await pages.renderCustomerDevices(c, user))
+})
+
+app.get('/customer/rent/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user))
+})
+
+app.post('/customer/rent/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const device = await getDeviceById(c, c.req.param('id'))
+  const form = await c.req.parseBody()
+  const startDate = String(form.startDate || '')
+  const endDate = String(form.endDate || '')
+  const start = new Date(`${startDate}T00:00:00Z`)
+  const end = new Date(`${endDate}T00:00:00Z`)
+  if (!device || device.status !== 'available' || !startDate || !endDate || !Number.isFinite(start.getTime()) || start >= end) {
+    return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
+  }
+  const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
+  const orderId = `o-${nanoid(8)}`
+  await insertOrder(c, {
+    id: orderId, orderNo: `OD${Date.now()}${nanoid(4).toUpperCase()}`, userId: user.id,
+    deviceId: device.id, startDate, endDate, rentalPeriod, status: 'pending_approval',
+    paymentMethod: 'bank_transfer', totalAmount: rentalPeriod * device.pricePerDay + device.depositAmount,
+    depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null,
+    createdAt: new Date().toISOString()
+  } as any)
+  return c.redirect(`/customer/orders/${orderId}`)
 })
 
 app.get('/staff/dashboard', async (c) => {
@@ -299,6 +345,53 @@ app.post('/staff/orders/:orderId/return', async (c) => {
   return c.json({ success: true, message: '订单已标记为已归还' })
 })
 
+app.post('/staff/orders/:orderId/approve', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  await updateOrderStatus(c, c.req.param('orderId'), 'approved')
+  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+})
+
+app.post('/staff/orders/:orderId/reject', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('orderId'))
+  if (order) {
+    await updateOrderStatus(c, order.id, 'cancelled')
+    await updateDeviceStatus(c, order.deviceId, 'available')
+  }
+  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+})
+
+app.post('/staff/orders/:orderId/mark-paid', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  await updateOrderStatus(c, c.req.param('orderId'), 'paid')
+  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+})
+
+app.post('/staff/orders/:orderId/complete', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('orderId'))
+  if (order) {
+    await updateOrderStatus(c, order.id, 'completed')
+    await updateDeviceStatus(c, order.deviceId, 'available')
+  }
+  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+})
+
+app.post('/staff/orders/:orderId/cancel', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('orderId'))
+  if (order) {
+    await updateOrderStatus(c, order.id, 'cancelled')
+    await updateDeviceStatus(c, order.deviceId, 'available')
+  }
+  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+})
+
 app.get('/staff/contracts', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
@@ -326,6 +419,12 @@ app.get('/staff/devices', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderStaffDevices(c, user))
+})
+
+app.get('/staff/devices/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.redirect('/login')
+  return c.html(await pages.renderStaffDeviceDetail(c, user, c.req.param('id')))
 })
 
 
@@ -613,8 +712,15 @@ app.post('/admin/users/new', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  const body = await c.req.text()
-  const form = parseFormBody(body)
+  const form = await c.req.parseBody()
+  const name = String(form.name || '').trim()
+  const email = String(form.email || '').trim().toLowerCase()
+  const password = String(form.password || '')
+  const role = String(form.role || 'CUSTOMER')
+  const status = String(form.status || 'active')
+  if (!name || !email || password.length < 8 || !['CUSTOMER', 'STAFF', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user), 400)
+  if (await findUserByEmail(c, email)) return c.html(pages.renderAdminUserNew(user), 409)
+  await insertUser(c, { id: `u-${nanoid(10)}`, name, email, password, role, status, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
   return c.redirect('/admin/users')
 })
 
@@ -756,6 +862,25 @@ app.get('/admin/orders/:id', async (c) => {
   return c.html(await pages.renderAdminOrderDetail(c, user, c.req.param('id')))
 })
 
+app.post('/admin/orders/:id/update', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const status = String((await c.req.parseBody()).status || '')
+  if (['pending_payment', 'paid', 'active', 'completed', 'cancelled'].includes(status)) await updateOrderStatus(c, c.req.param('id'), status)
+  return c.redirect(`/admin/orders/${c.req.param('id')}`)
+})
+
+app.post('/admin/orders/:id/refund', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('id'))
+  if (order && ['paid', 'active'].includes(order.status)) {
+    await updateOrderStatus(c, order.id, 'cancelled')
+    await updateDeviceStatus(c, order.deviceId, 'available')
+  }
+  return c.redirect(`/admin/orders/${c.req.param('id')}`)
+})
+
 app.get('/admin/finance', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -849,6 +974,7 @@ app.get('/admin/settings', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
+  await loadSystemSettingsFromDB(c)
   return c.html(pages.renderAdminSettings(user))
 })
 
@@ -857,10 +983,6 @@ app.post('/admin/settings/save', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.text('无权限', 403)
   }
-  const bodyText = await c.req.text()
-  // 把文本 body 挂回 req，避免 handleSaveAdminSettings 里再次读取 text 时是空
-  // Hono 不提供直接覆盖 req，这里改为直接 json 解析后写入 handler（handler已读取text）
-  // 因此直接把 c.req 交给 handler 读取即可，这里无需复用 bodyText。
   return actions.handleSaveAdminSettings(c)
 })
 

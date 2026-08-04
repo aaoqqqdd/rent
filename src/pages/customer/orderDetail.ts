@@ -29,7 +29,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           <p><strong>设备名称:</strong> ${device?.name ?? '未知设备'}</p>
           <p><strong>设备型号:</strong> ${device?.model ?? 'N/A'}</p>
           <p><strong>序列号:</strong> ${device?.serialNumber ?? 'N/A'}</p>
-          <p><strong>日租金:</strong> ${formatCurrency(device?.dailyRate ?? 0)}</p>
+          <p><strong>日租金:</strong> ${formatCurrency(device?.pricePerDay ?? device?.dailyRate ?? 0)}</p>
         </div>
       </div>
 
@@ -37,7 +37,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
         <div class="section-title" style="margin-top: 24px;"><h3>租赁合同</h3></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">
           <a class="button" href="/contract/view/${contract.id}" target="_blank">查看合同</a>
-          ${contract.status === 'pending_sign' ? `<a class="button button-primary" href="/contract/sign/${contract.id}">签署合同</a>` : ''}
+          ${contract.status === 'pending_sign' ? `<a class="button button-primary" href="/contract/sign?number=${encodeURIComponent(contract.contractNumber)}&step=1">签署合同</a>` : ''}
         </div>
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}
 

@@ -1,7 +1,8 @@
 import { buildLayout, getDevices, formatCurrency } from '../../site';
+import type { Context } from 'hono';
 
-export async function renderCustomerDevices(user: any) {
-  const devices = (await getDevices()).filter(device => device.status === 'available'); // 只显示可用设备
+export async function renderCustomerDevices(c: Context, user: any) {
+  const devices = (await getDevices(c)).filter(device => device.status === 'available'); // 只显示可用设备
 
   const body = `
     <div class="panel">
@@ -12,7 +13,7 @@ export async function renderCustomerDevices(user: any) {
             <div class="device-card card">
               <h3>${device.name}</h3>
               <p>型号: ${device.model}</p>
-              <p>日租金: ${formatCurrency(device.dailyRate ?? 0)}</p>
+              <p>日租金: ${formatCurrency(device.pricePerDay ?? device.dailyRate ?? 0)}</p>
               <p>押金: ${formatCurrency(device.depositAmount)}</p>
               <a class="button button-primary" href="/customer/rent/${device.id}">立即租赁</a>
             </div>

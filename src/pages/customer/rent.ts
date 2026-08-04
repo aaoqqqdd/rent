@@ -1,7 +1,8 @@
 import { buildLayout, getDeviceById, formatCurrency } from '../../site';
+import type { Context } from 'hono';
 
-export async function renderCustomerRent(deviceId: string, user: any, errorMessage?: string) {
-  const device = await getDeviceById(deviceId);
+export async function renderCustomerRent(c: Context, deviceId: string, user: any, errorMessage?: string) {
+  const device = await getDeviceById(c, deviceId);
 
   if (!device) {
     return buildLayout('租赁设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求租赁的设备不存在。</p></div>', user);
@@ -24,7 +25,7 @@ export async function renderCustomerRent(deviceId: string, user: any, errorMessa
         </div>
         <div class="form-group">
           <label class="form-label" for="dailyRate">日租金</label>
-          <input type="text" id="dailyRate" class="form-control" value="${formatCurrency(device.dailyRate ?? 0)}" readonly />
+          <input type="text" id="dailyRate" class="form-control" value="${formatCurrency(device.pricePerDay ?? device.dailyRate ?? 0)}" readonly />
         </div>
         <div class="form-group">
           <label class="form-label" for="depositAmount">押金</label>

@@ -19,7 +19,7 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
           <p><strong>设备名称:</strong> ${device.name}</p>
           <p><strong>型号:</strong> ${device.model}</p>
           <p><strong>序列号:</strong> ${device.serialNumber}</p>
-          <p><strong>日租金:</strong> ${formatCurrency(device.dailyRate ?? 0)}</p>
+          <p><strong>日租金:</strong> ${formatCurrency(device.pricePerDay ?? device.dailyRate ?? 0)}</p>
           <p><strong>状态:</strong> ${device.status}</p>
         </div>
         <div>

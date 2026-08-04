@@ -31,8 +31,8 @@ export async function renderStaffOrdersPending(c: Context, user: any) {
                 <td>${formatCurrency(order.totalAmount)}</td>
                 <td>${order.status}</td>
                 <td>
-                  <a class="button button-sm button-primary" href="/staff/orders/${order.id}/approve">批准</a>
-                  <a class="button button-sm button-danger" href="/staff/orders/${order.id}/reject">拒绝</a>
+                  <form method="POST" action="/staff/orders/${order.id}/approve" style="display:inline"><button class="button button-sm button-primary" type="submit">批准</button></form>
+                  <form method="POST" action="/staff/orders/${order.id}/reject" style="display:inline"><button class="button button-sm button-danger" type="submit">拒绝</button></form>
                   <a class="button button-sm button-secondary" href="/staff/orders/${order.id}">详情</a>
                 </td>
               </tr>
