@@ -18,25 +18,13 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
   const deviceMap = new Map(devices.map((device) => [device.id, device]))
 
   const body = `
-    <div class="panel">
-      <div class="section-title"><h2>客户详情 - ${customer.name}</h2><span class="section-note">查看客户资料、订单历史及管理。</span></div>
-      <div class="grid grid-2">
-        <div>
-          <h3>基本信息</h3>
-          <p><strong>姓名:</strong> ${customer.name}</p>
-          <p><strong>邮箱:</strong> ${customer.email}</p>
-          <p><strong>手机:</strong> ${customer.phone ?? 'N/A'}</p>
-          <p><strong>注册日期:</strong> ${customer.registrationDate}</p>
-          <p><strong>余额:</strong> ${formatCurrency(customer.balance)}</p>
-        </div>
-        <div>
-          <h3>操作</h3>
-          <a class="button" href="/staff/customers/${customer.id}/edit">编辑客户信息</a>
+    <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>ACTIVE RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>${customer.name}</h2><p>${customer.email}</p></div><div class="entity-heading-actions"><a class="button button-secondary" href="/staff/customers">返回客户列表</a><a class="button" href="/staff/customers/${customer.id}/edit">编辑客户</a></div></div></div>
+    <div class="panel record-panel single-column"><div class="record-grid">
+        <section class="record-section"><p class="section-code">PROFILE</p><h3>基本信息</h3><dl class="data-list"><div><dt>客户 ID</dt><dd class="mono">${customer.id}</dd></div><div><dt>姓名</dt><dd>${customer.name}</dd></div><div><dt>邮箱</dt><dd>${customer.email}</dd></div><div><dt>手机</dt><dd>${customer.phone ?? '未填写'}</dd></div><div><dt>注册日期</dt><dd>${customer.registrationDate || customer.createdAt || '-'}</dd></div></dl></section>
+        <section class="record-section"><p class="section-code">ACCOUNT</p><h3>账户信息</h3><dl class="data-list"><div><dt>余额</dt><dd class="mono">${formatCurrency(customer.balance)}</dd></div><div><dt>BSB</dt><dd class="mono">${customer.bsb || '未填写'}</dd></div><div><dt>银行账号</dt><dd class="mono">${customer.accountNumber || customer.account || '未填写'}</dd></div></dl>
           <form method="POST" action="/staff/customers/${customer.id}/delete" onsubmit="return confirm('确定要删除此客户吗？');" style="margin-top: 10px;">
             <button class="button button-danger" type="submit">删除客户</button>
-          </form>
-        </div>
-      </div>
+          </form></section></div>
 
       <div class="section-title" style="margin-top: 24px;"><h3>订单历史</h3></div>
       ${orders.length ? `

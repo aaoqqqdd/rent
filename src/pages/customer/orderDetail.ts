@@ -15,10 +15,12 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const contract = await getContractByOrderId(c, order.id)
   const transferProof = order.paymentMethod === 'bank_transfer' ? await c.env.RENT.prepare("SELECT pp.status, pp.reference_number, pp.rejection_reason FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any : null
   const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
+  const stripeFee = Math.round(Number(order.totalAmount) * 100 * 0.025) / 100
+  const stripeTotal = Number(order.totalAmount) + stripeFee
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>订单详情 #${order.orderNo}</h2><span class="section-note">查看订单状态、设备信息、租金明细及合同。</span></div>
+      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '合同付款资料'}</h2><span class="section-note">${order.orderNo ? '查看订单状态、设备信息、租金明细及合同。' : '订单编号将在付款确认后生成。'}</span></div>
       ${alertMessage}
       <div class="grid grid-2">
         <div>
@@ -43,8 +45,8 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
       ${contract ? `
         <div class="section-title" style="margin-top: 24px;"><h3>租赁合同</h3></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">
-          <a class="button" href="/contract/view/${contract.id}" target="_blank">查看合同</a>
-          ${contract.status === 'pending_sign' ? `<a class="button button-primary" href="/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1">签署合同</a>` : ''}
+          ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}" target="_blank">查看/下载合同</a>` : `<span class="section-note">正式合同将在签署完成后开放下载。</span>`}
+          ${contract.status === 'pending_sign' ? `<a class="button button-primary" href="/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1">签署租赁协议</a>` : ''}
         </div>
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}
 
@@ -57,7 +59,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
             <p><strong>银行名称:</strong> ${systemSettings.bankDetails.accountName}</p>
             <p><strong>BSB:</strong> ${systemSettings.bankDetails.bsb}</p>
             <p><strong>账号:</strong> ${systemSettings.bankDetails.account}</p>
-            <p>请转账 ${formatCurrency(order.totalAmount)} 到以上账户，并在备注中填写订单号 ${order.orderNo}。</p>
+            <p>请转账 ${formatCurrency(order.totalAmount)} 到以上账户，并在备注中填写合同编号 ${contract?.contractNumber || order.contractId}。</p>
             ${transferProof?.status === 'submitted' ? '<p>转账信息已提交，请等待管理员审核。</p>' : `<form method="post" action="/customer/orders/${order.id}/bank-transfer-proof">
               <label class="form-label" for="referenceNumber">银行 Reference</label>
               <input class="form-control" id="referenceNumber" name="referenceNumber" maxlength="100" required>
@@ -72,8 +74,9 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           ${systemSettings.paymentMethods.stripe ? `<div class="payment-card">
             <h4>信用卡支付（Stripe）</h4>
             <p>前往 Stripe 安全结账页面完成支付，本站不会接触您的卡号。</p>
+            <p>订单本金 ${formatCurrency(order.totalAmount)} ＋ 2.5% 支付手续费 ${formatCurrency(stripeFee)}。手续费不予退款。</p>
             <form method="POST" action="/customer/orders/${order.id}/stripe/checkout">
-              <button class="button button-primary" type="submit">支付 ${formatCurrency(order.totalAmount)}</button>
+              <button class="button button-primary" type="submit">支付 ${formatCurrency(stripeTotal)}</button>
             </form>
           </div>` : ''}
         </div>

@@ -3,13 +3,14 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractTemplate, CONTRACT_OPERATIONAL_FIELDS, CONTRACT_COMPUTED_FIELDS } from '../../site';
+import { buildLayout, getContractTemplate, CONTRACT_OPERATIONAL_FIELDS, CONTRACT_COMPUTED_FIELDS, CONTRACT_VARIABLE_GROUPS } from '../../site';
 import { Context } from 'hono';
 
 export async function renderAdminContracts(c: Context, user: any) {
   const currentTemplate = await getContractTemplate(c);
   const safeTemplateName = String(currentTemplate?.name ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const safeTemplateContent = String(currentTemplate?.content ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const completeVariableIndex = CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')
 
   const body = `
     <div class="panel">
@@ -25,6 +26,7 @@ export async function renderAdminContracts(c: Context, user: any) {
               <input type="text" id="templateName" name="templateName" class="form-control" value="${safeTemplateName}">
             </div>
             <div class="form-group">
+              <details class="variable-index" open><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${completeVariableIndex}</details>
               <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
                 <strong style="color: #155e75; display: block; margin-bottom: 12px;">📋 合同模板可用变量（点击变量可复制）：</strong>
                 <div style="max-height: 200px; overflow-y: auto;">
@@ -119,10 +121,15 @@ export async function renderAdminContracts(c: Context, user: any) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(template),
           });
+          const contentType = response.headers.get('content-type') || '';
+          const result = contentType.includes('application/json')
+            ? await response.json()
+            : { error: '服务器返回了无法识别的响应（HTTP ' + response.status + '）' };
           if (!response.ok) {
-            throw new Error(await response.text());
+            throw new Error(result.error || '合同模板保存失败');
           }
-          return response.json();
+          if (!result.success) throw new Error(result.error || '合同模板保存失败');
+          return result.template;
         };
 
         // 初始化编辑器内容

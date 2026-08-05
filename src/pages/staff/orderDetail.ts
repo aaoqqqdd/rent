@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, getContractByOrderId, systemSettings } from '../../site'
+import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, getContractByOrderId, systemSettings, isContractExpired } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffOrderDetail(c: Context, user: any, orderId: string, message?: string, type: 'success' | 'error' = 'error') {
@@ -14,11 +14,12 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   const customer = await getUserById(c, order.userId)
   const device = await getDeviceById(c, order.deviceId)
   const contract = await getContractByOrderId(c, order.id)
+  const contractExpired = contract ? isContractExpired(contract) : false
   const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>订单详情 #${order.orderNo}</h2><span class="section-note">管理订单状态、设备分配、合同签署及支付。</span></div>
+      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '合同付款资料'}</h2><span class="section-note">${order.orderNo ? '管理订单状态、设备分配、合同签署及支付。' : '订单编号将在付款确认后生成。'}</span></div>
       ${alertMessage}
       <div class="grid grid-2">
         <div>
@@ -47,7 +48,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
               <button class="button button-primary" type="submit">生成合同</button>
             </form>
           ` : ''}
-          ${contract && contract.status === 'pending_sign' ? `
+          ${contract && contract.status === 'pending_sign' && !contractExpired ? `
             <form method="POST" action="/staff/orders/${order.id}/remind-sign">
               <button class="button" type="submit">提醒客户签署合同</button>
             </form>
@@ -69,8 +70,8 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
       ${contract ? `
         <div class="section-title" style="margin-top: 24px;"><h3>租赁合同</h3></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">
-          <a class="button" href="/contract/view/${contract.id}" target="_blank">查看合同</a>
-          ${contract.status === 'signed' ? `<span class="tag tag-success">已签署</span>` : `<span class="tag tag-warning">${contract.status === 'pending_sign' ? '待签署' : '草稿'}</span>`}
+          ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}" target="_blank">查看/下载合同</a>` : '<span class="section-note">正式合同将在客户完成签署后开放。</span>'}
+          ${contractExpired ? '<span class="badge danger">已过期</span>' : contract.status === 'signed' ? `<span class="badge success">已签署</span>` : `<span class="badge warning-badge">${contract.status === 'pending_sign' ? '待签署' : '草稿'}</span>`}
         </div>
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}
 

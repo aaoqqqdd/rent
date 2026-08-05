@@ -100,7 +100,7 @@ export interface Device {
 
 export interface Order {
   id: string
-  orderNo: string
+  orderNo: string | null
   userId: string
   deviceId: string
   deviceName?: string
@@ -145,6 +145,7 @@ export interface Contract {
   status: 'draft' | 'pending_sign' | 'signed' | 'cancelled'
   validFrom?: string | null // New field for contract validity start date
   validUntil?: string | null // New field for contract validity end date
+  valid_until?: string | null
   signExpiresAt?: string | null
   sign_expires_at?: string | null
   created_by?: string | null // 记录合同创建人ID
@@ -159,6 +160,8 @@ export interface Contract {
   repair_cost?: number | null
   pickup_location?: string | null
   return_location?: string | null
+  customer_id_type?: string | null
+  customer_id_number?: string | null
   esign_ip?: string | null
   esign_device?: string | null
   contract_data?: string | Record<string, unknown> | null
@@ -172,6 +175,19 @@ export interface ContractTemplate {
   content: string
   createdAt?: string
   updatedAt?: string
+}
+
+export function isContractExpired(contract: Contract, now = Date.now()): boolean {
+  if ((contract.status as string) === 'expired') return true
+  if (!['draft', 'pending_sign'].includes(contract.status)) return false
+  const expiry = contract.signExpiresAt || contract.sign_expires_at || contract.validUntil || contract.valid_until
+  if (!expiry) return false
+  const expiryTime = new Date(expiry).getTime()
+  return Number.isFinite(expiryTime) && expiryTime < now
+}
+
+export function isContractFinalized(contract: Contract | null | undefined): boolean {
+  return Boolean(contract && contract.status === 'signed' && contract.signedAt && contract.signed_content)
 }
 
 // 生成一个随机的盐值
@@ -324,8 +340,8 @@ function normalizeContractRow(contractRow: any): Contract {
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
   const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
   const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
   const valid_from = contractRow.valid_from ?? contractRow.validFrom
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
@@ -418,8 +434,8 @@ export async function getContractById(cOrContext: Context | string, id?: string)
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
   const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
   const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
   const valid_from = contractRow.valid_from ?? contractRow.validFrom
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
@@ -446,15 +462,15 @@ export async function getContractByOrderId(cOrContext: Context | string, orderId
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualOrderId = typeof cOrContext === 'string' ? cOrContext : orderId
   if (!actualOrderId) return null
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE rentalId = ? OR rental_id = ?').bind(actualOrderId, actualOrderId).first()
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE orderId = ?').bind(actualOrderId).first()
   if (!contractRow) return null
 
   // 统一处理snake_case和camelCase字段
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
   const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
   const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
   const valid_from = contractRow.valid_from ?? contractRow.validFrom
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
@@ -539,6 +555,26 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
       order.createdAt
     )
     .run()
+}
+
+export async function ensureOrderNumber(c: Context, orderId: string, externalReference = ''): Promise<string> {
+  const existing = await c.env.RENT.prepare('SELECT orderNo FROM orders WHERE id = ?').bind(orderId).first() as any
+  if (!existing) throw new Error('订单不存在，无法生成订单编号')
+  if (existing.orderNo) return String(existing.orderNo)
+
+  const dateParts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(new Date())
+  const date = Object.fromEntries(dateParts.map(part => [part.type, part.value]))
+  const externalSuffix = externalReference.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(-10)
+  const randomBytes = new Uint8Array(5)
+  crypto.getRandomValues(randomBytes)
+  const randomSuffix = Array.from(randomBytes, byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()
+  const orderNo = `OD${date.year}${date.month}${date.day}${externalSuffix || randomSuffix}`
+  await c.env.RENT.prepare('UPDATE orders SET orderNo = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND (orderNo IS NULL OR orderNo = ?)')
+    .bind(orderNo, orderId, '').run()
+  const saved = await c.env.RENT.prepare('SELECT orderNo FROM orders WHERE id = ?').bind(orderId).first() as any
+  if (!saved?.orderNo) throw new Error('订单编号生成失败')
+  return String(saved.orderNo)
 }
 
 
@@ -698,8 +734,8 @@ export async function getContractByContractNumber(c: Context, contractNumber: st
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
   const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
   const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
   const valid_from = contractRow.valid_from ?? contractRow.validFrom
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
@@ -731,8 +767,8 @@ export async function getContractBySignToken(c: Context, signToken: string): Pro
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
   const validUntil = contractRow.validUntil ?? contractRow.valid_until
   const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId
+  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
+  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
   const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
   const valid_from = contractRow.valid_from ?? contractRow.validFrom
   const valid_until = contractRow.valid_until ?? contractRow.validUntil
@@ -881,7 +917,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'rentalTerms' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails'
+type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -905,6 +941,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
     return value ?? null
   }
 
+  const userTermsValue = await read('userTerms')
   const rentalTermsValue = await read('rentalTerms')
   const priceStrategyValue = await read('priceStrategy')
   const paymentMethodsValue = await read('paymentMethods')
@@ -913,6 +950,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const referralSettingsValue = await read('referralSettings')
   const companyDetailsValue = await read('companyDetails')
 
+  systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? systemSettings.userTerms)
   systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
   systemSettings.priceStrategy = priceStrategyValue ?? systemSettings.priceStrategy
   systemSettings.emailTemplate = emailTemplateValue ?? systemSettings.emailTemplate
@@ -950,6 +988,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     `).bind(key, serialized).run()
   }
 
+  await write('userTerms', systemSettings.userTerms)
   await write('rentalTerms', systemSettings.rentalTerms)
   await write('priceStrategy', systemSettings.priceStrategy)
   await write('paymentMethods', systemSettings.paymentMethods)
@@ -1507,18 +1546,31 @@ PC Rental电脑租赁团队
 
 export const systemSettings = {
   companyDetails: {
+    name: 'PC Rental',
     abn: '',
     gstIncluded: true,
     address: '',
     phone: '',
     email: '',
     contact: '',
+    website: '',
+    logo: '',
+    pickupLocations: [] as string[],
   },
   bankDetails: {
+    bankName: '',
     bsb: '062-001',
     account: '87654321',
     accountName: '账户名',
   },
+  userTerms: `<h1>用户协议</h1>
+<p>欢迎使用 PC Rental 电脑租赁服务。注册或使用本网站即表示您同意遵守本协议。</p>
+<h2>账户与资料</h2>
+<p>您应提供真实、准确且完整的资料，并妥善保管账户登录信息。</p>
+<h2>服务使用</h2>
+<p>您不得利用本服务从事违法活动、干扰平台运行或侵犯他人合法权益。</p>
+<h2>协议更新</h2>
+<p>更新后的协议将在本页面公布。继续使用服务即表示接受更新后的内容。</p>`,
   rentalTerms,
   priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
   paymentMethods: {
@@ -1575,45 +1627,93 @@ function escapeContractValue(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
 }
 
+export const CONTRACT_VARIABLE_NAMES = [
+  'contract_number','agreement_version','contract_status','created_time','updated_time','jurisdiction',
+  'company_name','company_abn','company_address','company_phone','company_email','company_website','company_logo',
+  'customer_name','customer_phone','customer_email','customer_address','customer_dob','customer_country','customer_id_type','customer_id_number','customer_driver_expiry','emergency_contact','emergency_phone',
+  'device_id','asset_tag','device_name','device_brand','device_model','device_cpu','device_ram','device_storage','device_gpu','device_os','device_sn','charger_sn','battery_health','battery_cycles','device_condition','device_accessories',
+  'start_date','end_date','rental_days','pickup_location','return_location','delivery_method','delivery_fee','return_date','return_status',
+  'currency','daily_rate','subtotal','gst_included','gst_amount','discount','coupon_code','total_rent','deposit_amount','deposit_paid','rent_paid','amount_due','payment_method','payment_date','payment_reference',
+  'bank_name','account_name','bank_bsb','bank_account',
+  'late_days','late_fee_per_day','late_fee',
+  'inspection_date','inspection_by','screen_condition','keyboard_condition','trackpad_condition','body_condition','camera_condition','wifi_condition','power_test','inspection_notes',
+  'damage_description','damage_photos','repair_cost','replacement_cost','deduction_amount','repair_invoice',
+  'deposit_refund','refund_amount','refund_date',
+  'signer_name','sign_time','esign_signature','company_signature','esign_ip','esign_device','esign_browser','esign_os',
+  'company_representative','customer_initials','insurance_selected','insurance_fee',
+  'pickup_time','return_time','accessories_returned','customer_acknowledgement',
+  'created_by','approved_by','notes','qr_code','contract_url','invoice_number','invoice_url',
+] as const
+
+export const CONTRACT_VARIABLE_GROUPS = [
+  ['合同', ['contract_number','agreement_version','contract_status','created_time','updated_time','jurisdiction']],
+  ['公司', ['company_name','company_abn','company_address','company_phone','company_email','company_website','company_logo']],
+  ['客户', ['customer_name','customer_phone','customer_email','customer_address','customer_dob','customer_country','customer_id_type','customer_id_number','customer_driver_expiry','emergency_contact','emergency_phone']],
+  ['设备', ['device_id','asset_tag','device_name','device_brand','device_model','device_cpu','device_ram','device_storage','device_gpu','device_os','device_sn','charger_sn','battery_health','battery_cycles','device_condition','device_accessories']],
+  ['租赁', ['start_date','end_date','rental_days','pickup_location','return_location','delivery_method','delivery_fee','return_date','return_status']],
+  ['付款', ['currency','daily_rate','subtotal','gst_included','gst_amount','discount','coupon_code','total_rent','deposit_amount','deposit_paid','rent_paid','amount_due','payment_method','payment_date','payment_reference']],
+  ['银行', ['bank_name','account_name','bank_bsb','bank_account']],
+  ['逾期归还', ['late_days','late_fee_per_day','late_fee']],
+  ['验机', ['inspection_date','inspection_by','screen_condition','keyboard_condition','trackpad_condition','body_condition','camera_condition','wifi_condition','power_test','inspection_notes']],
+  ['损坏', ['damage_description','damage_photos','repair_cost','replacement_cost','deduction_amount','repair_invoice']],
+  ['退款', ['deposit_refund','refund_amount','refund_date']],
+  ['电子签名', ['signer_name','sign_time','esign_signature','company_signature','esign_ip','esign_device','esign_browser','esign_os']],
+  ['代表与确认', ['company_representative','customer_initials']],
+  ['保险', ['insurance_selected','insurance_fee']],
+  ['取还时间', ['pickup_time','return_time','accessories_returned','customer_acknowledgement']],
+  ['系统', ['created_by','approved_by','notes','qr_code','contract_url','invoice_number','invoice_url']],
+] as const
+
 export function renderContractVariables(content: string, contract: Contract, order?: any, device?: any, customer?: any, extra: Record<string, unknown> = {}, includeInternal = false): string {
   const rentOnly = Math.max(0, Number(order?.totalAmount ?? order?.total_amount ?? 0) - Number(order?.depositAmount ?? order?.deposit_amount ?? 0))
   const stored = typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : (contract.contract_data || {})
-  const emptyOperational = Object.fromEntries(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => [name, '']))
+  const emptyVariables = Object.fromEntries(CONTRACT_VARIABLE_NAMES.map(name => [name, '']))
   const values: Record<string, unknown> = {
-    ...emptyOperational,
+    ...emptyVariables,
     ...stored,
     ...extra,
     contract_number: contract.contractNumber,
     order_no: order?.orderNo ?? order?.order_no,
+    agreement_version: stored.agreement_version || '1.0',
+    jurisdiction: stored.jurisdiction || 'VIC',
+    company_name: systemSettings.companyDetails.name,
     company_address: systemSettings.companyDetails.address,
     company_phone: systemSettings.companyDetails.phone,
     company_email: systemSettings.companyDetails.email,
     company_contact: systemSettings.companyDetails.contact,
+    company_website: systemSettings.companyDetails.website,
+    company_logo: systemSettings.companyDetails.logo,
     customer_name: customer?.name,
     customer_phone: customer?.phone,
     customer_email: customer?.email,
+    customer_address: stored.customer_address || customer?.address,
+    customer_dob: stored.customer_dob || customer?.dob,
+    customer_country: stored.customer_country || customer?.country,
+    customer_id_type: stored.customer_id_type || contract.customer_id_type,
+    customer_id_number: stored.customer_id_number || contract.customer_id_number,
     device_name: device?.name ?? order?.deviceName,
     device_model: device?.model,
     device_sn: device?.serialNumber ?? device?.serial_number,
-    device_condition: contract.device_condition,
-    device_accessories: contract.device_accessories,
+    device_condition: stored.device_condition || contract.device_condition,
+    device_accessories: stored.device_accessories || contract.device_accessories,
     start_date: order?.startDate ?? order?.start_date,
     end_date: order?.endDate ?? order?.end_date,
     rental_days: order?.rentalPeriod ?? order?.rental_period,
     daily_rate: Number(order?.dailyRate ?? order?.daily_rate ?? device?.pricePerDay ?? 0).toFixed(2),
     total_rent: rentOnly.toFixed(2),
     deposit_amount: Number(order?.depositAmount ?? order?.deposit_amount ?? 0).toFixed(2),
-    late_fee_per_day: Number(contract.late_fee_per_day || 0).toFixed(2),
-    repair_cost: contract.repair_cost == null ? '' : Number(contract.repair_cost).toFixed(2),
-    pickup_location: contract.pickup_location,
-    return_location: contract.return_location,
+    late_fee_per_day: Number(stored.late_fee_per_day ?? contract.late_fee_per_day ?? 0).toFixed(2),
+    repair_cost: stored.repair_cost ?? (contract.repair_cost == null ? '' : Number(contract.repair_cost).toFixed(2)),
+    pickup_location: stored.pickup_location || contract.pickup_location,
+    return_location: stored.return_location || contract.return_location,
     payment_method: order?.paymentMethod ?? order?.payment_method,
+    bank_name: systemSettings.bankDetails.bankName,
     bank_bsb: systemSettings.bankDetails.bsb,
     bank_account: systemSettings.bankDetails.account,
     account_name: systemSettings.bankDetails.accountName,
     company_abn: systemSettings.companyDetails.abn,
     gst_included: systemSettings.companyDetails.gstIncluded ? '是' : '否',
-    signer_name: customer?.name,
+    signer_name: stored.signer_name || customer?.name,
     sign_time: contract.signedAt ? new Date(contract.signedAt).toLocaleString('en-AU') : '',
     esign_ip: contract.esign_ip,
     esign_device: contract.esign_device,
@@ -1622,11 +1722,12 @@ export function renderContractVariables(content: string, contract: Contract, ord
     created_time: contract.createdAt ?? (contract as any).created_at,
     updated_time: (contract as any).updatedAt ?? (contract as any).updated_at,
     contract_status: contract.status,
+    company_representative: stored.company_representative || systemSettings.companyDetails.contact,
+    contract_url: stored.contract_url || `/contract/view/${contract.id}`,
+    invoice_url: stored.invoice_url || (order?.id ? `/orders/${order.id}/invoice` : ''),
     deleted: contract.deleted_at ? '是' : '否',
   }
-  if (!includeInternal) {
-    for (const name of ['created_by', 'approved_by', 'created_time', 'updated_time', 'contract_status', 'deleted', 'notes']) values[name] = ''
-  }
+  if (!includeInternal) values.deleted = ''
   return Object.entries(values).reduce((result, [name, value]) => {
     const safe = escapeContractValue(value)
     return result.replace(new RegExp(`\\$\\{${name}\\}|\\{${name}\\}`, 'g'), safe)
@@ -1634,17 +1735,19 @@ export function renderContractVariables(content: string, contract: Contract, ord
 }
 
 export const CONTRACT_OPERATIONAL_FIELDS = [
-  ['invoice_number','发票编号'], ['delivery_method','配送方式（Pickup / Delivery）'], ['delivery_fee','配送费'],
+  ['agreement_version','合同版本'], ['jurisdiction','司法管辖区'],
+  ['customer_address','客户地址'], ['customer_dob','客户出生日期'], ['customer_country','客户国家'], ['customer_id_type','证件类型'], ['customer_id_number','证件号码'], ['customer_driver_expiry','驾照到期日'], ['emergency_contact','紧急联系人'], ['emergency_phone','紧急联系电话'],
+  ['invoice_number','发票编号'], ['delivery_method','配送方式（Pickup / Delivery）'], ['delivery_fee','配送费'], ['pickup_location','取货地点'], ['return_location','归还地点'], ['pickup_time','取货时间'], ['return_time','归还时间'],
   ['return_status','归还状态'], ['return_date','实际归还日期'], ['inspection_date','检查日期'], ['inspection_by','检查员工'],
   ['device_brand','设备品牌'], ['device_cpu','CPU'], ['device_ram','内存'], ['device_storage','存储'], ['device_gpu','显卡'], ['device_os','设备操作系统'],
-  ['battery_health','电池健康'], ['charger_sn','充电器 SN'], ['asset_tag','公司资产编号'],
-  ['esign_signature','客户电子签名'], ['company_signature','公司电子签名'], ['esign_location','签约 GPS 位置'], ['esign_browser','签约浏览器'], ['esign_os','签约操作系统'], ['agreement_version','合同版本'],
+  ['battery_health','电池健康'], ['charger_sn','充电器 SN'], ['asset_tag','公司资产编号'], ['device_condition','设备状况'], ['device_accessories','交付配件'],
+  ['esign_signature','客户电子签名'], ['company_signature','公司电子签名'], ['esign_location','签约 GPS 位置'], ['esign_browser','签约浏览器'], ['esign_os','签约操作系统'], ['company_representative','公司代表'], ['customer_initials','客户姓名首字母'],
   ['discount','优惠金额'], ['coupon_code','优惠码'],
-  ['damage_description','损坏说明'], ['damage_photos','损坏照片 URL'], ['repair_invoice','维修发票'], ['replacement_cost','更换费用'],
+  ['damage_description','损坏说明'], ['damage_photos','损坏照片 URL'], ['repair_invoice','维修发票'], ['replacement_cost','更换费用'], ['repair_cost','维修费用'],
   ['collection_required','是否需要追回'], ['collection_date','回收日期'],
-  ['screen_condition','屏幕状况'], ['keyboard_condition','键盘状况'], ['trackpad_condition','触控板状况'], ['body_condition','外壳状况'], ['camera_condition','摄像头状况'], ['wifi_condition','WiFi 状况'], ['battery_cycles','电池循环次数'], ['power_test','开机测试'],
-  ['approved_by','审批员工'], ['notes','内部备注'],
-  ['jurisdiction','司法管辖区'], ['insurance_required','是否要求保险'], ['insurance_provider','保险公司'], ['waiver_signed','是否签署免责'], ['privacy_version','隐私政策版本'],
+  ['screen_condition','屏幕状况'], ['keyboard_condition','键盘状况'], ['trackpad_condition','触控板状况'], ['body_condition','外壳状况'], ['camera_condition','摄像头状况'], ['wifi_condition','WiFi 状况'], ['battery_cycles','电池循环次数'], ['power_test','开机测试'], ['inspection_notes','验机备注'], ['accessories_returned','已归还配件'], ['customer_acknowledgement','客户确认'],
+  ['approved_by','审批员工'], ['notes','内部备注'], ['qr_code','合同二维码图片 URL'],
+  ['insurance_selected','是否选择保险'], ['insurance_fee','保险费用'], ['insurance_provider','保险公司'], ['waiver_signed','是否签署免责'], ['privacy_version','隐私政策版本'],
 ] as const
 
 export const CONTRACT_COMPUTED_FIELDS = [
@@ -1654,7 +1757,7 @@ export const CONTRACT_COMPUTED_FIELDS = [
 ] as const
 
 export const CONTRACT_SIGNED_FIELDS = new Set([
-  'esign_signature', 'esign_location', 'esign_browser', 'esign_os', 'agreement_version',
+  'signer_name', 'customer_initials', 'esign_signature', 'company_signature', 'esign_location', 'esign_browser', 'esign_os', 'agreement_version',
 ])
 
 export async function getContractVariableData(c: Context, contract: Contract, order: any): Promise<Record<string, unknown>> {
@@ -1675,7 +1778,7 @@ export async function getContractVariableData(c: Context, contract: Contract, or
   const returnStatus = stored.damage_description ? 'Damaged' : stored.return_date ? (lateDays > 0 ? 'Overdue' : 'Returned') : (order.status === 'completed' ? 'Returned' : '')
   return {
     ...stored,
-    invoice_number: stored.invoice_number || `INV-${order.orderNo || order.id}`,
+    invoice_number: stored.invoice_number || (order.orderNo ? `INV-${order.orderNo}` : ''),
     currency: payments?.currency || 'AUD',
     deposit_paid: Number(payments?.deposit_paid || 0).toFixed(2),
     rent_paid: Number(payments?.rent_paid || 0).toFixed(2),
@@ -1692,6 +1795,8 @@ export async function getContractVariableData(c: Context, contract: Contract, or
     late_fee: (lateDays * Number(contract.late_fee_per_day || 0)).toFixed(2),
     return_status: returnStatus,
     created_by: creator?.name || contract.createdBy || '',
+    contract_url: `/contract/view/${contract.id}`,
+    invoice_url: `/orders/${order.id}/invoice`,
   }
 }
 
@@ -1702,8 +1807,10 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const data = contract && typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : ((contract?.contract_data as Record<string, unknown>) || {})
   const taxableGross = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount))
   const gstAmount = systemSettings.companyDetails.gstIncluded ? taxableGross / 11 : 0
-  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, total_amount, currency, status) VALUES (?, ?, ?, 'invoice', ?, ?, ?, ?, 'AUD', 'issued')`)
-    .bind(`inv-${order.id}`, String(data.invoice_number || `INV-${order.orderNo || order.id}`), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), Number(order.totalAmount)).run()
+  const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
+  const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
+  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued')`)
+    .bind(`inv-${order.id}`, String(data.invoice_number || `INV-${order.orderNo || order.id}`), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
 }
 
 export async function issueCreditNote(c: Context, orderId: string, amount: number): Promise<void> {
@@ -2132,7 +2239,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
     '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
     '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
-    '/admin/withdrawals': '💳', '/admin/devices': '▣', '/admin/settings': '⚙'
+    '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/settings': '⚙'
   }
 
   const renderNavLink = (href: string, text: string) => {

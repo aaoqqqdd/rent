@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, issueInvoice
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { createStripeCheckout } from '../stripePayments';
@@ -329,7 +329,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? new Date().toISOString() : null
           ).run()
         }
-        if (paymentMethod === 'balance') await issueInvoice(c, contract.rentalId)
+        if (paymentMethod === 'balance') {
+          await ensureOrderNumber(c, contract.rentalId)
+          await issueInvoice(c, contract.rentalId)
+        }
         await logError(c, 'INFO', `Order updated with user and payment method`, undefined, { 
           token, 
           orderId: contract.rentalId, 
@@ -344,7 +347,17 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const browser = /Edg\//.test(esignDevice) ? 'Edge' : /Chrome\//.test(esignDevice) ? 'Chrome' : /Firefox\//.test(esignDevice) ? 'Firefox' : /Safari\//.test(esignDevice) ? 'Safari' : 'Other'
         const os = /Windows/.test(esignDevice) ? 'Windows' : /Mac OS|Macintosh/.test(esignDevice) ? 'macOS' : /Android/.test(esignDevice) ? 'Android' : /iPhone|iPad/.test(esignDevice) ? 'iOS' : /Linux/.test(esignDevice) ? 'Linux' : 'Other'
         const existingData = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
-        const signedData = { ...existingData, esign_signature: userInfo.esignSignature, esign_browser: browser, esign_os: os, agreement_version: existingData.agreement_version || '1.0' }
+        const signerName = String(userInfo.esignSignature || userInfo.name || '').trim()
+        const customerInitials = signerName.split(/\s+/).filter(Boolean).map((part: string) => part[0]).join('').toUpperCase().slice(0, 8)
+        const signedData = {
+          ...existingData,
+          signer_name: signerName,
+          customer_initials: existingData.customer_initials || customerInitials,
+          esign_signature: userInfo.esignSignature,
+          esign_browser: browser,
+          esign_os: os,
+          agreement_version: existingData.agreement_version || '1.0'
+        }
         await c.env.RENT.prepare(`UPDATE contracts SET esign_ip = ?, esign_device = ?, contract_data = ? WHERE id = ?`)
           .bind(esignIp || null, esignDevice || null, JSON.stringify(signedData), contract.id).run()
         const signedAt = new Date().toISOString()

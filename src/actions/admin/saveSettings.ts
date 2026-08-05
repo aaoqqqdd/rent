@@ -25,13 +25,20 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
 
   const next = {
     companyDetails: {
+      name: String(payload.companyDetails?.name ?? getSystemSettings().companyDetails.name).trim(),
       abn: String(payload.companyDetails?.abn ?? getSystemSettings().companyDetails.abn).trim(),
       gstIncluded: Boolean(payload.companyDetails?.gstIncluded),
       address: String(payload.companyDetails?.address ?? getSystemSettings().companyDetails.address).trim(),
       contact: String(payload.companyDetails?.contact ?? getSystemSettings().companyDetails.contact).trim(),
       phone: String(payload.companyDetails?.phone ?? getSystemSettings().companyDetails.phone).trim(),
       email: String(payload.companyDetails?.email ?? getSystemSettings().companyDetails.email).trim(),
+      website: String(payload.companyDetails?.website ?? getSystemSettings().companyDetails.website).trim(),
+      logo: String(payload.companyDetails?.logo ?? getSystemSettings().companyDetails.logo).trim(),
+      pickupLocations: Array.isArray(payload.companyDetails?.pickupLocations)
+        ? payload.companyDetails.pickupLocations.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 20)
+        : getSystemSettings().companyDetails.pickupLocations,
     },
+    userTerms: sanitizeRichHtml(payload.userTerms ?? getSystemSettings().userTerms),
     rentalTerms: sanitizeRichHtml(payload.rentalTerms ?? getSystemSettings().rentalTerms),
     priceStrategy: payload.priceStrategy ?? getSystemSettings().priceStrategy,
     paymentMethods: {
@@ -40,6 +47,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       balancePayment: Boolean(payload.paymentMethods?.balancePayment),
     },
     bankDetails: {
+      bankName: payload.bankDetails?.bankName ?? getSystemSettings().bankDetails.bankName,
       accountName: payload.bankDetails?.accountName ?? getSystemSettings().bankDetails.accountName,
       bsb: payload.bankDetails?.bsb ?? getSystemSettings().bankDetails.bsb,
       account: payload.bankDetails?.account ?? getSystemSettings().bankDetails.account,

@@ -40,18 +40,17 @@ export async function renderStaffContractProgress(c: Context, user: any, contrac
         <p>邮箱: ${maskedCustomerEmail}</p>
       </div>
 
-      <div class="contract-section">
+      ${contract.status === 'pending_sign' ? `<div class="contract-section">
         <h4>签署链接</h4>
         <p>请将以下链接发送给客户进行签署:</p>
         <div class="input-group">
           <input type="text" id="signLink" value="\${window.location.origin}/contract/sign?token=${contract.signToken}" readonly class="form-control">
           <button class="button button-secondary" onclick="copyToClipboard('signLink')">复制链接</button>
         </div>
-      </div>
+      </div>` : ''}
 
       <div class="contract-actions">
-        <a class="button button-primary" href="/staff/contract/view?orderId=${contract.rentalId}">查看合同内容</a>
-        <button class="button button-secondary" onclick="window.print()">下载PDF</button>
+        ${contract.status === 'signed' ? `<a class="button button-primary" href="/staff/contract/view?orderId=${contract.rentalId}">查看/下载合同</a><button class="button button-secondary" onclick="window.print()">打印签署记录</button>` : '<span class="section-note">正式合同将在客户完成签署后开放下载。</span>'}
         <a class="button button-info" href="/staff/contracts">返回合同管理</a>
       </div>
     </div>

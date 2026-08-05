@@ -23,7 +23,7 @@ export async function renderCustomerOrders(c: Context, user: any) {
         <div class="table-wrapper">
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
             ${pendingOrders.map((order: any) => `
-              <tr><td>${order.orderNo}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">去支付</a></td></tr>
+              <tr><td>${order.orderNo || '付款后生成'}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">去支付</a></td></tr>
             `).join('')}
           </tbody></table>
         </div>
@@ -34,7 +34,7 @@ export async function renderCustomerOrders(c: Context, user: any) {
         <div class="table-wrapper">
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
             ${activeOrders.map((order: any) => `
-              <tr><td>${order.orderNo}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
+              <tr><td>${order.orderNo || '付款后生成'}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
             `).join('')}
           </tbody></table>
         </div>
@@ -45,7 +45,7 @@ export async function renderCustomerOrders(c: Context, user: any) {
         <div class="table-wrapper">
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
             ${completedOrders.map((order: any) => `
-              <tr><td>${order.orderNo}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>已完成</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
+              <tr><td>${order.orderNo || '未生成'}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>已完成</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
             `).join('')}
           </tbody></table>
         </div>
@@ -56,7 +56,7 @@ export async function renderCustomerOrders(c: Context, user: any) {
         <div class="table-wrapper">
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
             ${cancelledOrders.map((order: any) => `
-              <tr><td>${order.orderNo}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>已取消</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
+              <tr><td>${order.orderNo || '未生成'}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>已取消</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
             `).join('')}
           </tbody></table>
         </div>

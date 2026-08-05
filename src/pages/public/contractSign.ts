@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, formatCurrency, getSystemSettings, getContractTemplate, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText } from '../../site';
 import { Context } from 'hono';
 
 export async function renderContractSignPage(c: Context, tokenOrNumber: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
@@ -56,15 +56,14 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const device = await getDeviceById(c, order.deviceId);
   const contractCustomer = currentUser || (order.userId ? await getUserById(c, order.userId) : null);
 
+  await loadSystemSettingsFromDB(c)
   const systemSettings = getSystemSettings();
-  const contractTemplate = await getContractTemplate(c);
-  
   const variableData = await getContractVariableData(c, contract, order)
-  const activeContractContent = renderContractVariables(contract.content || contractTemplate.content || systemSettings.rentalTerms, contract, order, device, contractCustomer, variableData);
+  const activeAgreementContent = renderContractVariables(systemSettings.rentalTerms, contract, order, device, contractCustomer, variableData);
   
-  const contractHtml = /<[^>]+>/.test(activeContractContent)
-    ? activeContractContent
-    : activeContractContent.replace(/\n/g, '<br>');
+  const agreementHtml = /<[^>]+>/.test(activeAgreementContent)
+    ? activeAgreementContent
+    : activeAgreementContent.replace(/\n/g, '<br>');
 
   let content = '';
   let title = '合同签署';
@@ -87,8 +86,9 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           <h2>阅读并同意租赁协议</h2>
           ${errorMessage ? `<div class="alert" style="background:#fee2e2;border-color:#fecaca;">${errorMessage}</div>` : ''}
           
+          <p class="section-note">本步骤仅用于确认租赁协议。正式合同将在完成电子签署后生成。</p>
           <div class="contract-content" style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; max-height: 360px; overflow-y: auto; margin-bottom: 20px; background: #f9fafb;">
-            ${contractHtml}
+            ${agreementHtml}
           </div>
           
 
@@ -326,6 +326,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       break;
     case 3:
       title = '步骤 3/3: 选择付款方式';
+      const stripeFee = Math.round(Number(order.totalAmount) * 100 * 0.025) / 100;
+      const stripeTotal = Number(order.totalAmount) + stripeFee;
 
       // 在步骤3中获取订单和设备信息
 
@@ -345,7 +347,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               <label class="card" style="cursor: pointer; padding: 16px;">
                 <input type="radio" name="paymentMethod" value="stripe" required />
                 <strong style="margin-left: 8px;">信用卡支付（Stripe）</strong>
-                <p class="text-muted" style="margin: 4px 0 0 24px;">前往 Stripe 安全结账页面，支持主流信用卡。</p>
+                <p class="text-muted" style="margin: 4px 0 0 24px;">支付 ${formatCurrency(stripeTotal)}，包含 ${formatCurrency(stripeFee)}（2.5%）支付手续费，由支付提供商收取。付款由 Stripe 安全处理，本网站不保存您的任何资料。手续费不予退款。</p>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -363,6 +365,18 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               </label>
               ` : ''}
             </div>
+            ${systemSettings.paymentMethods.stripe ? `
+            <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
+              <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">2.5%</span></div>
+              <p>选择 Stripe 信用卡支付时，将在租金和押金合计金额上加收由支付提供商收取的手续费。付款由 Stripe 安全处理，本网站不保存信用卡卡号、有效期或安全码。</p>
+              <dl>
+                <div><dt>订单本金（含押金）</dt><dd>${formatCurrency(order.totalAmount)}</dd></div>
+                <div><dt>Stripe 支付手续费</dt><dd>${formatCurrency(stripeFee)}</dd></div>
+                <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd>${formatCurrency(stripeTotal)}</dd></div>
+              </dl>
+              <p class="payment-fee-notice__warning">支付手续费不属于租金或押金，退款时不予退还。</p>
+            </aside>
+            ` : ''}
             <div class="card" style="margin-top:20px; padding:16px;">
               <h3 style="margin-top:0;">退款接收方式</h3>
               <label style="display:block; margin-bottom:10px;"><input type="radio" name="refundMethod" value="balance" checked> 退回账户余额（默认，到账更快）</label>
@@ -378,7 +392,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               </div>
             </div>
             <div style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
-              <a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=2" class="button-secondary">返回上一步</a>
+              <a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=2" class="button button-secondary">返回上一步</a>
               <button class="button" type="submit">确认并完成签约</button>
             </div>
           </form>
@@ -386,6 +400,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             (() => {
               const form = document.querySelector('form[action*="step=3"]');
               const fields = document.getElementById('bank-refund-fields');
+              const stripeFeeNotice = document.getElementById('stripe-fee-notice');
               const bankInputs = fields.querySelectorAll('input');
               const update = () => {
                 const payment = form.querySelector('input[name="paymentMethod"]:checked')?.value;
@@ -393,6 +408,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 const show = payment === 'bank_transfer' && refund === 'original';
                 fields.style.display = show ? 'block' : 'none';
                 bankInputs.forEach(input => input.required = show);
+                if (stripeFeeNotice) stripeFeeNotice.hidden = payment !== 'stripe';
               };
               form.addEventListener('change', update);
               update();

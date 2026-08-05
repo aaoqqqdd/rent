@@ -13,10 +13,11 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
   }
 
   const body = `
-    <div class="panel">
-      <div class="section-title"><h2>编辑客户 - ${customer.name}</h2><span class="section-note">修改客户基本资料和账户信息。</span></div>
+    <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>编辑客户</h2><p>${customer.name} · 修改联系方式和退款账户。</p></div><a href="/staff/customers/${customer.id}" class="button button-secondary">返回客户详情</a></div></div>
+    <div class="panel record-panel single-column">
       ${errorMessage ? `<div class="alert">${errorMessage}</div>` : ''}
-      <form method="POST" action="/staff/customers/${customer.id}/edit">
+      <form method="POST" action="/staff/customers/${customer.id}/edit" class="record-form">
+        <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>基本资料</h3><p>客户身份及联系方式。</p></div></div>
         <div class="grid grid-2">
           <div>
             <label class="form-label">姓名</label>
@@ -26,7 +27,7 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
             <label class="form-label">邮箱</label>
             <input class="form-control" name="email" value="${customer.email}" readonly />
           </div>
-        </div>
+        </div></section><section class="form-section"><div class="form-section-title"><span class="mono">02</span><div><h3>账户资料</h3><p>余额和银行退款信息。</p></div></div>
         <div class="grid grid-2">
           <div>
             <label class="form-label">手机</label>
@@ -46,10 +47,7 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
             <label class="form-label">余额</label>
             <input class="form-control" type="number" step="0.01" name="balance" value="${customer.balance}" />
           </div>
-        </div>
-        <div style="margin-top:20px;">
-          <button class="button button-primary" type="submit">保存修改</button>
-        </div>
+        </div></section><div class="record-actions"><a class="button button-secondary" href="/staff/customers/${customer.id}">取消</a><button class="button button-primary" type="submit">保存修改</button></div>
       </form>
     </div>
   `

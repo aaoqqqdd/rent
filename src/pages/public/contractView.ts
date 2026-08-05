@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById, renderContractVariables, getContractVariableData, sanitizeRichHtml } from '../../site'
+import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById, isContractFinalized, renderContractVariables, getContractVariableData, sanitizeRichHtml } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderContractView(c: Context, contractId: string, user: any) {
@@ -14,6 +14,9 @@ export async function renderContractView(c: Context, contractId: string, user: a
   const order = await getOrderById(c, contract.rentalId);
   if (!user || (user.role === 'CUSTOMER' && order?.userId !== user.id)) {
     return buildLayout('无权查看合同', '<div class="panel"><h2>无权查看合同</h2><p>请登录合同所属账户后查看。</p><a class="button" href="/login">登录</a></div>', user)
+  }
+  if (!isContractFinalized(contract) && user.role !== 'ADMIN') {
+    return buildLayout('合同尚未生成', '<div class="panel"><h2>正式合同尚未生成</h2><p>客户完成电子签署后，合同才可查看和下载。</p></div>', user)
   }
   const device = order ? await getDeviceById(c, order.deviceId) : null;
   const customer = order ? await getUserById(c, order.userId) : null;
@@ -30,7 +33,7 @@ export async function renderContractView(c: Context, contractId: string, user: a
         ${renderedContract}
       </div>
       <div class="contract-actions" style="display: flex; gap: 12px;">
-        <button class="button" onclick="window.print()">打印/下载PDF</button>
+        ${isContractFinalized(contract) ? '<button class="button" onclick="window.print()">打印/下载 PDF</button>' : ''}
         ${user ? `<a class="button button-primary" href="/customer/dashboard">查看我的账户</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}
       </div>
     </div>

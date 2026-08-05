@@ -5,11 +5,19 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
+}
+
+export const STRIPE_PROCESSING_FEE_RATE = 0.025
+
+export function stripePaymentAmounts(orderTotal: number): { baseCents: number; feeCents: number; chargedCents: number } {
+  const baseCents = cents(orderTotal)
+  const feeCents = Math.round(baseCents * STRIPE_PROCESSING_FEE_RATE)
+  return { baseCents, feeCents, chargedCents: baseCents + feeCents }
 }
 
 function melbourneDate(): string {
@@ -25,15 +33,19 @@ export async function createStripeCheckout(c: Context, user: any, orderId: strin
   if (!order || order.userId !== user.id) return c.text('订单不存在或无权访问', 404)
   if (order.status !== 'pending_payment') return c.text('该订单当前不能支付', 409)
 
-  const amount = cents(order.totalAmount)
-  if (!Number.isInteger(amount) || amount <= 0) return c.text('订单金额无效', 400)
+  const { baseCents, feeCents, chargedCents } = stripePaymentAmounts(order.totalAmount)
+  if (!Number.isInteger(baseCents) || baseCents <= 0) return c.text('订单金额无效', 400)
   const origin = new URL(c.req.url).origin
   const params = new URLSearchParams({
     mode: 'payment',
     'line_items[0][price_data][currency]': 'aud',
-    'line_items[0][price_data][unit_amount]': String(amount),
-    'line_items[0][price_data][product_data][name]': `电脑租赁订单 ${order.orderNo}`,
+    'line_items[0][price_data][unit_amount]': String(baseCents),
+    'line_items[0][price_data][product_data][name]': order.orderNo ? `电脑租赁订单 ${order.orderNo}` : '电脑租赁合同付款',
     'line_items[0][quantity]': '1',
+    'line_items[1][price_data][currency]': 'aud',
+    'line_items[1][price_data][unit_amount]': String(feeCents),
+    'line_items[1][price_data][product_data][name]': 'Stripe 支付手续费（2.5%，不可退款）',
+    'line_items[1][quantity]': '1',
     customer_email: user.email,
     success_url: `${origin}/payment/result?orderId=${encodeURIComponent(order.id)}&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${origin}/customer/orders/${encodeURIComponent(order.id)}`,
@@ -41,20 +53,21 @@ export async function createStripeCheckout(c: Context, user: any, orderId: strin
     'metadata[customer_id]': user.id,
     'metadata[rental_amount]': String(cents(order.totalAmount - order.depositAmount)),
     'metadata[deposit_amount]': String(cents(order.depositAmount)),
+    'metadata[processing_fee]': String(feeCents),
     'payment_intent_data[metadata][order_id]': order.id,
   })
-  const session = await stripeRequest(c, 'checkout/sessions', params, `checkout-${order.id}`)
+  const session = await stripeRequest(c, 'checkout/sessions', params, `checkout-fee-v1-${order.id}`)
   if (!session.id || !session.url) return c.text('Stripe 未返回有效支付链接', 502)
 
   const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (existing) {
-    await c.env.RENT.prepare("UPDATE payments SET stripe_checkout_session_id = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .bind(session.id, existing.id).run()
+    await c.env.RENT.prepare("UPDATE payments SET stripe_checkout_session_id = ?, amount = ?, processing_fee = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(session.id, chargedCents / 100, feeCents / 100, existing.id).run()
   } else {
     await c.env.RENT.prepare(`
-      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, stripe_checkout_session_id)
-      VALUES (?, ?, ?, 'card', ?, ?, ?, 'AUD', 'pending', ?)
-    `).bind(`p-${nanoid(12)}`, order.id, user.id, order.totalAmount, order.depositAmount, order.totalAmount - order.depositAmount, session.id).run()
+      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, processing_fee, currency, status, stripe_checkout_session_id)
+      VALUES (?, ?, ?, 'card', ?, ?, ?, ?, 'AUD', 'pending', ?)
+    `).bind(`p-${nanoid(12)}`, order.id, user.id, chargedCents / 100, order.depositAmount, order.totalAmount - order.depositAmount, feeCents / 100, session.id).run()
   }
   return c.redirect(session.url, 303)
 }
@@ -79,8 +92,9 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     const customerId = String(session?.metadata?.customer_id || '')
     const order = await getOrderById(c, orderId)
     paidOrderId = orderId
-    const payment = await c.env.RENT.prepare('SELECT rental_id, customer_id, amount FROM payments WHERE stripe_checkout_session_id = ?').bind(session.id).first() as any
-    if (!order || !payment || payment.rental_id !== order.id || payment.customer_id !== customerId || cents(payment.amount) !== cents(order.totalAmount) || order.userId !== customerId || String(session.currency).toLowerCase() !== 'aud' || Number(session.amount_total) !== cents(order.totalAmount) || session.payment_status !== 'paid') {
+    const payment = await c.env.RENT.prepare('SELECT rental_id, customer_id, amount, processing_fee FROM payments WHERE stripe_checkout_session_id = ?').bind(session.id).first() as any
+    const expected = order ? stripePaymentAmounts(order.totalAmount) : null
+    if (!order || !payment || !expected || payment.rental_id !== order.id || payment.customer_id !== customerId || cents(payment.amount) !== expected.chargedCents || cents(payment.processing_fee) !== expected.feeCents || order.userId !== customerId || String(session.currency).toLowerCase() !== 'aud' || Number(session.amount_total) !== expected.chargedCents || session.payment_status !== 'paid') {
       return c.text('Stripe 支付数据与订单不匹配', 400)
     }
     statements.push(
@@ -98,7 +112,10 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     if (String(error.message).includes('UNIQUE')) return c.json({ received: true, duplicate: true })
     throw error
   }
-  if (paidOrderId) await issueInvoice(c, paidOrderId)
+  if (paidOrderId) {
+    await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
+    await issueInvoice(c, paidOrderId)
+  }
   return c.json({ received: true })
 }
 
@@ -178,7 +195,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
 
   let stripeRefundId: string | null = null
   if (channel === 'stripe') {
-    const params = new URLSearchParams({ payment_intent: payment.stripe_payment_intent_id, 'metadata[order_id]': order.id, 'metadata[type]': 'cancellation' })
+    const params = new URLSearchParams({ payment_intent: payment.stripe_payment_intent_id, amount: String(cents(order.totalAmount)), 'metadata[order_id]': order.id, 'metadata[type]': 'cancellation' })
     const refund = await stripeRequest(c, 'refunds', params, `cancellation-refund-${order.id}`)
     if (refund.status !== 'succeeded') return c.text('Stripe 全额退款尚未成功，请稍后重试', 502)
     stripeRefundId = refund.id

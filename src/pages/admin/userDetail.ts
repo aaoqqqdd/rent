@@ -25,46 +25,14 @@ export async function renderAdminUserDetail(c: Context, user: any, targetUserId:
   };
 
   const body = `
-    <div class="panel">
-      <div class="section-title">
-        <div>
-          <h2>用户详情 - ${targetUser.name}</h2>
-          <p style="color: var(--text-secondary); margin-top: 4px; font-size: 0.9rem;">查看和管理用户的详细信息。</p>
-        </div>
-        <a href="/admin/users" class="button button-secondary">← 返回列表</a>
+    <div class="entity-header"><div class="identity-strip mono"><span>USER / ${targetUser.id}</span><span>${targetUser.role}</span></div><div class="entity-heading"><div><p class="section-code">IDENTITY RECORD</p><h2>${targetUser.name}</h2><p>${targetUser.email}</p></div><div class="entity-heading-actions"><a href="/admin/users" class="button button-secondary">返回列表</a><a href="/admin/users/${targetUser.id}/edit" class="button">编辑用户</a></div></div></div>
+    <div class="panel record-panel single-column"><div class="record-grid">
+        <section class="record-section"><p class="section-code">ACCOUNT</p><h3>基本信息</h3><dl class="data-list">
+          <div><dt>用户 ID</dt><dd class="mono">${targetUser.id}</dd></div><div><dt>姓名</dt><dd>${targetUser.name}</dd></div><div><dt>邮箱</dt><dd>${targetUser.email}</dd></div><div><dt>电话</dt><dd>${targetUser.phone || '未填写'}</dd></div><div><dt>角色</dt><dd><span class="badge ${targetUser.role === 'ADMIN' ? 'badge-danger' : targetUser.role === 'STAFF' ? 'badge-warning' : 'badge-info'}">${roleMap[targetUser.role] || targetUser.role}</span></dd></div><div><dt>状态</dt><dd><span class="badge ${targetUser.status === 'active' ? 'badge-success' : 'badge-danger'}">${statusMap[targetUser.status || 'active']}</span></dd></div><div><dt>注册时间</dt><dd>${targetUser.createdAt ? new Date(targetUser.createdAt).toLocaleString('zh-CN') : '-'}</dd></div>
+        </dl></section>
+        <section class="record-section"><p class="section-code">FINANCE</p><h3>账户信息</h3><dl class="data-list"><div><dt>账户余额</dt><dd class="mono">AUD$${(targetUser.balance || 0).toFixed(2)}</dd></div><div><dt>佣金余额</dt><dd class="mono">AUD$${(targetUser.commissionBalance || 0).toFixed(2)}</dd></div>${targetUser.role === 'CUSTOMER' ? `<div><dt>BSB</dt><dd class="mono">${targetUser.bsb || '未填写'}</dd></div><div><dt>银行账号</dt><dd class="mono">${targetUser.accountNumber || targetUser.account_number || targetUser.account || '未填写'}</dd></div>` : ''}</dl></section>
       </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
-        <div>
-          <h3>基本信息</h3>
-          <p><strong>ID:</strong> <span style="font-family: monospace;">${targetUser.id}</span></p>
-          <p><strong>姓名:</strong> ${targetUser.name}</p>
-          <p><strong>邮箱:</strong> ${targetUser.email}</p>
-          <p><strong>电话:</strong> ${targetUser.phone || '未填写'}</p>
-          <p><strong>角色:</strong> <span class="badge ${targetUser.role === 'ADMIN' ? 'badge-danger' : targetUser.role === 'STAFF' ? 'badge-warning' : 'badge-info'}">${roleMap[targetUser.role] || targetUser.role}</span></p>
-          <p><strong>状态:</strong> <span class="badge ${targetUser.status === 'active' ? 'badge-success' : 'badge-danger'}">${statusMap[targetUser.status || 'active']}</span></p>
-          <p><strong>余额:</strong> AUD$${(targetUser.balance || 0).toFixed(2)}</p>
-          <p><strong>佣金余额:</strong> AUD$${(targetUser.commissionBalance || 0).toFixed(2)}</p>
-          <p><strong>注册时间:</strong> ${targetUser.createdAt ? new Date(targetUser.createdAt).toLocaleString('zh-CN') : '-'}</p>
-        </div>
-        ${targetUser.role === 'CUSTOMER' ? `
-        <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding: 24px; border-radius: 12px; border: 1px solid #f59e0b;">
-          <h3 style="margin-top: 0; color: #92400e;">💳 客户银行账户信息</h3>
-          <p><strong>BSB码:</strong> ${targetUser.bsb || '未填写'}</p>
-          <p><strong>银行账号:</strong> ${targetUser.accountNumber || '未填写'}</p>
-          <p style="margin-top: 16px; padding: 12px; background: rgba(255,255,255,0.5); border-radius: 8px; color: #78350f;">
-            <small>此信息为客户银行账户，退款时可使用此信息转账。</small>
-          </p>
-        </div>
-        ` : ''}
-      </div>
-
-      <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
-        <h3>快捷操作</h3>
-        <div style="display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap;">
-          <a href="/admin/users/${targetUser.id}/edit" class="button">✏️ 编辑用户</a>
-          <a href="/admin/orders?userId=${targetUser.id}" class="button button-secondary">📋 查看关联订单</a>
-        </div>
-      </div>
+      <div class="record-actions"><a href="/admin/orders?userId=${targetUser.id}" class="button button-secondary">查看关联订单</a></div>
     </div>
   `;
 

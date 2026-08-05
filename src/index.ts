@@ -31,6 +31,7 @@ import {
   hashPassword,
   findUserByEmail,
   findUserByReferralCode,
+  getUserById,
   createWithdrawalRequest,
   generateReferralCode,
   getOrderById,
@@ -43,9 +44,11 @@ import {
   sanitizeRichHtml,
   updateDeviceStatus,
   getContractById,
+  updateContractTemplate,
   CONTRACT_OPERATIONAL_FIELDS,
   CONTRACT_SIGNED_FIELDS,
   issueInvoice,
+  ensureOrderNumber,
   createAuthSession,
   deleteAuthSession,
   buildLayout,
@@ -134,7 +137,8 @@ app.use('*', async (c, next) => {
     : c.req.path === '/forgot-password' && c.req.method === 'POST' ? ['forgot', 5, 3600] as const
     : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
     : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
-    : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const : null
+    : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
+    : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
   if (rateRule && !await enforceRateLimit(c, rateRule[0], ip, rateRule[1], rateRule[2])) return c.text('请求过于频繁，请稍后再试', 429)
   await next()
   c.header('X-Content-Type-Options', 'nosniff')
@@ -241,8 +245,9 @@ app.get('/register', async (c) => {
   return c.html(pages.renderRegister())
 })
 
-app.get('/terms', (c) => {
-  return c.html(buildLayout('租赁条款', `<div class="panel contract-section"><div class="section-title"><h2>租赁条款</h2><span class="section-note mono">LEGAL / TERMS</span></div>${sanitizeRichHtml(getSystemSettings().rentalTerms)}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`))
+app.get('/terms', async (c) => {
+  const settings = await loadSystemSettingsFromDB(c)
+  return c.html(buildLayout('用户协议', `<div class="panel contract-section"><div class="section-title"><h2>用户协议</h2><span class="section-note mono">LEGAL / USER TERMS</span></div>${sanitizeRichHtml(settings.userTerms)}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`))
 })
 
 app.post('/register', async (c) => {
@@ -622,17 +627,22 @@ app.post('/contract/sign', async (c) => {
 app.post('/admin/contracts/template', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') {
-    return c.html(renderForbidden(), 403)
+    return c.json({ success: false, error: '无权限保存合同模板' }, 403)
   }
 
-  const body = await c.req.text()
-  const payload = JSON.parse(body || '{}')
-  const updatedTemplate = await updateContractTemplateInDB(c, {
-    id: payload.id || 'tmpl-1',
-    name: payload.name || '标准租赁合同模板',
-    content: payload.content || '',
-  })
-  return c.json(updatedTemplate)
+  try {
+    const body = await c.req.text()
+    const payload = JSON.parse(body || '{}')
+    const updatedTemplate = await updateContractTemplate(c, {
+      id: payload.id || 'default',
+      name: payload.name || '标准租赁合同模板',
+      content: payload.content || '',
+    })
+    return c.json({ success: true, template: updatedTemplate })
+  } catch (error: any) {
+    console.error('Failed to save contract template:', error?.stack || error)
+    return c.json({ success: false, error: error?.message || '合同模板保存失败' }, 500)
+  }
 });
 
 app.get('/contract/view/:id', async (c) => {
@@ -771,17 +781,19 @@ app.post('/customer/referral/join', async (c) => {
     return c.redirect('/login')
   }
 
-  if (user.referralCode) {
-    return c.html(await pages.renderCustomerReferral(c, user, '您已加入推荐计划，无需重复加入', 'info'))
+  const currentUser = await getUserById(c, user.id)
+  if (!currentUser) return c.redirect('/login')
+  if (currentUser.referralCode) {
+    return c.html(await pages.renderCustomerReferral(c, currentUser, '您已加入推荐计划，无需重复加入', 'info'))
   }
 
   const newReferralCode = await generateReferralCode()
-  await updateUser(c, user.id, { referralCode: newReferralCode })
+  const result = await c.env.RENT.prepare("UPDATE users SET referral_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND (referral_code IS NULL OR referral_code = '')")
+    .bind(newReferralCode, user.id).run()
+  const updatedUser = await getUserById(c, user.id)
+  const joinedNow = Number(result.meta?.changes || 0) > 0
 
-  // 更新session中的user对象
-  const updatedUser = { ...user, referralCode: newReferralCode }
-
-  return c.html(await pages.renderCustomerReferral(c, updatedUser, '恭喜您成功加入推荐计划！您的推荐码已生成。', 'success'))
+  return c.html(await pages.renderCustomerReferral(c, updatedUser || currentUser, joinedNow ? '恭喜您成功加入推荐计划！您的推荐码已生成。' : '您已加入推荐计划，无需重复加入', joinedNow ? 'success' : 'info'))
 })
 
 app.post('/customer/referral/leave', async (c) => {
@@ -794,12 +806,9 @@ app.post('/customer/referral/leave', async (c) => {
     return c.html(await pages.renderCustomerReferral(c, user, '您还未加入推荐计划', 'info'))
   }
 
-  await updateUser(c, user.id, { referralCode: null })
+  const updatedUser = await updateUser(c, user.id, { referralCode: null })
 
-  // 更新session中的user对象，移除推荐码
-  const updatedUser = { ...user, referralCode: null }
-
-  return c.html(await pages.renderCustomerReferral(c, updatedUser, '您已成功退出推荐计划，推荐码已失效。', 'success'))
+  return c.html(await pages.renderCustomerReferral(c, updatedUser || user, '您已成功退出推荐计划，推荐码已失效。', 'success'))
 })
 
 app.get('/customer/security', async (c) => {
@@ -1084,11 +1093,11 @@ app.post('/admin/contracts/:id/data', async (c) => {
   if (submittedData.damage_photos) {
     try { submittedData.damage_photos = validateHostedImageUrls(submittedData.damage_photos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
   }
-  for (const name of ['delivery_fee', 'discount', 'replacement_cost', 'battery_cycles']) {
+  for (const name of ['delivery_fee', 'discount', 'replacement_cost', 'repair_cost', 'battery_cycles', 'insurance_fee']) {
     const value = submittedData[name]
     if (value && (!Number.isFinite(Number(value)) || Number(value) < 0)) return c.text(`${name} 必须是非负数字`, 400)
   }
-  const allowedOptions: Record<string, string[]> = { delivery_method: ['', 'Pickup', 'Delivery'], return_status: ['', 'Returned', 'Overdue', 'Damaged'], collection_required: ['', '否', '是'], power_test: ['', '通过', '失败'], insurance_required: ['', '否', '是'], waiver_signed: ['', '否', '是'], jurisdiction: ['', 'VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'] }
+  const allowedOptions: Record<string, string[]> = { delivery_method: ['', 'Pickup', 'Delivery'], return_status: ['', 'Returned', 'Overdue', 'Damaged'], collection_required: ['', '否', '是'], power_test: ['', '通过', '失败'], insurance_selected: ['', '否', '是'], waiver_signed: ['', '否', '是'], jurisdiction: ['', 'VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'] }
   for (const [name, options] of Object.entries(allowedOptions)) if (!options.includes(submittedData[name] || '')) return c.text(`${name} 的值无效`, 400)
   const data = { ...existing, ...submittedData }
   await c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
@@ -1114,6 +1123,7 @@ app.post('/admin/orders/:id/update', async (c) => {
     if (!JSON.parse(contract?.contract_data || '{}').inspection_date) return c.text('完成订单前必须提交归还验机', 409)
   }
   await updateOrderStatus(c, order.id, status)
+  if (status === 'paid') await ensureOrderNumber(c, order.id)
   return c.redirect(`/admin/orders/${c.req.param('id')}`)
 })
 
@@ -1122,13 +1132,14 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
   if (!order || order.status !== 'pending_payment' || order.paymentMethod !== 'bank_transfer') return c.text('订单状态不允许审核', 409)
-  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
+  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
   if (!proof) return c.text('没有待审核的转账信息', 409)
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.payment_id),
     c.env.RENT.prepare("UPDATE orders SET status = 'paid', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
   ])
+  await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
   await issueInvoice(c, order.id)
   return c.redirect(`/admin/orders/${order.id}`)
 })
@@ -1297,6 +1308,52 @@ app.post('/admin/settings/save', async (c) => {
   } catch (error: any) {
     return c.json({ success: false, error: error.message || '保存失败' }, 400)
   }
+})
+
+app.get('/api/address/autocomplete', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.json({ error: '无权限查询地址' }, 403)
+  const apiKey = String(c.env.GOOGLE_MAPS_API_KEY || '')
+  if (!apiKey) return c.json({ error: '地址联想尚未配置，可手工填写地址' }, 503)
+  const input = String(c.req.query('q') || '').trim().slice(0, 120)
+  const sessionToken = String(c.req.query('session') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)
+  if (input.length < 3) return c.json({ suggestions: [] })
+  const response = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'suggestions.placePrediction.placeId,suggestions.placePrediction.text.text' },
+    body: JSON.stringify({ input, includedRegionCodes: ['au'], languageCode: 'en', regionCode: 'au', ...(sessionToken ? { sessionToken } : {}) })
+  })
+  if (!response.ok) {
+    console.error('Google address autocomplete failed:', response.status)
+    return c.json({ error: '地址联想暂时不可用，可手工填写地址' }, 502)
+  }
+  const data = await response.json() as any
+  const suggestions = (data.suggestions || []).map((item: any) => item.placePrediction).filter(Boolean).slice(0, 6).map((prediction: any) => ({ placeId: String(prediction.placeId || '').slice(0, 300), text: String(prediction.text?.text || '').slice(0, 300) })).filter((item: any) => item.placeId && item.text)
+  return c.json({ suggestions })
+})
+
+app.get('/api/address/details', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.json({ error: '无权限查询地址' }, 403)
+  const apiKey = String(c.env.GOOGLE_MAPS_API_KEY || '')
+  if (!apiKey) return c.json({ error: '地址联想尚未配置' }, 503)
+  const placeId = String(c.req.query('placeId') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 300)
+  const sessionToken = String(c.req.query('session') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)
+  if (!placeId) return c.json({ error: '地址标识无效' }, 400)
+  const params = new URLSearchParams({ fields: 'formattedAddress,addressComponents', languageCode: 'en', regionCode: 'AU', ...(sessionToken ? { sessionToken } : {}) })
+  const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?${params}` , { headers: { 'X-Goog-Api-Key': apiKey } })
+  if (!response.ok) {
+    console.error('Google address details failed:', response.status)
+    return c.json({ error: '无法读取地址详情，请手工填写' }, 502)
+  }
+  const place = await response.json() as any
+  const component = (type: string, short = false) => {
+    const item = (place.addressComponents || []).find((entry: any) => entry.types?.includes(type))
+    return String((short ? item?.shortText : item?.longText) || '')
+  }
+  const street = [component('street_number'), component('route')].filter(Boolean).join(' ')
+  const suburb = component('locality') || component('postal_town') || component('sublocality_level_1')
+  return c.json({ formattedAddress: String(place.formattedAddress || ''), street, suburb, state: component('administrative_area_level_1', true), postcode: component('postal_code') })
 })
 
 

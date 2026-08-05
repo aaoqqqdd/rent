@@ -9,7 +9,7 @@ import type { Context } from 'hono';
 export async function renderPaymentResult(c: Context, orderId: string, user: any) {
   const order = await getOrderById(c, orderId);
   const contract = order ? await getContractByOrderId(c, order.id) : null;
-  const payment = order ? await c.env.RENT.prepare("SELECT status FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any : null
+  const payment = order ? await c.env.RENT.prepare("SELECT status, amount, processing_fee FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any : null
   const status = payment?.status === 'paid' || order?.status === 'paid' ? 'success' : payment?.status === 'failed' ? 'fail' : 'pending'
 
   let title = '';
@@ -21,7 +21,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
 
   if (status === 'success') {
     title = '支付成功！';
-    message = `您的订单 <strong>#${order?.orderNo ?? 'N/A'}</strong> 已成功支付 <strong>${formatCurrency(order?.totalAmount ?? 0)}</strong>。`;
+    message = `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已成功支付 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>${Number(payment?.processing_fee || 0) ? `，其中支付手续费为 ${formatCurrency(payment.processing_fee)}（不可退款）` : ''}。网站发票与收据已生成。`;
     icon = `
       <div class="icon-wrapper success">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-check"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -30,7 +30,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     cardClass = 'success';
   } else if (status === 'fail') {
     title = '支付失败';
-    message = `您的订单 <strong>#${order?.orderNo ?? 'N/A'}</strong> 支付未能成功。请重试或选择其他支付方式。`;
+    message = `合同付款未能成功。请重试或选择其他支付方式。`;
     icon = `
       <div class="icon-wrapper danger">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-x"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -41,7 +41,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     buttonLink = `/customer/orders/${orderId}`;
   } else {
     title = '正在确认支付';
-    message = `Stripe 正在确认订单 <strong>#${order?.orderNo ?? 'N/A'}</strong> 的付款结果，本页面会自动刷新。`;
+    message = `Stripe 正在确认合同付款结果；确认后会生成订单编号，本页面会自动刷新。`;
     icon = '<div class="icon-wrapper" style="background:#e0f2fe;color:#0369a1;">…</div>';
     cardClass = '';
     buttonText = '刷新支付状态';

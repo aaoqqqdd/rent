@@ -111,6 +111,16 @@ npx wrangler secret put SETTINGS_ENCRYPTION_KEY
 
 不要将 `.dev.vars`、Stripe 密钥、Cloudflare API Token 或 `SETTINGS_ENCRYPTION_KEY` 提交到版本控制。
 
+### 配置送货地址联想
+
+新建合同的送货地址使用 Google Places API (New)，密钥仅由 Worker 服务端读取。启用 Places API (New) 后设置：
+
+```bash
+npx wrangler secret put GOOGLE_MAPS_API_KEY
+```
+
+未配置密钥时，地址联想会自动降级为手工填写街道、Suburb、州和邮编，不影响创建合同。请在 Google Cloud 中限制该密钥只能调用 Places API，并按实际用量设置预算告警。
+
 ## Stripe
 
 1. 登录管理员后台并打开“系统设置”。
@@ -137,7 +147,9 @@ https://<your-domain>/webhooks/stripe
 
 ### 支付和退款
 
-- Stripe 收款金额由服务端从 D1 订单读取，包括租金和押金。
+- Stripe 收款金额由服务端从 D1 订单读取，包括租金和押金，并在全部订单本金上加收 2.5% 支付手续费。
+- Tax Invoice / Receipt 由本网站付款成功后自动开具，Stripe 仅作为信用卡支付处理方。
+- Stripe 支付手续费单独记账且不予退款；押金退款和租赁开始前取消退款均只退订单本金范围内的金额。
 - 银行转账需要客户提交 Reference、说明和公开 HTTPS 凭证链接，并由管理员审核。
 - 客户可以选择将退款退回账户余额或原支付渠道。
 - 银行转账原路退款需要账户名、BSB 和银行账号，并由管理员在线下完成转账后确认。

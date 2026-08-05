@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAllContracts, getOrderById, getUserById, getOrders, getDeviceById, getUsers } from '../../site'
+import { buildLayout, getAllContracts, getOrderById, getUserById, getOrders, getDeviceById, getUsers, isContractExpired } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string) {
@@ -11,11 +11,11 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
   const allOrders = await getOrders(c)
   const allUsers = await getUsers(c)
 
-  const contractStatuses = ['pending_sign', 'signed', 'cancelled', 'completed']
+  const contractStatuses = ['pending_sign', 'signed', 'cancelled', 'completed', 'expired']
   const rentalStatuses = ['active', 'pending_pickup', 'pending_return', 'completed', 'cancelled']
 
   if (status && contractStatuses.includes(status)) {
-    allContracts = allContracts.filter((ct) => ct.status === status)
+    allContracts = allContracts.filter((ct) => status === 'expired' ? isContractExpired(ct) : ct.status === status && !isContractExpired(ct))
   }
 
   let filteredOrders = allOrders
@@ -78,6 +78,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
         <a href="/staff/contracts?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
         <a href="/staff/contracts?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
+        <a href="/staff/contracts?status=expired" class="button ${status === 'expired' ? 'button-primary' : 'button-secondary'}">已过期</a>
         <a href="/staff/contracts?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
         <a href="/staff/contracts?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
       </div>
@@ -108,20 +109,22 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           <tbody>
             ${contractsWithDetails
               .map(({ contract, order, customer }) => {
-                const canCancel = user && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id || contract.status === 'pending_sign');
-                const statusLabel = contract.status === 'pending_sign' ? '待签署' : contract.status === 'signed' ? '已签署' : contract.status === 'cancelled' ? '已取消' : contract.status === 'draft' ? '草稿' : contract.status
-                const signedAtText = contract.signedAt ? contract.signedAt : (contract.status === 'cancelled' ? '已取消' : '未签署')
+                const expired = isContractExpired(contract)
+                const canCancel = user && !expired && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id || contract.status === 'pending_sign');
+                const statusLabel = expired ? '已过期' : contract.status === 'pending_sign' ? '待签署' : contract.status === 'signed' ? '已签署' : contract.status === 'cancelled' ? '已取消' : contract.status === 'draft' ? '草稿' : contract.status
+                const statusClass = expired ? 'danger' : contract.status === 'signed' ? 'success' : contract.status === 'cancelled' ? 'neutral' : 'warning-badge'
+                const signedAtText = contract.signedAt ? contract.signedAt : (expired ? '签署期限已过' : contract.status === 'cancelled' ? '已取消' : '未签署')
                 return `
                 <tr>
                   <td>${contract.contractNumber}</td>
-                  <td>${order?.orderNo ?? 'N/A'}</td>
+                  <td>${order?.orderNo ?? '付款后生成'}</td>
                   <td>${customer?.name ?? '未知客户'}</td>
-                  <td>${statusLabel}</td>
+                  <td><span class="badge ${statusClass}">${statusLabel}</span></td>
                   <td>${signedAtText}</td>
                   <td>
-                    <a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>
+                    ${contract.status === 'signed' ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看/下载合同</a>` : `<a class="button button-sm button-secondary" href="/staff/contracts/${contract.id}/progress">签署进度</a>`}
                     ${
-                      contract.status === 'pending_sign'
+                      contract.status === 'pending_sign' && !expired
                         ? `
                           <a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>
                           <button class="button button-sm button-success" onclick="navigator.clipboard.writeText(window.location.origin + '/contract/sign?token=${contract.signToken}&step=1').then(()=>alert('合同签署链接已复制到剪贴板！'))">复制签署链接</button>
@@ -191,7 +194,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                 return `
                 <tr>
                   <td>${contract?.contractNumber ?? '—'}</td>
-                  <td>${order.orderNo}</td>
+                  <td>${order.orderNo || '付款后生成'}</td>
                   <td>${order.customer?.name ?? '待客户填写'}</td>
                   <td>${statusText}</td>
                   <td>${order.startDate ?? '—'}</td>

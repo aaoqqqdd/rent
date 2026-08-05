@@ -30,13 +30,12 @@ export async function renderAdminUsers(user: any, c: any) {
         <a href="/admin/users/new" class="button">添加新用户</a>
       </div>
       ${allUsers.length === 0 ? `
-        <div style="text-align: center; padding: 48px 24px; color: var(--text-secondary);">
-          <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">👥</div>
-          <h3>暂无用户</h3>
-          <p>点击右上角"添加新用户"创建用户</p>
+        <div class="empty-state">
+          <span class="empty-state-code mono">USER / 000</span>
+          <h3>暂无用户</h3><p>创建首个用户后，身份资料会显示在这里。</p><a href="/admin/users/new" class="button">添加新用户</a>
         </div>
       ` : `
-      <table>
+      <div class="table-wrapper"><table>
         <thead>
           <tr>
             <th>ID</th>
@@ -55,7 +54,7 @@ export async function renderAdminUsers(user: any, c: any) {
             const status = statusMap[u.status || 'active'] || { text: u.status, class: 'badge-info' };
             return `
               <tr>
-                <td style="font-family: monospace; font-size: 0.85rem;">${u.id}</td>
+                <td class="mono user-id-cell">${u.id}</td>
                 <td><strong>${u.name}</strong></td>
                 <td>${u.email}</td>
                 <td><span class="badge ${role.class}">${role.text}</span></td>
@@ -73,7 +72,7 @@ export async function renderAdminUsers(user: any, c: any) {
             `;
           }).join('')}
         </tbody>
-      </table>
+      </table></div>
       `}
     </div>
   `;

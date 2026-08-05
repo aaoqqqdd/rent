@@ -3,12 +3,14 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getSystemSettings, updateSystemSettings } from '../../site';
+import { buildLayout, getSystemSettings, updateSystemSettings, CONTRACT_VARIABLE_GROUPS } from '../../site';
 
 export function renderAdminSettings(user: any, stripe: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
+  const userTermsJson = JSON.stringify(settings.userTerms).replace(/</g, '\\u003c')
   const rentalTermsJson = JSON.stringify(settings.rentalTerms).replace(/</g, '\\u003c')
   const emailTemplateJson = JSON.stringify(settings.emailTemplate).replace(/</g, '\\u003c')
+  const completeVariableIndex = CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')
 
   const body = `
     <div class="panel">
@@ -18,16 +20,28 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         <div class="form-group">
           <label>公司税务信息</label>
           <div class="grid grid-2">
+            <div><label class="form-label" for="companyName">公司名称</label><input id="companyName" name="companyName" class="form-control" value="${settings.companyDetails.name}"></div>
             <div><label class="form-label" for="companyAbn">公司 ABN</label><input id="companyAbn" name="companyAbn" class="form-control" value="${settings.companyDetails.abn}" placeholder="11 位 ABN"></div>
             <div><label class="form-label" for="gstIncluded">GST 设置</label><select id="gstIncluded" name="gstIncluded" class="form-control"><option value="true" ${settings.companyDetails.gstIncluded ? 'selected' : ''}>价格包含 GST</option><option value="false" ${!settings.companyDetails.gstIncluded ? 'selected' : ''}>价格不含 GST</option></select></div>
             <div><label class="form-label" for="companyAddress">公司地址</label><input id="companyAddress" name="companyAddress" class="form-control" value="${settings.companyDetails.address}"></div>
             <div><label class="form-label" for="companyContact">公司联系人</label><input id="companyContact" name="companyContact" class="form-control" value="${settings.companyDetails.contact}"></div>
             <div><label class="form-label" for="companyPhone">公司电话</label><input id="companyPhone" name="companyPhone" class="form-control" value="${settings.companyDetails.phone}"></div>
             <div><label class="form-label" for="companyEmail">公司邮箱</label><input type="email" id="companyEmail" name="companyEmail" class="form-control" value="${settings.companyDetails.email}"></div>
+            <div><label class="form-label" for="companyWebsite">公司网站</label><input type="url" id="companyWebsite" name="companyWebsite" class="form-control" value="${settings.companyDetails.website}" placeholder="https://"></div>
+            <div><label class="form-label" for="companyLogo">公司 Logo URL</label><input type="url" id="companyLogo" name="companyLogo" class="form-control" value="${settings.companyDetails.logo}" placeholder="https://"></div>
+            <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
           </div>
         </div>
-        <div class="form-group">
-          <label for="rentalTerms">租赁条款</label>
+        <section class="legal-template-workspace">
+          <div class="section-title"><h3>协议内容</h3><span class="section-note">分别控制注册页与合同签署页显示的法律文本。</span></div>
+          <div class="legal-template-card">
+            <div class="legal-template-heading"><div><strong>用户协议</strong><p>显示在注册页面的“用户协议”链接中。</p></div><span class="status-badge">REGISTRATION</span></div>
+            <div id="userTermsEditor" class="quill-editor legal-editor"></div>
+            <textarea id="userTerms" name="userTerms" style="display:none;"></textarea>
+          </div>
+        <div class="form-group legal-template-card">
+          <div class="legal-template-heading"><div><strong>租赁协议</strong><p>客户签署合同 Step 1 阅读并同意的内容。</p></div><span class="status-badge">SIGNING STEP 1</span></div>
+          <details class="variable-index"><summary>查看完整合同变量索引</summary>${completeVariableIndex}</details>
           <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
              <strong style="color: #155e75; display: block; margin-bottom: 12px;">📋 租赁条款模板可用变量：</strong>
              <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
@@ -67,6 +81,8 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
           <div id="rentalTermsEditor" style="height: 250px;"></div>
           <textarea id="rentalTerms" name="rentalTerms" style="display:none;"></textarea>
         </div>
+        <p class="section-note">正式合同正文请前往 <a href="/admin/contracts">合同管理 → 合同模板编辑</a>。</p>
+        </section>
 
         <div class="form-group">
           <label for="priceStrategy">价格策略配置</label>
@@ -107,6 +123,10 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
               🏦 银行转账账户信息
             </h4>
             <div class="grid grid-2">
+              <div>
+                <label for="bankName" class="form-label">银行名称</label>
+                <input type="text" id="bankName" name="bankName" class="form-control" value="${settings.bankDetails.bankName}" placeholder="例如: Commonwealth Bank">
+              </div>
               <div>
                 <label for="bankAccountName" class="form-label">账户名称</label>
                 <input type="text" id="bankAccountName" name="bankAccountName" class="form-control" value="${settings.bankDetails.accountName}" placeholder="请输入账户名称">
@@ -176,7 +196,11 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
 
     <script>
       document.addEventListener('DOMContentLoaded', function() {
-        // 初始化 Quill 编辑器
+        // 初始化协议编辑器
+        const userTermsEditor = window.createRichTextEditor('#userTermsEditor', {
+          theme: 'snow',
+          modules: { toolbar: [[{ 'header': [1, 2, 3, false] }], ['bold', 'italic', 'underline'], [{ 'list': 'ordered'}, { 'list': 'bullet' }], ['link'], ['clean']] }
+        });
         const rentalTermsEditor = window.createRichTextEditor('#rentalTermsEditor', {
           theme: 'snow',
           modules: {
@@ -197,8 +221,12 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         });
 
         // 将数据库中的内容加载到编辑器
+        const userTermsContent = ${userTermsJson};
         const rentalTermsContent = ${rentalTermsJson};
         const emailTemplateContent = ${emailTemplateJson};
+        if (userTermsContent) {
+          userTermsEditor.root.innerHTML = userTermsContent;
+        }
         if (rentalTermsContent) {
           rentalTermsEditor.root.innerHTML = rentalTermsContent;
         }
@@ -207,8 +235,10 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         }
         
         // 隐藏的 textarea 用于表单提交
+        const userTermsTextarea = document.getElementById('userTerms');
         const rentalTermsTextarea = document.getElementById('rentalTerms');
         const emailTemplateTextarea = document.getElementById('emailTemplate');
+        userTermsTextarea.value = userTermsContent;
         rentalTermsTextarea.value = rentalTermsContent;
         emailTemplateTextarea.value = emailTemplateContent;
 
@@ -217,11 +247,13 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         event.preventDefault();
         
         // 提交前，将编辑器内容同步到隐藏的 textarea
+        userTermsTextarea.value = userTermsEditor.root.innerHTML;
         rentalTermsTextarea.value = rentalTermsEditor.root.innerHTML;
         emailTemplateTextarea.value = emailTemplateEditor.root.innerHTML;
 
         const formData = new FormData(this);
         const newSettings = {
+          userTerms: formData.get('userTerms'),
           rentalTerms: formData.get('rentalTerms'),
           priceStrategy: formData.get('priceStrategy'),
           paymentMethods: {
@@ -236,17 +268,22 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
             clear: formData.has('clearStripeConfig'),
           },
           bankDetails: {
+            bankName: formData.get('bankName'),
             accountName: formData.get('bankAccountName'),
             bsb: formData.get('bankBSB'),
             account: formData.get('bankAccount'),
           },
           companyDetails: {
+            name: formData.get('companyName'),
             abn: formData.get('companyAbn'),
             gstIncluded: formData.get('gstIncluded') === 'true',
             address: formData.get('companyAddress'),
             contact: formData.get('companyContact'),
             phone: formData.get('companyPhone'),
             email: formData.get('companyEmail'),
+            website: formData.get('companyWebsite'),
+            logo: formData.get('companyLogo'),
+            pickupLocations: String(formData.get('pickupLocations') || '').split(/\\n+/).map(value => value.trim()).filter(Boolean),
           },
           emailTemplate: formData.get('emailTemplate'),
           referralSettings: {

@@ -14,12 +14,12 @@ export async function renderAdminContractData(c: Context, user: any, contractId:
   const data = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
   let damageImages: string[] = []
   try { if ((data as any).damage_photos) damageImages = validateHostedImageUrls((data as any).damage_photos) } catch {}
-  const dateFields = new Set(['return_date', 'inspection_date', 'collection_date'])
-  const numberFields = new Set(['delivery_fee', 'discount', 'replacement_cost', 'battery_cycles'])
-  const longFields = new Set(['damage_description', 'damage_photos', 'notes', 'esign_signature', 'company_signature'])
+  const dateFields = new Set(['customer_dob', 'customer_driver_expiry', 'return_date', 'inspection_date', 'collection_date', 'pickup_time', 'return_time'])
+  const numberFields = new Set(['delivery_fee', 'discount', 'replacement_cost', 'repair_cost', 'battery_cycles', 'insurance_fee'])
+  const longFields = new Set(['device_condition', 'device_accessories', 'inspection_notes', 'damage_description', 'damage_photos', 'notes', 'esign_signature', 'company_signature', 'accessories_returned', 'customer_acknowledgement'])
   const options: Record<string, string[]> = {
     delivery_method: ['Pickup', 'Delivery'], return_status: ['Returned', 'Overdue', 'Damaged'],
-    collection_required: ['否', '是'], power_test: ['通过', '失败'], insurance_required: ['否', '是'], waiver_signed: ['否', '是'],
+    collection_required: ['否', '是'], power_test: ['通过', '失败'], insurance_selected: ['否', '是'], waiver_signed: ['否', '是'],
     jurisdiction: ['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'],
   }
   const renderField = ([name, label]: typeof CONTRACT_OPERATIONAL_FIELDS[number]) => {
@@ -31,12 +31,13 @@ export async function renderAdminContractData(c: Context, user: any, contractId:
     return `<div class="form-group"><label class="form-label" for="${name}">${label} <code>\${${name}}</code></label><input class="form-control" type="${type}" id="${name}" name="${name}" value="${value}"${numeric}></div>`
   }
   const groups = [
-    ['发票与交付', ['invoice_number','delivery_method','delivery_fee','return_status','return_date','inspection_date','inspection_by']],
-    ['设备配置', ['device_brand','device_cpu','device_ram','device_storage','device_gpu','device_os','battery_health','charger_sn','asset_tag']],
-    ['电子签约', ['esign_signature','company_signature','esign_location','esign_browser','esign_os','agreement_version']],
-    ['优惠与损坏', ['discount','coupon_code','damage_description','damage_photos','repair_invoice','replacement_cost','collection_required','collection_date']],
-    ['设备检查', ['screen_condition','keyboard_condition','trackpad_condition','body_condition','camera_condition','wifi_condition','battery_cycles','power_test']],
-    ['后台与法律', ['approved_by','notes','jurisdiction','insurance_required','insurance_provider','waiver_signed','privacy_version']],
+    ['客户与证件', ['customer_address','customer_dob','customer_country','customer_id_type','customer_id_number','customer_driver_expiry','emergency_contact','emergency_phone']],
+    ['发票与交付', ['invoice_number','delivery_method','delivery_fee','pickup_location','return_location','pickup_time','return_time','return_status','return_date']],
+    ['设备配置', ['device_brand','device_cpu','device_ram','device_storage','device_gpu','device_os','battery_health','battery_cycles','charger_sn','asset_tag','device_condition','device_accessories']],
+    ['电子签约', ['esign_signature','company_signature','esign_location','esign_browser','esign_os','agreement_version','company_representative','customer_initials']],
+    ['优惠与损坏', ['discount','coupon_code','damage_description','damage_photos','repair_invoice','repair_cost','replacement_cost','collection_required','collection_date']],
+    ['设备检查', ['inspection_date','inspection_by','screen_condition','keyboard_condition','trackpad_condition','body_condition','camera_condition','wifi_condition','power_test','inspection_notes','accessories_returned','customer_acknowledgement']],
+    ['保险、后台与法律', ['insurance_selected','insurance_fee','insurance_provider','approved_by','notes','qr_code','jurisdiction','waiver_signed','privacy_version']],
   ] as const
   const available = CONTRACT_OPERATIONAL_FIELDS.filter(([name]) => contract.status !== 'signed' || !CONTRACT_SIGNED_FIELDS.has(name))
   const sections = groups.map(([title, names]) => `<section style="margin-top:24px"><h3>${title}</h3><div class="grid grid-2">${available.filter(([name]) => (names as readonly string[]).includes(name)).map(renderField).join('')}</div></section>`).join('')

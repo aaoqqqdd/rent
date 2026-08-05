@@ -4,23 +4,41 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono';
-import { User, getDeviceById, getContractTemplate, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, updateDeviceStatus } from '../../site';
+import { User, getDeviceById, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, updateDeviceStatus } from '../../site';
 import { nanoid, customAlphabet } from 'nanoid';
 
 // 自定义nanoid，只使用大写字母和数字，确保合同编号只包含大写字母和数字
 const uppercaseAlphanumericNanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 16);
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
-  const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, pickupLocation, returnLocation } = body;
+  const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, returnLocation } = body;
   const deliveryMethod = body.deliveryMethod === 'Delivery' ? 'Delivery' : 'Pickup'
-  const deliveryFee = Number(body.deliveryFee || 0)
+  const deliveryFee = deliveryMethod === 'Delivery' ? Number(body.deliveryFee || 0) : 0
+  await loadSystemSettingsFromDB(c)
+  const allowedLocations = getSystemSettings().companyDetails.pickupLocations
+  const returnLocationValue = String(returnLocation || '').trim()
+  let pickupLocationValue = String(body.pickupLocation || '').trim()
+  let deliveryAddressData: Record<string, string> = {}
+  if (deliveryMethod === 'Pickup') {
+    if (!pickupLocationValue) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请选择自取地点')}`)
+    if (user.role !== 'ADMIN' && !allowedLocations.includes(pickupLocationValue)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('员工只能选择管理员配置的自取地点')}`)
+  } else {
+    const street = String(body.deliveryStreet || '').trim()
+    const suburb = String(body.deliverySuburb || '').trim()
+    const state = String(body.deliveryState || '').trim().toUpperCase()
+    const postcode = String(body.deliveryPostcode || '').trim()
+    if (!street || !suburb || !['VIC','NSW','QLD','SA','WA','TAS','NT','ACT'].includes(state) || !/^\d{4}$/.test(postcode)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请填写完整有效的澳洲送货地址')}`)
+    pickupLocationValue = `${street}, ${suburb} ${state} ${postcode}, Australia`
+    deliveryAddressData = { delivery_address: pickupLocationValue, delivery_street: street, delivery_suburb: suburb, delivery_state: state, delivery_postcode: postcode, delivery_place_id: String(body.deliveryPlaceId || '').trim().slice(0, 300) }
+  }
+  if (!returnLocationValue || (user.role !== 'ADMIN' && !allowedLocations.includes(returnLocationValue))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请选择管理员配置的归还地点')}`)
 
   if (!deviceId || !startDate || !endDate) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备、开始日期和结束日期均为必填项')}`);
   }
   const lateFeePerDay = Number(body.lateFeePerDay)
   const repairCost = body.repairCost === '' ? null : Number(body.repairCost)
-  if (!deviceCondition?.trim() || !pickupLocation?.trim() || !returnLocation?.trim() || !Number.isFinite(lateFeePerDay) || lateFeePerDay < 0 || !Number.isFinite(deliveryFee) || deliveryFee < 0 || (repairCost !== null && (!Number.isFinite(repairCost) || repairCost < 0))) {
+  if (!deviceCondition?.trim() || !Number.isFinite(lateFeePerDay) || lateFeePerDay < 0 || !Number.isFinite(deliveryFee) || deliveryFee < 0 || (repairCost !== null && (!Number.isFinite(repairCost) || repairCost < 0))) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请填写设备状况、取还地点及有效的非负费用')}`);
   }
 
@@ -55,19 +73,9 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const contractId = `ct-${nanoid(10)}`;
   const signToken = nanoid(32);
 
-  // 生成订单编号：OD + 当天日期年月日 + 时间戳 + 随机6位大写字母/数字，确保唯一性
-  const now = new Date();
-  const orderYear = now.getFullYear();
-  const orderMonth = (now.getMonth() + 1).toString().padStart(2, '0');
-  const orderDay = now.getDate().toString().padStart(2, '0');
-  const orderDateStr = `${orderYear}${orderMonth}${orderDay}`;
-  const timestamp = Date.now().toString(); // 完整时间戳，精确到毫秒
-  const orderRandomSuffix = uppercaseAlphanumericNanoid().slice(0, 6); // 增加到6位随机字符
-  const orderNo = `OD${orderDateStr}${timestamp.slice(-8)}${orderRandomSuffix}`;
-
   const newOrder: Order = {
     id: orderId,
-    orderNo: orderNo,
+    orderNo: null,
     userId: user.id, // 临时用户ID，将在客户签署时更新
     deviceId: deviceId,
     startDate: startDate,
@@ -112,9 +120,9 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     device_accessories: deviceAccessories?.trim() || null,
     late_fee_per_day: lateFeePerDay,
     repair_cost: repairCost,
-    pickup_location: pickupLocation.trim(),
-    return_location: returnLocation.trim(),
-    contract_data: { invoice_number: `INV-${orderNo}`, delivery_method: deliveryMethod, delivery_fee: deliveryFee.toFixed(2), agreement_version: '1.0' },
+    pickup_location: pickupLocationValue,
+    return_location: returnLocationValue,
+    contract_data: { invoice_number: '', delivery_method: deliveryMethod, delivery_fee: deliveryFee.toFixed(2), pickup_location: pickupLocationValue, return_location: returnLocationValue, ...deliveryAddressData, agreement_version: '1.0' },
   };
 
   await insertOrder(c, newOrder);

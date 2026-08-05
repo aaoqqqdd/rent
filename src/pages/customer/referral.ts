@@ -13,8 +13,8 @@ function desensitizeName(name: string): string {
 }
 
 export async function renderCustomerReferral(c: Context, user: any, message?: string, type?: 'success' | 'error' | 'info') {
-  // 从数据库获取完整的用户信息和佣金统计
-  const currentUser = await c.env.RENT.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+  // 使用统一归一化读取，确保 snake_case 数据库字段能被页面正确识别。
+  const currentUser = await getUserById(c, user.id);
   
   if (!currentUser) {
     return buildLayout('我的推荐 - 电脑租赁管理系统', '<div class="panel"><h2>用户未找到</h2><p>无法加载推荐信息。</p></div>', user);
@@ -28,6 +28,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
   type CommissionRecord = { amount: number; status: string }
 
   const records = (commissionRecords.results || []) as CommissionRecord[]
+  const commissionBalance = Number(currentUser.commissionBalance || 0)
 
   // 计算佣金统计
   const totalCommission = records.reduce((sum, record) => sum + (record.amount || 0), 0)
@@ -128,8 +129,8 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
         <form method="POST" action="/customer/referral/withdraw" id="withdrawForm">
           <div class="form-group">
             <label class="form-label" for="withdrawAmount">提现金额</label>
-            <input type="number" id="withdrawAmount" name="amount" class="form-control" min="0.01" max="${currentUser.commission_balance}" step="0.01" required />
-            <p class="form-text">当前可提现余额: ${formatCurrency(currentUser.commission_balance)}</p>
+            <input type="number" id="withdrawAmount" name="amount" class="form-control" min="0.01" max="${commissionBalance}" step="0.01" required />
+            <p class="form-text">当前可提现余额: ${formatCurrency(commissionBalance)}</p>
           </div>
           
           <div class="form-group">
@@ -143,7 +144,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
                 </div>
               </label>
               <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 12px; border: 1px solid var(--border); border-radius: 8px;">
-                <input type="radio" name="withdrawMethod" value="bank_transfer" onchange="toggleBankDetails()" ${currentUser.commission_balance >= 100 ? '' : 'disabled'} />
+                <input type="radio" name="withdrawMethod" value="bank_transfer" onchange="toggleBankDetails()" ${commissionBalance >= 100 ? '' : 'disabled'} />
                 <div>
                   <strong>银行转账</strong>
                   <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 14px;">最低提现金额100澳元，1-2个工作日到账</p>
@@ -155,7 +156,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
           <div id="bankDetailsSection" style="display: none;">
             <div class="form-group">
               <label class="form-label" for="accountName">银行账户名称</label>
-              <input type="text" id="accountName" name="account_name" class="form-control" value="${currentUser.account_name || ''}" />
+              <input type="text" id="accountName" name="account_name" class="form-control" value="${currentUser.name || ''}" />
             </div>
             <div class="form-group">
               <label class="form-label" for="bsb">BSB (银行代码)</label>
@@ -167,7 +168,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
             </div>
           </div>
           
-          <button type="submit" class="button button-primary" ${currentUser.commission_balance <= 0 ? 'disabled' : ''}>申请提现</button>
+          <button type="submit" class="button button-primary" ${commissionBalance <= 0 ? 'disabled' : ''}>申请提现</button>
         </form>
         <script>
           function toggleBankDetails() {
