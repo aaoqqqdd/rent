@@ -12,7 +12,7 @@ export async function renderContractView(c: Context, contractId: string, user: a
     return buildLayout('查看合同 - 电脑租赁管理系统', '<div class="panel"><h2>合同未找到</h2><p>您请求的合同不存在。</p></div>', user);
   }
   const order = await getOrderById(c, contract.rentalId);
-  if (!user || (user.role === 'CUSTOMER' && order?.userId !== user.id)) {
+  if (!user || (user.role === 'CUSTOMER' && order?.userId !== user.id) || (user.role === 'STAFF' && (contract.createdBy || contract.created_by) !== user.id)) {
     return buildLayout('无权查看合同', '<div class="panel"><h2>无权查看合同</h2><p>请登录合同所属账户后查看。</p><a class="button" href="/login">登录</a></div>', user)
   }
   if (!isContractFinalized(contract) && user.role !== 'ADMIN') {

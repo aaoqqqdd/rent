@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { createStripeCheckout } from '../stripePayments';
@@ -16,6 +16,7 @@ import { getStripeRuntimeConfig } from '../../stripe';
 
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
   const token = identifier; // 明确定义 token
+  const currentUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null)
 
   // 记录进入签约流程的日志
   await logError(c, 'DEBUG', `Entering contract signing process`, undefined, { 
@@ -63,6 +64,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
   let redirectUrl = '';
   let errorMessage: string | undefined = undefined;
+  let signingCompleted = false;
 
   try {
     switch (step) {
@@ -91,33 +93,41 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先同意租赁协议。');
         }
 
-        const { name, email, password, passwordConfirm, phoneCode, phone, createAccount, referrer, esignSignature } = body;
+        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount, referrer, esignSignature } = body;
+        const cleanFirstName = String(firstName || '').trim()
+        const cleanLastName = String(lastName || '').trim()
+        const name = `${cleanFirstName} ${cleanLastName}`.trim()
+        const email = String(body.email || '').trim().toLowerCase()
+        const submittedPhone = phone
         
         // 验证必填字段
-        if (!name || !email || !phoneCode || !phone || esignSignature?.trim() !== name.trim()) {
+        if (!cleanFirstName || !cleanLastName || !email || !submittedPhone || esignSignature?.trim() !== name) {
           await logError(c, 'INFO', `Missing required fields in step 2`, undefined, { 
             token, 
             hasName: !!name, 
             hasEmail: !!email, 
-            hasPhoneCode: !!phoneCode, 
-            hasPhone: !!phone 
+            hasPhoneCode: !!phoneCode,
+            hasPhone: !!submittedPhone
           });
           throw new Error('请完整填写姓名、邮箱和联系电话；电子签名必须与姓名一致。');
         }
+        if (cleanFirstName.length > 100 || cleanLastName.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          throw new Error('姓名或电子邮箱格式不正确。')
+        }
         
         // 如果选择创建账户，密码是必填的
-        if (createAccount && (!password || !passwordConfirm)) {
+        if (!currentUser && createAccount && (!password || !passwordConfirm)) {
           await logError(c, 'INFO', `Missing password for account creation`, undefined, { token });
           throw new Error('创建账户时密码和确认密码是必填项。');
         }
         
-        if (createAccount && password !== passwordConfirm) {
+        if (!currentUser && createAccount && password !== passwordConfirm) {
           await logError(c, 'INFO', `Password mismatch in account creation`, undefined, { token });
           throw new Error('两次输入的密码不一致。');
         }
         
         // 验证电话号码格式 - 先清理空格、连字符和国际前缀，再按各国规则校验
-        const normalizedPhone = String(phone || '').replace(/\D/g, '');
+        const normalizedPhone = String(submittedPhone || '').replace(/\D/g, '');
         let phoneToValidate = normalizedPhone;
 
         if (phoneCode === '+86') {
@@ -163,8 +173,14 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
         
         // 从数据库检查邮箱是否已存在
-        const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
-        if (existingUser) {
+        const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() as any
+        if (currentUser) {
+          if (existingUser && existingUser.id !== currentUser.id) throw new Error('该邮箱已被其他账户使用，请更换电子邮箱。')
+          const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
+          await c.env.RENT.prepare('UPDATE users SET name = ?, email = ?, phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .bind(name, email, fullPhone, currentUser.id).run()
+          await updateSignSession(c, token, { userIdToLink: currentUser.id });
+        } else if (existingUser) {
           await logError(c, 'INFO', `Existing user found with email, will link account`, undefined, { token, email, existingUserId: existingUser.id });
           // 如果邮箱已存在，我们不会立即报错，而是将现有用户的ID存入会话
           // 在步骤3中，我们会用这个ID来关联合同，而不是创建新用户
@@ -182,14 +198,15 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         // 检查邮箱是否存在，并抛出特定错误以便前端处理
-        if (existingUser && !body.force_continue) {
+        if (!currentUser && existingUser) {
           await logError(c, 'INFO', `Email exists and user not forced to continue, returning EMAIL_EXISTS`, undefined, { token, email });
           throw new Error('该邮箱已注册，请直接登录或使用其他邮箱。');
         }
 
         // 保存用户信息到会话
-        await updateSignSession(c, token, { 
-          userInfo: { ...body, phone: phoneToValidate, fullPhone: `${phoneCode}${phoneToValidate}` } 
+        const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
+        await updateSignSession(c, token, {
+          userInfo: { ...body, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount: currentUser ? false : createAccount, phone: phoneToValidate, fullPhone }
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
         
@@ -210,6 +227,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const refundBsb = String(body.refundBsb || '').trim()
         const refundAccountNumber = String(body.refundAccountNumber || '').replace(/\s/g, '')
         const refundAccountName = String(body.refundAccountName || '').trim()
+        const transferReference = String(body.transferReference || '').trim().slice(0, 100)
+        const transferNote = String(body.transferNote || '').trim().slice(0, 500)
+        let transferProofUrl = ''
         if (!paymentMethod) {
           await logError(c, 'INFO', `No payment method selected in step 3`, undefined, { token });
           throw new Error('请选择一种支付方式。');
@@ -225,6 +245,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           if (!/^\d{3}-?\d{3}$/.test(refundBsb) || !/^\d{4,10}$/.test(refundAccountNumber) || !refundAccountName) {
             throw new Error('选择银行原路退款时，请填写正确的账户名、BSB 和银行账号')
           }
+        }
+        if (paymentMethod === 'bank_transfer') {
+          if (!transferReference) throw new Error('银行转账必须填写付款 Reference')
+          try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
 
         // **核心签约逻辑**
@@ -264,7 +288,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             id: newUserId,
             name: userInfo.name,
             email: userInfo.email,
-            password: userInfo.createAccount ? userInfo.password : undefined, // 直接传递 password
+            password: userInfo.createAccount ? userInfo.password : undefined,
             // password_hash: password_hash ?? undefined,
             role: 'CUSTOMER',
             phone: userInfo.fullPhone,
@@ -272,8 +296,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             commissionBalance: 0,
             pendingCommission: 0,
             withdrawnCommission: 0,
-            referralCode: undefined,
-            referrerId: referrerId ?? undefined,
+            referralCode: null as any,
+            referrerId: referrerId ?? null as any,
+            staffId: contract.createdBy || contract.created_by || undefined,
             createdAt: new Date().toISOString(),
             registrationDate: new Date().toISOString(),
           };
@@ -281,6 +306,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           await logError(c, 'INFO', `New user created successfully`, undefined, { token, newUserId });
         } else {
           await logError(c, 'INFO', `Linking existing user to contract`, undefined, { token, userId });
+          const contractOwner = contract.createdBy || contract.created_by
+          if (contractOwner) await c.env.RENT.prepare('UPDATE users SET staff_id = COALESCE(staff_id, ?) WHERE id = ?').bind(contractOwner, userId).run()
         }
 
         // 2. 更新订单信息
@@ -320,14 +347,19 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
           const paymentTotal = Number(paymentOrder?.totalAmount || 0)
           const paymentDeposit = Number(paymentOrder?.depositAmount || 0)
+          const paymentId = `p-${nanoid(12)}`
           await c.env.RENT.prepare(`
             INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, paid_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?)
           `).bind(
-            `p-${nanoid(12)}`, contract.rentalId, userId, paymentMethod,
+            paymentId, contract.rentalId, userId, paymentMethod,
             paymentTotal, paymentDeposit, paymentTotal - paymentDeposit,
             paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? new Date().toISOString() : null
           ).run()
+          if (paymentMethod === 'bank_transfer') {
+            await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')")
+              .bind(`proof-${nanoid(12)}`, paymentId, transferReference, transferNote || null, transferProofUrl).run()
+          }
         }
         if (paymentMethod === 'balance') {
           await ensureOrderNumber(c, contract.rentalId)
@@ -418,12 +450,16 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         
         // 5. 清理会话
         await deleteSignSession(c, token);
+        signingCompleted = true;
         await logError(c, 'INFO', `Sign session deleted after successful completion`, undefined, { token });
 
         if (paymentMethod === 'stripe') {
           const stripeUser = await getUserById(c, userId)
           if (!stripeUser) throw new Error('无法读取付款用户信息')
-          return createStripeCheckout(c, stripeUser, contract.rentalId)
+          const stripeResponse = await createStripeCheckout(c, stripeUser, contract.rentalId)
+          const headers = new Headers(stripeResponse.headers)
+          headers.append('Set-Cookie', 'contract_sign_draft=; Path=/contract/sign; Max-Age=0; SameSite=Lax')
+          return new Response(stripeResponse.body, { status: stripeResponse.status, statusText: stripeResponse.statusText, headers })
         }
         redirectUrl = `/payment/result?orderId=${contract.rentalId}`;
         await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, { 
@@ -455,6 +491,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
     status: 302,
     headers: {
       'Location': redirectUrl,
+      ...(signingCompleted ? { 'Set-Cookie': 'contract_sign_draft=; Path=/contract/sign; Max-Age=0; SameSite=Lax' } : {}),
     },
   });
 }

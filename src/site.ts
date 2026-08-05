@@ -40,6 +40,18 @@ export function sanitizePlainText(value: unknown, maxLength = 500): string {
     .slice(0, maxLength)
 }
 
+export function splitPersonName(value: unknown): { firstName: string; lastName: string } {
+  const name = sanitizePlainText(value, 200).trim()
+  const parts = name.split(/\s+/).filter(Boolean)
+  if (parts.length > 1) return { firstName: parts.slice(0, -1).join(' '), lastName: parts.at(-1) || '' }
+  if (/^[\p{Script=Han}]{2,}$/u.test(name)) return { firstName: name.slice(1), lastName: name.slice(0, 1) }
+  return { firstName: name, lastName: '' }
+}
+
+export function combinePersonName(firstName: unknown, lastName: unknown): string {
+  return `${sanitizePlainText(firstName, 100).trim()} ${sanitizePlainText(lastName, 100).trim()}`.trim()
+}
+
 export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
 
 export interface User {
@@ -76,6 +88,7 @@ export interface User {
 
   // staff 相关旧代码可能依赖
   staffId?: string
+  staff_id?: string
 }
 
 export interface Device {
@@ -278,6 +291,7 @@ function normalizeUserRow(row: any): User {
 
   const referralCode = row.referralCode ?? row.referral_code ?? null
   const referrerId = row.referrerId ?? row.referrer_id ?? row.referrerId
+  const staffId = row.staffId ?? row.staff_id
 
   return {
     ...row,
@@ -291,7 +305,9 @@ function normalizeUserRow(row: any): User {
     updatedAt,
     updated_at,
     referralCode,
-    referrerId
+    referrerId,
+    staffId,
+    staff_id: staffId
   } as User
 }
 
@@ -309,6 +325,9 @@ function normalizeOrderRow(orderRow: any): Order {
   const refundBsb = orderRow.refundBsb ?? orderRow.refund_bsb
   const refundAccountNumber = orderRow.refundAccountNumber ?? orderRow.refund_account_number
   const refundAccountName = orderRow.refundAccountName ?? orderRow.refund_account_name
+  const orderNo = orderRow.orderNo ?? orderRow.order_no
+  const contractId = orderRow.contractId ?? orderRow.contract_id
+  const signedAt = orderRow.signedAt ?? orderRow.signed_at
 
   return {
     ...orderRow,
@@ -328,6 +347,12 @@ function normalizeOrderRow(orderRow: any): Order {
     created_at: createdAt,
     refundMethod,
     refundBsb,
+    orderNo,
+    order_no: orderNo,
+    contractId,
+    contract_id: contractId,
+    signedAt,
+    signed_at: signedAt,
     refundAccountNumber,
     refundAccountName,
     status: orderRow.status ?? orderRow.order_status
@@ -645,17 +670,17 @@ export async function updateOrder(c: Context, order: Order): Promise<void> {
       'UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, contractId = ?, signedAt = ? WHERE id = ?'
     )
     .bind(
-      order.orderNo,
-      order.userId,
-      order.deviceId,
-      order.startDate,
-      order.endDate,
-      order.status,
-      order.paymentMethod,
-      order.totalAmount,
-      order.depositAmount,
-      order.contractId,
-      order.signedAt,
+      order.orderNo ?? null,
+      order.userId ?? null,
+      order.deviceId ?? null,
+      order.startDate ?? null,
+      order.endDate ?? null,
+      order.status ?? 'pending_payment',
+      order.paymentMethod ?? null,
+      Number(order.totalAmount ?? 0),
+      Number(order.depositAmount ?? 0),
+      order.contractId ?? null,
+      order.signedAt ?? null,
       order.id
     )
     .run()
@@ -934,21 +959,16 @@ export function getSystemSettings(): typeof systemSettings {
 
 export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
   const db = getDB(c)
-
-  const read = async (key: SystemSettingsKey) => {
-    const row = await db.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(key).first()
-    const value = (row as any)?.value
-    return value ?? null
-  }
-
-  const userTermsValue = await read('userTerms')
-  const rentalTermsValue = await read('rentalTerms')
-  const priceStrategyValue = await read('priceStrategy')
-  const paymentMethodsValue = await read('paymentMethods')
-  const bankDetailsValue = await read('bankDetails')
-  const emailTemplateValue = await read('emailTemplate')
-  const referralSettingsValue = await read('referralSettings')
-  const companyDetailsValue = await read('companyDetails')
+  const rows = await db.prepare('SELECT key, value FROM systemSettings').all() as any
+  const values = new Map<SystemSettingsKey, string>((rows.results || []).map((row: any) => [row.key, row.value]))
+  const userTermsValue = values.get('userTerms')
+  const rentalTermsValue = values.get('rentalTerms')
+  const priceStrategyValue = values.get('priceStrategy')
+  const paymentMethodsValue = values.get('paymentMethods')
+  const bankDetailsValue = values.get('bankDetails')
+  const emailTemplateValue = values.get('emailTemplate')
+  const referralSettingsValue = values.get('referralSettings')
+  const companyDetailsValue = values.get('companyDetails')
 
   systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? systemSettings.userTerms)
   systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
@@ -1026,6 +1046,8 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   const hasCreatedAtCamel = await userHasColumn(c, 'createdAt')
   const hasCommissionBalanceSnake = await userHasColumn(c, 'commission_balance')
   const hasCommissionBalanceCamel = await userHasColumn(c, 'commissionBalance')
+  const hasStaffIdSnake = await userHasColumn(c, 'staff_id')
+  const hasStaffIdCamel = await userHasColumn(c, 'staffId')
 
   let passwordHashToStore = user.passwordHash ?? null;
   let passwordSaltToStore = user.passwordSalt ?? null;
@@ -1046,8 +1068,8 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   }
 
   // 构建INSERT字段和值
-  const insertFields = ['id', 'name', 'email', 'role', 'status', 'balance'];
-  const insertValues = [user.id, user.name, user.email, user.role, user.status ?? 'active', user.balance ?? 0];
+  const insertFields = ['id', 'name', 'email', 'phone', 'role', 'status', 'balance'];
+  const insertValues = [user.id, user.name, user.email, user.phone || null, user.role, user.status ?? 'active', user.balance ?? 0];
 
   // 处理commission_balance / commissionBalance
   if (hasCommissionBalanceSnake) {
@@ -1074,6 +1096,14 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   } else if (hasReferrerIdCamel) {
     insertFields.push('referrerId');
     insertValues.push(user.referrerId ?? null);
+  }
+
+  if (hasStaffIdSnake) {
+    insertFields.push('staff_id');
+    insertValues.push(user.staffId ?? null);
+  } else if (hasStaffIdCamel) {
+    insertFields.push('staffId');
+    insertValues.push(user.staffId ?? null);
   }
 
   // 处理created_at / createdAt
@@ -1141,13 +1171,14 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     commissionBalance: 'commission_balance',
     createdAt: 'created_at',
     updatedAt: 'updated_at',
-    commissionRate: 'commission_rate'
+    commissionRate: 'commission_rate',
+    staffId: 'staff_id'
   }
 
   const allowedFields = new Set([
     'name', 'email', 'role', 'status', 'balance', 'phone', 'bsb', 'account', 'accountNumber',
     'referralCode', 'referrerId', 'passwordHash', 'passwordSalt', 'commissionBalance',
-    'createdAt', 'updatedAt', 'commissionRate',
+    'createdAt', 'updatedAt', 'commissionRate', 'staffId',
   ])
   for (const key of Object.keys(fields)) {
     if (!allowedFields.has(key)) delete fields[key]
@@ -1632,7 +1663,7 @@ export const CONTRACT_VARIABLE_NAMES = [
   'company_name','company_abn','company_address','company_phone','company_email','company_website','company_logo',
   'customer_name','customer_phone','customer_email','customer_address','customer_dob','customer_country','customer_id_type','customer_id_number','customer_driver_expiry','emergency_contact','emergency_phone',
   'device_id','asset_tag','device_name','device_brand','device_model','device_cpu','device_ram','device_storage','device_gpu','device_os','device_sn','charger_sn','battery_health','battery_cycles','device_condition','device_accessories',
-  'start_date','end_date','rental_days','pickup_location','return_location','delivery_method','delivery_fee','return_date','return_status',
+  'start_date','end_date','rental_days','pickup_location','return_location','delivery_method','delivery_fee','return_method','return_date','return_status',
   'currency','daily_rate','subtotal','gst_included','gst_amount','discount','coupon_code','total_rent','deposit_amount','deposit_paid','rent_paid','amount_due','payment_method','payment_date','payment_reference',
   'bank_name','account_name','bank_bsb','bank_account',
   'late_days','late_fee_per_day','late_fee',
@@ -1650,7 +1681,7 @@ export const CONTRACT_VARIABLE_GROUPS = [
   ['公司', ['company_name','company_abn','company_address','company_phone','company_email','company_website','company_logo']],
   ['客户', ['customer_name','customer_phone','customer_email','customer_address','customer_dob','customer_country','customer_id_type','customer_id_number','customer_driver_expiry','emergency_contact','emergency_phone']],
   ['设备', ['device_id','asset_tag','device_name','device_brand','device_model','device_cpu','device_ram','device_storage','device_gpu','device_os','device_sn','charger_sn','battery_health','battery_cycles','device_condition','device_accessories']],
-  ['租赁', ['start_date','end_date','rental_days','pickup_location','return_location','delivery_method','delivery_fee','return_date','return_status']],
+  ['租赁', ['start_date','end_date','rental_days','pickup_location','return_location','delivery_method','delivery_fee','return_method','return_date','return_status']],
   ['付款', ['currency','daily_rate','subtotal','gst_included','gst_amount','discount','coupon_code','total_rent','deposit_amount','deposit_paid','rent_paid','amount_due','payment_method','payment_date','payment_reference']],
   ['银行', ['bank_name','account_name','bank_bsb','bank_account']],
   ['逾期归还', ['late_days','late_fee_per_day','late_fee']],
@@ -1737,7 +1768,7 @@ export function renderContractVariables(content: string, contract: Contract, ord
 export const CONTRACT_OPERATIONAL_FIELDS = [
   ['agreement_version','合同版本'], ['jurisdiction','司法管辖区'],
   ['customer_address','客户地址'], ['customer_dob','客户出生日期'], ['customer_country','客户国家'], ['customer_id_type','证件类型'], ['customer_id_number','证件号码'], ['customer_driver_expiry','驾照到期日'], ['emergency_contact','紧急联系人'], ['emergency_phone','紧急联系电话'],
-  ['invoice_number','发票编号'], ['delivery_method','配送方式（Pickup / Delivery）'], ['delivery_fee','配送费'], ['pickup_location','取货地点'], ['return_location','归还地点'], ['pickup_time','取货时间'], ['return_time','归还时间'],
+  ['invoice_number','发票编号'], ['delivery_method','配送方式（Pickup / Delivery）'], ['delivery_fee','配送费'], ['return_method','归还方式（CourierPickup / StoreReturn）'], ['pickup_location','取货地点'], ['return_location','归还地点'], ['pickup_time','取货时间'], ['return_time','归还时间'],
   ['return_status','归还状态'], ['return_date','实际归还日期'], ['inspection_date','检查日期'], ['inspection_by','检查员工'],
   ['device_brand','设备品牌'], ['device_cpu','CPU'], ['device_ram','内存'], ['device_storage','存储'], ['device_gpu','显卡'], ['device_os','设备操作系统'],
   ['battery_health','电池健康'], ['charger_sn','充电器 SN'], ['asset_tag','公司资产编号'], ['device_condition','设备状况'], ['device_accessories','交付配件'],
@@ -1762,10 +1793,12 @@ export const CONTRACT_SIGNED_FIELDS = new Set([
 
 export async function getContractVariableData(c: Context, contract: Contract, order: any): Promise<Record<string, unknown>> {
   const stored = typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : (contract.contract_data || {})
-  const payments = await c.env.RENT.prepare("SELECT COALESCE(SUM(amount),0) paid, COALESCE(SUM(deposit_amount),0) deposit_paid, COALESCE(SUM(rental_amount),0) rent_paid, MAX(paid_at) payment_date, MAX(currency) currency FROM payments WHERE rental_id = ? AND status = 'paid'").bind(order.id).first() as any
-  const reference = await c.env.RENT.prepare("SELECT pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.created_at DESC LIMIT 1").bind(order.id).first() as any
-  const refund = await c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-  const creator = contract.createdBy ? await getUserById(c, contract.createdBy) : null
+  const [payments, reference, refund, creator] = await Promise.all([
+    c.env.RENT.prepare("SELECT COALESCE(SUM(amount),0) paid, COALESCE(SUM(deposit_amount),0) deposit_paid, COALESCE(SUM(rental_amount),0) rent_paid, MAX(paid_at) payment_date, MAX(currency) currency FROM payments WHERE rental_id = ? AND status = 'paid'").bind(order.id).first(),
+    c.env.RENT.prepare("SELECT pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.created_at DESC LIMIT 1").bind(order.id).first(),
+    c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
+    contract.createdBy ? getUserById(c, contract.createdBy) : Promise.resolve(null),
+  ]) as any[]
   const paid = Number(payments?.paid || 0)
   const deposit = Number(order.depositAmount ?? order.deposit_amount ?? 0)
   const total = Number(order.totalAmount ?? order.total_amount ?? 0)
@@ -1813,11 +1846,11 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
     .bind(`inv-${order.id}`, String(data.invoice_number || `INV-${order.orderNo || order.id}`), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
 }
 
-export async function issueCreditNote(c: Context, orderId: string, amount: number): Promise<void> {
+export async function issueCreditNote(c: Context, orderId: string, amount: number, refundedProcessingFee = 0): Promise<void> {
   const invoice = await c.env.RENT.prepare("SELECT id, invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice'").bind(orderId).first() as any
   if (!invoice) return
-  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, total_amount, currency, status, related_invoice_id) VALUES (?, ?, ?, 'credit_note', ?, 0, 0, ?, 'AUD', 'issued', ?)`)
-    .bind(`cn-${orderId}`, `CN-${invoice.invoice_number}`, orderId, -Math.abs(amount), -Math.abs(amount), invoice.id).run()
+  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status, related_invoice_id) VALUES (?, ?, ?, 'credit_note', ?, 0, 0, ?, ?, 'AUD', 'issued', ?)`)
+    .bind(`cn-${orderId}`, `CN-${invoice.invoice_number}`, orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
 }
 
 export const contractTemplate = {

@@ -16,6 +16,9 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
   if (!contract) {
     return buildLayout('合同查看 - 电脑租赁管理系统', `<div class="panel"><h2>合同未找到</h2><p>该订单没有关联的合同。</p></div>`, user);
   }
+  if (user.role !== 'ADMIN' && (contract.createdBy || contract.created_by) !== user.id) {
+    return buildLayout('无权查看合同', '<div class="panel"><h2>无权查看合同</h2><p>员工只能查看自己创建的合同。</p></div>', user)
+  }
 
   if (!isContractFinalized(contract)) {
     return buildLayout('正式合同尚未生成', '<div class="panel"><h2>正式合同尚未生成</h2><p>客户完成电子签署后，员工才可查看和下载合同。</p><a class="button button-secondary" href="/staff/contracts">返回合同管理</a></div>', user)

@@ -3,11 +3,11 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getUsers } from '../../site';
+import { buildLayout, getUsers, splitPersonName } from '../../site';
 import { Context } from 'hono';
 
 export async function renderStaffCustomers(c: Context, user: any, searchTerm: string = '') {
-  const customers = (await getUsers(c)).filter(u => u.role === 'CUSTOMER' && u.staffId === user.id);
+  const customers = (await getUsers(c)).filter(account => account.role === 'CUSTOMER' && (user.role === 'ADMIN' || account.staffId === user.id));
 
   const filteredCustomers = customers.filter(customer => {
     const searchLower = searchTerm.toLowerCase();
@@ -18,7 +18,7 @@ export async function renderStaffCustomers(c: Context, user: any, searchTerm: st
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>客户管理</h2><span class="section-note">管理所有注册客户。</span></div>
+      <div class="section-title"><div><h2>客户管理</h2><span class="section-note">管理所有注册客户。</span></div><a class="button" href="/staff/customers/new">创建客户账户</a></div>
       <div class="search-bar" style="margin-bottom: 20px;">
         <form action="/staff/customers" method="GET" style="display: flex; gap: 10px;">
           <input type="text" name="searchTerm" class="form-control" placeholder="搜索客户姓名、邮箱或手机..." value="${searchTerm}" style="flex-grow: 1;" />
@@ -26,10 +26,11 @@ export async function renderStaffCustomers(c: Context, user: any, searchTerm: st
         </form>
       </div>
       <div class="table-wrapper">
-        <table class="table"><thead><tr><th>姓名</th><th>邮箱</th><th>手机</th><th>注册日期</th><th>操作</th></tr></thead><tbody>
-          ${filteredCustomers.map((customer) => `
+        <table class="table"><thead><tr><th>名</th><th>姓</th><th>邮箱</th><th>手机</th><th>注册日期</th><th>操作</th></tr></thead><tbody>
+          ${filteredCustomers.map((customer) => { const personName = splitPersonName(customer.name); return `
             <tr>
-              <td>${customer.name}</td>
+              <td>${personName.firstName || '-'}</td>
+              <td>${personName.lastName || '-'}</td>
               <td>${customer.email}</td>
               <td>${customer.phone ?? 'N/A'}</td>
               <td>${customer.registrationDate}</td>
@@ -38,7 +39,7 @@ export async function renderStaffCustomers(c: Context, user: any, searchTerm: st
                 <a class="link-button" href="/staff/customers/${customer.id}/edit">编辑</a>
               </td>
             </tr>
-          `).join('')}
+          `}).join('')}
         </tbody></table>
       </div>
     </div>

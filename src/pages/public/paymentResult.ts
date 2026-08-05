@@ -21,7 +21,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
 
   if (status === 'success') {
     title = '支付成功！';
-    message = `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已成功支付 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>${Number(payment?.processing_fee || 0) ? `，其中支付手续费为 ${formatCurrency(payment.processing_fee)}（不可退款）` : ''}。网站发票与收据已生成。`;
+    message = `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已成功支付 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>${Number(payment?.processing_fee || 0) ? `，其中支付手续费为 ${formatCurrency(payment.processing_fee)}（仅退还押金时退回相应部分）` : ''}。网站发票与收据已生成。`;
     icon = `
       <div class="icon-wrapper success">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-check"><polyline points="20 6 9 17 4 12"></polyline></svg>

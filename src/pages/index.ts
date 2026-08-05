@@ -33,6 +33,7 @@ export * from './staff/deviceEdit';
 export * from './staff/customers';
 export * from './staff/customerDetail';
 export * from './staff/customerEdit';
+export * from './staff/customerNew';
 export * from './staff/newContract';
 export * from './staff/ordersPending';
 export * from './staff/rentalsTracking';

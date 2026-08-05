@@ -767,12 +767,39 @@ tr:hover td { background: #f1f5f8; }
 .empty-state h3 { margin: 0; }
 .empty-state p { margin: 8px 0 18px; }
 .user-id-cell { color: var(--text-secondary); font-size: .75rem; }
-.delivery-address { margin-top: 28px; padding: 22px; background: var(--bg-subtle); border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 4px; }
-.address-autocomplete { position: relative; }
-.address-suggestions { position: absolute; z-index: 40; top: calc(100% - 9px); left: 0; right: 0; padding: 5px; background: var(--surface-strong); border: 1px solid var(--border); border-radius: 3px; box-shadow: var(--shadow-md); }
-.address-suggestions button { width: 100%; padding: 10px 11px; display: block; color: var(--text); background: transparent; border: 0; border-bottom: 1px solid var(--border-subtle); text-align: left; cursor: pointer; }
-.address-suggestions button:hover, .address-suggestions button:focus { color: var(--primary-dark); background: var(--primary-light); }
-.address-suggestions small { padding: 7px 10px 3px; display: block; color: var(--text-tertiary); font: .62rem var(--font-mono); text-align: right; }
+.page-header { margin-bottom: 22px; padding: 24px 26px; display: flex; align-items: center; justify-content: space-between; gap: 24px; color: #eef3f7; background: var(--graphite); border-bottom: 4px solid var(--accent); }
+.page-header h2 { margin: 2px 0 4px; color: #fff; font-size: clamp(1.55rem, 3vw, 2.15rem); text-transform: uppercase; letter-spacing: .035em; }
+.page-header p:not(.section-code) { margin: 0; color: #b9c4ce; }
+.page-header .section-code { color: #8da0b1; }
+.subsection-heading { margin-bottom: 14px; display: flex; align-items: flex-end; justify-content: space-between; }
+.subsection-heading-spaced { margin-top: 42px; padding-top: 28px; border-top: 1px solid var(--border); }
+.subsection-heading h3 { margin: 2px 0 0; }
+.filter-tabs { margin-bottom: 16px; padding: 5px; display: flex; gap: 5px; flex-wrap: wrap; background: var(--bg-subtle); border: 1px solid var(--border); }
+.filter-tabs .button { min-height: 34px; padding: 6px 12px; box-shadow: none !important; }
+.search-bar { margin-bottom: 24px; }
+.search-form { display: flex; align-items: stretch; gap: 8px; }
+.search-form .form-control { min-width: 0; margin: 0; }
+.table-actions { min-width: 190px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.inline-form { margin: 0; display: inline-flex; }
+.badge-neutral { color: var(--text-secondary); background: var(--bg-subtle); }
+.badge-neutral::before { background: var(--text-tertiary); }
+.action-toast { position: fixed; z-index: 100; right: 22px; bottom: 22px; max-width: min(360px, calc(100vw - 44px)); padding: 12px 16px; color: #fff; background: var(--graphite); border-left: 4px solid var(--success); box-shadow: var(--shadow-lg); font-weight: 600; }
+.action-toast[data-state="error"] { border-left-color: var(--danger); }
+
+.delivery-address { margin-top: 28px; padding: 22px; background: var(--bg-subtle); border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 3px; }
+.address-autocomplete { position: relative; z-index: 5; }
+.address-search-control { position: relative; }
+.address-search-control .form-control { margin-bottom: 0; padding-right: 54px; background: var(--surface-strong); }
+.address-search-indicator { position: absolute; top: 50%; right: 12px; padding: 3px 6px; color: var(--primary-dark); background: var(--primary-light); transform: translateY(-50%); font: 700 .65rem var(--font-mono); letter-spacing: .08em; }
+.address-search-status { min-height: 28px; padding: 7px 2px 0; color: var(--text-secondary); font-size: .75rem; }
+.address-search-status[data-state="loading"] { color: var(--primary-dark); }
+.address-search-status[data-state="success"] { color: var(--success); }
+.address-search-status[data-state="error"] { color: var(--danger); }
+.address-suggestions { position: absolute; z-index: 40; top: 70px; left: 0; right: 0; max-height: 310px; overflow-y: auto; padding: 6px; background: var(--surface-strong); border: 1px solid #aeb8c1; border-top: 3px solid var(--primary); border-radius: 3px; box-shadow: var(--shadow-lg); }
+.address-suggestions button { width: 100%; padding: 11px 10px; display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--text); background: transparent; border: 0; border-bottom: 1px solid var(--border-subtle); text-align: left; cursor: pointer; }
+.address-suggestions button:hover, .address-suggestions button:focus, .address-suggestions button[aria-selected="true"] { color: var(--primary-dark); background: var(--primary-light); outline: none; }
+.address-suggestion-marker { width: 30px; height: 26px; display: grid; place-items: center; color: var(--text-secondary); background: var(--bg-subtle); border: 1px solid var(--border); font-size: .62rem; }
+.address-suggestions small { padding: 8px 10px 4px; display: block; color: var(--text-tertiary); font: .62rem var(--font-mono); text-align: right; }
 
 .legal-template-workspace { margin: 30px 0; padding: 24px; background: var(--bg-subtle); border: 1px solid var(--border); border-left: 4px solid var(--primary); }
 .legal-template-card { margin: 18px 0; padding: 20px; background: var(--surface); border: 1px solid var(--border); }
@@ -780,7 +807,53 @@ tr:hover td { background: #f1f5f8; }
 .legal-template-heading p { margin: 4px 0 0; color: var(--text-secondary); }
 .legal-editor { min-height: 240px; background: var(--surface); }
 
+/* Public contract signing workstation */
+.signing-shell { width: min(980px, 100%); margin: 0 auto; }
+.signing-header { margin-bottom: 18px; padding: 25px 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; color: #eef3f7; background: var(--graphite); border-bottom: 4px solid var(--accent); box-shadow: var(--shadow-sm); }
+.signing-header h1 { margin: 3px 0 5px; color: #fff; font-size: clamp(1.7rem, 4vw, 2.35rem); letter-spacing: .035em; text-transform: uppercase; }
+.signing-header p:not(.section-code) { margin: 0; color: #bdc8d1; }
+.signing-header .section-code { margin: 0; color: #8fa2b1; }
+.signing-steps { margin: -1px -1px 26px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: var(--bg-subtle); border: 1px solid var(--border); }
+.signing-steps > div { min-height: 60px; padding: 13px 16px; display: flex; align-items: center; gap: 10px; color: var(--text-tertiary); border-top: 3px solid transparent; border-right: 1px solid var(--border); }
+.signing-steps > div:last-child { border-right: 0; }
+.signing-steps > div.is-active { color: var(--primary-dark); background: var(--surface); border-top-color: var(--primary); }
+.signing-steps .mono { font-size: .66rem; letter-spacing: .09em; }
+.signing-steps strong { font-size: .82rem; }
+.signing-agreement { max-height: 440px; margin: 18px 0; padding: clamp(18px, 4vw, 34px); overflow: auto; background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--primary); box-shadow: inset 0 1px 7px rgb(19 32 43 / .05); }
+.agreement-confirmation { margin-top: 20px; padding: 15px 17px; display: flex; align-items: flex-start; gap: 11px; background: var(--primary-light); border: 1px solid #bbcbf3; }
+.agreement-confirmation input { margin-top: 3px; accent-color: var(--primary); }
+.signing-form { margin-top: 20px; }
+.recorded-account { margin-bottom: 24px; padding: 20px; background: #f4f8f6; border: 1px solid #b8cfc1; border-left: 4px solid var(--success); }
+.recorded-account__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.recorded-account__header h3 { margin: 3px 0 0; }
+.recorded-account dl, .bank-transfer-notice dl { margin: 17px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); }
+.recorded-account dl div, .bank-transfer-notice dl div { min-width: 0; padding: 12px 12px 12px 0; }
+.recorded-account dt, .bank-transfer-notice dt { color: var(--text-secondary); font-size: .7rem; }
+.recorded-account dd, .bank-transfer-notice dd { margin: 4px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+.recorded-account > p { margin: 15px 0 0; color: var(--text-secondary); font-size: .78rem; }
+.phone-field { display: grid; grid-template-columns: minmax(150px, .38fr) minmax(0, 1fr); gap: 9px; }
+.account-choice, .payment-option { cursor: pointer; }
+.account-choice { margin: 8px 0 22px; padding: 15px 17px; display: flex; align-items: flex-start; gap: 11px; background: var(--bg-subtle); border: 1px solid var(--border); }
+.account-choice input, .payment-option input { margin-top: 3px; accent-color: var(--primary); }
+.account-choice small, .payment-option small { margin-top: 3px; display: block; color: var(--text-secondary); font-size: .74rem; font-weight: 400; }
+.field-error { min-height: 18px; padding-top: 4px; display: block; color: var(--danger); font-size: .72rem; }
+.form-control[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 2px rgb(176 46 46 / .12); }
+.form-error-summary { margin-top: 10px; padding: 11px 14px; color: #7e2020; background: #fff0f0; border-left: 4px solid var(--danger); font-weight: 600; }
+.payment-options { display: grid !important; gap: 9px !important; }
+.payment-option { padding: 15px 17px; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: flex-start; gap: 9px; background: var(--surface); border: 1px solid var(--border); transition: border-color .15s ease, background .15s ease; }
+.payment-option:hover, .payment-option:has(input:checked) { background: var(--primary-light); border-color: #9cb2e9; }
+.payment-option:has(input:disabled) { cursor: not-allowed; opacity: .62; }
+.bank-transfer-notice { margin-top: 16px; padding: 20px; background: #f7f9fa; border: 1px solid var(--border); border-left: 4px solid var(--primary); }
+.bank-transfer-notice[hidden] { display: none; }
+.bank-transfer-notice dl { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.bank-transfer-notice .grid { margin-top: 15px; padding-top: 17px; border-top: 1px solid var(--border); }
+
 @media (max-width: 760px) {
+  .page-header { padding: 20px; align-items: flex-start; flex-direction: column; }
+  .page-header .button { width: 100%; }
+  .search-form { flex-direction: column; }
+  .search-form .button { width: 100%; }
+  .table-actions { min-width: 150px; }
   .legal-template-workspace, .legal-template-card { padding: 16px; }
   .legal-template-heading { display: block; }
   .entity-heading { padding: 20px; align-items: flex-start; flex-direction: column; }
@@ -791,4 +864,10 @@ tr:hover td { background: #f1f5f8; }
   .data-list > div { grid-template-columns: 1fr; gap: 3px; }
   .record-actions { flex-direction: column-reverse; }
   .record-actions .button { width: 100%; }
+  .signing-header { padding: 20px; align-items: flex-start; flex-direction: column; }
+  .signing-steps { grid-template-columns: 1fr; }
+  .signing-steps > div { min-height: 46px; padding: 10px 13px; border-top: 0; border-right: 0; border-left: 3px solid transparent; border-bottom: 1px solid var(--border); }
+  .signing-steps > div.is-active { border-top: 0; border-left-color: var(--primary); }
+  .recorded-account dl, .bank-transfer-notice dl { grid-template-columns: 1fr; }
+  .phone-field { grid-template-columns: 1fr; }
 }

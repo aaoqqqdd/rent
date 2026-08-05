@@ -53,7 +53,8 @@ import {
   deleteAuthSession,
   buildLayout,
   getSystemSettings,
-  loadSystemSettingsFromDB
+  loadSystemSettingsFromDB,
+  combinePersonName
 } from './site'
 import { nanoid, customAlphabet } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -80,6 +81,13 @@ async function getTableColumns(c: any, tableName: string): Promise<string[]> {
 }
 
 const app = new Hono()
+
+app.get('/styles.css', (c) => {
+  c.header('Content-Type', 'text/css; charset=utf-8')
+  c.header('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400')
+  c.header('X-Content-Type-Options', 'nosniff')
+  return c.body(siteStyles)
+})
 
 let loginAttemptsSchemaReady: Promise<void> | null = null
 
@@ -150,14 +158,6 @@ app.use('*', async (c, next) => {
   if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.quilljs.com; style-src 'self' 'unsafe-inline' https://cdn.quilljs.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'")
 })
-
-app.get('/styles.css', (c) => {
-  c.header('Content-Type', 'text/css; charset=utf-8')
-  c.header('Cache-Control', 'public, max-age=3600')
-  return c.body(siteStyles)
-})
-
-
 
 app.use('*', async (c, next) => {
   try {
@@ -410,6 +410,56 @@ app.get('/staff/dashboard', async (c) => {
   return c.html(pages.renderStaffDashboard(user, dashboardData))
 })
 
+app.get('/staff/customers', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(await pages.renderStaffCustomers(c, user, c.req.query('searchTerm') || ''))
+})
+
+app.get('/staff/customers/new', (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(pages.renderStaffCustomerNew(user))
+})
+
+app.post('/staff/customers/new', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const name = combinePersonName(form.firstName, form.lastName)
+  const email = String(form.email || '').trim().toLowerCase()
+  const password = String(form.password || '')
+  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email || password.length < 8) return c.html(pages.renderStaffCustomerNew(user, '请完整填写名、姓、邮箱和至少 8 位密码'), 400)
+  if (await findUserByEmail(c, email)) return c.html(pages.renderStaffCustomerNew(user, '该邮箱已被使用'), 409)
+  const customer = await insertUser(c, { id: `u-${nanoid(10)}`, name, email, phone: String(form.phone || '').trim(), password, role: 'CUSTOMER', status: 'active', staffId: user.id, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
+  return c.redirect(`/staff/customers/${customer.id}`)
+})
+
+app.get('/staff/customers/:id/edit', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(await pages.renderStaffCustomerEdit(c, user, c.req.param('id')))
+})
+
+app.post('/staff/customers/:id/edit', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  const customerId = c.req.param('id')
+  const customer = await getUserById(c, customerId)
+  if (!customer || customer.role !== 'CUSTOMER' || (user.role !== 'ADMIN' && customer.staffId !== user.id)) return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const name = combinePersonName(form.firstName, form.lastName)
+  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim()) return c.html(await pages.renderStaffCustomerEdit(c, user, customerId, '请分别填写名和姓'), 400)
+  await updateUser(c, customerId, { name, phone: String(form.phone || ''), bsb: String(form.bsb || ''), account: String(form.account || ''), balance: Number(form.balance || 0) })
+  return c.redirect(`/staff/customers/${customerId}`)
+})
+
+app.get('/staff/customers/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(await pages.renderStaffCustomerDetail(c, user, c.req.param('id')))
+})
+
 app.get('/staff/orders/pending', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
@@ -592,6 +642,31 @@ app.get('/staff/contracts/:id/progress', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderStaffContractProgress(c, user, c.req.param('id')))
+})
+
+app.get('/staff/contracts/:id/data', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  const contract = await getContractById(c, c.req.param('id'))
+  if (!contract || (user.role !== 'ADMIN' && (contract.createdBy || contract.created_by) !== user.id)) return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderAdminContractData(c, user, contract.id))
+})
+
+app.post('/staff/contracts/:id/data', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  const contract = await getContractById(c, c.req.param('id'))
+  if (!contract || (user.role !== 'ADMIN' && (contract.createdBy || contract.created_by) !== user.id)) return c.html(renderForbidden(), 403)
+  const form = parseFormBody(await c.req.text())
+  const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
+  const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
+  const submitted = Object.entries(form).filter(([name]) => allowed.has(name as any) && (contract.status !== 'signed' || !CONTRACT_SIGNED_FIELDS.has(name))).map(([name, value]) => [name, String(value).trim().slice(0, 4000)])
+  const submittedData = Object.fromEntries(submitted)
+  if (submittedData.damage_photos) {
+    try { submittedData.damage_photos = validateHostedImageUrls(submittedData.damage_photos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
+  }
+  await c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify({ ...existing, ...submittedData }), contract.id).run()
+  return c.redirect(`/staff/contracts/${contract.id}/data`)
 })
 
 app.post('/staff/contract/:id/cancel', async (c) => {
@@ -884,12 +959,12 @@ app.post('/admin/users/new', async (c) => {
     return c.redirect('/login')
   }
   const form = await c.req.parseBody()
-  const name = String(form.name || '').trim()
+  const name = combinePersonName(form.firstName, form.lastName)
   const email = String(form.email || '').trim().toLowerCase()
   const password = String(form.password || '')
   const role = String(form.role || 'CUSTOMER')
   const status = String(form.status || 'active')
-  if (!name || !email || password.length < 8 || !['CUSTOMER', 'STAFF', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user), 400)
+  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email || password.length < 8 || !['CUSTOMER', 'STAFF', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user), 400)
   if (await findUserByEmail(c, email)) return c.html(pages.renderAdminUserNew(user), 409)
   await insertUser(c, { id: `u-${nanoid(10)}`, name, email, password, role, status, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
   return c.redirect('/admin/users')
@@ -920,12 +995,16 @@ app.post('/admin/users/:id/edit', async (c) => {
   const form = await c.req.parseBody()
 
   const dataToUpdate: any = {
-    name: form.name?.toString() || '',
+    name: combinePersonName(form.firstName, form.lastName),
     phone: form.phone?.toString() || '',
     bsb: form.bsb?.toString() || '',
     account_number: form.account_number?.toString() || '',
     balance: parseFloat(form.balance?.toString() || '0'),
     role: form.role?.toString() || 'CUSTOMER'
+  }
+
+  if (!dataToUpdate.name || !String(form.firstName || '').trim() || !String(form.lastName || '').trim()) {
+    return c.html(await pages.renderAdminUserEdit(c, user, targetUserId, '请分别填写名和姓'), 400)
   }
 
   // 如果提供了密码，更新密码
@@ -1340,8 +1419,8 @@ app.get('/api/address/details', async (c) => {
   const placeId = String(c.req.query('placeId') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 300)
   const sessionToken = String(c.req.query('session') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)
   if (!placeId) return c.json({ error: '地址标识无效' }, 400)
-  const params = new URLSearchParams({ fields: 'formattedAddress,addressComponents', languageCode: 'en', regionCode: 'AU', ...(sessionToken ? { sessionToken } : {}) })
-  const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?${params}` , { headers: { 'X-Goog-Api-Key': apiKey } })
+  const params = new URLSearchParams({ languageCode: 'en', regionCode: 'AU', ...(sessionToken ? { sessionToken } : {}) })
+  const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?${params}` , { headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'formattedAddress,addressComponents' } })
   if (!response.ok) {
     console.error('Google address details failed:', response.status)
     return c.json({ error: '无法读取地址详情，请手工填写' }, 502)

@@ -3,27 +3,30 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrders, getUserById, getDeviceById, getAllContracts, getUsers } from '../../site'
+import { buildLayout, getOrders, getAllContracts, getUsers, getDevices } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffRentalsTracking(c: Context, user: any, status?: string, searchTerm?: string) {
-  const allOrders = await getOrders(c)
-  const allContracts = await getAllContracts(c)
-  const allUsers = await getUsers(c)
+  const [allOrders, allContracts, allUsers, allDevices] = await Promise.all([getOrders(c), getAllContracts(c), getUsers(c), getDevices(c)])
+  const usersById = new Map(allUsers.map(account => [account.id, account]))
+  const devicesById = new Map(allDevices.map(device => [device.id, device]))
+  const visibleContracts = user.role === 'ADMIN' ? allContracts : allContracts.filter(contract => (contract.createdBy || contract.created_by) === user.id)
+  const visibleOrderIds = new Set(visibleContracts.map(contract => contract.rentalId))
+  const visibleOrders = user.role === 'ADMIN' ? allOrders : allOrders.filter(order => visibleOrderIds.has(order.id))
 
   const rentalStatuses = ['pending_pickup', 'pending_return', 'active', 'paid', 'approved']
   const allStatuses = [...rentalStatuses, 'completed', 'cancelled', 'expiring']
   
   // 根据URL参数筛选订单
-  let filteredOrders = allOrders
+  let filteredOrders = visibleOrders
   if (status && allStatuses.includes(status)) {
-    filteredOrders = allOrders.filter((r: any) => r.status === status)
+    filteredOrders = visibleOrders.filter((r: any) => r.status === status)
   } else if (status === 'expiring') {
     const now = new Date();
     const sevenDaysLater = new Date();
     sevenDaysLater.setDate(now.getDate() + 7);
 
-    filteredOrders = allOrders.filter((order: any) => {
+    filteredOrders = visibleOrders.filter((order: any) => {
       if (order.endDate) {
         const endDate = new Date(order.endDate);
         // 订单状态不是已完成或已取消，并且结束日期在未来7天内
@@ -33,13 +36,11 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
     });
   }
 
-  const ordersWithDetails = await Promise.all(
-    filteredOrders.map(async (order: any) => {
-      const customer = await getUserById(c, order.userId)
-      const device = order.deviceId ? await getDeviceById(c, order.deviceId) : null
-      return { ...order, customer, device }
-    })
-  )
+  const ordersWithDetails = filteredOrders.map((order: any) => ({
+    ...order,
+    customer: usersById.get(order.userId),
+    device: order.deviceId ? devicesById.get(order.deviceId) : null,
+  }))
 
   // 搜索功能
   let finalOrders = ordersWithDetails;
@@ -94,7 +95,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
           <tbody>
             ${finalOrders
               .map((order: any) => {
-                const contract = allContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
+                const contract = visibleContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
                 const hasSignedContract = contract?.status === 'signed'
                 const statusText = order.status === 'pending_pickup' ? '待拿取' : 
                                   order.status === 'pending_return' ? '待归还' : 

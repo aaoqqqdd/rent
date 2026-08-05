@@ -3,14 +3,15 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getUserById } from '../../site';
+import { buildLayout, getUserById, splitPersonName } from '../../site';
 import { Context } from 'hono';
 
 export async function renderStaffCustomerEdit(c: Context, user: any, customerId: string, errorMessage?: string) {
   const customer = await getUserById(c, customerId)
-  if (!customer || customer.role !== 'CUSTOMER') {
+  if (!customer || customer.role !== 'CUSTOMER' || (user.role !== 'ADMIN' && customer.staffId !== user.id)) {
     return buildLayout('编辑客户 - 电脑租赁管理系统', '<div class="panel"><h2>客户未找到</h2><p>您请求的客户不存在。</p></div>', user)
   }
+  const personName = splitPersonName(customer.name)
 
   const body = `
     <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>编辑客户</h2><p>${customer.name} · 修改联系方式和退款账户。</p></div><a href="/staff/customers/${customer.id}" class="button button-secondary">返回客户详情</a></div></div>
@@ -20,8 +21,12 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
         <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>基本资料</h3><p>客户身份及联系方式。</p></div></div>
         <div class="grid grid-2">
           <div>
-            <label class="form-label">姓名</label>
-            <input class="form-control" name="name" value="${customer.name}" />
+            <label class="form-label">名 / Given name</label>
+            <input class="form-control" name="firstName" value="${personName.firstName}" required autocomplete="given-name" />
+          </div>
+          <div>
+            <label class="form-label">姓 / Family name</label>
+            <input class="form-control" name="lastName" value="${personName.lastName}" required autocomplete="family-name" />
           </div>
           <div>
             <label class="form-label">邮箱</label>

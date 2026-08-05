@@ -74,7 +74,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           ${systemSettings.paymentMethods.stripe ? `<div class="payment-card">
             <h4>信用卡支付（Stripe）</h4>
             <p>前往 Stripe 安全结账页面完成支付，本站不会接触您的卡号。</p>
-            <p>订单本金 ${formatCurrency(order.totalAmount)} ＋ 2.5% 支付手续费 ${formatCurrency(stripeFee)}。手续费不予退款。</p>
+            <p>订单本金 ${formatCurrency(order.totalAmount)} ＋ 2.5% 支付手续费 ${formatCurrency(stripeFee)}。仅退还押金时退回相应手续费，其他退款不退手续费。</p>
             <form method="POST" action="/customer/orders/${order.id}/stripe/checkout">
               <button class="button button-primary" type="submit">支付 ${formatCurrency(stripeTotal)}</button>
             </form>

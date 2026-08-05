@@ -3,16 +3,49 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, splitPersonName } from '../../site';
 import { Context } from 'hono';
 
+export function readContractSignDraft(cookieHeader: string | undefined, token: string): Record<string, string> {
+  const encoded = cookieHeader?.match(/(?:^|;\s*)contract_sign_draft=([^;]*)/)?.[1]
+  if (!encoded) return {}
+  try {
+    const draft = JSON.parse(decodeURIComponent(encoded)) as Record<string, unknown>
+    if (draft.token !== token) return {}
+    return Object.fromEntries(['firstName', 'lastName', 'email', 'phoneCode', 'phone', 'referrer', 'createAccount']
+      .filter(key => typeof draft[key] === 'string').map(key => [key, draft[key] as string]))
+  } catch { return {} }
+}
+
+function splitContractPhone(value: string): { phoneCode: string; phone: string } {
+  const compact = value.replace(/[\s()-]/g, '')
+  const code = ['+886', '+852', '+853', '+86', '+61', '+44', '+82', '+81', '+65', '+1'].find(item => compact.startsWith(item))
+  if (!code) return { phoneCode: '+61', phone: value }
+  let phone = compact.slice(code.length)
+  if (code === '+61' && phone && !phone.startsWith('0')) phone = `0${phone}`
+  return { phoneCode: code, phone }
+}
+
 export async function renderContractSignPage(c: Context, tokenOrNumber: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
+  if (!Object.keys(userInput).length) userInput = readContractSignDraft(c.req.header('cookie'), tokenOrNumber)
   const escapeAttribute = (value: unknown) => sanitizePlainText(value, 500)
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   tokenOrNumber = escapeAttribute(tokenOrNumber)
   errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
   userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
-  const currentUser = await findUserBySession(c, c.req.header('cookie') ?? null);
+  const currentUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null);
+  if (currentUser) {
+    const accountName = splitPersonName(currentUser.name)
+    const accountPhone = splitContractPhone(String(currentUser.phone || ''))
+    userInput = {
+      firstName: userInput.firstName || accountName.firstName,
+      lastName: userInput.lastName || accountName.lastName,
+      email: userInput.email || String(currentUser.email || ''),
+      phoneCode: userInput.phoneCode || accountPhone.phoneCode,
+      phone: userInput.phone || accountPhone.phone,
+      ...userInput,
+    }
+  }
   let contract = await getContractBySignToken(c, tokenOrNumber);
   
 
@@ -53,12 +86,13 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const orderId = contract.rentalId || contract.rental_id;
   const order = await getOrderById(c, orderId);
   if (!order) return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
-  const device = await getDeviceById(c, order.deviceId);
-  const contractCustomer = currentUser || (order.userId ? await getUserById(c, order.userId) : null);
-
   await loadSystemSettingsFromDB(c)
   const systemSettings = getSystemSettings();
-  const variableData = await getContractVariableData(c, contract, order)
+  const [device, contractCustomer, variableData] = await Promise.all([
+    getDeviceById(c, order.deviceId),
+    currentUser ? Promise.resolve(currentUser) : (order.userId ? getUserById(c, order.userId) : Promise.resolve(null)),
+    getContractVariableData(c, contract, order),
+  ])
   const activeAgreementContent = renderContractVariables(systemSettings.rentalTerms, contract, order, device, contractCustomer, variableData);
   
   const agreementHtml = /<[^>]+>/.test(activeAgreementContent)
@@ -70,10 +104,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
 
   // 简单的进度条
   const progressBar = `
-    <div style="display: flex; justify-content: space-between; margin-bottom: 20px; padding: 10px; background: #f3f4f6; border-radius: 8px;">
-      <div style="flex:1; text-align:center; padding: 8px; border-radius: 6px; ${step >= 1 ? 'background: #3b82f6; color: white;' : ''}">1. 同意协议</div>
-      <div style="flex:1; text-align:center; padding: 8px; border-radius: 6px; ${step >= 2 ? 'background: #3b82f6; color: white;' : ''}">2. 填写信息</div>
-      <div style="flex:1; text-align:center; padding: 8px; border-radius: 6px; ${step >= 3 ? 'background: #3b82f6; color: white;' : ''}">3. 选择支付</div>
+    <div class="signing-steps" aria-label="签署进度">
+      <div class="${step >= 1 ? 'is-active' : ''}"><span class="mono">01</span><strong>同意协议</strong></div>
+      <div class="${step >= 2 ? 'is-active' : ''}"><span class="mono">02</span><strong>确认资料</strong></div>
+      <div class="${step >= 3 ? 'is-active' : ''}"><span class="mono">03</span><strong>选择支付</strong></div>
     </div>
   `;
 
@@ -87,18 +121,18 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           ${errorMessage ? `<div class="alert" style="background:#fee2e2;border-color:#fecaca;">${errorMessage}</div>` : ''}
           
           <p class="section-note">本步骤仅用于确认租赁协议。正式合同将在完成电子签署后生成。</p>
-          <div class="contract-content" style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; max-height: 360px; overflow-y: auto; margin-bottom: 20px; background: #f9fafb;">
+          <div class="contract-content signing-agreement">
             ${agreementHtml}
           </div>
           
 
 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=1">
-            <label class="form-check" style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" name="agreeTerms" required style="width: auto;"/> 
+            <label class="form-check agreement-confirmation">
+              <input type="checkbox" name="agreeTerms" required />
               <span>我已仔细阅读并完全同意上述所有租赁条款。</span>
             </label>
-            <button class="button" type="submit" style="margin-top: 20px;">同意并进入下一步</button>
+            <div class="record-actions"><button class="button" type="submit">同意并进入下一步</button></div>
           </form>
         </div>
       `;
@@ -110,217 +144,60 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           ${progressBar}
           <h2>${title}</h2>
           
-          ${errorMessage ? `
-            <div id="error-container" class="alert" style="background:#fee2e2;border-color:#fecaca;">
-              ${errorMessage === 'EMAIL_EXISTS' ? 
-                `
-                <p><strong>此电子邮箱已被注册。</strong></p>
-                <p>您可以选择直接继续，合同将自动关联到您的账户下；或者您可以选择登录后继续。</p>
-                <div style="margin-top: 16px;">
-                  <button type="button" class="button" onclick="continueWithExistingEmail()">直接继续</button>
-                  <a href="/login?redirect=/contract/sign?token=${token}%26step=2" class="button-secondary" style="margin-left: 12px;">立即登录</a>
-                </div>
-                ` : 
-                errorMessage
-              }
-            </div>
-          ` : ''}
+          ${errorMessage ? `<div class="alert alert-danger"><strong>无法保存资料</strong><p>${errorMessage}</p>${!currentUser && errorMessage.includes('已注册') ? `<a class="button button-secondary" href="/login?redirect=${encodeURIComponent(`/contract/sign?token=${token}&step=2`)}">登录后继续</a>` : ''}</div>` : ''}
 
-          <form method="POST" action="/contract/sign?token=${token}&step=2" id="sign-form">
-            <input type="hidden" name="force_continue" id="force_continue" value="false" />
+          <form method="POST" action="/contract/sign?token=${token}&step=2" id="sign-form" class="signing-form" novalidate>
+            ${currentUser ? `
+              <section class="recorded-account"><div class="recorded-account__header"><div><span class="mono">ACCOUNT LINKED</span><h3>已关联账户</h3></div><span class="badge badge-success">已登录</span></div><p>已自动填写账户资料，您可以在签署前修改；保存后将同步更新账户。</p></section>
+            ` : ''}
             <div class="grid grid-2">
-              <div class="form-group">
-                <label class="form-label" for="name">姓名</label>
-                <input id="name" class="form-control" name="name" value="${userInput.name ?? ''}" required />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="email">电子邮箱</label>
-                <input id="email" class="form-control" type="email" name="email" value="${userInput.email ?? ''}" required />
-              </div>
+              <div class="form-group"><label class="form-label" for="firstName">名 / Given name</label><input id="firstName" class="form-control" name="firstName" value="${userInput.firstName ?? ''}" autocomplete="given-name" required><span class="field-error" data-error-for="firstName"></span></div>
+              <div class="form-group"><label class="form-label" for="lastName">姓 / Family name</label><input id="lastName" class="form-control" name="lastName" value="${userInput.lastName ?? ''}" autocomplete="family-name" required><span class="field-error" data-error-for="lastName"></span></div>
+              <div class="form-group"><label class="form-label" for="email">电子邮箱</label><input id="email" class="form-control" type="email" name="email" value="${userInput.email ?? ''}" autocomplete="email" required><span class="field-error" data-error-for="email"></span></div>
+              ${currentUser ? '' : `<div class="form-group"><label class="form-label" for="referrer">推荐人代码（选填）</label><input id="referrer" class="form-control" name="referrer" value="${userInput.referrer ?? ''}" maxlength="64" placeholder="如有推荐人请填写"></div>`}
             </div>
-            <div class="form-group" style="margin-top: 16px;">
-              <label class="form-label" for="phone">联系电话</label>
-              <div style="display: flex; gap: 12px; align-items: start;">
-                <div style="width: 140px;">
-                  <select id="phoneCode" name="phoneCode" class="form-control" style="width: 100%;" required onchange="validatePhoneNumber(); updatePlaceholder()">
-                    <option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option>
-                    <option value="+61" ${userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option>
-                    <option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option>
-                    <option value="+44" ${userInput.phoneCode === '+44' ? 'selected' : ''}>+44 英国</option>
-                    <option value="+852" ${userInput.phoneCode === '+852' ? 'selected' : ''}>+852 香港</option>
-                    <option value="+886" ${userInput.phoneCode === '+886' ? 'selected' : ''}>+886 台湾</option>
-                    <option value="+65" ${userInput.phoneCode === '+65' ? 'selected' : ''}>+65 新加坡</option>
-                    <option value="+82" ${userInput.phoneCode === '+82' ? 'selected' : ''}>+82 韩国</option>
-                    <option value="+81" ${userInput.phoneCode === '+81' ? 'selected' : ''}>+81 日本</option>
-                  </select>
-                </div>
-                <div style="flex: 1;">
-                  <input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" oninput="validatePhoneNumber(); updatePlaceholder()" required placeholder="请输入手机号码" />
-                  <span id="phoneError" style="color: #ef4444; font-size: 14px; display: none;"></span>
-                </div>
-              </div>
-            </div>
-            <div class="grid grid-2" style="margin-top:16px;">
-              <div class="form-group"><label class="form-label" for="esignSignature">电子签名（输入本人全名）</label><input id="esignSignature" name="esignSignature" class="form-control" value="${userInput.esignSignature ?? ''}" required></div>
-            </div>
-            
-            <!-- 推荐人代码输入框 -->
-            <div class="form-group" style="margin-top: 16px;">
-              <label class="form-label" for="referrer">推荐人代码（选填）</label>
-              <input id="referrer" class="form-control" name="referrer" value="${userInput.referrer ?? ''}" placeholder="如有推荐人请填写推荐码" />
-              <p class="form-text" style="font-size: 12px; color: #6b7280; margin-top: 4px;">填写推荐人代码后将无法更改，系统会自动为推荐人计算佣金分成</p>
-            </div>
-            
-            <div id="create-account-section" style="display: flex; align-items: center; gap: 10px; margin-top: 24px; margin-bottom: 16px;">
-              <input type="checkbox" id="createAccountCheckbox" name="createAccount" style="width: auto;" onchange="togglePasswordFields()" />
-              <label for="createAccountCheckbox" style="margin: 0;">创建账户 (用于管理您的订单)</label>
-            </div>
-
-            <div id="passwordFields" style="display: none;">
-              <div class="grid grid-2">
-                <div class="form-group">
-                  <label class="form-label" for="password">设置密码</label>
-                  <input id="password" class="form-control" type="password" name="password" />
-                </div>
-                <div class="form-group">
-                  <label class="form-label" for="passwordConfirm">确认密码</label>
-                  <input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" />
-                </div>
-              </div>
-            </div>
-
-            <script>
-              function continueWithExistingEmail() {
-                document.getElementById('force_continue').value = 'true';
-                document.getElementById('sign-form').submit();
-              }
-
-              function togglePasswordFields() {
-                const checkbox = document.getElementById('createAccountCheckbox');
-                const passwordFields = document.getElementById('passwordFields');
-                const passwordInput = document.getElementById('password');
-                const passwordConfirmInput = document.getElementById('passwordConfirm');
-
-                if (checkbox.checked) {
-                  passwordFields.style.display = 'block';
-                  passwordInput.required = true;
-                  passwordConfirmInput.required = true;
-                } else {
-                  passwordFields.style.display = 'none';
-                  passwordInput.required = false;
-                  passwordConfirmInput.required = false;
-                }
-              }
-
-              function validatePhoneNumber() {
-                const phoneCode = document.getElementById('phoneCode').value;
-                const phoneNumber = document.getElementById('phone').value.trim();
-                const phoneError = document.getElementById('phoneError');
-                const rawPhone = phoneNumber.replace(/\D/g, '');
-                let phoneToValidate = rawPhone;
-
-                if (phoneCode === '+86' && rawPhone.startsWith('86') && rawPhone.length === 13) {
-                  phoneToValidate = rawPhone.slice(2);
-                } else {
-                  phoneToValidate = rawPhone;
-                }
-                
-                // 每个国家的详细手机号格式要求
-                const phonePatterns = {
-                  '+86': /^1[3-9]\\d{9}$/, // 中国：11位，必须以13-19开头
-                  '+61': /^0\\d{9}$/, // 澳大利亚：手机以0开头，共10位
-                  '+1': /^\\d{10}$/, // 美国/加拿大：10位手机号
-                  '+44': /^7\\d{9}$/, // 英国：手机以7开头，共10位
-                  '+852': /^[5689]\\d{7}$/, // 香港：手机以5/6/8/9开头，共8位
-                  '+853': /^6\\d{7}$/, // 澳门：手机以6开头，共8位
-                  '+886': /^9\\d{8}$/, // 台湾：手机以9开头，共9位
-                  '+65': /^[89]\\d{7}$/, // 新加坡：手机以8/9开头，共8位
-                  '+82': /^1[0-9]\\d{7,8}$/, // 韩国：手机以1开头，共9-10位
-                  '+81': /^[789]0\\d{8}$/ // 日本：手机以70/80/90开头，共10位
-                };
-                
-                // 错误提示信息
-                const errorMessages = {
-                  '+86': '中国手机号需要11位，必须以13-19开头',
-                  '+61': '澳大利亚手机号需要10位，必须以0开头',
-                  '+1': '美国/加拿大手机号需要10位数字',
-                  '+44': '英国手机号需要10位，必须以7开头',
-                  '+852': '香港手机号需要8位，必须以5、6、8或9开头',
-                  '+853': '澳门手机号需要8位，必须以6开头',
-                  '+886': '台湾手机号需要9位，必须以9开头',
-                  '+65': '新加坡手机号需要8位，必须以8/9开头',
-                  '+82': '韩国手机号需要9-10位，必须以1开头',
-                  '+81': '日本手机号需要10位，必须以70/80/90开头'
-                };
-                
-                const pattern = phonePatterns[phoneCode];
-                
-                if (phoneNumber === '') {
-                  phoneError.style.display = 'none';
-                  return true;
-                }
-                
-                const testResult = pattern ? pattern.test(phoneToValidate) : false;
-                if (testResult) {
-                  phoneError.style.display = 'none';
-                  phoneError.textContent = '';
-                  return true;
-                } else {
-                  phoneError.style.display = 'block';
-                  phoneError.textContent = errorMessages[phoneCode] || '电话号码格式不正确';
-                  return false;
-                }
-              }
-
-              document.addEventListener('DOMContentLoaded', function() {
-                togglePasswordFields();
-                const errorMessage = "${errorMessage}";
-                if (errorMessage === 'EMAIL_EXISTS') {
-                  // 隐藏创建账户和密码字段
-                  const createAccountSection = document.getElementById('create-account-section');
-                  if(createAccountSection) createAccountSection.style.display = 'none';
-                  
-                  const passwordFields = document.getElementById('passwordFields');
-                  if(passwordFields) passwordFields.style.display = 'none';
-                }
-              });
-
-              function updatePlaceholder() {
-                const phoneCode = document.getElementById('phoneCode').value;
-                const phoneInput = document.getElementById('phone');
-                const placeholders = {
-                  '+86': '请输入11位手机号（以13-19开头）',
-                  '+61': '请输入10位手机号（以0开头）',
-                  '+1': '请输入10位手机号码',
-                  '+44': '请输入10位手机号（以7开头）',
-                  '+852': '请输入8位手机号（以5、6、8或9开头）',
-                  '+853': '请输入8位手机号（以6开头）',
-                  '+886': '请输入9位手机号（以9开头）',
-                  '+65': '请输入8位手机号（以8/9开头）',
-                  '+82': '请输入9-10位手机号（以1开头）',
-                  '+81': '请输入10位手机号（以70/80/90开头）'
-                };
-                phoneInput.placeholder = placeholders[phoneCode] || '请输入电话号码';
-              }
-
-              // 页面加载时初始化占位符
-              document.addEventListener('DOMContentLoaded', function() {
-                updatePlaceholder();
-              });
-
-              document.getElementById('sign-form').addEventListener('submit', function(e) {
-                if (!validatePhoneNumber()) {
-                  e.preventDefault();
-                  // 错误信息已在 validatePhoneNumber 中显示，无需额外 alert
-                }
-              });
-            </script>
-            
-            <div style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
-              <a href="/contract/sign?token=${token}&step=1" class="button-secondary">返回上一步</a>
-              <button class="button" type="submit">保存信息并进入下一步</button>
-            </div>
+            <div class="form-group"><label class="form-label" for="phone">联系电话</label><div class="phone-field"><select id="phoneCode" name="phoneCode" class="form-control" required><option value="+61" ${!userInput.phoneCode || userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option><option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option><option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option><option value="+44" ${userInput.phoneCode === '+44' ? 'selected' : ''}>+44 英国</option><option value="+852" ${userInput.phoneCode === '+852' ? 'selected' : ''}>+852 香港</option><option value="+886" ${userInput.phoneCode === '+886' ? 'selected' : ''}>+886 台湾</option><option value="+65" ${userInput.phoneCode === '+65' ? 'selected' : ''}>+65 新加坡</option><option value="+82" ${userInput.phoneCode === '+82' ? 'selected' : ''}>+82 韩国</option><option value="+81" ${userInput.phoneCode === '+81' ? 'selected' : ''}>+81 日本</option></select><input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" autocomplete="tel-national" required placeholder="例如 0412 345 678"></div><span class="field-error" data-error-for="phone"></span></div>
+            ${currentUser ? '' : `
+              <label class="account-choice"><input type="checkbox" id="createAccountCheckbox" name="createAccount" ${userInput.createAccount === 'true' ? 'checked' : ''}><span><strong>同时创建账户</strong><small>用于登录后查看订单、合同和发票。</small></span></label>
+              <div id="passwordFields" class="grid grid-2" hidden><div class="form-group"><label class="form-label" for="password">设置密码</label><input id="password" class="form-control" type="password" name="password" minlength="8" autocomplete="new-password"><span class="field-error" data-error-for="password"></span></div><div class="form-group"><label class="form-label" for="passwordConfirm">确认密码</label><input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" autocomplete="new-password"><span class="field-error" data-error-for="passwordConfirm"></span></div></div>
+            `}
+            <div class="form-group"><label class="form-label" for="esignSignature">电子签名（输入完整姓名）</label><input id="esignSignature" name="esignSignature" class="form-control" value="${userInput.esignSignature ?? ''}" autocomplete="name" required><span class="field-error" data-error-for="esignSignature"></span><small class="form-text">必须与上方填写的名和姓完全一致。</small></div>
+            <div id="form-error-summary" class="form-error-summary" role="alert" hidden>请先修正标记的资料。</div>
+            <div class="record-actions"><a href="/contract/sign?token=${token}&step=1" class="button button-secondary">返回上一步</a><button class="button" id="sign-info-submit" type="submit">保存信息并进入下一步</button></div>
           </form>
+          <script>
+            (() => {
+              const form = document.getElementById('sign-form');
+              const summary = document.getElementById('form-error-summary');
+              const errorFor = (id) => form.querySelector('[data-error-for="' + id + '"]');
+              const setError = (id, message) => { const input = document.getElementById(id); const target = errorFor(id); if (input) input.setAttribute('aria-invalid', String(Boolean(message))); if (target) target.textContent = message || ''; return !message; };
+              const fullName = () => [document.getElementById('firstName')?.value.trim(), document.getElementById('lastName')?.value.trim()].filter(Boolean).join(' ');
+              const phonePatterns = { '+61': /^0\\d{9}$/, '+86': /^1[3-9]\\d{9}$/, '+1': /^\\d{10}$/, '+44': /^7\\d{9}$/, '+852': /^[5689]\\d{7}$/, '+886': /^9\\d{8}$/, '+65': /^[89]\\d{7}$/, '+82': /^1[0-9]\\d{7,8}$/, '+81': /^[789]0\\d{8}$/ };
+              const validate = () => {
+                let valid = true;
+                const firstName = document.getElementById('firstName'); const lastName = document.getElementById('lastName'); const email = document.getElementById('email');
+                if (firstName) valid = setError('firstName', firstName.value.trim() ? '' : '请填写名。') && valid;
+                if (lastName) valid = setError('lastName', lastName.value.trim() ? '' : '请填写姓。') && valid;
+                if (email) valid = setError('email', email.validity.valid ? '' : '请输入有效的电子邮箱。') && valid;
+                const phone = document.getElementById('phone'); const code = document.getElementById('phoneCode');
+                if (phone && code) { const digits = phone.value.replace(/\\D/g, ''); valid = setError('phone', phonePatterns[code.value]?.test(digits) ? '' : '电话号码格式与所选国家代码不匹配。') && valid; }
+                const signature = document.getElementById('esignSignature'); valid = setError('esignSignature', signature.value.trim() === fullName() ? '' : '电子签名必须与完整姓名完全一致。') && valid;
+                const createAccount = document.getElementById('createAccountCheckbox'); const password = document.getElementById('password'); const confirm = document.getElementById('passwordConfirm');
+                if (createAccount?.checked) { valid = setError('password', password.value.length >= 8 ? '' : '密码至少需要 8 个字符。') && valid; valid = setError('passwordConfirm', confirm.value === password.value ? '' : '两次输入的密码不一致。') && valid; }
+                summary.hidden = valid; return valid;
+              };
+              const accountChoice = document.getElementById('createAccountCheckbox');
+              const updateAccountFields = () => { const fields = document.getElementById('passwordFields'); if (!fields || !accountChoice) return; fields.hidden = !accountChoice.checked; fields.querySelectorAll('input').forEach(input => input.required = accountChoice.checked); };
+              const saveDraft = () => {
+                const draft = { token: ${JSON.stringify(token).replace(/</g, '\\u003c')}, firstName: document.getElementById('firstName')?.value || '', lastName: document.getElementById('lastName')?.value || '', email: document.getElementById('email')?.value || '', phoneCode: document.getElementById('phoneCode')?.value || '', phone: document.getElementById('phone')?.value || '', referrer: document.getElementById('referrer')?.value || '', createAccount: String(Boolean(accountChoice?.checked)) };
+                document.cookie = 'contract_sign_draft=' + encodeURIComponent(JSON.stringify(draft)) + '; Path=/contract/sign; Max-Age=604800; SameSite=Lax' + (location.protocol === 'https:' ? '; Secure' : '');
+              };
+              accountChoice?.addEventListener('change', () => { updateAccountFields(); validate(); saveDraft(); });
+              form.querySelectorAll('input, select').forEach(input => { input.addEventListener('input', () => { validate(); saveDraft(); }); input.addEventListener('change', () => { validate(); saveDraft(); }); });
+              form.addEventListener('submit', event => { if (!validate()) { event.preventDefault(); form.querySelector('[aria-invalid="true"]')?.focus(); } });
+              updateAccountFields();
+            })();
+          </script>
         </div>
       `;
       break;
@@ -344,27 +221,25 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=3">
             <div class="payment-options" style="display: flex; flex-direction: column; gap: 15px;">
               ${systemSettings.paymentMethods.stripe ? `
-              <label class="card" style="cursor: pointer; padding: 16px;">
+              <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
-                <strong style="margin-left: 8px;">信用卡支付（Stripe）</strong>
-                <p class="text-muted" style="margin: 4px 0 0 24px;">支付 ${formatCurrency(stripeTotal)}，包含 ${formatCurrency(stripeFee)}（2.5%）支付手续费，由支付提供商收取。付款由 Stripe 安全处理，本网站不保存您的任何资料。手续费不予退款。</p>
+                <span><strong>信用卡支付（Stripe）</strong><small>支付 ${formatCurrency(stripeTotal)}，包含 ${formatCurrency(stripeFee)}（2.5%）手续费。Stripe 安全处理付款，网站不保存卡号、有效期或安全码。</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
-              <label class="card" style="cursor: pointer; padding: 16px;">
+              <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="bank_transfer" required />
-                <strong style="margin-left: 8px;">银行转账</strong>
-                <p class="text-muted" style="margin: 4px 0 0 24px;">请转账至 BSB: ${systemSettings.bankDetails.bsb}, Account: ${systemSettings.bankDetails.account}。转账后请上传凭证。</p>
+                <span><strong>银行转账</strong><small>查看账户资料并提交转账凭证截图。</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.balancePayment && currentUser ? `
-              <label class="card" style="cursor: pointer; padding: 16px;">
+              <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="balance" required ${currentUser.balance >= order.totalAmount ? '' : 'disabled'} />
-                <strong style="margin-left: 8px;">账户余额支付</strong>
-                <p class="text-muted" style="margin: 4px 0 0 24px;">当前账户余额: ${formatCurrency(currentUser.balance || 0)} ${currentUser.balance >= order.totalAmount ? '' : '（余额不足）'}</p>
+                <span><strong>账户余额支付</strong><small>当前余额 ${formatCurrency(currentUser.balance || 0)} ${currentUser.balance >= order.totalAmount ? '' : '（余额不足）'}</small></span>
               </label>
               ` : ''}
             </div>
+            ${systemSettings.paymentMethods.bankTransfer ? `<aside id="bank-transfer-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>银行转账资料</strong><span class="mono">AUD</span></div><dl><div><dt>银行</dt><dd>${escapeAttribute(systemSettings.bankDetails.bankName || '—')}</dd></div><div><dt>账户名</dt><dd>${escapeAttribute(systemSettings.bankDetails.accountName)}</dd></div><div><dt>BSB</dt><dd>${escapeAttribute(systemSettings.bankDetails.bsb)}</dd></div><div><dt>账号</dt><dd>${escapeAttribute(systemSettings.bankDetails.account)}</dd></div><div><dt>转账金额</dt><dd>${formatCurrency(order.totalAmount)}</dd></div></dl><div class="grid grid-2"><div class="form-group"><label class="form-label" for="transferReference">银行 Reference</label><input class="form-control bank-proof-input" id="transferReference" name="transferReference" maxlength="100" placeholder="银行交易 Reference"><span class="field-error" data-payment-error="transferReference"></span></div><div class="form-group"><label class="form-label" for="transferProofUrl">付款截图链接</label><input class="form-control bank-proof-input" id="transferProofUrl" name="transferProofUrl" type="url" placeholder="https://.../payment-proof.jpg"><span class="field-error" data-payment-error="transferProofUrl"></span></div></div><div class="form-group"><label class="form-label" for="transferNote">转账备注（选填）</label><textarea class="form-control" id="transferNote" name="transferNote" maxlength="500"></textarea><small class="form-text">请先把截图上传到可公开访问的 HTTPS 图床，再粘贴图片链接；提交后由管理员审核。</small></div></aside>` : ''}
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">2.5%</span></div>
@@ -374,7 +249,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 <div><dt>Stripe 支付手续费</dt><dd>${formatCurrency(stripeFee)}</dd></div>
                 <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd>${formatCurrency(stripeTotal)}</dd></div>
               </dl>
-              <p class="payment-fee-notice__warning">支付手续费不属于租金或押金，退款时不予退还。</p>
+              <p class="payment-fee-notice__warning">仅处理押金退款时，会同时退回实际退还押金对应的 2.5% 手续费；取消订单及其他退款不退手续费。</p>
             </aside>
             ` : ''}
             <div class="card" style="margin-top:20px; padding:16px;">
@@ -384,11 +259,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               <p class="text-muted">信用卡原路退回 Stripe；银行转账原路退回您填写的银行账户；余额付款仍退回余额。</p>
               <div id="bank-refund-fields" style="display:none; margin-top:14px;">
                 <label class="form-label" for="refundAccountName">账户名</label>
-                <input class="form-control" id="refundAccountName" name="refundAccountName" value="${currentUser?.name || ''}">
+                <input class="form-control" id="refundAccountName" name="refundAccountName" value="${escapeAttribute(currentUser?.name || '')}">
                 <label class="form-label" for="refundBsb">BSB</label>
-                <input class="form-control" id="refundBsb" name="refundBsb" value="${currentUser?.bsb || ''}" placeholder="062-001">
+                <input class="form-control" id="refundBsb" name="refundBsb" value="${escapeAttribute(currentUser?.bsb || '')}" placeholder="062-001">
                 <label class="form-label" for="refundAccountNumber">账号</label>
-                <input class="form-control" id="refundAccountNumber" name="refundAccountNumber" value="${currentUser?.accountNumber || currentUser?.account_number || ''}" inputmode="numeric">
+                <input class="form-control" id="refundAccountNumber" name="refundAccountNumber" value="${escapeAttribute(currentUser?.accountNumber || currentUser?.account_number || '')}" inputmode="numeric">
               </div>
             </div>
             <div style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
@@ -401,6 +276,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const form = document.querySelector('form[action*="step=3"]');
               const fields = document.getElementById('bank-refund-fields');
               const stripeFeeNotice = document.getElementById('stripe-fee-notice');
+              const bankTransferNotice = document.getElementById('bank-transfer-notice');
+              const bankProofInputs = Array.from(document.querySelectorAll('.bank-proof-input'));
               const bankInputs = fields.querySelectorAll('input');
               const update = () => {
                 const payment = form.querySelector('input[name="paymentMethod"]:checked')?.value;
@@ -409,8 +286,17 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 fields.style.display = show ? 'block' : 'none';
                 bankInputs.forEach(input => input.required = show);
                 if (stripeFeeNotice) stripeFeeNotice.hidden = payment !== 'stripe';
+                if (bankTransferNotice) bankTransferNotice.hidden = payment !== 'bank_transfer';
+                bankProofInputs.forEach(input => input.required = payment === 'bank_transfer');
               };
               form.addEventListener('change', update);
+              form.addEventListener('submit', event => {
+                const payment = form.querySelector('input[name="paymentMethod"]:checked')?.value;
+                if (payment !== 'bank_transfer') return;
+                let valid = true;
+                bankProofInputs.forEach(input => { const error = document.querySelector('[data-payment-error="' + input.id + '"]'); let message = input.value.trim() ? '' : (input.type === 'url' ? '请填写有效的 HTTPS 截图链接。' : '请填写银行 Reference。'); if (!message && input.type === 'url') { try { if (new URL(input.value).protocol !== 'https:') message = '截图链接必须使用 HTTPS。'; } catch { message = '请填写有效的 HTTPS 截图链接。'; } } input.setAttribute('aria-invalid', String(Boolean(message))); error.textContent = message; if (message) valid = false; });
+                if (!valid) { event.preventDefault(); bankProofInputs.find(input => input.getAttribute('aria-invalid') === 'true')?.focus(); }
+              });
               update();
             })();
           </script>
@@ -418,9 +304,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       `;
       break;
     default:
-      content = '<div class="panel"><h2>无效的步骤</h2><p>请从第一步开始签署合同。 <a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=1">点击这里返回第一步</a></p></div>';
+      content = `<div class="panel"><h2>无效的步骤</h2><p>请从第一步开始签署合同。 <a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=1">点击这里返回第一步</a></p></div>`;
       break;
   }
 
-  return buildLayout(title, content, currentUser);
+  const signingPage = `<main class="signing-shell"><header class="signing-header"><div><p class="section-code">E-SIGN / ${escapeAttribute(contract.contractNumber)}</p><h1>租赁协议签署</h1><p>${escapeAttribute(device?.name || '租赁设备')} · ${escapeAttribute(order.startDate)} 至 ${escapeAttribute(order.endDate)}</p></div><span class="badge badge-warning">待签署</span></header>${content}</main>`
+  return buildLayout(title, signingPage, currentUser);
 }

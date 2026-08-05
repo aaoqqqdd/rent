@@ -3,11 +3,12 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout } from '../../site';
+import { buildLayout, splitPersonName } from '../../site';
 
 export async function renderAdminUsers(user: any, c: any) {
   const { getUsersAsync } = await import('../../site')
   const allUsers = await getUsersAsync(c);
+  const usersById = new Map(allUsers.map(account => [account.id, account]))
 
   const roleMap: Record<string, { text: string; class: string }> = {
     'ADMIN': { text: '管理员', class: 'badge-danger' },
@@ -39,8 +40,11 @@ export async function renderAdminUsers(user: any, c: any) {
         <thead>
           <tr>
             <th>ID</th>
-            <th>姓名</th>
+            <th>名</th>
+            <th>姓</th>
             <th>邮箱</th>
+            <th>绑定员工</th>
+            <th>推荐人</th>
             <th>角色</th>
             <th>状态</th>
             <th>余额</th>
@@ -52,11 +56,15 @@ export async function renderAdminUsers(user: any, c: any) {
           ${allUsers.map(u => {
             const role = roleMap[u.role] || { text: u.role, class: 'badge-info' };
             const status = statusMap[u.status || 'active'] || { text: u.status, class: 'badge-info' };
+            const personName = splitPersonName(u.name)
             return `
               <tr>
                 <td class="mono user-id-cell">${u.id}</td>
-                <td><strong>${u.name}</strong></td>
+                <td><strong>${personName.firstName || '-'}</strong></td>
+                <td><strong>${personName.lastName || '-'}</strong></td>
                 <td>${u.email}</td>
+                <td>${u.role === 'CUSTOMER' ? usersById.get(u.staffId || '')?.name || '未分配' : '-'}</td>
+                <td>${u.role === 'CUSTOMER' ? usersById.get(u.referrerId || '')?.name || '无' : '-'}</td>
                 <td><span class="badge ${role.class}">${role.text}</span></td>
                 <td><span class="badge ${status.class}">${status.text}</span></td>
                 <td>AUD$${parseFloat(String(u.balance || 0)).toFixed(2)}</td>

@@ -20,6 +20,11 @@ export function stripePaymentAmounts(orderTotal: number): { baseCents: number; f
   return { baseCents, feeCents, chargedCents: baseCents + feeCents }
 }
 
+export function refundableDepositFee(refundAmount: number, payment: any): number {
+  if (payment?.payment_method !== 'card' || Number(payment?.processing_fee || 0) <= 0) return 0
+  return Math.round(cents(refundAmount) * STRIPE_PROCESSING_FEE_RATE) / 100
+}
+
 function melbourneDate(): string {
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
   const value = Object.fromEntries(parts.map(part => [part.type, part.value]))
@@ -151,6 +156,8 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   const depositAmount = Number(order.depositAmount)
   if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > depositAmount) return c.text('押金退款金额无效', 400)
   const deductionAmount = Number((depositAmount - refundAmount).toFixed(2))
+  const refundedProcessingFee = refundableDepositFee(refundAmount, payment)
+  const totalRefundAmount = Number((refundAmount + refundedProcessingFee).toFixed(2))
   const reason = String(form.deductionReason || '').trim()
   if (deductionAmount > 0 && !reason) return c.text('扣除押金时必须填写原因', 400)
 
@@ -162,7 +169,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (refundAmount > 0 && channel === 'stripe') {
     const params = new URLSearchParams({
       payment_intent: payment.stripe_payment_intent_id,
-      amount: String(cents(refundAmount)),
+      amount: String(cents(totalRefundAmount)),
       'metadata[order_id]': order.id,
       'metadata[type]': 'deposit',
     })
@@ -172,12 +179,12 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   }
 
   await c.env.RENT.batch([
-    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, 'deposit', ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, order.id, payment.id, depositAmount, refundAmount, deductionAmount, reason || null, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
-    ...(refundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(refundAmount, order.userId)] : []),
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, order.id, payment.id, depositAmount, refundAmount, refundedProcessingFee, deductionAmount, reason || null, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
+    ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
-  if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount)
+  if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount, refundedProcessingFee)
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 

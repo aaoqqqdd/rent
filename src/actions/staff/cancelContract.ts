@@ -33,7 +33,7 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
       return c.redirect(`/staff/contracts?error=Only pending contracts can be cancelled`);
     }
 
-    const isAdmin = user.role === 'ADMIN' || user.role === 'STAFF';
+    const isAdmin = user.role === 'ADMIN';
     const isCreator = contract.created_by === user.id || contract.createdBy === user.id;
 
     if (!isAdmin && !isCreator) {

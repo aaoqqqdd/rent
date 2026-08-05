@@ -16,7 +16,8 @@ export function renderAdminUserNew(user: any) {
       </aside>
       <form method="POST" action="/admin/users/new" class="record-form">
         <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>账户资料</h3><p>用于登录和识别用户。</p></div></div><div class="grid grid-2">
-          <div class="form-group"><label class="form-label" for="name">用户姓名</label><input class="form-control" type="text" id="name" name="name" required autocomplete="name" placeholder="输入用户姓名"></div>
+          <div class="form-group"><label class="form-label" for="firstName">名 / Given name</label><input class="form-control" type="text" id="firstName" name="firstName" required autocomplete="given-name"></div>
+          <div class="form-group"><label class="form-label" for="lastName">姓 / Family name</label><input class="form-control" type="text" id="lastName" name="lastName" required autocomplete="family-name"></div>
           <div class="form-group"><label class="form-label" for="email">邮箱地址</label><input class="form-control" type="email" id="email" name="email" required autocomplete="email" placeholder="name@example.com"></div>
           <div class="form-group"><label class="form-label" for="password">登录密码</label><input class="form-control" type="password" id="password" name="password" required autocomplete="new-password" minlength="8" placeholder="至少 8 个字符"></div>
         </div></section>

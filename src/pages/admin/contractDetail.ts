@@ -26,6 +26,7 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
   const order = orderId ? await getOrderById(c, orderId) : null;
   const customer = order ? await getUserById(c, order.userId) : null;
   const device = order ? await getDeviceById(c, order.deviceId) : null
+  const creator = contract.createdBy || contract.created_by ? await getUserById(c, contract.createdBy || contract.created_by || '') : null
   const renderedContract = contract.signed_content ? sanitizeRichHtml(contract.signed_content) : renderContractVariables(contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
 
   const body = `
@@ -36,6 +37,7 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
         <h3>合同编号: ${contract.contractNumber}</h3>
         <p>状态: ${contract.status === 'signed' ? '已签署' : '待签署'}</p>
         <p>签署日期: ${contract.signedAt ? new Date(contract.signedAt).toLocaleString() : '未签署'}</p>
+        <p>创建员工: ${creator ? `${creator.name} · ${creator.email}` : '未知'}</p>
         ${contract.content_hash ? `<p><strong>内容摘要 SHA-256：</strong><code style="word-break:break-all">${contract.content_hash}</code></p>` : ''}
       </div>
 

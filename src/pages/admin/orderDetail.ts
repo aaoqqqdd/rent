@@ -19,7 +19,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
   const customer = await getUserById(c, order.userId);
   const device = await getDeviceById(c, order.deviceId);
-  const completedRefund = await c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any;
+  const completedRefund = await c.env.RENT.prepare("SELECT type, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any;
   const transferProof = await c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any;
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch {}
@@ -133,7 +133,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         <div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #c2410c;">💸 退款处理</h4>
           <p class="section-note">客户选择：${order.refundMethod === 'original' ? `原路退回${order.paymentMethod === 'bank_transfer' ? `（${escapeHtml(order.refundAccountName)} / ${escapeHtml(order.refundBsb)} / ${escapeHtml(order.refundAccountNumber)}）` : ''}` : '退回账户余额'}</p>
-          ${completedRefund ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
+          ${completedRefund ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${order.status === 'completed' && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/deposit-refund" onsubmit="return confirm('确定提交本次押金处理吗？每笔订单只能处理一次。');">
             ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先按上方账户信息完成银行转账，再确认本操作。</div>' : ''}
             <label class="form-label" for="refundAmount">退还押金金额（最多 ${formatCurrency(order.depositAmount)}）</label>

@@ -32,7 +32,7 @@ export async function renderAdminContractData(c: Context, user: any, contractId:
   }
   const groups = [
     ['客户与证件', ['customer_address','customer_dob','customer_country','customer_id_type','customer_id_number','customer_driver_expiry','emergency_contact','emergency_phone']],
-    ['发票与交付', ['invoice_number','delivery_method','delivery_fee','pickup_location','return_location','pickup_time','return_time','return_status','return_date']],
+    ['发票与交付', ['invoice_number','delivery_method','delivery_fee','return_method','pickup_location','return_location','pickup_time','return_time','return_status','return_date']],
     ['设备配置', ['device_brand','device_cpu','device_ram','device_storage','device_gpu','device_os','battery_health','battery_cycles','charger_sn','asset_tag','device_condition','device_accessories']],
     ['电子签约', ['esign_signature','company_signature','esign_location','esign_browser','esign_os','agreement_version','company_representative','customer_initials']],
     ['优惠与损坏', ['discount','coupon_code','damage_description','damage_photos','repair_invoice','repair_cost','replacement_cost','collection_required','collection_date']],
@@ -42,5 +42,6 @@ export async function renderAdminContractData(c: Context, user: any, contractId:
   const available = CONTRACT_OPERATIONAL_FIELDS.filter(([name]) => contract.status !== 'signed' || !CONTRACT_SIGNED_FIELDS.has(name))
   const sections = groups.map(([title, names]) => `<section style="margin-top:24px"><h3>${title}</h3><div class="grid grid-2">${available.filter(([name]) => (names as readonly string[]).includes(name)).map(renderField).join('')}</div></section>`).join('')
   const previews = damageImages.length ? `<section><h3>损坏照片预览</h3><div style="display:flex;gap:12px;flex-wrap:wrap">${damageImages.map(url => `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer"><img src="${escape(url)}" alt="损坏照片" loading="lazy" referrerpolicy="no-referrer" style="width:180px;height:130px;object-fit:cover;border-radius:8px"></a>`).join('')}</div></section>` : ''
-  return buildLayout('合同变量数据', `<div class="panel"><div class="section-title"><h2>合同变量数据</h2><a class="button button-secondary" href="/admin/contracts/${contract.id}">返回合同</a></div><p class="section-note">付款、退款、逾期费用和后台时间等字段由系统自动计算；这里维护设备配置、交付、检查、损坏及法律资料。合同签署后，电子签约记录不可修改。</p>${previews}<form method="post" action="/admin/contracts/${contract.id}/data">${sections}<button class="button button-primary" type="submit">保存合同资料</button></form></div>`, user)
+  const basePath = user.role === 'ADMIN' ? '/admin/contracts' : '/staff/contracts'
+  return buildLayout('合同变量数据', `<div class="panel"><div class="section-title"><h2>合同变量数据</h2><a class="button button-secondary" href="${basePath}">返回合同列表</a></div><p class="section-note">付款、退款、逾期费用和后台时间等字段由系统自动计算；这里维护设备配置、交付、检查、损坏及法律资料。合同签署后，电子签约记录不可修改。</p>${previews}<form method="post" action="${basePath}/${contract.id}/data">${sections}<button class="button button-primary" type="submit">保存合同资料</button></form></div>`, user)
 }

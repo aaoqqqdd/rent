@@ -3,13 +3,17 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAllContracts, getOrderById, getUserById, getOrders, getDeviceById, getUsers, isContractExpired } from '../../site'
+import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContractExpired } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string) {
-  let allContracts = await getAllContracts(c)
-  const allOrders = await getOrders(c)
-  const allUsers = await getUsers(c)
+  let [allContracts, allOrders, allUsers, allDevices] = await Promise.all([getAllContracts(c), getOrders(c), getUsers(c), getDevices(c)])
+  const ordersById = new Map(allOrders.map(order => [order.id, order]))
+  const usersById = new Map(allUsers.map(account => [account.id, account]))
+  const devicesById = new Map(allDevices.map(device => [device.id, device]))
+  if (user.role !== 'ADMIN') allContracts = allContracts.filter(contract => (contract.createdBy || contract.created_by) === user.id)
+  const visibleOrderIds = new Set(allContracts.map(contract => contract.rentalId))
+  const visibleOrders = user.role === 'ADMIN' ? allOrders : allOrders.filter(order => visibleOrderIds.has(order.id))
 
   const contractStatuses = ['pending_sign', 'signed', 'cancelled', 'completed', 'expired']
   const rentalStatuses = ['active', 'pending_pickup', 'pending_return', 'completed', 'cancelled']
@@ -18,20 +22,20 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
     allContracts = allContracts.filter((ct) => status === 'expired' ? isContractExpired(ct) : ct.status === status && !isContractExpired(ct))
   }
 
-  let filteredOrders = allOrders
+  let filteredOrders = visibleOrders
   if (status && rentalStatuses.includes(status)) {
-    filteredOrders = allOrders.filter((r: any) => r.status === status)
+    filteredOrders = visibleOrders.filter((r: any) => r.status === status)
   } else if (!status) {
-    filteredOrders = allOrders.filter((r: any) => ['active', 'pending_pickup', 'pending_return'].includes(r.status))
+    filteredOrders = visibleOrders.filter((r: any) => ['active', 'pending_pickup', 'pending_return'].includes(r.status))
   }
 
   if (searchTerm && searchTerm.trim()) {
     const searchLower = searchTerm.toLowerCase().trim()
     allContracts = allContracts.filter((contract) => {
       if (contract.contractNumber?.toLowerCase().includes(searchLower)) return true
-      const order = allOrders.find((o) => o.id === contract.rentalId)
+      const order = ordersById.get(contract.rentalId)
       if (order?.orderNo?.toLowerCase().includes(searchLower)) return true
-      const customer = order ? allUsers.find((u) => u.id === order.userId) : null
+      const customer = order ? usersById.get(order.userId) : null
       if (customer?.name?.toLowerCase().includes(searchLower)) return true
       if (customer?.email?.toLowerCase().includes(searchLower)) return true
       if (customer?.phone?.toLowerCase().includes(searchLower)) return true
@@ -39,29 +43,24 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
     })
 
     filteredOrders = filteredOrders.filter((order: any) => {
-      const customer = allUsers.find((u) => u.id === order.userId)
-      const device = order.deviceId ? allOrders.find((o) => o.id === order.deviceId) : null
-      return [order.orderNo, order.id, customer?.name, customer?.email, device?.deviceName, order.startDate, order.endDate]
+      const customer = usersById.get(order.userId)
+      const device = order.deviceId ? devicesById.get(order.deviceId) : null
+      return [order.orderNo, order.id, customer?.name, customer?.email, device?.name, order.startDate, order.endDate]
         .filter(Boolean)
         .some((value: any) => String(value).toLowerCase().includes(searchLower))
     })
   }
 
-  const contractsWithDetails = await Promise.all(
-    allContracts.map(async (contract) => {
-      const order = await getOrderById(c, contract.rentalId)
-      const customer = order ? await getUserById(c, order.userId) : null
-      return { contract, order, customer }
-    })
-  )
+  const contractsWithDetails = allContracts.map(contract => {
+    const order = ordersById.get(contract.rentalId)
+    return { contract, order, customer: order ? usersById.get(order.userId) : null }
+  })
 
-  const ordersWithDetails = await Promise.all(
-    filteredOrders.map(async (order: any) => {
-      const customer = await getUserById(c, order.userId)
-      const device = await getDeviceById(c, order.deviceId)
-      return { ...order, customer, device }
-    })
-  )
+  const ordersWithDetails = filteredOrders.map((order: any) => ({
+    ...order,
+    customer: usersById.get(order.userId),
+    device: devicesById.get(order.deviceId),
+  }))
 
   const activeRentals = ordersWithDetails
 
@@ -73,8 +72,8 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
 
       <!-- 统一的筛选按钮 - 包含合同和租赁状态 -->
-      <h3 style="margin-top: 0; margin-bottom: 16px;">合同管理</h3>
-      <div class="filter-tabs" style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+      <div class="subsection-heading"><div><p class="section-code">CONTRACTS</p><h3>合同管理</h3></div></div>
+      <div class="filter-tabs">
         <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
         <a href="/staff/contracts?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
         <a href="/staff/contracts?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
@@ -84,9 +83,9 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       </div>
       
       <!-- 搜索功能 -->
-      <div class="search-bar" style="margin-bottom: 24px;">
-        <form action="/staff/contracts" method="GET" style="display: flex; gap: 10px;">
-          <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" style="flex-grow: 1;" />
+      <div class="search-bar">
+        <form action="/staff/contracts" method="GET" class="search-form">
+          <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" />
           ${status ? `<input type="hidden" name="status" value="${status}" />` : ''}
           <button type="submit" class="button button-primary">搜索</button>
         </form>
@@ -101,6 +100,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
               <th>合同编号</th>
               <th>订单编号</th>
               <th>客户</th>
+              ${user.role === 'ADMIN' ? '<th>创建员工</th>' : ''}
               <th>状态</th>
               <th>签署日期</th>
               <th>操作</th>
@@ -112,28 +112,30 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                 const expired = isContractExpired(contract)
                 const canCancel = user && !expired && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id || contract.status === 'pending_sign');
                 const statusLabel = expired ? '已过期' : contract.status === 'pending_sign' ? '待签署' : contract.status === 'signed' ? '已签署' : contract.status === 'cancelled' ? '已取消' : contract.status === 'draft' ? '草稿' : contract.status
-                const statusClass = expired ? 'danger' : contract.status === 'signed' ? 'success' : contract.status === 'cancelled' ? 'neutral' : 'warning-badge'
+                const statusClass = expired ? 'badge-danger' : contract.status === 'signed' ? 'badge-success' : contract.status === 'cancelled' ? 'badge-neutral' : 'badge-warning'
                 const signedAtText = contract.signedAt ? contract.signedAt : (expired ? '签署期限已过' : contract.status === 'cancelled' ? '已取消' : '未签署')
                 return `
                 <tr>
                   <td>${contract.contractNumber}</td>
                   <td>${order?.orderNo ?? '付款后生成'}</td>
                   <td>${customer?.name ?? '未知客户'}</td>
+                  ${user.role === 'ADMIN' ? `<td>${usersById.get(contract.createdBy || contract.created_by || '')?.name || '未知'}</td>` : ''}
                   <td><span class="badge ${statusClass}">${statusLabel}</span></td>
                   <td>${signedAtText}</td>
-                  <td>
-                    ${contract.status === 'signed' ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看/下载合同</a>` : `<a class="button button-sm button-secondary" href="/staff/contracts/${contract.id}/progress">签署进度</a>`}
+                  <td><div class="table-actions">
+                    ${contract.status === 'signed' ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>` : `<a class="button button-sm button-secondary" href="/staff/contracts/${contract.id}/progress">签署进度</a>`}
+                    <a class="button button-sm button-secondary" href="/staff/contracts/${contract.id}/data">编辑资料</a>
                     ${
                       contract.status === 'pending_sign' && !expired
                         ? `
                           <a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>
-                          <button class="button button-sm button-success" onclick="navigator.clipboard.writeText(window.location.origin + '/contract/sign?token=${contract.signToken}&step=1').then(()=>alert('合同签署链接已复制到剪贴板！'))">复制签署链接</button>
-                          ${canCancel ? `<form action="/staff/contract/${contract.id}/cancel" method="post" style="display:inline;"><button type="submit" class="button button-sm button-danger" onclick="return confirm('确定要取消这份合同吗？');">取消</button></form>` : ''}
+                          <button type="button" class="button button-sm button-secondary copy-sign-link" data-sign-token="${contract.signToken}">复制链接</button>
+                          ${canCancel ? `<form action="/staff/contract/${contract.id}/cancel" method="post" class="inline-form"><button type="submit" class="button button-sm button-danger" onclick="return confirm('确定取消合同 ${contract.contractNumber} 吗？取消后客户将无法继续签署。');">取消合同</button></form>` : ''}
                         `
                         : ''
                     }
                     ${order?.status === 'active' ? `<a class="button button-sm button-info" href="/staff/orders/${contract.rentalId}">租赁详情</a>` : ''}
-                  </td>
+                  </div></td>
                 </tr>
               `
               })
@@ -141,12 +143,12 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           </tbody>
         </table>
       `
-          : '<p>没有找到符合条件的合同记录。</p>'
+          : '<div class="empty-state"><span class="empty-state-code mono">NO CONTRACTS</span><h3>没有符合条件的合同</h3><p>调整筛选条件或创建新的租赁合同。</p></div>'
       }
 
-      <h3 style="margin-top: 48px; margin-bottom: 16px;">租赁管理</h3>
+      <div class="subsection-heading subsection-heading-spaced"><div><p class="section-code">RENTALS</p><h3>租赁管理</h3></div></div>
 
-            <div class="filter-tabs" style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+      <div class="filter-tabs">
         <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部租赁</a>
         <a href="/staff/contracts?status=active" class="button ${status === 'active' ? 'button-primary' : 'button-secondary'}">当前租赁中</a>
         <a href="/staff/contracts?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
@@ -155,9 +157,9 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       </div>
       
       <!-- 搜索功能 -->
-      <div class="search-bar" style="margin-bottom: 24px;">
-        <form action="/staff/contracts" method="GET" style="display: flex; gap: 10px;">
-          <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" style="flex-grow: 1;" />
+      <div class="search-bar">
+        <form action="/staff/contracts" method="GET" class="search-form">
+          <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" />
           ${status ? `<input type="hidden" name="status" value="${status}" />` : ''}
           <button type="submit" class="button button-primary">搜索</button>
         </form>
@@ -208,11 +210,36 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           </tbody>
         </table>
       `
-          : '<p>目前没有符合条件的租赁记录。</p>'
+          : '<div class="empty-state"><span class="empty-state-code mono">NO RENTALS</span><h3>没有符合条件的租赁记录</h3><p>更换状态筛选后再试。</p></div>'
       }
 
 
     </div>
+    <div id="action-toast" class="action-toast" role="status" aria-live="polite" hidden></div>
+    <script>
+      (() => {
+        const toast = document.getElementById('action-toast');
+        const showToast = (message, failed = false) => {
+          toast.textContent = message;
+          toast.dataset.state = failed ? 'error' : 'success';
+          toast.hidden = false;
+          window.setTimeout(() => { toast.hidden = true; }, 2600);
+        };
+        document.querySelectorAll('.copy-sign-link').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const link = window.location.origin + '/contract/sign?token=' + encodeURIComponent(button.dataset.signToken) + '&step=1';
+            try {
+              if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(link);
+              else { const field = document.createElement('textarea'); field.value = link; document.body.appendChild(field); field.select(); document.execCommand('copy'); field.remove(); }
+              const original = button.textContent;
+              button.textContent = '已复制';
+              window.setTimeout(() => { button.textContent = original; }, 1800);
+              showToast('签署链接已复制');
+            } catch { showToast('复制失败，请进入签署进度页面手工复制', true); }
+          });
+        });
+      })();
+    </script>
   `
 
   return buildLayout('合同与租赁进度管理 - 电脑租赁管理系统', body, user)

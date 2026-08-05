@@ -13,10 +13,12 @@ const uppercaseAlphanumericNanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQR
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
   const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, returnLocation } = body;
   const deliveryMethod = body.deliveryMethod === 'Delivery' ? 'Delivery' : 'Pickup'
-  const deliveryFee = deliveryMethod === 'Delivery' ? Number(body.deliveryFee || 0) : 0
+  const deliveryFeeText = String(body.deliveryFee || '').trim()
+  const deliveryFee = deliveryMethod === 'Delivery' ? Number(deliveryFeeText) : 0
+  const returnMethod = deliveryMethod === 'Delivery' && body.returnMethod === 'CourierPickup' ? 'CourierPickup' : 'StoreReturn'
   await loadSystemSettingsFromDB(c)
   const allowedLocations = getSystemSettings().companyDetails.pickupLocations
-  const returnLocationValue = String(returnLocation || '').trim()
+  let returnLocationValue = String(returnLocation || '').trim()
   let pickupLocationValue = String(body.pickupLocation || '').trim()
   let deliveryAddressData: Record<string, string> = {}
   if (deliveryMethod === 'Pickup') {
@@ -31,14 +33,18 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     pickupLocationValue = `${street}, ${suburb} ${state} ${postcode}, Australia`
     deliveryAddressData = { delivery_address: pickupLocationValue, delivery_street: street, delivery_suburb: suburb, delivery_state: state, delivery_postcode: postcode, delivery_place_id: String(body.deliveryPlaceId || '').trim().slice(0, 300) }
   }
-  if (!returnLocationValue || (user.role !== 'ADMIN' && !allowedLocations.includes(returnLocationValue))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请选择管理员配置的归还地点')}`)
+  if (returnMethod === 'CourierPickup') {
+    returnLocationValue = pickupLocationValue
+  } else if (!returnLocationValue || (user.role !== 'ADMIN' && !allowedLocations.includes(returnLocationValue))) {
+    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请选择管理员配置的归还店铺')}`)
+  }
 
   if (!deviceId || !startDate || !endDate) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备、开始日期和结束日期均为必填项')}`);
   }
   const lateFeePerDay = Number(body.lateFeePerDay)
   const repairCost = body.repairCost === '' ? null : Number(body.repairCost)
-  if (!deviceCondition?.trim() || !Number.isFinite(lateFeePerDay) || lateFeePerDay < 0 || !Number.isFinite(deliveryFee) || deliveryFee < 0 || (repairCost !== null && (!Number.isFinite(repairCost) || repairCost < 0))) {
+  if (!deviceCondition?.trim() || !Number.isFinite(lateFeePerDay) || lateFeePerDay < 0 || (deliveryMethod === 'Delivery' && !deliveryFeeText) || !Number.isFinite(deliveryFee) || deliveryFee < 0 || (repairCost !== null && (!Number.isFinite(repairCost) || repairCost < 0))) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请填写设备状况、取还地点及有效的非负费用')}`);
   }
 
@@ -122,7 +128,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     repair_cost: repairCost,
     pickup_location: pickupLocationValue,
     return_location: returnLocationValue,
-    contract_data: { invoice_number: '', delivery_method: deliveryMethod, delivery_fee: deliveryFee.toFixed(2), pickup_location: pickupLocationValue, return_location: returnLocationValue, ...deliveryAddressData, agreement_version: '1.0' },
+    contract_data: { invoice_number: '', delivery_method: deliveryMethod, delivery_fee: deliveryFee.toFixed(2), return_method: returnMethod, pickup_location: pickupLocationValue, return_location: returnLocationValue, ...deliveryAddressData, agreement_version: '1.0' },
   };
 
   await insertOrder(c, newOrder);
