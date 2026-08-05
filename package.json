@@ -7,7 +7,7 @@
     "sanitize-html": "^2.17.6"
   },
   "scripts": {
-    "test": "TS_NODE_TRANSPILE_ONLY=true node --loader ts-node/esm --experimental-specifier-resolution=node --test tests/*.test.ts",
+    "test": "TS_NODE_TRANSPILE_ONLY=true node --loader ts-node/esm --loader ./tests/text-module-loader.mjs --experimental-specifier-resolution=node --test tests/*.test.ts",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
     "db:init": "wrangler d1 migrations apply rent --local",

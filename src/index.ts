@@ -48,12 +48,14 @@ import {
   issueInvoice,
   createAuthSession,
   deleteAuthSession,
+  buildLayout,
   getSystemSettings,
   loadSystemSettingsFromDB
 } from './site'
 import { nanoid, customAlphabet } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund } from './actions/stripePayments'
+import siteStyles from './styles.css'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
   const form: Record<string, string> = {}
@@ -145,6 +147,12 @@ app.use('*', async (c, next) => {
   c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.quilljs.com; style-src 'self' 'unsafe-inline' https://cdn.quilljs.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'")
 })
 
+app.get('/styles.css', (c) => {
+  c.header('Content-Type', 'text/css; charset=utf-8')
+  c.header('Cache-Control', 'public, max-age=3600')
+  return c.body(siteStyles)
+})
+
 
 
 app.use('*', async (c, next) => {
@@ -234,7 +242,7 @@ app.get('/register', async (c) => {
 })
 
 app.get('/terms', (c) => {
-  return c.html(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>租赁条款</title><link rel="stylesheet" href="/styles.css"></head><body><main class="container"><div class="panel"><h1>租赁条款</h1>${sanitizeRichHtml(getSystemSettings().rentalTerms)}<p><a class="button" href="/register">返回注册</a></p></div></main></body></html>`)
+  return c.html(buildLayout('租赁条款', `<div class="panel contract-section"><div class="section-title"><h2>租赁条款</h2><span class="section-note mono">LEGAL / TERMS</span></div>${sanitizeRichHtml(getSystemSettings().rentalTerms)}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`))
 })
 
 app.post('/register', async (c) => {

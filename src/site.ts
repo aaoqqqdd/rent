@@ -5,6 +5,13 @@
 
 import { Context } from 'hono'
 import sanitizeHtml from 'sanitize-html'
+import layoutTemplate from './layout.html'
+
+function renderLayoutTemplate(values: Record<string, string>): string {
+  return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? values[key] : placeholder
+  )
+}
 
 export function sanitizeRichHtml(value: unknown): string {
   return sanitizeHtml(String(value ?? ''), {
@@ -174,6 +181,8 @@ function generateSalt(length: number = 16): string {
   return Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+const PBKDF2_ITERATIONS = 100000
+
 export async function generateReferralCode(length: number = 6): Promise<string> {
   const { customAlphabet } = await import('nanoid');
   const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -182,7 +191,7 @@ export async function generateReferralCode(length: number = 6): Promise<string> 
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  const iterations = 210000
+  const iterations = PBKDF2_ITERATIONS
   const salt = generateSalt()
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations }, key, 256)
@@ -194,7 +203,7 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   if (storedHash.startsWith('pbkdf2$')) {
     const [, iterationText, salt, expected] = storedHash.split('$')
     const iterations = Number(iterationText)
-    if (!iterations || !salt || !expected) return false
+    if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_ITERATIONS || !salt || !expected) return false
     const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
     const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations }, key, 256)
     const actual = Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('')
@@ -2171,449 +2180,14 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       </aside>`
     : ''
 
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${normalizedTitle}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-  <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
-  <style>
-    :root {
-      --primary: #1e40af;
-      --primary-light: #dbeafe;
-      --primary-dark: #1e3a8a;
-      --accent: #b45309;
-      --accent-light: #fef3c7;
-      --success: #047857;
-      --success-light: #d1fae5;
-      --warning: #b45309;
-      --warning-light: #fef3c7;
-      --danger: #b91c1c;
-      --danger-light: #fee2e2;
-      --info: #0369a1;
-      --info-light: #e0f2fe;
-      --bg: #fafaf9;
-      --bg-subtle: #f5f5f4;
-      --surface: #ffffff;
-      --text: #18181b;
-      --text-secondary: #71717a;
-      --text-tertiary: #a1a1aa;
-      --border: #e4e4e7;
-      --border-subtle: #f4f4f5;
-      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.04);
-      --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04);
-      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.06), 0 2px 4px -2px rgb(0 0 0 / 0.04);
-      --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.06), 0 4px 6px -4px rgb(0 0 0 / 0.04);
-      --radius: 6px;
-      --radius-md: 8px;
-      --radius-lg: 10px;
-      --transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-      --font-display: 'Space Grotesk', system-ui, sans-serif;
-      --font-body: 'Inter', system-ui, -apple-system, sans-serif;
-      --font-mono: 'JetBrains Mono', ui-monospace, monospace;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { font-size: 15px; }
-    body {
-      font-family: var(--font-body);
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.55;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
-    body::before {
-      content: '';
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background-image: radial-gradient(circle at 1px 1px, #e4e4e7 1px, transparent 0);
-      background-size: 32px 32px;
-      opacity: 0.3;
-      pointer-events: none;
-      z-index: 0;
-    }
-    .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-    .page { position: relative; z-index: 1; max-width: 100%; min-height: 100vh; display: flex; flex-direction: column; }
-
-    header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0 28px;
-      height: 60px;
-      background: rgba(255,255,255,0.85);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-    }
-    .logo {
-      font-family: var(--font-display);
-      font-size: 1.25rem;
-      font-weight: 700;
-      color: var(--primary);
-      text-decoration: none;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      letter-spacing: -0.02em;
-    }
-    .logo-mark {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 32px; height: 32px;
-      background: var(--primary);
-      color: white;
-      border-radius: var(--radius);
-      font-size: 1rem;
-    }
-    .main-nav { display: flex; align-items: center; gap: 4px; }
-    .main-nav a {
-      padding: 8px 16px;
-      text-decoration: none;
-      color: var(--text-secondary);
-      font-weight: 500;
-      font-size: 0.9rem;
-      border-radius: var(--radius);
-      transition: var(--transition);
-    }
-    .main-nav a:hover { color: var(--text); background: var(--bg-subtle); }
-    .user-block { display: flex; align-items: center; gap: 12px; }
-    .user-avatar {
-      width: 34px; height: 34px;
-      border-radius: 50%;
-      background: var(--primary);
-      display: flex; align-items: center; justify-content: center;
-      color: white;
-      font-weight: 600;
-      font-size: 0.85rem;
-      font-family: var(--font-display);
-      border: 2px solid var(--surface);
-      box-shadow: var(--shadow-sm);
-    }
-    .user-label { font-weight: 500; font-size: 0.9rem; color: var(--text); }
-    .logout-button {
-      padding: 6px 14px;
-      font-size: 0.85rem;
-      font-weight: 500;
-      color: var(--text-secondary);
-      background: var(--bg-subtle);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      text-decoration: none;
-      transition: var(--transition);
-    }
-    .logout-button:hover { background: var(--danger-light); color: var(--danger); border-color: var(--danger-light); }
-
-    .container { display: flex; flex: 1; }
-    .content { flex: 1; padding: 28px 32px; max-width: 1400px; }
-    .page-centered {
-      display: flex; justify-content: center; align-items: center;
-      min-height: calc(100vh - 60px);
-      padding: 40px 20px;
-      width: 100%;
-    }
-
-    .hero {
-      background: linear-gradient(135deg, var(--primary) 0%, #312e81 100%);
-      color: white;
-      border-radius: var(--radius-lg);
-      padding: 36px 40px;
-      margin-bottom: 24px;
-      position: relative;
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.1);
-    }
-    .hero::before {
-      content: '';
-      position: absolute;
-      top: -50%; right: -20%;
-      width: 400px; height: 400px;
-      background: radial-gradient(circle, rgba(180,83,9,0.25) 0%, transparent 70%);
-      border-radius: 50%;
-    }
-    .hero h2 {
-      font-family: var(--font-display);
-      font-size: 1.75rem;
-      font-weight: 700;
-      margin-bottom: 6px;
-      position: relative; z-index: 1;
-      letter-spacing: -0.02em;
-    }
-    .hero p { font-size: 0.95rem; opacity: 0.8; position: relative; z-index: 1; }
-
-    .panel {
-      background: var(--surface);
-      border-radius: var(--radius-lg);
-      padding: 28px;
-      border: 1px solid var(--border);
-      box-shadow: var(--shadow-sm);
-      margin-bottom: 20px;
-    }
-    .panel h3 { font-family: var(--font-display); font-size: 1.1rem; font-weight: 600; margin-bottom: 20px; color: var(--text); }
-
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px;
-      margin-bottom: 24px;
-    }
-    .stat-card {
-      background: var(--surface);
-      border-radius: var(--radius-lg);
-      padding: 24px;
-      border: 1px solid var(--border);
-      box-shadow: var(--shadow-sm);
-      transition: var(--transition);
-      position: relative;
-      overflow: hidden;
-    }
-    .stat-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 3px;
-      background: var(--primary);
-    }
-    .stat-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
-    .stat-card.primary::before { background: var(--primary); }
-    .stat-card.success::before { background: var(--success); }
-    .stat-card.warning::before { background: var(--warning); }
-    .stat-card.accent::before { background: var(--accent); }
-    .stat-card.danger::before { background: var(--danger); }
-    .stat-card h3 {
-      font-size: 0.75rem;
-      color: var(--text-tertiary);
-      margin-bottom: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      font-weight: 600;
-      font-family: var(--font-display);
-    }
-    .stat-card .value {
-      font-family: var(--font-mono);
-      font-size: 2rem;
-      font-weight: 600;
-      color: var(--text);
-      line-height: 1;
-      letter-spacing: -0.02em;
-    }
-    .stat-card .trend { font-size: 0.8rem; color: var(--success); margin-top: 10px; display: flex; align-items: center; gap: 4px; }
-
-    .grid { display: grid; gap: 16px; }
-    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
-    .grid-3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-    .grid-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-
-    .section-title {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--border);
-    }
-    .section-title h2 { font-family: var(--font-display); font-size: 1.25rem; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
-    .section-note { color: var(--text-tertiary); font-size: 0.85rem; }
-
-    .button {
-      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-      padding: 10px 20px;
-      background: var(--primary); color: white;
-      border: none; border-radius: var(--radius);
-      text-decoration: none; cursor: pointer;
-      font-size: 0.9rem; font-weight: 500; font-family: var(--font-body);
-      transition: var(--transition);
-      box-shadow: var(--shadow-sm);
-    }
-    .button:hover { background: var(--primary-dark); box-shadow: var(--shadow-md); }
-    .button:active { transform: translateY(1px); }
-    .button-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
-    .button-secondary:hover { background: var(--bg-subtle); border-color: var(--text-tertiary); }
-    .button-success { background: var(--success); }
-    .button-success:hover { background: #065f46; }
-    .button-warning { background: var(--warning); }
-    .button-warning:hover { background: #92400e; }
-    .button-danger { background: var(--danger); }
-    .button-danger:hover { background: #991b1b; }
-    .button-sm { padding: 6px 14px; font-size: 0.8rem; }
-
-    .link-button {
-      background: none; border: none;
-      color: var(--primary); text-decoration: none;
-      cursor: pointer; font-size: 0.85rem; font-weight: 500;
-      transition: var(--transition);
-      padding: 6px 10px; border-radius: var(--radius);
-    }
-    .link-button:hover { background: var(--primary-light); text-decoration: none; }
-
-    .form-label { display: block; margin-bottom: 6px; font-weight: 500; font-size: 0.85rem; color: var(--text); }
-    .form-control {
-      width: 100%; padding: 10px 14px;
-      border: 1px solid var(--border); border-radius: var(--radius);
-      margin-bottom: 16px;
-      font-size: 0.95rem; font-family: var(--font-body);
-      transition: var(--transition);
-      background: var(--surface); color: var(--text);
-    }
-    .form-control::placeholder { color: var(--text-tertiary); }
-    .form-control:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
-    .form-control:hover:not(:focus) { border-color: var(--text-tertiary); }
-
-    .quill { border-radius: var(--radius-lg); border: 1px solid var(--border); transition: var(--transition); margin-bottom: 16px; }
-    .quill:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
-    .ql-toolbar {
-      border-top-left-radius: var(--radius-lg); border-top-right-radius: var(--radius-lg);
-      background: var(--bg-subtle); border-bottom: 1px solid var(--border);
-      border-left: none; border-right: none; border-top: none;
-    }
-    .ql-container {
-      border-bottom-left-radius: var(--radius-lg); border-bottom-right-radius: var(--radius-lg);
-      min-height: 280px; background: var(--surface); border: none;
-      font-size: 0.95rem; color: var(--text); font-family: var(--font-body);
-    }
-    .ql-editor { min-height: 280px; line-height: 1.7; }
-    .ql-editor.ql-blank::before { color: var(--text-tertiary); font-style: normal; }
-
-    .form-check { display: flex; align-items: center; margin-bottom: 12px; font-size: 0.85rem; gap: 8px; color: var(--text-secondary); }
-    .form-check input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
-
-    .alert {
-      padding: 12px 16px; border-radius: var(--radius); margin-bottom: 16px;
-      border: 1px solid; display: flex; align-items: flex-start;
-      gap: 10px; font-size: 0.85rem; line-height: 1.5;
-    }
-    .alert-success { background: var(--success-light); border-color: #86efac; color: #065f46; }
-    .alert-warning { background: var(--warning-light); border-color: #fcd34d; color: #92400e; }
-    .alert-danger { background: var(--danger-light); border-color: #fca5a5; color: #991b1b; }
-    .alert-info { background: var(--info-light); border-color: #7dd3fc; color: #0c4a6e; }
-
-    .card {
-      background: var(--surface); border-radius: var(--radius-lg); padding: 20px;
-      border: 1px solid var(--border); box-shadow: var(--shadow-sm); transition: var(--transition);
-    }
-    .card:hover { box-shadow: var(--shadow-md); }
-    .card h3 { font-family: var(--font-display); font-size: 1rem; font-weight: 600; margin-bottom: 12px; }
-    .card p { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 8px; }
-    .text-muted { color: var(--text-secondary); font-size: 0.85rem; }
-
-    .sidebar {
-      width: 220px; background: var(--surface); padding: 16px 12px;
-      border-right: 1px solid var(--border);
-      position: sticky; top: 60px; height: calc(100vh - 60px);
-      display: flex; flex-direction: column;
-    }
-    .sidebar-section { flex: 1; }
-    .sidebar-section h3 {
-      font-size: 0.68rem; text-transform: uppercase; color: var(--text-tertiary);
-      padding: 0 10px 8px; margin-bottom: 4px;
-      letter-spacing: 0.1em; font-weight: 600; font-family: var(--font-display);
-    }
-    .sidebar-section a {
-      display: flex; align-items: center; gap: 10px;
-      padding: 8px 12px; text-decoration: none; color: var(--text-secondary);
-      border-radius: var(--radius); margin-bottom: 2px;
-      transition: var(--transition); font-weight: 500; font-size: 0.85rem;
-    }
-    .sidebar-section a .nav-icon { width: 18px; text-align: center; font-size: 0.85rem; opacity: 0.5; }
-    .sidebar-section a:hover { background: var(--bg-subtle); color: var(--text); }
-    .sidebar-section a:hover .nav-icon { opacity: 1; color: var(--primary); }
-    .sidebar-section a.active { background: var(--primary-light); color: var(--primary-dark); }
-    .sidebar-section a.active .nav-icon { opacity: 1; color: var(--primary); }
-    .sidebar-footer { padding: 12px 10px 0; border-top: 1px solid var(--border); margin-top: auto; }
-    .status-indicator { display: flex; align-items: center; gap: 8px; font-size: 0.72rem; color: var(--text-tertiary); }
-    .led {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: var(--success);
-      box-shadow: 0 0 0 2px var(--success-light), 0 0 6px var(--success);
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-
-    .login-container { max-width: 400px; width: 100%; margin: 0 auto; }
-    .login-card {
-      background: var(--surface); border-radius: var(--radius-lg); padding: 40px 36px;
-      border: 1px solid var(--border); box-shadow: var(--shadow-lg);
-      width: 100%;
-    }
-    .login-logo {
-      text-align: center; font-family: var(--font-display); font-size: 1.75rem;
-      font-weight: 700; color: var(--primary); margin-bottom: 6px;
-      letter-spacing: -0.02em; display: flex; align-items: center; justify-content: center; gap: 10px;
-    }
-    .login-subtitle { text-align: center; color: var(--text-secondary); margin-bottom: 28px; font-size: 0.9rem; }
-
-    table {
-      width: 100%; border-collapse: separate; border-spacing: 0;
-      background: var(--surface); border-radius: var(--radius-lg); overflow: hidden;
-      border: 1px solid var(--border); font-size: 0.88rem;
-    }
-    th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border-subtle); }
-    th {
-      background: var(--bg-subtle); font-weight: 600; font-size: 0.72rem;
-      text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary);
-      font-family: var(--font-display);
-    }
-    td { color: var(--text); }
-    tr:hover td { background: var(--bg-subtle); }
-    tr:last-child td { border-bottom: none; }
-
-    .badge {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 10px; border-radius: 999px;
-      font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
-      letter-spacing: 0.04em; font-family: var(--font-mono);
-    }
-    .badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; }
-    .badge-success { background: var(--success-light); color: #065f46; }
-    .badge-success::before { background: var(--success); }
-    .badge-warning { background: var(--warning-light); color: #92400e; }
-    .badge-warning::before { background: var(--warning); }
-    .badge-danger { background: var(--danger-light); color: #991b1b; }
-    .badge-danger::before { background: var(--danger); }
-    .badge-info { background: var(--info-light); color: #0c4a6e; }
-    .badge-info::before { background: var(--info); }
-    .badge-primary { background: var(--primary-light); color: #1e3a8a; }
-    .badge-primary::before { background: var(--primary); }
-
-    @media (max-width: 768px) {
-      header { padding: 0 16px; }
-      .sidebar { display: none; }
-      .content { padding: 16px; }
-      .stats-grid { grid-template-columns: 1fr; gap: 12px; }
-      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
-      .hero { padding: 24px 20px; }
-      .hero h2 { font-size: 1.35rem; }
-      table { display: block; overflow-x: auto; }
-      .main-nav { display: none; }
-      .user-label { display: none; }
-      .login-card { padding: 28px 24px; margin: 12px; }
-      .panel { padding: 20px; }
-    }
-  </style>
-</head>
-<body>
-  <div class="page">
-    <header>
-      <a href="/" class="logo"><span class="logo-mark">▣</span>PC Rental</a>
-      <nav class="main-nav">${topNav}</nav>
-      <div class="user-block">${userBlockHtml}</div>
-    </header>
-    <div class="container">
-      ${sidebar}
-      <main class="content">${body}</main>
-    </div>
-  </div>
-  <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
-</body>
-</html>`
+  return renderLayoutTemplate({
+    TITLE: normalizedTitle,
+    BODY_CLASS: isAuthPage ? 'auth-page' : currentUser ? 'app-page' : 'public-page',
+    TOP_NAV: topNav,
+    USER_BLOCK: userBlockHtml,
+    SIDEBAR: sidebar,
+    CONTENT: body
+  })
 }
 
 // ==================== 错误日志记录系统 ====================

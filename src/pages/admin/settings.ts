@@ -7,6 +7,8 @@ import { buildLayout, getSystemSettings, updateSystemSettings } from '../../site
 
 export function renderAdminSettings(user: any, stripe: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
+  const rentalTermsJson = JSON.stringify(settings.rentalTerms).replace(/</g, '\\u003c')
+  const emailTemplateJson = JSON.stringify(settings.emailTemplate).replace(/</g, '\\u003c')
 
   const body = `
     <div class="panel">
@@ -175,7 +177,7 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
     <script>
       document.addEventListener('DOMContentLoaded', function() {
         // 初始化 Quill 编辑器
-        const rentalTermsEditor = new Quill('#rentalTermsEditor', {
+        const rentalTermsEditor = window.createRichTextEditor('#rentalTermsEditor', {
           theme: 'snow',
           modules: {
             toolbar: [
@@ -187,7 +189,7 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
             ]
           }
         });
-        const emailTemplateEditor = new Quill('#emailTemplateEditor', {
+        const emailTemplateEditor = window.createRichTextEditor('#emailTemplateEditor', {
           theme: 'snow',
           modules: {
             toolbar: [['bold', 'italic'], ['link']]
@@ -195,8 +197,8 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         });
 
         // 将数据库中的内容加载到编辑器
-        const rentalTermsContent = ${JSON.stringify(settings.rentalTerms)};
-        const emailTemplateContent = ${JSON.stringify(settings.emailTemplate)};
+        const rentalTermsContent = ${rentalTermsJson};
+        const emailTemplateContent = ${emailTemplateJson};
         if (rentalTermsContent) {
           rentalTermsEditor.root.innerHTML = rentalTermsContent;
         }
@@ -262,7 +264,7 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         })
         .then(async response => {
           const rawText = await response.text();
-          let data: any = {};
+          let data = {};
           try {
             data = rawText ? JSON.parse(rawText) : {};
           } catch {

@@ -9,6 +9,13 @@
 			"invocation_logs": true
 		}
 	},
+	"rules": [
+		{
+			"type": "Text",
+			"globs": ["**/*.html", "**/*.css"],
+			"fallthrough": true
+		}
+	],
 	// "compatibility_flags": [
 	//   "nodejs_compat"
 	// ],

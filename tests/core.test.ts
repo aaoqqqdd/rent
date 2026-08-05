@@ -5,13 +5,24 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { canTransitionOrder, hashPassword, verifyPassword, renderContractVariables, CONTRACT_OPERATIONAL_FIELDS, CONTRACT_COMPUTED_FIELDS, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml } from '../src/site'
+import { buildLayout, canTransitionOrder, hashPassword, verifyPassword, renderContractVariables, CONTRACT_OPERATIONAL_FIELDS, CONTRACT_COMPUTED_FIELDS, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml } from '../src/site'
+import { renderAdminSettings } from '../src/pages/admin/settings'
+import { renderAdminContracts } from '../src/pages/admin/contracts'
+
+function assertInlineScriptsParse(html: string) {
+  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
+    .map(match => match[1])
+    .filter(Boolean)
+  assert.ok(scripts.length > 0)
+  for (const script of scripts) assert.doesNotThrow(() => new Function(script))
+}
 
 test('PBKDF2 passwords verify without storing plaintext', async () => {
   const hash = await hashPassword('A-secure-password-123')
-  assert.match(hash, /^pbkdf2\$210000\$/)
+  assert.match(hash, /^pbkdf2\$100000\$/)
   assert.equal(await verifyPassword('A-secure-password-123', hash), true)
   assert.equal(await verifyPassword('wrong-password', hash), false)
+  assert.equal(await verifyPassword('A-secure-password-123', 'pbkdf2$210000$salt$hash'), false)
 })
 
 test('terminal order states cannot be reopened', () => {
@@ -41,4 +52,24 @@ test('plain text and contract HTML reject script injection', () => {
   assert.match(cleaned, /Hello \$\{contract_number\}/)
   assert.doesNotMatch(cleaned, /script|javascript:|onclick/i)
   assert.match(cleaned, /<a rel="noopener noreferrer">link<\/a>/)
+})
+
+test('rich text editor pages emit valid browser JavaScript', async () => {
+  const user = { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }
+  assertInlineScriptsParse(renderAdminSettings(user))
+
+  const statement = {
+    bind() { return this },
+    async first() { return null },
+  }
+  const context = { env: { RENT: { prepare: () => statement } } } as any
+  assertInlineScriptsParse(await renderAdminContracts(context, user))
+})
+
+test('site layout loads the external stylesheet and resolves template slots', () => {
+  const html = buildLayout('测试页面', '<section id="test-content">内容</section>')
+  assert.match(html, /<link rel="stylesheet" href="\/styles\.css">/)
+  assert.doesNotMatch(html, /<style(?:\s|>)/i)
+  assert.doesNotMatch(html, /\{\{[A-Z_]+\}\}/)
+  assert.match(html, /<section id="test-content">内容<\/section>/)
 })

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{TITLE}}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+
+</head>
+<body class="{{BODY_CLASS}}">
+  <div class="page">
+    <header>
+      <a href="/" class="logo"><span class="logo-mark">PR</span><span class="logo-copy">PC Rental<small>设备租赁控制台</small></span></a>
+      <span class="asset-tag mono">ASSET OPS / MEL</span>
+      <nav class="main-nav">{{TOP_NAV}}</nav>
+      <div class="user-block">{{USER_BLOCK}}</div>
+    </header>
+    <div class="container">
+      {{SIDEBAR}}
+      <main class="content">{{CONTENT}}</main>
+    </div>
+  </div>
+  <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
+  <script>
+    window.createRichTextEditor = function(selector, options) {
+      if (window.Quill) return new window.Quill(selector, options);
+      const root = document.querySelector(selector);
+      if (!root) throw new Error('Rich text editor element not found: ' + selector);
+      root.contentEditable = 'true';
+      root.setAttribute('role', 'textbox');
+      root.setAttribute('aria-multiline', 'true');
+      root.classList.add('rich-text-fallback');
+      const toolbar = document.createElement('div');
+      toolbar.className = 'rich-text-fallback-toolbar';
+      const commands = [
+        ['正文', 'formatBlock', 'p'], ['H1', 'formatBlock', 'h1'], ['H2', 'formatBlock', 'h2'],
+        ['B', 'bold'], ['I', 'italic'], ['U', 'underline'],
+        ['1.', 'insertOrderedList'], ['•', 'insertUnorderedList'],
+        ['链接', 'createLink'], ['清除', 'removeFormat']
+      ];
+      commands.forEach(function(item) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = item[0];
+        button.addEventListener('mousedown', function(event) {
+          event.preventDefault();
+          root.focus();
+          let value = item[2] || null;
+          if (item[1] === 'createLink') {
+            value = window.prompt('请输入链接地址（https://）');
+            if (!value) return;
+          }
+          document.execCommand(item[1], false, value);
+        });
+        toolbar.appendChild(button);
+      });
+      root.parentNode.insertBefore(toolbar, root);
+      return { root: root };
+    };
+    (function() {
+      const path = window.location.pathname.replace(/\/$/, '') || '/';
+      const links = Array.from(document.querySelectorAll('.sidebar-section a'));
+      const active = links
+        .filter(function(link) {
+          const href = (link.getAttribute('href') || '').replace(/\/$/, '') || '/';
+          return path === href || (href !== '/' && path.startsWith(href + '/'));
+        })
+        .sort(function(a, b) { return b.getAttribute('href').length - a.getAttribute('href').length; })[0];
+      if (active) {
+        active.classList.add('active');
+        active.setAttribute('aria-current', 'page');
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -75,7 +75,7 @@ export async function renderAdminContracts(c: Context, user: any) {
                 </table>
               </div>
               <label for="templateContentEditor">模板内容</label>
-              <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;">${currentTemplate?.content ?? ''}</div>
+              <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;"></div>
               <input type="hidden" id="templateContent" name="templateContent" value="${safeTemplateContent}">
               <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们。</small>
             </div>
@@ -99,7 +99,7 @@ export async function renderAdminContracts(c: Context, user: any) {
 
     <script>
       document.addEventListener('DOMContentLoaded', function() {
-        const quill = new Quill('#templateContentEditor', {
+        const quill = window.createRichTextEditor('#templateContentEditor', {
           theme: 'snow',
           modules: {
             toolbar: [
