@@ -103,6 +103,8 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
           <details class="variable-index"><summary>完整邮件变量索引（${emailVariables.length} 项）</summary>${emailVariableIndex}</details>
           <div id="emailTemplateEditor" style="height: 150px;"></div>
           <textarea id="emailTemplate" name="emailTemplate" style="display:none;"></textarea>
+          <button type="button" id="emailTemplatePreviewButton" class="button button-secondary" style="margin-top: 16px;">预览变量替换</button>
+          <div id="emailTemplatePreview" class="template-preview" style="margin-top: 16px; border:1px solid #d1d5db; padding:16px; border-radius:8px; background:#fff; min-height: 120px;"></div>
         </div>
 
         <div class="form-group">
@@ -129,9 +131,36 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         const emailTemplateEditor = window.createRichTextEditor('#emailTemplateEditor', {
           theme: 'snow',
           modules: {
-            toolbar: [['bold', 'italic'], ['link']]
+            toolbar: [
+              ['bold', 'italic', 'underline', 'strike'],
+              [{ color: [] }, { background: [] }],
+              [{ align: [] }],
+              ['link', 'clean']
+            ]
           }
         });
+
+        const emailTemplatePreviewButton = document.getElementById('emailTemplatePreviewButton');
+        const emailTemplatePreview = document.getElementById('emailTemplatePreview');
+
+        async function updateEmailTemplatePreview() {
+          if (!emailTemplatePreviewButton || !emailTemplatePreview) return;
+          emailTemplatePreview.textContent = '正在生成预览...';
+          try {
+            const response = await fetch('/admin/templates/preview', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ kind: 'email', content: emailTemplateEditor.root.innerHTML })
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
+            emailTemplatePreview.innerHTML = result.html || '<p>无预览内容</p>';
+          } catch (error) {
+            emailTemplatePreview.textContent = error instanceof Error ? error.message : '预览失败';
+          }
+        }
+
+        emailTemplatePreviewButton?.addEventListener('click', updateEmailTemplatePreview);
 
         // 将数据库中的内容加载到编辑器
         const emailTemplateContent = ${emailTemplateJson};
@@ -210,7 +239,7 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         .then(data => {
           if (data.success) {
             alert('系统设置已保存成功！');
-            window.location.reload();
+            updateEmailTemplatePreview?.();
           } else {
             alert('保存失败: ' + data.error);
           }

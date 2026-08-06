@@ -45,6 +45,11 @@ export async function renderAdminContracts(c: Context, user: any) {
               <input type="hidden" id="templateContent" name="templateContent" value="${safeTemplateContent}">
               <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们；也可以通过编辑器里的“分页”按钮插入分页符。</small>
             </div>
+            <div style="display:flex; gap:12px; align-items:center; margin-bottom: 16px;">
+              <button type="button" id="contractTemplatePreviewButton" class="button button-secondary">预览变量效果</button>
+              <span class="section-note">点击预览当前模板在示例订单中的变量替换效果。</span>
+            </div>
+            <div id="contractTemplatePreview" class="template-preview" style="margin-bottom: 16px; border:1px solid #d1d5db; padding:16px; border-radius:8px; background:#fff; min-height:160px;"></div>
             <button type="submit" class="button button-primary">保存模板</button>
           </form>
         </div>
@@ -74,6 +79,7 @@ export async function renderAdminContracts(c: Context, user: any) {
               [{ list: 'ordered' }, { list: 'bullet' }],
               ['blockquote', 'code-block'],
               [{ color: [] }, { background: [] }],
+              [{ align: [] }],
               ['link', 'clean']
             ]
           }
@@ -110,6 +116,28 @@ export async function renderAdminContracts(c: Context, user: any) {
           return result.template;
         };
 
+        const contractTemplatePreviewButton = document.getElementById('contractTemplatePreviewButton');
+        const contractTemplatePreview = document.getElementById('contractTemplatePreview');
+
+        async function updateContractTemplatePreview() {
+          if (!contractTemplatePreview) return;
+          contractTemplatePreview.textContent = '正在生成预览...';
+          try {
+            const response = await fetch('/admin/templates/preview', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ kind: 'contract', content: quill.root.innerHTML })
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
+            contractTemplatePreview.innerHTML = result.html || '<p>无预览内容</p>';
+          } catch (error) {
+            contractTemplatePreview.textContent = error instanceof Error ? error.message : '预览失败';
+          }
+        }
+
+        contractTemplatePreviewButton?.addEventListener('click', updateContractTemplatePreview);
+
         // 初始化编辑器内容
         const initialContent = document.getElementById('templateContent').value;
         if (initialContent) {
@@ -130,7 +158,7 @@ export async function renderAdminContracts(c: Context, user: any) {
 
           updateContractTemplate(newTemplate).then(() => {
             alert('合同模板已保存成功！');
-            window.location.reload();
+            updateContractTemplatePreview?.();
           }).catch(error => {
             alert('保存失败: ' + error.message);
           });

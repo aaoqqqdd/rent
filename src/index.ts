@@ -42,6 +42,8 @@ import {
   validateHostedImageUrls,
   enforceRateLimit,
   sanitizeRichHtml,
+  renderSiteVariables,
+  renderContractVariables,
   updateDeviceStatus,
   getContractById,
   updateContractTemplate,
@@ -161,10 +163,10 @@ app.use('*', async (c, next) => {
   const ip = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim()
   const rateRule = c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
     : c.req.path === '/forgot-password' && c.req.method === 'POST' ? ['forgot', 5, 3600] as const
-    : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
-    : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
-    : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
-    : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
+      : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
+        : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
+          : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
+            : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
   if (rateRule && !await enforceRateLimit(c, rateRule[0], ip, rateRule[1], rateRule[2])) return c.text('请求过于频繁，请稍后再试', 429)
   await next()
   c.header('X-Content-Type-Options', 'nosniff')
@@ -265,7 +267,9 @@ app.get('/register', async (c) => {
 
 app.get('/terms', async (c) => {
   const settings = await loadSystemSettingsFromDB(c)
-  return c.html(buildLayout('用户协议', `<div class="panel contract-section"><div class="section-title"><h2>用户协议</h2><span class="section-note mono">LEGAL / USER TERMS</span></div>${sanitizeRichHtml(settings.userTerms)}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`))
+  const currentUser = c.get('user')
+  const content = renderSiteVariables(settings.userTerms, currentUser)
+  return c.html(buildLayout('用户协议', `<div class="panel contract-section"><div class="section-title"><h2>用户协议</h2><span class="section-note mono">LEGAL / USER TERMS</span></div>${content}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`, currentUser))
 })
 
 for (const [path, title, key, code] of [
@@ -276,7 +280,8 @@ for (const [path, title, key, code] of [
   app.get(path, async (c) => {
     const settings = await loadSystemSettingsFromDB(c)
     const currentUser = c.get('user')
-    return c.html(buildLayout(title, `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">${code}</p><h2>${title}</h2></div></div><div class="legal-document__content">${sanitizeRichHtml(settings[key])}</div></article>`, currentUser))
+    const content = renderSiteVariables(settings[key], currentUser)
+    return c.html(buildLayout(title, `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">${code}</p><h2>${title}</h2></div></div><div class="legal-document__content">${content}</div></article>`, currentUser))
   })
 }
 
@@ -615,7 +620,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   const form = await c.req.parseBody()
   const allowedCheck = new Set(['正常', '异常', '未测试'])
   const checks: Record<string, string> = {}
-  for (const [input, field] of [['screenCondition','screen_condition'],['keyboardCondition','keyboard_condition'],['trackpadCondition','trackpad_condition'],['bodyCondition','body_condition'],['cameraCondition','camera_condition'],['wifiCondition','wifi_condition'],['powerTest','power_test']]) {
+  for (const [input, field] of [['screenCondition', 'screen_condition'], ['keyboardCondition', 'keyboard_condition'], ['trackpadCondition', 'trackpad_condition'], ['bodyCondition', 'body_condition'], ['cameraCondition', 'camera_condition'], ['wifiCondition', 'wifi_condition'], ['powerTest', 'power_test']]) {
     const value = String(form[input] || '')
     if (!allowedCheck.has(value)) return c.text(`${input} 检查结果无效`, 400)
     checks[field] = value
@@ -633,7 +638,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
     try { damagePhotos = validateHostedImageUrls(form.damagePhotos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
   }
   if (damageDescription && !damagePhotos) return c.text('记录损坏时必须提供至少一张损坏照片链接', 400)
-  Object.assign(data, checks, { battery_cycles: batteryCycles ?? '', battery_health: String(form.batteryHealth || '').trim().slice(0, 100), damage_description: damageDescription, damage_photos: damagePhotos, replacement_cost: replacementCost.toFixed(2), return_status: damageDescription ? 'Damaged' : 'Returned', return_date: now.slice(0,10), inspection_date: now.slice(0,10), inspection_by: user.name || user.id })
+  Object.assign(data, checks, { battery_cycles: batteryCycles ?? '', battery_health: String(form.batteryHealth || '').trim().slice(0, 100), damage_description: damageDescription, damage_photos: damagePhotos, replacement_cost: replacementCost.toFixed(2), return_status: damageDescription ? 'Damaged' : 'Returned', return_date: now.slice(0, 10), inspection_date: now.slice(0, 10), inspection_by: user.name || user.id })
   await c.env.RENT.batch([
     c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(data), contract.id),
     c.env.RENT.prepare("UPDATE orders SET status = 'completed', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
@@ -1580,6 +1585,149 @@ app.post('/admin/templates/:kind', async (c) => {
   }
 })
 
+app.post('/admin/templates/preview', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限预览' }, 403)
+  try {
+    const payload = await c.req.json()
+    const kind = String(payload?.kind || '').trim()
+    const content = String(payload?.content || '')
+    if (!content) return c.json({ success: false, error: '缺少内容' }, 400)
+    await loadSystemSettingsFromDB(c)
+    let html = ''
+    if (kind === 'rental') {
+      const sampleContract = {
+        id: 'sample-contract',
+        rentalId: 'sample-order',
+        contractNumber: 'CTR-0001',
+        content,
+        signedAt: null,
+        status: 'pending_sign',
+        contract_data: {
+          customer_name: '测试客户',
+          customer_email: 'test@example.com',
+          customer_phone: '0412345678',
+          customer_address: '墨尔本 VIC',
+          device_name: 'MacBook Pro',
+          device_model: 'M2',
+          device_sn: 'SN123456',
+          pickup_location: '市中心门店',
+          return_location: '市中心门店',
+          payment_reference: 'REF123456',
+        }
+      } as any
+      const sampleOrder = {
+        id: 'sample-order',
+        orderNo: 'OD20260806',
+        deviceId: 'device-1',
+        startDate: '2026-08-10',
+        endDate: '2026-08-15',
+        rentalPeriod: 5,
+        totalAmount: 1500,
+        depositAmount: 300,
+        dailyRate: 240,
+        paymentMethod: 'card',
+        status: 'pending_payment',
+      } as any
+      const sampleDevice = {
+        id: 'device-1',
+        name: 'MacBook Pro',
+        brand: 'Apple',
+        model: 'M2',
+        serialNumber: 'SN123456',
+        cpu: 'M2',
+        ram: '16GB',
+        storage: '512GB',
+        gpu: 'Apple',
+        os: 'macOS Ventura',
+      } as any
+      const sampleCustomer = {
+        name: '测试客户',
+        email: 'test@example.com',
+        phone: '0412345678',
+      } as any
+      const sampleExtra = {
+        payment_date: '2026-08-08',
+        payment_reference: 'REF123456',
+        contract_url: 'https://example.com/contract/CTR-0001',
+        invoice_url: 'https://example.com/invoice/INV-0001',
+      }
+      html = renderContractVariables(content, sampleContract, sampleOrder, sampleDevice, sampleCustomer, sampleExtra, true)
+    } else if (kind === 'contract') {
+      const sampleContract = {
+        id: 'sample-contract',
+        rentalId: 'sample-order',
+        contractNumber: 'CTR-0001',
+        content,
+        signedAt: '2026-08-08T10:00:00.000Z',
+        status: 'signed',
+        contract_data: {
+          customer_name: '测试客户',
+          customer_email: 'test@example.com',
+          customer_phone: '0412345678',
+          customer_address: '墨尔本 VIC',
+          device_name: 'MacBook Pro',
+          device_model: 'M2',
+          device_sn: 'SN123456',
+          pickup_location: '市中心门店',
+          return_location: '市中心门店',
+          payment_reference: 'REF123456',
+        }
+      } as any
+      const sampleOrder = {
+        id: 'sample-order',
+        orderNo: 'OD20260806',
+        deviceId: 'device-1',
+        startDate: '2026-08-10',
+        endDate: '2026-08-15',
+        rentalPeriod: 5,
+        totalAmount: 1500,
+        depositAmount: 300,
+        dailyRate: 240,
+        paymentMethod: 'card',
+        status: 'completed',
+      } as any
+      const sampleDevice = {
+        id: 'device-1',
+        name: 'MacBook Pro',
+        brand: 'Apple',
+        model: 'M2',
+        serialNumber: 'SN123456',
+        cpu: 'M2',
+        ram: '16GB',
+        storage: '512GB',
+        gpu: 'Apple',
+        os: 'macOS Ventura',
+      } as any
+      const sampleCustomer = {
+        name: '测试客户',
+        email: 'test@example.com',
+        phone: '0412345678',
+      } as any
+      const sampleExtra = {
+        payment_date: '2026-08-08',
+        payment_reference: 'REF123456',
+        contract_url: 'https://example.com/contract/CTR-0001',
+        invoice_url: 'https://example.com/invoice/INV-0001',
+      }
+      html = renderContractVariables(content, sampleContract, sampleOrder, sampleDevice, sampleCustomer, sampleExtra, true)
+    } else if (kind === 'email') {
+      html = renderSiteVariables(content, user, {
+        order_no: 'OD20260806',
+        contract_number: 'CTR-0001',
+        device_name: 'MacBook Pro',
+        sign_link: 'https://example.com/sign/abc',
+        expire_time: '2026-08-15',
+      })
+    } else {
+      html = renderSiteVariables(content, user)
+    }
+    return c.json({ success: true, html })
+  } catch (error: any) {
+    return c.json({ success: false, error: error?.message || '预览失败' }, 400)
+  }
+})
+
 app.post('/admin/settings/save', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -1623,7 +1771,7 @@ app.get('/api/address/details', async (c) => {
   const sessionToken = String(c.req.query('session') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)
   if (!placeId) return c.json({ error: '地址标识无效' }, 400)
   const params = new URLSearchParams({ languageCode: 'en', regionCode: 'AU', ...(sessionToken ? { sessionToken } : {}) })
-  const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?${params}` , { headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'formattedAddress,addressComponents' } })
+  const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?${params}`, { headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'formattedAddress,addressComponents' } })
   if (!response.ok) {
     console.error('Google address details failed:', response.status)
     return c.json({ error: '无法读取地址详情，请手工填写' }, 502)

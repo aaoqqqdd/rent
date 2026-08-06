@@ -5,7 +5,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
 import { renderAdminContracts } from '../src/pages/admin/contracts'
@@ -228,6 +228,13 @@ test('all registered contract variables render without leftovers', () => {
   const template = names.map(name => `\${${name}}`).join('|')
   const result = renderContractVariables(template, { id: 'c', rentalId: 'o', contractNumber: 'CN1', content: template, signedAt: null, status: 'signed', contract_data: values }, {}, {}, {}, values, true)
   assert.equal(result.includes('${'), false)
+})
+
+test('site variables replace company and user values in legal pages', () => {
+  const html = renderSiteVariables('<p>欢迎来到 {company_name}，用户：${user_name}，邮箱：{user_email}</p>', { name: '张三', email: 'zhangsan@example.com' })
+  assert.match(html, /欢迎来到.*PC Rental/)
+  assert.match(html, /用户：张三/)
+  assert.match(html, /邮箱：zhangsan@example\.com/)
 })
 
 test('hosted image links require public HTTPS URLs', () => {

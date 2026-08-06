@@ -21,11 +21,11 @@ export function renderAdminTemplateHub(user: any) {
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">CR</span><div><h3>版权说明</h3><p>说明网站内容权利及源代码许可。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">版权许可</span><a class="button button-sm button-secondary" href="/admin/templates/copyright">编辑说明</a></article>
       <article class="template-register__row">
         <div class="template-register__document"><span class="document-mark">RA</span><div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意。</p></div></div>
-        <p>签署步骤 1</p><span class="badge badge-warning">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a>
+        <p>签署步骤 1</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a>
       </article>
       <article class="template-register__row">
         <div class="template-register__document"><span class="document-mark">CT</span><div><h3>正式合同模板</h3><p>签署完成后冻结并生成可下载合同。</p></div></div>
-        <p>正式合同</p><span class="badge badge-success">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/contract">编辑模板</a>
+        <p>正式合同</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/contract">编辑模板</a>
       </article>
     </div>`
   return buildLayout('协议与合同模板 - 电脑租赁管理系统', body, user)
@@ -58,6 +58,8 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           <div id="agreementContentEditor" class="quill-editor template-rich-editor"></div>
           <textarea id="agreementContent" name="content" hidden></textarea>
         </div>
+        <button type="button" id="agreementPreviewButton" class="button button-secondary">预览变量效果</button>
+        <div id="agreementPreview" class="template-preview" style="margin-top: 16px; border:1px solid #d1d5db; padding:16px; border-radius:8px; background:#fff; min-height: 140px;"></div>
         <div id="templateSaveStatus" class="template-save-status" role="status" aria-live="polite"></div>
         <div class="form-actions">
           <button type="submit" class="button button-primary">保存${title.replace('编辑', '')}</button>
@@ -72,10 +74,43 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         const submitButton = form.querySelector('button[type="submit"]');
         const editor = window.createRichTextEditor('#agreementContentEditor', {
           theme: 'snow',
-          modules: { toolbar: [[{ header: [1, 2, 3, false] }], ['bold', 'italic', 'underline', 'strike'], [{ list: 'ordered' }, { list: 'bullet' }], ['blockquote'], ['link'], ['clean']] }
+          modules: {
+            toolbar: [
+              [{ header: [1, 2, 3, false] }],
+              ['bold', 'italic', 'underline', 'strike'],
+              [{ list: 'ordered' }, { list: 'bullet' }],
+              ['blockquote'],
+              [{ color: [] }, { background: [] }],
+              [{ align: [] }],
+              ['link'],
+              ['clean']
+            ]
+          }
         });
         const initialContent = ${initialContent};
         if (initialContent) editor.root.innerHTML = initialContent;
+
+        const previewButton = document.getElementById('agreementPreviewButton');
+        const previewContainer = document.getElementById('agreementPreview');
+
+        async function updateAgreementPreview() {
+          if (!previewContainer) return;
+          previewContainer.textContent = '正在生成预览...';
+          try {
+            const response = await fetch('/admin/templates/preview', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ kind: form.dataset.kind, content: editor.root.innerHTML })
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
+            previewContainer.innerHTML = result.html || '<p>无预览内容</p>';
+          } catch (error) {
+            previewContainer.textContent = error instanceof Error ? error.message : '预览失败';
+          }
+        }
+
+        previewButton?.addEventListener('click', updateAgreementPreview);
 
         form.addEventListener('submit', async function(event) {
           event.preventDefault();

@@ -36,6 +36,27 @@ export function sanitizeRichHtml(value: unknown): string {
   })
 }
 
+export function renderSiteVariables(content: string, currentUser: any = {}, extraValues: Record<string, unknown> = {}): string {
+  const values: Record<string, unknown> = {
+    company_name: systemSettings.companyDetails.name,
+    company_abn: systemSettings.companyDetails.abn,
+    company_address: systemSettings.companyDetails.address,
+    company_phone: systemSettings.companyDetails.phone,
+    company_email: systemSettings.companyDetails.email,
+    company_website: systemSettings.companyDetails.website,
+    company_logo: systemSettings.companyDetails.logo,
+    user_name: currentUser?.name || '',
+    user_email: currentUser?.email || '',
+    ...extraValues,
+  }
+
+  const filled = Object.entries(values).reduce((result, [key, value]) => {
+    return result.replace(new RegExp(`\\$\\{${key}\\}|\\{${key}\\}`, 'g'), escapeContractValue(value))
+  }, String(content ?? ''))
+
+  return sanitizeRichHtml(filled)
+}
+
 export function sanitizePlainText(value: unknown, maxLength = 500): string {
   return sanitizeHtml(String(value ?? ''), { allowedTags: [], allowedAttributes: {} })
     .trim()
