@@ -1602,7 +1602,7 @@ app.post('/admin/templates/:kind', async (c) => {
   }
 })
 
-app.post('/admin/templates/preview', async (c) => {
+app.post('/admin/template-preview', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限预览' }, 403)
   try {

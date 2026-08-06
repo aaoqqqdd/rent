@@ -59,16 +59,8 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         <input type="hidden" id="agreementKind" name="kind" value="${kind}">
         ${variableIndex}
         <div class="form-group">
-          <label for="agreementContentEditor">协议内容</label>
-          <div class="editor-mode-toggle">
-            <button type="button" id="agreementModeHtml" class="active">可视编辑</button>
-            <button type="button" id="agreementModeMd">Markdown</button>
-          </div>
-          <div class="editor-card">
-            <div id="agreementContentEditor" class="quill-editor template-rich-editor"></div>
-          </div>
-          <textarea id="agreementContentMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
-          <textarea id="agreementContent" name="content" hidden></textarea>
+          <label for="agreementContentMarkdown">协议内容（Markdown）</label>
+          <textarea id="agreementContentMarkdown" name="content" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
         </div>
         <div class="template-controls">
           <button type="button" id="agreementPreviewButton" class="button button-secondary">预览变量效果</button>
@@ -87,49 +79,17 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         const form = document.getElementById('agreementTemplateForm');
         const status = document.getElementById('templateSaveStatus');
         const submitButton = form.querySelector('button[type="submit"]');
-        const editor = window.createRichTextEditor('#agreementContentEditor', {
-          theme: 'snow',
-          modules: {
-            toolbar: [
-              [{ header: [1, 2, 3, false] }, { size: ['small', false, 'large', 'huge'] }, 'bold', 'italic', 'underline', 'strike'],
-              [{ list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }, { align: [] }, 'blockquote', 'link', { color: [] }, { background: [] }, 'clean']
-            ]
-          }
-        });
-        const agreementModeHtml = document.getElementById('agreementModeHtml');
-        const agreementModeMd = document.getElementById('agreementModeMd');
         const agreementContentMarkdown = document.getElementById('agreementContentMarkdown');
         const previewButton = document.getElementById('agreementPreviewButton');
         const previewContainer = document.getElementById('agreementPreview');
 
         const initialContent = ${initialContent};
         if (initialContent) {
-          editor.root.innerHTML = initialContent;
-          if (agreementContentMarkdown) {
-            agreementContentMarkdown.value = window.htmlToMarkdown(initialContent);
-          }
+          agreementContentMarkdown.value = window.htmlToMarkdown(initialContent);
         }
 
         function getAgreementContent() {
-          if (form.classList.contains('is-markdown-mode')) {
-            return window.markdownToHtml(agreementContentMarkdown.value);
-          }
-          return editor.root.innerHTML;
-        }
-
-        function switchAgreementMode(toMd) {
-          if (!agreementModeHtml || !agreementModeMd || !agreementContentMarkdown) return;
-          if (toMd) {
-            agreementContentMarkdown.value = window.htmlToMarkdown(editor.root.innerHTML);
-            form.classList.add('is-markdown-mode');
-            agreementModeMd.classList.add('active');
-            agreementModeHtml.classList.remove('active');
-          } else {
-            editor.root.innerHTML = window.markdownToHtml(agreementContentMarkdown.value);
-            form.classList.remove('is-markdown-mode');
-            agreementModeMd.classList.remove('active');
-            agreementModeHtml.classList.add('active');
-          }
+          return window.markdownToHtml(agreementContentMarkdown.value);
         }
 
         const agreementKindInput = document.getElementById('agreementKind');
@@ -140,7 +100,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           previewContainer.textContent = '正在生成预览...';
           try {
             const kind = String(form.dataset.kind || (agreementKindInput ? agreementKindInput.value : '')).trim();
-            const response = await fetch('/admin/templates/preview', {
+            const response = await fetch('/admin/template-preview', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ kind, content: getAgreementContent() })
@@ -153,11 +113,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           }
         }
 
-        agreementModeHtml?.addEventListener('click', function () { switchAgreementMode(false); });
-        agreementModeMd?.addEventListener('click', function () { switchAgreementMode(true); });
         previewButton?.addEventListener('click', function(event) { updateAgreementPreview(event); });
-
-        switchAgreementMode(false);
 
         form.addEventListener('submit', async function(event) {
           event.preventDefault();
