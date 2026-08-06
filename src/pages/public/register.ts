@@ -44,7 +44,7 @@ export function renderRegister(errorMessage?: string) {
             <input class="form-control" name="referrer" placeholder="来自朋友的推荐码" />
             <div class="form-row">
               <label class="form-check">
-                <input type="checkbox" name="terms" required /> 我已阅读并同意 <a href="/terms" class="link-button">用户协议</a>
+                <input type="checkbox" name="terms" required /> 我已阅读并同意 <a href="/terms" class="link-button">用户协议</a>和<a href="/service-terms" class="link-button">网站服务条款</a>，并已阅读<a href="/privacy" class="link-button">隐私政策</a>
               </label>
             </div>
             <button class="button" type="submit" style="width: 100%;">立即注册</button>

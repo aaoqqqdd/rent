@@ -259,8 +259,14 @@ test('rich text editor pages emit valid browser JavaScript', async () => {
   assert.match(hubHtml, /href="\/admin\/templates\/user"/)
   assert.match(hubHtml, /href="\/admin\/templates\/rental"/)
   assert.match(hubHtml, /href="\/admin\/templates\/contract"/)
+  assert.match(hubHtml, /href="\/admin\/templates\/service"/)
+  assert.match(hubHtml, /href="\/admin\/templates\/privacy"/)
+  assert.match(hubHtml, /href="\/admin\/templates\/copyright"/)
   assertInlineScriptsParse(renderAdminAgreementEditor(user, 'user'))
   assertInlineScriptsParse(renderAdminAgreementEditor(user, 'rental'))
+  assertInlineScriptsParse(renderAdminAgreementEditor(user, 'service'))
+  assertInlineScriptsParse(renderAdminAgreementEditor(user, 'privacy'))
+  assertInlineScriptsParse(renderAdminAgreementEditor(user, 'copyright'))
 
   const statement = {
     bind() { return this },
@@ -280,6 +286,10 @@ test('site layout loads the external stylesheet and resolves template slots', ()
   assert.doesNotMatch(html, /<style(?:\s|>)/i)
   assert.doesNotMatch(html, /\{\{[A-Z_]+\}\}/)
   assert.match(html, /<section id="test-content">内容<\/section>/)
+  assert.match(html, /class="legal-footer"/)
+  assert.match(html, /href="\/service-terms"/)
+  assert.match(html, /href="\/privacy"/)
+  assert.match(html, /href="\/copyright"/)
 })
 
 test('order status failures stay on the page and use a modal dialog', () => {
@@ -311,6 +321,8 @@ test('user management forms use the shared identity record design', async () => 
   assert.doesNotMatch(registrationHtml, /name="name"/)
   assert.match(registrationHtml, /minlength="8"/)
   assert.match(registrationHtml, /pattern="\(\?=\.\*\[A-Za-z\]\).*\[0-9\].*\{8,\}"/)
+  assert.match(registrationHtml, /href="\/service-terms"/)
+  assert.match(registrationHtml, /href="\/privacy"/)
 
   const rows = [
     { id: 'customer-1', name: 'Kai Chen', email: 'kai@example.com', role: 'CUSTOMER', status: 'active', account_status: 'active', staff_id: 'staff-1' },

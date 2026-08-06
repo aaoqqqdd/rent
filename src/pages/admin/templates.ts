@@ -5,17 +5,20 @@
 
 import { buildLayout, CONTRACT_VARIABLE_GROUPS, getSystemSettings } from '../../site'
 
-type AgreementKind = 'user' | 'rental'
+type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'copyright'
 
 export function renderAdminTemplateHub(user: any) {
   const body = `
-    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>DOCUMENT CONTROL</span><span>3 ACTIVE TEMPLATES</span></div><div class="entity-heading"><div><p class="section-code">LEGAL & CONTRACTS</p><h2>协议与合同模板</h2><p>管理客户注册、签署和正式合同生成时使用的文本。</p></div><a class="button button-secondary" href="/admin/contracts">返回合同管理</a></div></div>
+    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>DOCUMENT CONTROL</span><span>6 ACTIVE TEMPLATES</span></div><div class="entity-heading"><div><p class="section-code">LEGAL & CONTRACTS</p><h2>协议与合同模板</h2><p>管理注册、租赁签署、网站法律信息和正式合同文本。</p></div><a class="button button-secondary" href="/admin/contracts">返回合同管理</a></div></div>
     <div class="panel template-register">
       <div class="template-register__labels mono"><span>文档</span><span>显示位置</span><span>类型</span><span>操作</span></div>
       <article class="template-register__row">
         <div class="template-register__document"><span class="document-mark">UA</span><div><h3>用户协议</h3><p>账户注册与正式账户升级时确认。</p></div></div>
         <p>注册页面</p><span class="badge badge-neutral">法律文本</span><a class="button button-sm button-secondary" href="/admin/templates/user">编辑协议</a>
       </article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">ST</span><div><h3>网站服务条款</h3><p>说明网站功能、合理使用和服务规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/service">编辑条款</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">PP</span><div><h3>隐私政策</h3><p>说明个人资料、付款信息和保存方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/privacy">编辑政策</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">CR</span><div><h3>版权说明</h3><p>说明网站内容权利及源代码许可。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">版权许可</span><a class="button button-sm button-secondary" href="/admin/templates/copyright">编辑说明</a></article>
       <article class="template-register__row">
         <div class="template-register__document"><span class="document-mark">RA</span><div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意。</p></div></div>
         <p>签署步骤 1</p><span class="badge badge-warning">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a>
@@ -31,9 +34,15 @@ export function renderAdminTemplateHub(user: any) {
 export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
   const settings = getSystemSettings()
   const isRental = kind === 'rental'
-  const title = isRental ? '编辑租赁协议' : '编辑用户协议'
-  const description = isRental ? '用于合同签署流程第一步。变量会在展示时替换为对应合同数据。' : '用于注册和正式账户创建流程。'
-  const initialContent = JSON.stringify(isRental ? settings.rentalTerms : settings.userTerms).replace(/</g, '\\u003c')
+  const documentMeta = {
+    user: ['编辑用户协议', '用于注册和正式账户创建流程。', settings.userTerms],
+    rental: ['编辑租赁协议', '用于合同签署流程第一步。变量会在展示时替换为对应合同数据。', settings.rentalTerms],
+    service: ['编辑网站服务条款', '显示在全站右下角的服务条款页面。', settings.serviceTerms],
+    privacy: ['编辑隐私政策', '显示在全站右下角的隐私政策页面。', settings.privacyPolicy],
+    copyright: ['编辑版权说明', '显示在全站右下角的版权与代码许可页面。', settings.copyrightNotice],
+  }[kind]
+  const [title, description, content] = documentMeta
+  const initialContent = JSON.stringify(content).replace(/</g, '\\u003c')
   const variableIndex = isRental
     ? `<details class="variable-index"><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')}</details>`
     : ''
@@ -51,7 +60,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         </div>
         <div id="templateSaveStatus" class="template-save-status" role="status" aria-live="polite"></div>
         <div class="form-actions">
-          <button type="submit" class="button button-primary">保存${isRental ? '租赁协议' : '用户协议'}</button>
+          <button type="submit" class="button button-primary">保存${title.replace('编辑', '')}</button>
           <a href="/admin/templates" class="button button-secondary">取消</a>
         </div>
       </form>

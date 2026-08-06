@@ -268,6 +268,18 @@ app.get('/terms', async (c) => {
   return c.html(buildLayout('用户协议', `<div class="panel contract-section"><div class="section-title"><h2>用户协议</h2><span class="section-note mono">LEGAL / USER TERMS</span></div>${sanitizeRichHtml(settings.userTerms)}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`))
 })
 
+for (const [path, title, key, code] of [
+  ['/service-terms', '网站服务条款', 'serviceTerms', 'LEGAL / SERVICE TERMS'],
+  ['/privacy', '隐私政策', 'privacyPolicy', 'LEGAL / PRIVACY'],
+  ['/copyright', '版权说明', 'copyrightNotice', 'LEGAL / COPYRIGHT'],
+] as const) {
+  app.get(path, async (c) => {
+    const settings = await loadSystemSettingsFromDB(c)
+    const currentUser = c.get('user')
+    return c.html(buildLayout(title, `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">${code}</p><h2>${title}</h2></div></div><div class="legal-document__content">${sanitizeRichHtml(settings[key])}</div></article>`, currentUser))
+  })
+}
+
 app.post('/register', async (c) => {
   const form = await c.req.parseBody()
   const { firstName, lastName, email, password, passwordConfirm, referrer, countryCode, phone } = form
@@ -1546,7 +1558,7 @@ app.get('/admin/templates/:kind', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const kind = c.req.param('kind')
   if (kind === 'contract') return c.html(await pages.renderAdminContracts(c, user))
-  if (kind !== 'user' && kind !== 'rental') return c.html(renderNotFound(), 404)
+  if (!['user', 'rental', 'service', 'privacy', 'copyright'].includes(kind)) return c.html(renderNotFound(), 404)
   await loadSystemSettingsFromDB(c)
   return c.html(pages.renderAdminAgreementEditor(user, kind))
 })
@@ -1555,12 +1567,13 @@ app.post('/admin/templates/:kind', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限保存协议' }, 403)
   const kind = c.req.param('kind')
-  if (kind !== 'user' && kind !== 'rental') return c.json({ success: false, error: '未知的协议类型' }, 404)
+  if (!['user', 'rental', 'service', 'privacy', 'copyright'].includes(kind)) return c.json({ success: false, error: '未知的协议类型' }, 404)
   try {
     const payload = await c.req.json()
     const content = sanitizeRichHtml(payload?.content || '')
     await loadSystemSettingsFromDB(c)
-    await updateSystemSettings(c, kind === 'user' ? { userTerms: content } : { rentalTerms: content })
+    const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'copyright']
+    await updateSystemSettings(c, { [settingKey]: content })
     return c.json({ success: true })
   } catch (error: any) {
     return c.json({ success: false, error: error?.message || '协议保存失败' }, 400)

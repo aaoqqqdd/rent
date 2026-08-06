@@ -1008,7 +1008,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails'
+type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -1029,6 +1029,9 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const values = new Map<SystemSettingsKey, string>((rows.results || []).map((row: any) => [row.key, row.value]))
   const userTermsValue = values.get('userTerms')
   const rentalTermsValue = values.get('rentalTerms')
+  const serviceTermsValue = values.get('serviceTerms')
+  const privacyPolicyValue = values.get('privacyPolicy')
+  const copyrightNoticeValue = values.get('copyrightNotice')
   const priceStrategyValue = values.get('priceStrategy')
   const paymentMethodsValue = values.get('paymentMethods')
   const bankDetailsValue = values.get('bankDetails')
@@ -1038,6 +1041,9 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
 
   systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? systemSettings.userTerms)
   systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
+  systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue ?? systemSettings.serviceTerms)
+  systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue ?? systemSettings.privacyPolicy)
+  systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue ?? systemSettings.copyrightNotice)
   systemSettings.priceStrategy = priceStrategyValue ?? systemSettings.priceStrategy
   systemSettings.emailTemplate = emailTemplateValue ?? systemSettings.emailTemplate
 
@@ -1078,6 +1084,9 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
 
   await write('userTerms', systemSettings.userTerms)
   await write('rentalTerms', systemSettings.rentalTerms)
+  await write('serviceTerms', systemSettings.serviceTerms)
+  await write('privacyPolicy', systemSettings.privacyPolicy)
+  await write('copyrightNotice', systemSettings.copyrightNotice)
   await write('priceStrategy', systemSettings.priceStrategy)
   await write('paymentMethods', systemSettings.paymentMethods)
   await write('bankDetails', systemSettings.bankDetails)
@@ -1705,6 +1714,22 @@ export const systemSettings = {
 <p>您不得利用本服务从事违法活动、干扰平台运行或侵犯他人合法权益。</p>
 <h2>协议更新</h2>
 <p>更新后的协议将在本页面公布。继续使用服务即表示接受更新后的内容。</p>`,
+  serviceTerms: `<h1>网站服务条款</h1>
+<p>欢迎访问 PC Rental。使用本网站、提交租赁申请或使用相关服务，即表示您同意本服务条款。</p>
+<h2>服务范围</h2><p>本网站提供设备信息展示、租赁合同签署、付款、订单与售后管理服务。具体租赁权利义务以双方签署的租赁协议和合同为准。</p>
+<h2>合理使用</h2><p>您不得干扰网站运行、绕过安全措施、冒用他人身份或利用本网站从事违法活动。</p>
+<h2>信息准确性</h2><p>您应确保提交的联系、身份、交付及付款资料真实准确，并及时更新发生变化的信息。</p>
+<h2>服务变更</h2><p>我们可基于运营、安全或法律要求调整网站功能，并会在适当位置公布重要变化。</p>`,
+  privacyPolicy: `<h1>隐私政策</h1>
+<p>PC Rental 重视您的个人信息与隐私。本政策说明我们在提供设备租赁服务时如何处理信息。</p>
+<h2>收集的信息</h2><p>我们可能收集账户资料、联系方式、身份核验资料、租赁与付款记录、电子签署记录以及保障网站安全所需的技术信息。</p>
+<h2>使用目的</h2><p>信息用于创建和履行租赁合同、处理付款和退款、交付设备、客户支持、防止欺诈及履行法律义务。</p>
+<h2>付款资料</h2><p>信用卡付款由第三方支付服务商处理，本网站不保存完整信用卡号码或安全码。</p>
+<h2>保存与权利</h2><p>我们仅在提供服务或法律要求所需期限内保存信息。您可以联系我们申请查阅或更正个人资料。</p>`,
+  copyrightNotice: `<h1>版权说明</h1>
+<p>© 2026 PC Rental。网站内容、界面设计、商标、文字及其他原创材料的权利归其合法权利人所有。</p>
+<h2>网站代码许可</h2><p>本项目源代码依照仓库 LICENSE 文件所列的 PolyForm Noncommercial 1.0.0 条款提供。允许非商业使用、修改和分发，但必须保留原始版权说明及 LICENSE 文件。</p>
+<h2>限制</h2><p>未经书面授权，不得将网站代码或原创内容用于商业目的，也不得删除或淡化版权与许可信息。</p>`,
   rentalTerms,
   priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
   paymentMethods: {
@@ -2415,7 +2440,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     TOP_NAV: topNav,
     USER_BLOCK: userBlockHtml,
     SIDEBAR: sidebar,
-    CONTENT: body
+    CONTENT: body,
+    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/copyright">版权说明</a></nav></footer>`
   })
 }
 
