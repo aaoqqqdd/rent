@@ -41,7 +41,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
         </div>
       </div>
 
-      ${['paid','active','completed'].includes(order.status) ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票</a></p>` : ''}
+      ${['paid', 'active', 'completed'].includes(order.status) ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票</a></p>` : ''}
       ${contract ? `
         <div class="section-title" style="margin-top: 24px;"><h3>租赁合同</h3></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">

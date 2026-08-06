@@ -29,7 +29,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     const suburb = String(body.deliverySuburb || '').trim()
     const state = String(body.deliveryState || '').trim().toUpperCase()
     const postcode = String(body.deliveryPostcode || '').trim()
-    if (!street || !suburb || !['VIC','NSW','QLD','SA','WA','TAS','NT','ACT'].includes(state) || !/^\d{4}$/.test(postcode)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请填写完整有效的澳洲送货地址')}`)
+    if (!street || !suburb || !['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].includes(state) || !/^\d{4}$/.test(postcode)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请填写完整有效的澳洲送货地址')}`)
     pickupLocationValue = `${street}, ${suburb} ${state} ${postcode}, Australia`
     deliveryAddressData = { delivery_address: pickupLocationValue, delivery_street: street, delivery_suburb: suburb, delivery_state: state, delivery_postcode: postcode, delivery_place_id: String(body.deliveryPlaceId || '').trim().slice(0, 300) }
   }
@@ -55,6 +55,11 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   const start = new Date(startDate);
   const end = new Date(endDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (start < today || end < today) {
+    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('开始日期和结束日期必须是今天或之后的日期')}`);
+  }
   if (start >= end) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
   }
@@ -93,7 +98,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const signExpiresDate = new Date();
   const expiryDays = parseInt(expiryDuration) || 7;
   signExpiresDate.setDate(signExpiresDate.getDate() + expiryDays);
-  
+
   // 生成合同编号：CN + 随机10位大写字母和数字，确保高唯一性
   const contractRandomSuffix = uppercaseAlphanumericNanoid().slice(0, 10);
   const contractNumber = `CN${contractRandomSuffix}`;

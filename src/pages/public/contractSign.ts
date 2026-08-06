@@ -68,11 +68,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
     }
   }
   let contract = await getContractBySignToken(c, tokenOrNumber);
-  
+
 
   // 在模板中使用的 `token` 变量，映射传入的 tokenOrNumber
   const token = tokenOrNumber;
-  
+
   if (!contract) {
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
   }
@@ -114,8 +114,31 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
     currentUser ? Promise.resolve(currentUser) : (order.userId ? getUserById(c, order.userId) : Promise.resolve(null)),
     getContractVariableData(c, contract, order),
   ])
+
+  if (contract.status === 'signed' || contract.signedAt) {
+    const orderLink = currentUser?.role === 'CUSTOMER' && order.userId === currentUser.id
+      ? `/customer/orders/${order.id}`
+      : `/login?redirect=${encodeURIComponent(`/customer/orders/${order.id}`)}`;
+    const paymentStatusLabel = order.status === 'paid'
+      ? '付款已完成，发票与收据已生成。'
+      : '合同已签署，订单仍未完成付款。请前往订单查看付款状态或联系工作人员。';
+    const completedContent = `
+      <div class="panel">
+        <div class="entity-header"><div class="identity-strip mono"><span>E-SIGN / ${escapeAttribute(contract.contractNumber)}</span><span>合同已签署</span></div><div class="entity-heading"><div><p class="section-code">RENTAL AGREEMENT</p><h2>租赁协议已完成</h2><p>${escapeAttribute(device?.name || '租赁设备')} · ${escapeAttribute(order.startDate)} 至 ${escapeAttribute(order.endDate)}</p></div><span class="badge badge-success">已签署</span></div></div>
+        <div class="panel" style="margin-top: 16px;">
+          <p>${paymentStatusLabel}</p>
+          <div class="grid grid-2" style="gap: 16px; margin-top: 24px;">
+            <a class="button" href="${orderLink}">查看订单详情</a>
+            <a class="button button-secondary" href="/contract/view/${contract.id}">查看合同</a>
+          </div>
+        </div>
+      </div>
+    `;
+    return buildLayout('合同已签署 - 电脑租赁管理系统', completedContent, currentUser);
+  }
+
   const activeAgreementContent = renderContractVariables(systemSettings.rentalTerms, contract, order, device, contractCustomer, variableData);
-  
+
   const agreementHtml = /<[^>]+>/.test(activeAgreementContent)
     ? activeAgreementContent
     : activeAgreementContent.replace(/\n/g, '<br>');

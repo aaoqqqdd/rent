@@ -169,13 +169,6 @@
   flex-direction: column;
 }
 
-.editor-toolbar-placeholder {
-  display: block;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
 .quill-editor {
   min-height: 360px;
   background: #fff;
@@ -234,10 +227,24 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
+  border: 1px solid transparent;
+}
+
+.editor-card .ql-toolbar.ql-snow .ql-picker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+.editor-card .ql-toolbar.ql-snow .ql-picker.ql-expanded .ql-picker-label {
+  z-index: 35;
 }
 
 .editor-card .ql-toolbar.ql-snow .ql-picker-options {
-  z-index: 30;
+  z-index: 40;
+  min-width: 11rem;
+  border-radius: 12px;
 }
 
 .editor-card .ql-container.ql-snow {
@@ -2242,17 +2249,81 @@ tr:hover td {
   }
 
   .logo-copy small,
-  .user-label {
+  .user-label,
+  .asset-tag {
     display: none;
   }
 
+  header {
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    height: auto;
+    gap: 10px;
+  }
+
+  .logo {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .main-nav {
+    order: 3;
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .main-nav a {
+    padding: 8px 10px;
+    font-size: 0.82rem;
+  }
+
   .user-block {
-    gap: 7px;
+    order: 2;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    width: auto;
   }
 
   .user-avatar {
     width: 32px;
     height: 32px;
+  }
+
+  .editor-card .ql-toolbar.ql-snow,
+  .rich-text-fallback-toolbar {
+    padding: 8px;
+    gap: 6px;
+    flex-wrap: wrap;
+    overflow-x: auto;
+  }
+
+  .editor-card .ql-toolbar.ql-snow .ql-formats {
+    gap: 4px;
+    padding: 4px 6px;
+  }
+
+  .editor-card .ql-toolbar.ql-snow button,
+  .editor-card .ql-toolbar.ql-snow .ql-picker-label,
+  .rich-text-fallback-toolbar button {
+    min-width: 30px;
+    min-height: 30px;
+    padding: 4px 8px;
+    font-size: 0.82rem;
+  }
+
+  .ql-toolbar.ql-snow::-webkit-scrollbar,
+  .rich-text-fallback-toolbar::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .ql-toolbar.ql-snow::-webkit-scrollbar-thumb,
+  .rich-text-fallback-toolbar::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.18);
+    border-radius: 999px;
   }
 
   .logout-button {

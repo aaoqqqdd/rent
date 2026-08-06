@@ -15,7 +15,7 @@ function desensitizeName(name: string): string {
 export async function renderCustomerReferral(c: Context, user: any, message?: string, type?: 'success' | 'error' | 'info') {
   // 使用统一归一化读取，确保 snake_case 数据库字段能被页面正确识别。
   const currentUser = await getUserById(c, user.id);
-  
+
   if (!currentUser) {
     return buildLayout('我的推荐 - 电脑租赁管理系统', '<div class="panel"><h2>用户未找到</h2><p>无法加载推荐信息。</p></div>', user);
   }
@@ -24,7 +24,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
   const commissionRecords = await c.env.RENT.prepare(`
     SELECT * FROM commission_records WHERE referrer_id = ?
   `).bind(user.id).all();
-  
+
   type CommissionRecord = { amount: number; status: string }
 
   const records = (commissionRecords.results || []) as CommissionRecord[]
@@ -41,7 +41,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
   const withdrawnCommission = records
     .filter((record) => record.status === 'withdrawn')
     .reduce((sum, record) => sum + (record.amount || 0), 0)
-  
+
   // 获取已推荐的好友列表
   const tableInfo = await c.env.RENT.prepare('PRAGMA table_info(users)').all() as any;
   const userColumns = (tableInfo.results || []).map((column: any) => column.name);

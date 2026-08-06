@@ -1298,7 +1298,8 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     accountStatus: 'account_status',
     guestOrderId: 'guest_order_id',
     guestExpiresAt: 'guest_expires_at',
-    deletedAt: 'deleted_at'
+    deletedAt: 'deleted_at',
+    accountNumber: 'account_number'
   }
 
   const allowedFields = new Set([

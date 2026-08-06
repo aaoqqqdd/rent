@@ -18,6 +18,9 @@ export async function renderNewContractPage(c: Context, user: any) {
     const groupName = `${String(device.name || '未命名设备')}\u0000${String(device.model || '未登记型号')}`
     deviceGroups.set(groupName, [...(deviceGroups.get(groupName) || []), device])
   }
+  const bookingRanges = ((await c.env.RENT.prepare(`SELECT id, deviceId, startDate, endDate, status FROM orders WHERE status NOT IN ('completed', 'cancelled') ORDER BY startDate`).all()).results || []) as any[]
+  const today = new Date().toISOString().slice(0, 10)
+  const bookedDeviceIds = new Set(bookingRanges.filter(item => item.deviceId && item.endDate >= today).map(item => item.deviceId))
   const deviceCatalog = [...deviceGroups.entries()].sort(([left], [right]) => left.localeCompare(right, 'zh-CN')).map(([groupName, groupDevices]) => {
     const [name, model] = groupName.split('\u0000')
     return `
@@ -25,17 +28,17 @@ export async function renderNewContractPage(c: Context, user: any) {
       <button class="device-catalog-group__heading" type="button" data-group-toggle aria-expanded="true"><span><strong>${escape(name)}</strong><small>${escape(model)}</small></span><span class="mono" data-group-count>${groupDevices.length} 台</span></button>
       <div class="device-catalog-grid">
         ${groupDevices.sort((left, right) => String(left.model || '').localeCompare(String(right.model || ''), 'zh-CN')).map(device => {
-          const serial = device.serialNumber || device.serial_number || '未登记'
-          const assetTag = device.assetTag || device.asset_tag || device.id
-          const configuration = [device.cpu, device.ram, device.storage, device.gpu, device.os].filter(Boolean).join(' · ') || device.description || '暂无配置说明'
-          const searchText = [device.name, device.brand, device.model, serial, assetTag, configuration].filter(Boolean).join(' ').toLocaleLowerCase('zh-CN')
-          return `<button class="device-catalog-card" type="button" data-device-id="${escape(device.id)}" data-device-search="${escape(searchText)}" aria-pressed="false"><span class="device-catalog-card__top"><strong>${escape(device.model || '未登记型号')}</strong><span class="badge ${device.status === 'rented' ? 'badge-warning' : 'badge-success'}">${device.status === 'rented' ? '有租赁档期' : '可安排'}</span></span><span class="device-catalog-card__config">${escape(configuration)}</span><span class="device-catalog-card__meta"><span>SN ${escape(serial)}</span><span>资产 ${escape(assetTag)}</span></span></button>`
-        }).join('')}
+      const serial = device.serialNumber || device.serial_number || '未登记'
+      const assetTag = device.assetTag || device.asset_tag || device.id
+      const configuration = [device.cpu, device.ram, device.storage, device.gpu, device.os].filter(Boolean).join(' · ') || device.description || '暂无配置说明'
+      const searchText = [device.name, device.brand, device.model, serial, assetTag, configuration].filter(Boolean).join(' ').toLocaleLowerCase('zh-CN')
+      const isBooked = bookedDeviceIds.has(device.id)
+      return `<button class="device-catalog-card" type="button" data-device-id="${escape(device.id)}" data-device-search="${escape(searchText)}" aria-pressed="false"><span class="device-catalog-card__top"><strong>${escape(device.model || '未登记型号')}</strong><span class="badge ${isBooked ? 'badge-warning' : 'badge-success'}">${isBooked ? '有租赁档期' : '可安排'}</span></span><span class="device-catalog-card__config">${escape(configuration)}</span><span class="device-catalog-card__meta"><span>SN ${escape(serial)}</span><span>资产 ${escape(assetTag)}</span></span></button>`
+    }).join('')}
       </div>
       <div class="device-group-pagination" data-group-pagination><button class="button button-sm button-secondary" data-group-prev type="button">上一页</button><span class="mono" data-group-page-status></span><button class="button button-sm button-secondary" data-group-next type="button">下一页</button></div>
     </section>`
   }).join('')
-  const bookingRanges = ((await c.env.RENT.prepare(`SELECT id, deviceId, startDate, endDate, status FROM orders WHERE status NOT IN ('completed', 'cancelled') ORDER BY startDate`).all()).results || []) as any[]
   const bookingData = JSON.stringify(bookingRanges).replace(/</g, '\\u003c')
 
   const formHtml = `
@@ -58,11 +61,11 @@ export async function renderNewContractPage(c: Context, user: any) {
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="start-date" class="form-label">租赁开始日期</label>
-            <input type="date" id="start-date" name="startDate" class="form-control" required>
+            <input type="date" id="start-date" name="startDate" class="form-control" required min="${today}">
           </div>
           <div class="form-group">
             <label for="end-date" class="form-label">租赁结束日期</label>
-            <input type="date" id="end-date" name="endDate" class="form-control" required>
+            <input type="date" id="end-date" name="endDate" class="form-control" required min="${today}">
           </div>
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
@@ -92,7 +95,7 @@ export async function renderNewContractPage(c: Context, user: any) {
           <div class="form-section-title"><span class="mono">AU</span><div><h3>送货地址</h3><p>输入至少 3 个字符选择地址，街道、城区、州和邮编会自动填写。</p></div></div>
           <div class="form-group address-autocomplete"><label class="form-label" for="delivery-address-search">搜索澳洲地址</label><div class="address-search-control"><input id="delivery-address-search" class="form-control" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="address-suggestions" aria-expanded="false" placeholder="例如 123 Collins Street, Melbourne"><span class="address-search-indicator" aria-hidden="true">AU</span></div><div id="address-search-status" class="address-search-status" aria-live="polite">可直接手工填写下方地址。</div><div id="address-suggestions" class="address-suggestions" role="listbox" hidden></div></div>
           <input type="hidden" id="delivery-place-id" name="deliveryPlaceId"><input type="hidden" id="delivery-address" name="deliveryAddress">
-          <div class="grid grid-2"><div class="form-group"><label class="form-label" for="delivery-street">街道地址</label><input id="delivery-street" name="deliveryStreet" class="form-control" autocomplete="address-line1"></div><div class="form-group"><label class="form-label" for="delivery-suburb">Suburb</label><input id="delivery-suburb" name="deliverySuburb" class="form-control" autocomplete="address-level2"></div><div class="form-group"><label class="form-label" for="delivery-state">州</label><select id="delivery-state" name="deliveryState" class="form-control"><option value="">请选择</option>${['VIC','NSW','QLD','SA','WA','TAS','NT','ACT'].map(state => `<option value="${state}">${state}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="delivery-postcode">邮编</label><input id="delivery-postcode" name="deliveryPostcode" class="form-control" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="postal-code"></div></div>
+          <div class="grid grid-2"><div class="form-group"><label class="form-label" for="delivery-street">街道地址</label><input id="delivery-street" name="deliveryStreet" class="form-control" autocomplete="address-line1"></div><div class="form-group"><label class="form-label" for="delivery-suburb">Suburb</label><input id="delivery-suburb" name="deliverySuburb" class="form-control" autocomplete="address-level2"></div><div class="form-group"><label class="form-label" for="delivery-state">州</label><select id="delivery-state" name="deliveryState" class="form-control"><option value="">请选择</option>${['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].map(state => `<option value="${state}">${state}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="delivery-postcode">邮编</label><input id="delivery-postcode" name="deliveryPostcode" class="form-control" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="postal-code"></div></div>
         </section>
         <div class="form-group" style="margin-top: 16px;">
           <label for="expiry-duration" class="form-label">合同签署过期时间（过期后无法签署或查看）</label>
@@ -137,9 +140,11 @@ export async function renderNewContractPage(c: Context, user: any) {
       const bookingConflict = document.getElementById('booking-conflict');
       const bookingMonthLabel = document.getElementById('booking-month-label');
       const now = new Date();
+      const isoDate = date => date.toISOString().slice(0, 10);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayValue = isoDate(today);
       let bookingMonth = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
       const devicePageSize = 4;
-      const isoDate = date => date.toISOString().slice(0, 10);
       const selectedBookings = () => bookings.filter(item => item.deviceId === deviceSelect.value);
       function selectDevice(card) {
         deviceSelect.value = card.dataset.deviceId;
@@ -177,9 +182,19 @@ export async function renderNewContractPage(c: Context, user: any) {
         const ranges = selectedBookings();
         for (let index = 0; index < 42; index += 1) {
           const date = new Date(gridStart); date.setUTCDate(gridStart.getUTCDate() + index);
-          const value = isoDate(date); const blocked = ranges.some(item => item.startDate <= value && item.endDate > value);
+          const value = isoDate(date);
+          const isPast = value < todayValue;
+          const blocked = ranges.some(item => item.startDate <= value && item.endDate > value);
           const inRange = startDateInput.value && endDateInput.value && startDateInput.value <= value && value < endDateInput.value;
-          const cell = document.createElement('button'); cell.type = 'button'; cell.dataset.date = value; cell.className = 'booking-day' + (date.getUTCMonth() !== first.getUTCMonth() ? ' is-outside' : '') + (blocked ? ' is-booked' : '') + (inRange ? ' is-selected-range' : '') + (startDateInput.value === value ? ' is-range-start' : '') + (endDateInput.value === value ? ' is-range-end' : ''); cell.textContent = String(date.getUTCDate()); cell.title = blocked ? '该设备此日已有租赁' : deviceSelect.value ? '选择 ' + value : '请先选择设备'; cell.disabled = blocked || !deviceSelect.value; cell.addEventListener('click', () => selectBookingDate(value)); bookingCalendar.appendChild(cell);
+          const cell = document.createElement('button');
+          cell.type = 'button';
+          cell.dataset.date = value;
+          cell.className = 'booking-day' + (date.getUTCMonth() !== first.getUTCMonth() ? ' is-outside' : '') + (blocked ? ' is-booked' : '') + (isPast ? ' is-past' : '') + (inRange ? ' is-selected-range' : '') + (startDateInput.value === value ? ' is-range-start' : '') + (endDateInput.value === value ? ' is-range-end' : '');
+          cell.textContent = String(date.getUTCDate());
+          cell.title = blocked ? '该设备此日已有租赁' : isPast ? '无法选择过去日期' : deviceSelect.value ? '选择 ' + value : '请先选择设备';
+          cell.disabled = blocked || !deviceSelect.value || isPast;
+          cell.addEventListener('click', () => selectBookingDate(value));
+          bookingCalendar.appendChild(cell);
         }
         bookingStatus.textContent = deviceSelect.value ? first.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', timeZone: 'UTC' }) : '请先选择设备';
       }

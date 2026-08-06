@@ -37,11 +37,11 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
       }
     }
   }
-  
+
   const countryCodeOptions = countryCodes.map(country =>
     `<option value="${country.code}" ${country.code === selectedCountryCode ? 'selected' : ''}>${country.name} (${country.code})</option>`
   ).join('');
-  
+
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const body = `
     <div class="panel">

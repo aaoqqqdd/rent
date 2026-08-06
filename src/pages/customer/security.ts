@@ -10,7 +10,7 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
   // 从数据库获取最新的用户信息
   const currentUser = await getUserById(c, user.id);
   const userToUse = currentUser || user;
-  
+
   const body = `
     <div class="panel">
       <div class="section-title"><h2>安全设置</h2><span class="section-note">管理您的账户安全。</span></div>

@@ -32,9 +32,9 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
         <div class="table-wrapper">
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
             ${orders.map((order) => {
-              const device = deviceMap.get(order.deviceId)
-              return `<tr><td>${order.orderNo}</td><td>${device?.name ?? 'N/A'}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">查看订单</a></td></tr>`
-            }).join('')}
+    const device = deviceMap.get(order.deviceId)
+    return `<tr><td>${order.orderNo}</td><td>${device?.name ?? 'N/A'}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">查看订单</a></td></tr>`
+  }).join('')}
           </tbody></table>
         </div>
       ` : '<p>此客户暂无订单历史。</p>'}

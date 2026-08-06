@@ -102,9 +102,8 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         </form>
       </div>
 
-      ${
-        contractsWithDetails.length > 0
-          ? `
+      ${contractsWithDetails.length > 0
+      ? `
         <table class="table">
           <thead>
             <tr>
@@ -119,16 +118,16 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           </thead>
           <tbody>
             ${contractsWithDetails
-              .map(({ contract, order, customer }) => {
-                const expired = isContractExpired(contract)
-                const canCancel = user && !expired && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id || contract.status === 'pending_sign');
-                const statusLabel = expired ? '已过期' : contract.status === 'pending_sign' ? '待签署' : contract.status === 'signed' ? '已签署' : contract.status === 'cancelled' ? '已取消' : contract.status === 'draft' ? '草稿' : contract.status
-                const statusClass = expired ? 'badge-danger' : contract.status === 'signed' ? 'badge-success' : contract.status === 'cancelled' ? 'badge-neutral' : 'badge-warning'
-                const signedAtText = contract.signedAt ? contract.signedAt : (expired ? '签署期限已过' : contract.status === 'cancelled' ? '已取消' : '未签署')
-                const showSigningProgress = contract.status === 'pending_sign' && !expired
-                const canEditData = !expired && !['completed', 'cancelled'].includes(contract.status)
-                const canViewContract = isContractFinalized(contract)
-                return `
+        .map(({ contract, order, customer }) => {
+          const expired = isContractExpired(contract)
+          const canCancel = user && !expired && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id || contract.status === 'pending_sign');
+          const statusLabel = expired ? '已过期' : contract.status === 'pending_sign' ? '待签署' : contract.status === 'signed' ? '已签署' : contract.status === 'cancelled' ? '已取消' : contract.status === 'draft' ? '草稿' : contract.status
+          const statusClass = expired ? 'badge-danger' : contract.status === 'signed' ? 'badge-success' : contract.status === 'cancelled' ? 'badge-neutral' : 'badge-warning'
+          const signedAtText = contract.signedAt ? contract.signedAt : (expired ? '签署期限已过' : contract.status === 'cancelled' ? '已取消' : '未签署')
+          const showSigningProgress = contract.status === 'pending_sign' && !expired
+          const canEditData = !expired && !['completed', 'cancelled'].includes(contract.status)
+          const canViewContract = isContractFinalized(contract)
+          return `
                 <tr>
                   <td>${contract.contractNumber}</td>
                   <td>${order?.orderNo ?? '付款后生成'}</td>
@@ -139,25 +138,24 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                   <td><div class="table-actions">
                     ${canViewContract ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>` : ''}
                     ${canEditData ? `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/contracts/${contract.id}/data` : `/staff/contracts/${contract.id}/data`}">编辑资料</a>` : ''}
-                    ${
-                      contract.status === 'pending_sign' && !expired
-                        ? `
+                    ${contract.status === 'pending_sign' && !expired
+              ? `
                           <button type="button" class="button button-sm button-secondary contract-list-action copy-sign-link" data-sign-token="${contract.signToken}">复制链接</button>
                           ${canCancel ? `<form action="/staff/contract/${contract.id}/cancel" method="post" class="inline-form"><button type="submit" class="button button-sm contract-list-action contract-cancel-action" onclick="return confirm('确定取消合同 ${contract.contractNumber} 吗？取消后客户将无法继续签署。');">取消合同</button></form>` : ''}
                         `
-                        : ''
-                    }
+              : ''
+            }
                     ${order?.status === 'active' ? `<a class="button button-sm button-info" href="${isAdmin ? `/admin/orders/${contract.rentalId}` : `/staff/orders/${contract.rentalId}`}">租赁详情</a>` : ''}
                   </div></td>
                 </tr>
               `
-              })
-              .join('')}
+        })
+        .join('')}
           </tbody>
         </table>
       `
-          : '<div class="empty-state"><span class="empty-state-code mono">NO CONTRACTS</span><h3>没有符合条件的合同</h3><p>调整筛选条件或创建新的租赁合同。</p></div>'
-      }
+      : '<div class="empty-state"><span class="empty-state-code mono">NO CONTRACTS</span><h3>没有符合条件的合同</h3><p>调整筛选条件或创建新的租赁合同。</p></div>'
+    }
 
       <div class="subsection-heading subsection-heading-spaced"><div><p class="section-code">RENTALS</p><h3>租赁管理</h3></div></div>
 
@@ -179,9 +177,8 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         </form>
       </div>
 
-      ${
-        activeRentals.length > 0
-          ? `
+      ${activeRentals.length > 0
+      ? `
         <table class="table">
           <thead>
             <tr>
@@ -197,17 +194,17 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           </thead>
           <tbody>
             ${activeRentals
-              .map((order: any) => {
-                const contract = allContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
-                const hasSignedContract = contract?.status === 'signed'
-                const statusText = order.status === 'pending_pickup' ? '待拿取' : order.status === 'pending_return' ? '待归还' : order.status === 'active' ? '当前租赁中' : order.status === 'completed' ? '已完成' : order.status === 'cancelled' ? '已取消' : order.status
-                const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
-                const actionButton = hasSignedContract
-                  ? `<a class="button button-sm button-primary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待拿取</a>`
-                  : order.status === 'active' || order.status === 'pending_return'
-                    ? `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`
-                    : `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待归还</a>`
-                return `
+        .map((order: any) => {
+          const contract = allContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
+          const hasSignedContract = contract?.status === 'signed'
+          const statusText = order.status === 'pending_pickup' ? '待拿取' : order.status === 'pending_return' ? '待归还' : order.status === 'active' ? '当前租赁中' : order.status === 'completed' ? '已完成' : order.status === 'cancelled' ? '已取消' : order.status
+          const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
+          const actionButton = hasSignedContract
+            ? `<a class="button button-sm button-primary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待拿取</a>`
+            : order.status === 'active' || order.status === 'pending_return'
+              ? `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`
+              : `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待归还</a>`
+          return `
                 <tr>
                   <td>${contract?.contractNumber ?? '—'}</td>
                   <td>${order.orderNo || '付款后生成'}</td>
@@ -219,13 +216,13 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                   <td>${actionButton}</td>
                 </tr>
               `
-              })
-              .join('')}
+        })
+        .join('')}
           </tbody>
         </table>
       `
-          : '<div class="empty-state"><span class="empty-state-code mono">NO RENTALS</span><h3>没有符合条件的租赁记录</h3><p>更换状态筛选后再试。</p></div>'
-      }
+      : '<div class="empty-state"><span class="empty-state-code mono">NO RENTALS</span><h3>没有符合条件的租赁记录</h3><p>更换状态筛选后再试。</p></div>'
+    }
 
 
     </div>

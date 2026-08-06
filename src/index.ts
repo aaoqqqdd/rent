@@ -804,14 +804,14 @@ app.get('/staff/contract/view', async (c) => {
 })
 
 app.get('/contract/sign', async (c) => {
-  const token = c.req.query('token') || '';
+  const token = c.req.query('token') || c.req.query('number') || '';
   const step = Number(c.req.query('step') || '1');
   const error = c.req.query('error');
   return c.html(await pages.renderContractSignPage(c, token, step, error));
 });
 
 app.post('/contract/sign', async (c) => {
-  const token = c.req.query('token') || '';
+  const token = c.req.query('token') || c.req.query('number') || '';
   const step = Number(c.req.query('step') || '1');
   const form = await c.req.parseBody();
   return actions.handleSignContractStep(c, token, step, form);
