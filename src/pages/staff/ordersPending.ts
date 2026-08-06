@@ -7,7 +7,7 @@ import { buildLayout, formatCurrency, getPendingOrdersWithDetails } from '../../
 import { Context } from 'hono';
 
 export async function renderStaffOrdersPending(c: Context, user: any) {
-  const pendingOrders = await getPendingOrdersWithDetails(c);
+  const pendingOrders = await getPendingOrdersWithDetails(c, user.role === 'ADMIN' ? undefined : user.id);
 
   const body = `
     <div class="panel">

@@ -54,7 +54,8 @@ import {
   buildLayout,
   getSystemSettings,
   loadSystemSettingsFromDB,
-  combinePersonName
+  combinePersonName,
+  isStrongPassword
 } from './site'
 import { nanoid, customAlphabet } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -132,6 +133,21 @@ app.use('*', async (c, next) => {
 })
 
 app.use('*', async (c, next) => {
+  const user = c.get('user') as any
+  if (user?.accountType === 'guest') {
+    const path = c.req.path
+    const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result'])
+    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/checkout|bank-transfer-proof))?$/)
+    const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
+    if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
+    if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
+    const permitted = allowedExact.has(path) || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path === '/styles.css'
+    if (!permitted && path.startsWith('/customer/')) return c.redirect('/customer/guest')
+  }
+  await next()
+})
+
+app.use('*', async (c, next) => {
   const contentLength = Number(c.req.header('Content-Length') || 0)
   const maxBody = c.req.path === '/webhooks/stripe' ? 512 * 1024 : 128 * 1024
   if (contentLength > maxBody) return c.text('Request body too large', 413)
@@ -198,7 +214,7 @@ app.get('/', async (c) => {
   if (!user) {
     return c.redirect('/login')
   }
-  if (user.role === 'CUSTOMER') return c.redirect('/customer/dashboard')
+  if (user.role === 'CUSTOMER') return c.redirect(user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard')
   if (user.role === 'STAFF') return c.redirect('/staff/dashboard')
   return c.redirect('/admin/dashboard')
 })
@@ -229,7 +245,7 @@ app.post('/login', async (c) => {
     return c.html(pages.renderLogin('账号或密码错误'))
   }
   await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()
-  const response = c.redirect(user.role === 'CUSTOMER' ? '/customer/dashboard' : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
+  const response = c.redirect(user.role === 'CUSTOMER' ? (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard') : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
   const session = await createAuthSession(c, user.id, form.remember === 'on')
   let cookieOptions = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`;
   if (new URL(c.req.url).protocol === 'https:') cookieOptions += '; Secure'
@@ -252,15 +268,16 @@ app.get('/terms', async (c) => {
 
 app.post('/register', async (c) => {
   const form = await c.req.parseBody()
-  const { name, email, password, passwordConfirm, referrer, countryCode, phone } = form
+  const { firstName, lastName, email, password, passwordConfirm, referrer, countryCode, phone } = form
+  const name = combinePersonName(firstName, lastName)
 
-  if (!name?.trim() || !email?.trim() || !password?.trim() || !passwordConfirm?.trim() || !phone?.trim()) {
+  if (!String(firstName || '').trim() || !String(lastName || '').trim() || !email?.trim() || !password?.trim() || !passwordConfirm?.trim() || !phone?.trim()) {
     return c.html(pages.renderRegister('请输入完整注册信息'))
   }
   if (password !== passwordConfirm) {
     return c.html(pages.renderRegister('两次输入密码不一致'))
   }
-  if (String(password).length < 10) return c.html(pages.renderRegister('密码至少需要 10 位'))
+  if (!isStrongPassword(password)) return c.html(pages.renderRegister('密码至少需要 8 位，并同时包含字母、数字和符号'))
 
   // 检查邮箱是否已存在
   const existingUser = await findUserByEmail(c, email)
@@ -285,7 +302,7 @@ app.post('/register', async (c) => {
   const fullPhone = `${countryCode}${phone}`
   const newUser = {
     id: newUserId,
-    name: name.trim(),
+    name,
     email: email.trim(),
     phone: fullPhone,
     passwordHash: await hashPassword(password),
@@ -338,6 +355,24 @@ app.get('/customer/dashboard', async (c) => {
   const orders = await getOrdersAsync(c)
   const devices = await getDevicesAsync(c)
   return c.html(pages.renderCustomerDashboard(user, orders, devices))
+})
+
+app.get('/customer/guest', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER' || user.accountType !== 'guest') return c.redirect('/login')
+  return c.html(await pages.renderGuestAccount(c, user))
+})
+
+app.post('/customer/guest/upgrade', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER' || user.accountType !== 'guest') return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const password = String(form.newPassword || '')
+  const confirmation = String(form.confirmPassword || '')
+  if (!isStrongPassword(password)) return c.html(await pages.renderGuestAccount(c, user, '新密码至少需要 8 位，并同时包含字母、数字和符号。'))
+  if (password !== confirmation) return c.html(await pages.renderGuestAccount(c, user, '两次输入的新密码不一致。'))
+  await updateUser(c, user.id, { password, accountType: 'formal', guestOrderId: null, guestExpiresAt: null })
+  return c.redirect('/customer/dashboard?upgraded=1')
 })
 
 app.get('/customer/orders', async (c) => {
@@ -406,7 +441,7 @@ app.get('/staff/dashboard', async (c) => {
   if (user.role !== 'STAFF' && user.role !== 'ADMIN') {
     return c.html(renderForbidden(), 403)
   }
-  const dashboardData = await getStaffDashboardData(c)
+  const dashboardData = await getStaffDashboardData(c, user.role === 'ADMIN' ? undefined : user.id)
   return c.html(pages.renderStaffDashboard(user, dashboardData))
 })
 
@@ -429,7 +464,8 @@ app.post('/staff/customers/new', async (c) => {
   const name = combinePersonName(form.firstName, form.lastName)
   const email = String(form.email || '').trim().toLowerCase()
   const password = String(form.password || '')
-  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email || password.length < 8) return c.html(pages.renderStaffCustomerNew(user, '请完整填写名、姓、邮箱和至少 8 位密码'), 400)
+  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email) return c.html(pages.renderStaffCustomerNew(user, '请完整填写名、姓和邮箱'), 400)
+  if (!isStrongPassword(password)) return c.html(pages.renderStaffCustomerNew(user, '密码至少需要 8 位，并同时包含字母、数字和符号'), 400)
   if (await findUserByEmail(c, email)) return c.html(pages.renderStaffCustomerNew(user, '该邮箱已被使用'), 409)
   const customer = await insertUser(c, { id: `u-${nanoid(10)}`, name, email, phone: String(form.phone || '').trim(), password, role: 'CUSTOMER', status: 'active', staffId: user.id, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
   return c.redirect(`/staff/customers/${customer.id}`)
@@ -458,6 +494,23 @@ app.get('/staff/customers/:id', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
   return c.html(await pages.renderStaffCustomerDetail(c, user, c.req.param('id')))
+})
+
+app.get('/staff/orders', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(await pages.renderStaffOrders(c, user, c.req.query('searchTerm') || ''))
+})
+
+app.use('/staff/orders/*', async (c, next) => {
+  const user = c.get('user')
+  const orderId = c.req.path.split('/')[3]
+  if (user?.role === 'STAFF' && orderId && orderId !== 'pending') {
+    const order = await getOrderById(c, orderId)
+    const customer = order ? await getUserById(c, order.userId) : null
+    if (!order || customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
+  }
+  await next()
 })
 
 app.get('/staff/orders/pending', async (c) => {
@@ -611,6 +664,43 @@ app.get('/staff/devices', async (c) => {
   return c.html(await pages.renderStaffDevices(c, user))
 })
 
+app.get('/staff/devices/new', (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(pages.renderStaffDeviceNew(user))
+})
+
+app.post('/staff/devices/new', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const name = String(form.name || '').trim()
+  const model = String(form.model || '').trim()
+  const serialNumber = String(form.serialNumber || '').trim()
+  const pricePerDay = Number(form.dailyRate)
+  const status = String(form.status || 'available') as any
+  if (!name || !model || !serialNumber || !Number.isFinite(pricePerDay) || pricePerDay < 0 || !['available', 'rented', 'maintenance'].includes(status)) return c.html(pages.renderStaffDeviceNew(user, '请填写完整有效的设备资料'), 400)
+  const device = await insertDevice(c, { name, model, serialNumber, pricePerDay, depositAmount: 0, status, description: '' })
+  return c.redirect(`/staff/devices/${device.id}`)
+})
+
+app.get('/staff/devices/:id/edit', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id')))
+})
+
+app.post('/staff/devices/:id/edit', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const pricePerDay = Number(form.dailyRate)
+  const status = String(form.status || 'available')
+  if (!String(form.name || '').trim() || !String(form.model || '').trim() || !String(form.serialNumber || '').trim() || !Number.isFinite(pricePerDay) || pricePerDay < 0 || !['available', 'rented', 'maintenance'].includes(status)) return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id'), '请填写完整有效的设备资料'), 400)
+  await updateDevice(c, c.req.param('id'), { name: String(form.name), model: String(form.model), serialNumber: String(form.serialNumber), pricePerDay, status: status as any })
+  return c.redirect(`/staff/devices/${c.req.param('id')}`)
+})
+
 app.get('/staff/devices/:id', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.redirect('/login')
@@ -725,7 +815,10 @@ app.get('/contract/view/:id', async (c) => {
 })
 
 app.get('/payment/result', async (c) => {
-  return c.html(await pages.renderPaymentResult(c, c.req.query('orderId') || '', c.get('user')))
+  const orderId = c.req.query('orderId') || ''
+  const user = c.get('user') as any
+  if (user?.accountType === 'guest' && orderId !== user.guestOrderId) return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderPaymentResult(c, orderId, user))
 })
 
 app.get('/orders/:id/invoice', async (c) => {
@@ -964,7 +1057,7 @@ app.post('/admin/users/new', async (c) => {
   const password = String(form.password || '')
   const role = String(form.role || 'CUSTOMER')
   const status = String(form.status || 'active')
-  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email || password.length < 8 || !['CUSTOMER', 'STAFF', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user), 400)
+  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email || !isStrongPassword(password) || !['CUSTOMER', 'STAFF', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user), 400)
   if (await findUserByEmail(c, email)) return c.html(pages.renderAdminUserNew(user), 409)
   await insertUser(c, { id: `u-${nanoid(10)}`, name, email, password, role, status, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
   return c.redirect('/admin/users')
@@ -1315,6 +1408,7 @@ app.post('/admin/devices/new', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
+  if (!['available', 'rented', 'maintenance'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   await insertDevice(c, {
     name: form.name || '',
     model: form.model || '',
@@ -1346,6 +1440,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
+  if (!['available', 'rented', 'maintenance'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   await updateDevice(c, c.req.param('id'), {
     name: form.name,
     model: form.model,
@@ -1459,12 +1554,14 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, logError } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, logError } = await import('./site')
     ctx.waitUntil(
       (async () => {
         try {
           const deletedCount = await cleanupExpiredAndCancelledContracts(c)
+          const expiredGuestCount = await cleanupExpiredGuestAccounts(c)
           console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
+          console.log(`Scheduled guest cleanup completed: disabled ${expiredGuestCount} expired guest accounts`)
         } catch (error) {
           await logError(c, 'ERROR', 'Failed to run scheduled contract cleanup', error as Error)
           console.error('Scheduled contract cleanup failed:', error)

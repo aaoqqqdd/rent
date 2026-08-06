@@ -26,8 +26,7 @@ export function renderRegister(errorMessage?: string) {
           <p class="login-subtitle">创建您的专业设备租赁账户</p>
           <form method="POST" action="/register">
             ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
-            <label class="form-label">姓名</label>
-            <input class="form-control" name="name" placeholder="请输入姓名" required />
+            <div class="grid grid-2"><div><label class="form-label" for="firstName">名 / Given name</label><input class="form-control" id="firstName" name="firstName" autocomplete="given-name" required /></div><div><label class="form-label" for="lastName">姓 / Family name</label><input class="form-control" id="lastName" name="lastName" autocomplete="family-name" required /></div></div>
             <label class="form-label">邮箱地址</label>
             <input class="form-control" type="email" name="email" placeholder="name@example.com" required />
             <label class="form-label">手机号</label>
@@ -38,9 +37,9 @@ export function renderRegister(errorMessage?: string) {
               <input class="form-control" type="tel" name="phone" placeholder="请输入手机号" required />
             </div>
             <label class="form-label">登录密码</label>
-            <input class="form-control" type="password" name="password" placeholder="至少8位，包含字母和数字" required />
+            <input class="form-control" type="password" name="password" minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s])\\S{8,}" title="至少 8 位，并同时包含字母、数字和符号" placeholder="至少 8 位，包含字母、数字和符号" autocomplete="new-password" required />
             <label class="form-label">确认密码</label>
-            <input class="form-control" type="password" name="passwordConfirm" placeholder="请再次输入密码" required />
+            <input class="form-control" type="password" name="passwordConfirm" minlength="8" placeholder="请再次输入密码" autocomplete="new-password" required />
             <label class="form-label">推荐码 (选填)</label>
             <input class="form-control" name="referrer" placeholder="来自朋友的推荐码" />
             <div class="form-row">

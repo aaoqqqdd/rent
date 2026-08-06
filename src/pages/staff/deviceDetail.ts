@@ -12,8 +12,9 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
     return buildLayout('设备详情 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求的设备不存在。</p></div>', user)
   }
 
-  const orders = (await getOrders(c)).filter(order => order.deviceId === device.id)
   const usersData = await getUsers(c)
+  const usersById = new Map(usersData.map(account => [account.id, account]))
+  const orders = (await getOrders(c)).filter(order => order.deviceId === device.id && (user.role === 'ADMIN' || usersById.get(order.userId)?.staffId === user.id))
 
   const body = `
     <div class="panel">
@@ -30,9 +31,6 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
         <div>
           <h3>操作</h3>
           <a class="button" href="/staff/devices/${device.id}/edit">编辑设备信息</a>
-          <form method="POST" action="/staff/devices/${device.id}/delete" onsubmit="return confirm('确定要删除此设备吗？');" style="margin-top: 10px;">
-            <button class="button button-danger" type="submit">删除设备</button>
-          </form>
         </div>
       </div>
 

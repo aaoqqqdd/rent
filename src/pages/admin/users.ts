@@ -46,6 +46,7 @@ export async function renderAdminUsers(user: any, c: any) {
             <th>绑定员工</th>
             <th>推荐人</th>
             <th>角色</th>
+            <th>账户类型</th>
             <th>状态</th>
             <th>余额</th>
             <th>注册时间</th>
@@ -66,6 +67,7 @@ export async function renderAdminUsers(user: any, c: any) {
                 <td>${u.role === 'CUSTOMER' ? usersById.get(u.staffId || '')?.name || '未分配' : '-'}</td>
                 <td>${u.role === 'CUSTOMER' ? usersById.get(u.referrerId || '')?.name || '无' : '-'}</td>
                 <td><span class="badge ${role.class}">${role.text}</span></td>
+                <td><span class="badge ${u.accountType === 'guest' ? 'badge-warning' : u.accountType === 'deleted_guest' ? 'badge-danger' : 'badge-success'}">${u.accountType === 'guest' ? '访客/临时账户' : u.accountType === 'deleted_guest' ? '已删除访客' : '正式账户'}</span></td>
                 <td><span class="badge ${status.class}">${status.text}</span></td>
                 <td>AUD$${parseFloat(String(u.balance || 0)).toFixed(2)}</td>
                 <td>${u.createdAt

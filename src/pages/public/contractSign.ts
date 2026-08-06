@@ -26,6 +26,16 @@ function splitContractPhone(value: string): { phoneCode: string; phone: string }
   return { phoneCode: code, phone }
 }
 
+export function renderSigningProgress(step: number): string {
+  const items = [['01', '同意协议'], ['02', '确认资料'], ['03', '选择支付']]
+  return `<ol class="signing-steps" aria-label="合同签署进度">${items.map(([number, label], index) => {
+    const itemStep = index + 1
+    const state = itemStep < step ? 'complete' : itemStep === step ? 'current' : 'upcoming'
+    const stateLabel = state === 'complete' ? '已完成' : state === 'current' ? '当前步骤' : '尚未开始'
+    return `<li class="signing-step signing-step--${state}"${state === 'current' ? ' aria-current="step"' : ''}><span class="signing-step__number" aria-hidden="true">${number}</span><span class="signing-step__copy"><span class="signing-step__title">${label}</span><span class="signing-step__state">${stateLabel}</span></span></li>`
+  }).join('')}</ol>`
+}
+
 export async function renderContractSignPage(c: Context, tokenOrNumber: string, step: number, errorMessage?: string, userInput: Record<string, string> = {}) {
   if (!Object.keys(userInput).length) userInput = readContractSignDraft(c.req.header('cookie'), tokenOrNumber)
   const escapeAttribute = (value: unknown) => sanitizePlainText(value, 500)
@@ -102,14 +112,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   let content = '';
   let title = '合同签署';
 
-  // 简单的进度条
-  const progressBar = `
-    <div class="signing-steps" aria-label="签署进度">
-      <div class="${step >= 1 ? 'is-active' : ''}"><span class="mono">01</span><strong>同意协议</strong></div>
-      <div class="${step >= 2 ? 'is-active' : ''}"><span class="mono">02</span><strong>确认资料</strong></div>
-      <div class="${step >= 3 ? 'is-active' : ''}"><span class="mono">03</span><strong>选择支付</strong></div>
-    </div>
-  `;
+  const progressBar = renderSigningProgress(step)
 
   switch (step) {
     case 1:
@@ -158,8 +161,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             </div>
             <div class="form-group"><label class="form-label" for="phone">联系电话</label><div class="phone-field"><select id="phoneCode" name="phoneCode" class="form-control" required><option value="+61" ${!userInput.phoneCode || userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option><option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option><option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option><option value="+44" ${userInput.phoneCode === '+44' ? 'selected' : ''}>+44 英国</option><option value="+852" ${userInput.phoneCode === '+852' ? 'selected' : ''}>+852 香港</option><option value="+886" ${userInput.phoneCode === '+886' ? 'selected' : ''}>+886 台湾</option><option value="+65" ${userInput.phoneCode === '+65' ? 'selected' : ''}>+65 新加坡</option><option value="+82" ${userInput.phoneCode === '+82' ? 'selected' : ''}>+82 韩国</option><option value="+81" ${userInput.phoneCode === '+81' ? 'selected' : ''}>+81 日本</option></select><input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" autocomplete="tel-national" required placeholder="例如 0412 345 678"></div><span class="field-error" data-error-for="phone"></span></div>
             ${currentUser ? '' : `
-              <label class="account-choice"><input type="checkbox" id="createAccountCheckbox" name="createAccount" ${userInput.createAccount === 'true' ? 'checked' : ''}><span><strong>同时创建账户</strong><small>用于登录后查看订单、合同和发票。</small></span></label>
-              <div id="passwordFields" class="grid grid-2" hidden><div class="form-group"><label class="form-label" for="password">设置密码</label><input id="password" class="form-control" type="password" name="password" minlength="8" autocomplete="new-password"><span class="field-error" data-error-for="password"></span></div><div class="form-group"><label class="form-label" for="passwordConfirm">确认密码</label><input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" autocomplete="new-password"><span class="field-error" data-error-for="passwordConfirm"></span></div></div>
+              <label class="account-choice"><input type="checkbox" id="createAccountCheckbox" name="createAccount" ${userInput.createAccount === 'true' ? 'checked' : ''}><span><strong>注册正式账户</strong><small>勾选后设置自己的密码；不勾选将自动创建访客账户并在签署完成后显示临时密码。</small></span></label>
+              <div id="passwordFields" class="grid grid-2" hidden><div class="form-group"><label class="form-label" for="password">设置密码</label><input id="password" class="form-control" type="password" name="password" minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s])\\S{8,}" title="至少 8 位，并同时包含字母、数字和符号" autocomplete="new-password"><small class="form-text">至少 8 位，必须包含字母、数字和符号。</small><span class="field-error" data-error-for="password"></span></div><div class="form-group"><label class="form-label" for="passwordConfirm">确认密码</label><input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" minlength="8" autocomplete="new-password"><span class="field-error" data-error-for="passwordConfirm"></span></div></div>
             `}
             <div class="form-group"><label class="form-label" for="esignSignature">电子签名（输入完整姓名）</label><input id="esignSignature" name="esignSignature" class="form-control" value="${userInput.esignSignature ?? ''}" autocomplete="name" required><span class="field-error" data-error-for="esignSignature"></span><small class="form-text">必须与上方填写的名和姓完全一致。</small></div>
             <div id="form-error-summary" class="form-error-summary" role="alert" hidden>请先修正标记的资料。</div>
@@ -182,12 +185,12 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 const phone = document.getElementById('phone'); const code = document.getElementById('phoneCode');
                 if (phone && code) { const digits = phone.value.replace(/\\D/g, ''); valid = setError('phone', phonePatterns[code.value]?.test(digits) ? '' : '电话号码格式与所选国家代码不匹配。') && valid; }
                 const signature = document.getElementById('esignSignature'); valid = setError('esignSignature', signature.value.trim() === fullName() ? '' : '电子签名必须与完整姓名完全一致。') && valid;
-                const createAccount = document.getElementById('createAccountCheckbox'); const password = document.getElementById('password'); const confirm = document.getElementById('passwordConfirm');
-                if (createAccount?.checked) { valid = setError('password', password.value.length >= 8 ? '' : '密码至少需要 8 个字符。') && valid; valid = setError('passwordConfirm', confirm.value === password.value ? '' : '两次输入的密码不一致。') && valid; }
+                const formalAccount = document.getElementById('createAccountCheckbox')?.checked; const password = document.getElementById('password'); const confirm = document.getElementById('passwordConfirm');
+                if (formalAccount) { valid = setError('password', /^(?=.*[A-Za-z])(?=.*\\d)(?=.*[^A-Za-z0-9\\s])\\S{8,}$/.test(password.value) ? '' : '密码至少需要 8 位，并同时包含字母、数字和符号。') && valid; valid = setError('passwordConfirm', confirm.value === password.value ? '' : '两次输入的密码不一致。') && valid; }
                 summary.hidden = valid; return valid;
               };
               const accountChoice = document.getElementById('createAccountCheckbox');
-              const updateAccountFields = () => { const fields = document.getElementById('passwordFields'); if (!fields || !accountChoice) return; fields.hidden = !accountChoice.checked; fields.querySelectorAll('input').forEach(input => input.required = accountChoice.checked); };
+              const updateAccountFields = () => { const fields = document.getElementById('passwordFields'); const formal = Boolean(accountChoice?.checked); if (!fields) return; fields.hidden = !formal; fields.querySelectorAll('input').forEach(input => input.required = formal); };
               const saveDraft = () => {
                 const draft = { token: ${JSON.stringify(token).replace(/</g, '\\u003c')}, firstName: document.getElementById('firstName')?.value || '', lastName: document.getElementById('lastName')?.value || '', email: document.getElementById('email')?.value || '', phoneCode: document.getElementById('phoneCode')?.value || '', phone: document.getElementById('phone')?.value || '', referrer: document.getElementById('referrer')?.value || '', createAccount: String(Boolean(accountChoice?.checked)) };
                 document.cookie = 'contract_sign_draft=' + encodeURIComponent(JSON.stringify(draft)) + '; Path=/contract/sign; Max-Age=604800; SameSite=Lax' + (location.protocol === 'https:' ? '; Secure' : '');
@@ -308,6 +311,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       break;
   }
 
-  const signingPage = `<main class="signing-shell"><header class="signing-header"><div><p class="section-code">E-SIGN / ${escapeAttribute(contract.contractNumber)}</p><h1>租赁协议签署</h1><p>${escapeAttribute(device?.name || '租赁设备')} · ${escapeAttribute(order.startDate)} 至 ${escapeAttribute(order.endDate)}</p></div><span class="badge badge-warning">待签署</span></header>${content}</main>`
+  const signingPage = `<main class="signing-shell"><div class="entity-header signing-page-header"><div class="identity-strip mono"><span>E-SIGN / ${escapeAttribute(contract.contractNumber)}</span><span>SECURE SIGNING</span></div><div class="entity-heading"><div><p class="section-code">RENTAL AGREEMENT</p><h2 id="signing-page-title">租赁协议签署</h2><p>${escapeAttribute(device?.name || '租赁设备')} · ${escapeAttribute(order.startDate)} 至 ${escapeAttribute(order.endDate)}</p></div><span class="badge badge-warning">待签署</span></div></div>${content}</main>`
   return buildLayout(title, signingPage, currentUser);
 }

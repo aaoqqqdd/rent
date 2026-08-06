@@ -43,7 +43,6 @@ export function renderAdminDeviceNew(user: any) {
               <option value="available" selected>✅ 可用 - 可以出租</option>
               <option value="maintenance">🔧 维修中 - 暂时不可用</option>
               <option value="rented">📦 已出租</option>
-              <option value="retired">📌 已退役</option>
             </select>
           </div>
         </div>

@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, buildLayout
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { createStripeCheckout } from '../stripePayments';
@@ -93,7 +93,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先同意租赁协议。');
         }
 
-        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount, referrer, esignSignature } = body;
+        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature } = body;
+        const createAccount = !currentUser && Boolean(createAccountInput)
+        const selectedAccountMode = createAccount ? 'formal' : 'guest'
         const cleanFirstName = String(firstName || '').trim()
         const cleanLastName = String(lastName || '').trim()
         const name = `${cleanFirstName} ${cleanLastName}`.trim()
@@ -120,10 +122,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           await logError(c, 'INFO', `Missing password for account creation`, undefined, { token });
           throw new Error('创建账户时密码和确认密码是必填项。');
         }
-        
         if (!currentUser && createAccount && password !== passwordConfirm) {
           await logError(c, 'INFO', `Password mismatch in account creation`, undefined, { token });
           throw new Error('两次输入的密码不一致。');
+        }
+        if (!currentUser && createAccount && !isStrongPassword(password)) {
+          throw new Error('密码至少需要 8 位，并同时包含字母、数字和符号。');
         }
         
         // 验证电话号码格式 - 先清理空格、连字符和国际前缀，再按各国规则校验
@@ -206,7 +210,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         // 保存用户信息到会话
         const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
         await updateSignSession(c, token, {
-          userInfo: { ...body, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount: currentUser ? false : createAccount, phone: phoneToValidate, fullPhone }
+          userInfo: { ...body, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone }
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
         
@@ -216,6 +220,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
       case 3:
         // Step 3: 选择支付方式并完成签约
         await logError(c, 'DEBUG', `Processing step 3: Payment method selection and contract finalization`, undefined, { token });
+        await loadSystemSettingsFromDB(c)
+        const signingOrder = await getOrderById(c, contract.rentalId)
+        if (!signingOrder) throw new Error('合同关联的订单不存在。')
+        const order = signingOrder
         
         if (!signSession.userInfo) {
           await logError(c, 'WARNING', `User attempted to access step 3 without providing user info`, undefined, { token });
@@ -255,6 +263,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const userInfo = signSession.userInfo;
         const userIdToLink = signSession.userIdToLink;
         let userId = userIdToLink; // 默认使用已存在的用户ID
+        let guestPassword = String(signSession.guestPassword || '')
 
         // 1. 如果没有已存在的用户ID，则创建新用户
         if (!userId) {
@@ -284,11 +293,16 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           //   password_hash = await hashPassword(userInfo.password);
           // }
           
+          const isGuest = userInfo.accountMode === 'guest'
+          if (isGuest && !guestPassword) {
+            guestPassword = generateTemporaryPassword()
+            await updateSignSession(c, token, { guestPassword })
+          }
           const newUser: User = {
             id: newUserId,
             name: userInfo.name,
             email: userInfo.email,
-            password: userInfo.createAccount ? userInfo.password : undefined,
+            password: isGuest ? guestPassword : userInfo.password,
             // password_hash: password_hash ?? undefined,
             role: 'CUSTOMER',
             phone: userInfo.fullPhone,
@@ -299,10 +313,14 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             referralCode: null as any,
             referrerId: referrerId ?? null as any,
             staffId: contract.createdBy || contract.created_by || undefined,
+            accountType: isGuest ? 'guest' : 'formal',
+            guestOrderId: isGuest ? contract.rentalId : null,
+            guestExpiresAt: isGuest ? signingOrder.endDate : null,
             createdAt: new Date().toISOString(),
             registrationDate: new Date().toISOString(),
           };
           await insertUser(c, newUser);
+          await updateSignSession(c, token, { userIdToLink: newUserId });
           await logError(c, 'INFO', `New user created successfully`, undefined, { token, newUserId });
         } else {
           await logError(c, 'INFO', `Linking existing user to contract`, undefined, { token, userId });
@@ -314,12 +332,16 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         // 处理余额支付
         let orderStatus: Order['status'] = 'pending_payment';
         if (paymentMethod === 'balance') {
+          const existingBalancePayment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'balance' AND status = 'paid' LIMIT 1").bind(contract.rentalId).first()
+          if (existingBalancePayment) {
+            orderStatus = 'paid'
+          } else {
           // 获取用户当前余额
           const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any;
           const currentBalance = user?.balance || 0;
           // 获取订单总金额
-          const rental = await c.env.RENT.prepare('SELECT total_amount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
-          const totalAmount = rental?.total_amount || 0;
+          const rental = await c.env.RENT.prepare('SELECT totalAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
+          const totalAmount = rental?.totalAmount || 0;
           
           if (currentBalance >= totalAmount) {
             // 扣除余额
@@ -332,6 +354,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           } else {
             await logError(c, 'WARNING', `Insufficient balance for payment`, undefined, { token, userId, balance: currentBalance, required: totalAmount });
             throw new Error('账户余额不足，无法使用余额支付');
+          }
           }
         }
 
@@ -347,18 +370,36 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
           const paymentTotal = Number(paymentOrder?.totalAmount || 0)
           const paymentDeposit = Number(paymentOrder?.depositAmount || 0)
-          const paymentId = `p-${nanoid(12)}`
-          await c.env.RENT.prepare(`
-            INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, paid_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?)
-          `).bind(
-            paymentId, contract.rentalId, userId, paymentMethod,
-            paymentTotal, paymentDeposit, paymentTotal - paymentDeposit,
-            paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? new Date().toISOString() : null
-          ).run()
+          const existingPayment = await c.env.RENT.prepare('SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(contract.rentalId, paymentMethod).first() as any
+          const paymentId = existingPayment?.id || `p-${nanoid(12)}`
+          if (!existingPayment) {
+            await c.env.RENT.prepare(`
+              INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, paid_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?)
+            `).bind(
+              paymentId, contract.rentalId, userId, paymentMethod,
+              paymentTotal, paymentDeposit, paymentTotal - paymentDeposit,
+              paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? new Date().toISOString() : null
+            ).run()
+          }
           if (paymentMethod === 'bank_transfer') {
-            await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')")
-              .bind(`proof-${nanoid(12)}`, paymentId, transferReference, transferNote || null, transferProofUrl).run()
+            const existingProof = await c.env.RENT.prepare("SELECT id FROM payment_proofs WHERE payment_id = ? AND status = 'submitted' ORDER BY uploaded_at DESC LIMIT 1").bind(paymentId).first() as any
+            if (existingProof) {
+              await c.env.RENT.prepare("UPDATE payment_proofs SET reference_number = ?, note = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                .bind(transferReference, transferNote || null, transferProofUrl, existingProof.id).run()
+            } else {
+              await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')")
+                .bind(`proof-${nanoid(12)}`, paymentId, transferReference, transferNote || null, transferProofUrl).run()
+            }
+          }
+        }
+        let stripeResponse: Response | null = null
+        if (paymentMethod === 'stripe') {
+          const stripeUser = await getUserById(c, userId)
+          if (!stripeUser) throw new Error('无法读取付款用户信息')
+          stripeResponse = await createStripeCheckout(c, stripeUser, contract.rentalId)
+          if (stripeResponse.status < 300 || stripeResponse.status >= 400) {
+            throw new Error((await stripeResponse.text()) || 'Stripe 无法创建付款页面')
           }
         }
         if (paymentMethod === 'balance') {
@@ -411,33 +452,35 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (referrerId) {
           await logError(c, 'DEBUG', `Processing referral commission`, undefined, { token, referrerId, newUserId });
           // 获取租赁订单的总金额
-          const rental = await c.env.RENT.prepare('SELECT total_amount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
+          const rental = await c.env.RENT.prepare('SELECT totalAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
           if (rental) {
             // 获取推荐人的分成比例
             const referrer = await c.env.RENT.prepare('SELECT commission_rate FROM users WHERE id = ?').bind(referrerId).first() as any;
             const commissionRate = referrer?.commission_rate || 25.0; // 默认25%
-            const commissionAmount = (rental.total_amount * commissionRate) / 100;
+            const commissionAmount = (rental.totalAmount * commissionRate) / 100;
 
             await logError(c, 'INFO', `Calculated commission for referrer`, undefined, { 
               token, 
               referrerId, 
               commissionAmount, 
               commissionRate,
-              rentalTotal: rental.total_amount
+              rentalTotal: rental.totalAmount
             });
 
             // 创建佣金记录 - 使用snake_case列名匹配数据库schema
-            const commissionId = `c-${nanoid(8)}`;
-            await c.env.RENT.prepare(`
-              INSERT INTO commission_records (id, referrer_id, rental_id, customer_id, amount, rate, status)
+            const commissionId = `c-${contract.id}`;
+            const commissionInsert = await c.env.RENT.prepare(`
+              INSERT OR IGNORE INTO commission_records (id, referrer_id, rental_id, customer_id, amount, rate, status)
               VALUES (?, ?, ?, ?, ?, ?, 'pending')
             `).bind(commissionId, referrerId, contract.rentalId, newUserId, commissionAmount, commissionRate).run();
             
-            // 更新推荐人的佣金余额
-            await c.env.RENT.prepare(`
-              UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `).bind(commissionAmount, referrerId).run();
+            // 仅首次创建佣金记录时增加余额，付款重试不会重复计佣。
+            if (Number((commissionInsert as any).meta?.changes ?? (commissionInsert as any).changes ?? 0) > 0) {
+              await c.env.RENT.prepare(`
+                UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+              `).bind(commissionAmount, referrerId).run();
+            }
             
             await logError(c, 'INFO', `Commission recorded and referrer balance updated`, undefined, { 
               token, 
@@ -453,10 +496,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         signingCompleted = true;
         await logError(c, 'INFO', `Sign session deleted after successful completion`, undefined, { token });
 
-        if (paymentMethod === 'stripe') {
-          const stripeUser = await getUserById(c, userId)
-          if (!stripeUser) throw new Error('无法读取付款用户信息')
-          const stripeResponse = await createStripeCheckout(c, stripeUser, contract.rentalId)
+        if (guestPassword) {
+          const paymentUrl = stripeResponse?.headers.get('Location') || `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
+          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${stripeResponse ? '继续前往 Stripe 支付' : '查看付款结果'}</a></div></div>`
+          return c.html(buildLayout('保存访客登录资料', guestPage))
+        }
+        if (stripeResponse) {
           const headers = new Headers(stripeResponse.headers)
           headers.append('Set-Cookie', 'contract_sign_draft=; Path=/contract/sign; Max-Age=0; SameSite=Lax')
           return new Response(stripeResponse.body, { status: stripeResponse.status, statusText: stripeResponse.statusText, headers })

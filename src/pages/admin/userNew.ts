@@ -19,7 +19,7 @@ export function renderAdminUserNew(user: any) {
           <div class="form-group"><label class="form-label" for="firstName">名 / Given name</label><input class="form-control" type="text" id="firstName" name="firstName" required autocomplete="given-name"></div>
           <div class="form-group"><label class="form-label" for="lastName">姓 / Family name</label><input class="form-control" type="text" id="lastName" name="lastName" required autocomplete="family-name"></div>
           <div class="form-group"><label class="form-label" for="email">邮箱地址</label><input class="form-control" type="email" id="email" name="email" required autocomplete="email" placeholder="name@example.com"></div>
-          <div class="form-group"><label class="form-label" for="password">登录密码</label><input class="form-control" type="password" id="password" name="password" required autocomplete="new-password" minlength="8" placeholder="至少 8 个字符"></div>
+          <div class="form-group"><label class="form-label" for="password">登录密码</label><input class="form-control" type="password" id="password" name="password" required autocomplete="new-password" minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s])\\S{8,}" title="至少 8 位，并同时包含字母、数字和符号" placeholder="至少 8 位，包含字母、数字和符号"></div>
         </div></section>
         <section class="form-section"><div class="form-section-title"><span class="mono">02</span><div><h3>权限与状态</h3><p>决定用户可以访问的工作区。</p></div></div><div class="grid grid-2">
           <div class="form-group"><label class="form-label" for="role">用户角色</label><select class="form-control" id="role" name="role"><option value="CUSTOMER" selected>客户 / CUSTOMER</option><option value="STAFF">员工 / STAFF</option><option value="ADMIN">管理员 / ADMIN</option></select></div>

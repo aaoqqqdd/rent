@@ -57,7 +57,6 @@ export function renderAdminDeviceEdit(user: any, device: any) {
             <option value="available" ${status === 'available' ? 'selected' : ''}>✅ 可用</option>
             <option value="rented" ${status === 'rented' ? 'selected' : ''}>📦 已租出</option>
             <option value="maintenance" ${status === 'maintenance' ? 'selected' : ''}>🔧 维护中</option>
-            <option value="retired" ${status === 'retired' ? 'selected' : ''}>📌 已退役</option>
           </select>
         </div>
         <div class="form-group">

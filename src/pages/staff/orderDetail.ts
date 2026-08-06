@@ -12,6 +12,9 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user)
   }
   const customer = await getUserById(c, order.userId)
+  if (user.role !== 'ADMIN' && customer?.staffId !== user.id) {
+    return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2><p>员工只能查看自己名下客户的订单。</p></div>', user)
+  }
   const device = await getDeviceById(c, order.deviceId)
   const contract = await getContractByOrderId(c, order.id)
   const contractExpired = contract ? isContractExpired(contract) : false
@@ -43,16 +46,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
               <button class="button button-danger" type="submit">拒绝订单</button>
             </form>
           ` : ''}
-          ${order.status === 'approved' && !contract ? `
-            <form method="POST" action="/staff/orders/${order.id}/generate-contract">
-              <button class="button button-primary" type="submit">生成合同</button>
-            </form>
-          ` : ''}
-          ${contract && contract.status === 'pending_sign' && !contractExpired ? `
-            <form method="POST" action="/staff/orders/${order.id}/remind-sign">
-              <button class="button" type="submit">提醒客户签署合同</button>
-            </form>
-          ` : ''}
+          ${order.status === 'approved' && !contract ? `<a class="button button-primary" href="/staff/contracts/new">前往新建合同</a>` : ''}
           ${order.status === 'pending_payment' ? `
             <p class="alert">银行转账需由管理员审核客户提交的 Reference 后确认付款。</p>
           ` : ''}

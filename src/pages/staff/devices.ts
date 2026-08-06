@@ -10,7 +10,7 @@ export async function renderStaffDevices(c: Context, user: any) {
   const devices = await getDevices(c)
   const body = `
     <div class="panel">
-      <h2>设备管理</h2>
+      <div class="section-title"><h2>设备管理</h2><a class="button" href="/staff/devices/new">添加设备</a></div>
       <div class="table-wrapper">
         <table class="table">
           <thead>
@@ -20,6 +20,7 @@ export async function renderStaffDevices(c: Context, user: any) {
               <th>序列号</th>
               <th>日租金</th>
               <th>状态</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -30,6 +31,7 @@ export async function renderStaffDevices(c: Context, user: any) {
                 <td>${device.serialNumber}</td>
                 <td>${formatCurrency(device.pricePerDay ?? device.price_per_day ?? 0)}</td>
                 <td>${device.status}</td>
+                <td><a class="link-button" href="/staff/devices/${device.id}">查看</a><a class="link-button" href="/staff/devices/${device.id}/edit">编辑</a></td>
               </tr>
             `).join('')}
           </tbody>

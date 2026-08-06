@@ -128,7 +128,6 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                     ${
                       contract.status === 'pending_sign' && !expired
                         ? `
-                          <a class="button button-sm button-primary" href="/staff/contract/${contract.id}/remind">提醒签署</a>
                           <button type="button" class="button button-sm button-secondary copy-sign-link" data-sign-token="${contract.signToken}">复制链接</button>
                           ${canCancel ? `<form action="/staff/contract/${contract.id}/cancel" method="post" class="inline-form"><button type="submit" class="button button-sm button-danger" onclick="return confirm('确定取消合同 ${contract.contractNumber} 吗？取消后客户将无法继续签署。');">取消合同</button></form>` : ''}
                         `

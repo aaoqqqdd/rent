@@ -14,7 +14,7 @@ export function renderStaffCustomerNew(user: any, errorMessage?: string) {
           <div class="form-group"><label class="form-label" for="lastName">姓 / Family name</label><input class="form-control" id="lastName" name="lastName" required autocomplete="family-name"></div>
           <div class="form-group"><label class="form-label" for="email">邮箱</label><input class="form-control" type="email" id="email" name="email" required autocomplete="email"></div>
           <div class="form-group"><label class="form-label" for="phone">电话</label><input class="form-control" id="phone" name="phone" autocomplete="tel"></div>
-          <div class="form-group"><label class="form-label" for="password">初始密码</label><input class="form-control" type="password" id="password" name="password" minlength="8" required autocomplete="new-password"></div>
+          <div class="form-group"><label class="form-label" for="password">初始密码</label><input class="form-control" type="password" id="password" name="password" minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s])\\S{8,}" title="至少 8 位，并同时包含字母、数字和符号" placeholder="至少 8 位，包含字母、数字和符号" required autocomplete="new-password"></div>
         </div></section>
         <div class="record-actions"><a href="/staff/customers" class="button button-secondary">取消</a><button class="button button-primary" type="submit">创建客户</button></div>
       </form>

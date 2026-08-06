@@ -11,7 +11,8 @@ export async function renderStaffOrders(c: Context, user: any, searchTerm: strin
   const usersData = await getUsers(c);
   const devicesData = await getDevices(c);
 
-  const filteredOrders = orders.filter(order => {
+  const visibleOrders = user.role === 'ADMIN' ? orders : orders.filter(order => usersData.find(account => account.id === order.userId)?.staffId === user.id)
+  const filteredOrders = visibleOrders.filter(order => {
     const customer = usersData.find(u => u.id === order.userId);
     const device = devicesData.find(d => d.id === order.deviceId);
     const searchLower = searchTerm.toLowerCase();

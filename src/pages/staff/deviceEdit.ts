@@ -30,7 +30,6 @@ export async function renderStaffDeviceEdit(c: Context, user: any, deviceId: str
           <option value="available" ${device.status === 'available' ? 'selected' : ''}>可用</option>
           <option value="rented" ${device.status === 'rented' ? 'selected' : ''}>已租借</option>
           <option value="maintenance" ${device.status === 'maintenance' ? 'selected' : ''}>维护中</option>
-          <option value="retired" ${device.status === 'retired' ? 'selected' : ''}>已退役</option>
         </select>
         <button class="button button-primary" type="submit" style="margin-top: 20px;">保存修改</button>
       </form>

@@ -89,6 +89,14 @@ export interface User {
   // staff 相关旧代码可能依赖
   staffId?: string
   staff_id?: string
+  accountType?: 'formal' | 'guest' | 'deleted_guest'
+  account_type?: 'formal' | 'guest' | 'deleted_guest'
+  guestOrderId?: string | null
+  guest_order_id?: string | null
+  guestExpiresAt?: string | null
+  guest_expires_at?: string | null
+  deletedAt?: string | null
+  deleted_at?: string | null
 }
 
 export interface Device {
@@ -228,6 +236,18 @@ export async function hashPassword(password: string): Promise<string> {
   return `pbkdf2$${iterations}$${salt}$${hash}`
 }
 
+export function isStrongPassword(password: unknown): boolean {
+  return /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{8,}$/.test(String(password ?? ''))
+}
+
+export function generateTemporaryPassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+  const bytes = new Uint8Array(12)
+  crypto.getRandomValues(bytes)
+  const random = Array.from(bytes, byte => alphabet[byte % alphabet.length]).join('')
+  return `${random.slice(0, 4)}-${random.slice(4, 8)}-${random.slice(8)}!7`
+}
+
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
   if (storedHash.startsWith('pbkdf2$')) {
     const [, iterationText, salt, expected] = storedHash.split('$')
@@ -292,6 +312,10 @@ function normalizeUserRow(row: any): User {
   const referralCode = row.referralCode ?? row.referral_code ?? null
   const referrerId = row.referrerId ?? row.referrer_id ?? row.referrerId
   const staffId = row.staffId ?? row.staff_id
+  const accountType = row.accountType ?? row.account_type ?? 'formal'
+  const guestOrderId = row.guestOrderId ?? row.guest_order_id ?? null
+  const guestExpiresAt = row.guestExpiresAt ?? row.guest_expires_at ?? null
+  const deletedAt = row.deletedAt ?? row.deleted_at ?? null
 
   return {
     ...row,
@@ -307,7 +331,15 @@ function normalizeUserRow(row: any): User {
     referralCode,
     referrerId,
     staffId,
-    staff_id: staffId
+    staff_id: staffId,
+    accountType,
+    account_type: accountType,
+    guestOrderId,
+    guest_order_id: guestOrderId,
+    guestExpiresAt,
+    guest_expires_at: guestExpiresAt,
+    deletedAt,
+    deleted_at: deletedAt,
   } as User
 }
 
@@ -667,7 +699,7 @@ export async function updateOrder(c: Context, order: Order): Promise<void> {
   const db = getDB(c)
   await db
     .prepare(
-      'UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, contractId = ?, signedAt = ? WHERE id = ?'
+      'UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, contractId = ? WHERE id = ?'
     )
     .bind(
       order.orderNo ?? null,
@@ -680,7 +712,6 @@ export async function updateOrder(c: Context, order: Order): Promise<void> {
       Number(order.totalAmount ?? 0),
       Number(order.depositAmount ?? 0),
       order.contractId ?? null,
-      order.signedAt ?? null,
       order.id
     )
     .run()
@@ -728,8 +759,8 @@ export async function cleanupExpiredAndCancelledContracts(c: Context): Promise<n
     const result = await db.prepare(`
       DELETE FROM contracts 
       WHERE (status = 'pending_sign' AND (signExpiresAt < ? OR sign_expires_at < ?))
-         OR (status = 'cancelled' AND (updatedAt < ? OR updated_at < ?))
-    `).bind(now, now, sevenDaysAgoISO, sevenDaysAgoISO).run()
+         OR (status = 'cancelled' AND updatedAt < ?)
+    `).bind(now, now, sevenDaysAgoISO).run()
 
     const deletedCount = result.meta?.changes || 0
     if (deletedCount > 0) {
@@ -740,6 +771,22 @@ export async function cleanupExpiredAndCancelledContracts(c: Context): Promise<n
     await logError(c, 'ERROR', 'Failed to cleanup expired/cancelled contracts', error as Error)
     return 0
   }
+}
+
+export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
+  const expired = await c.env.RENT.prepare(`
+    SELECT id FROM users
+    WHERE account_type = 'guest' AND guest_expires_at IS NOT NULL
+      AND date(guest_expires_at) < date('now')
+  `).all() as any
+  const ids = (expired.results || []).map((row: any) => String(row.id))
+  if (!ids.length) return 0
+  const placeholders = ids.map(() => '?').join(', ')
+  await c.env.RENT.batch([
+    c.env.RENT.prepare(`DELETE FROM auth_sessions WHERE user_id IN (${placeholders})`).bind(...ids),
+    c.env.RENT.prepare(`UPDATE users SET account_type = 'deleted_guest', status = 'inactive', email = 'deleted-guest-' || id || '@invalid.local', phone = NULL, password_hash = 'disabled', password_salt = 'disabled', deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...ids),
+  ])
+  return ids.length
 }
 
 // Compatibility alias expected by legacy code
@@ -1048,6 +1095,9 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   const hasCommissionBalanceCamel = await userHasColumn(c, 'commissionBalance')
   const hasStaffIdSnake = await userHasColumn(c, 'staff_id')
   const hasStaffIdCamel = await userHasColumn(c, 'staffId')
+  const hasAccountType = await userHasColumn(c, 'account_type')
+  const hasGuestOrderId = await userHasColumn(c, 'guest_order_id')
+  const hasGuestExpiresAt = await userHasColumn(c, 'guest_expires_at')
 
   let passwordHashToStore = user.passwordHash ?? null;
   let passwordSaltToStore = user.passwordSalt ?? null;
@@ -1104,6 +1154,16 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   } else if (hasStaffIdCamel) {
     insertFields.push('staffId');
     insertValues.push(user.staffId ?? null);
+  }
+
+  if (hasAccountType) {
+    insertFields.push('account_type'); insertValues.push(user.accountType ?? 'formal')
+  }
+  if (hasGuestOrderId) {
+    insertFields.push('guest_order_id'); insertValues.push(user.guestOrderId ?? null)
+  }
+  if (hasGuestExpiresAt) {
+    insertFields.push('guest_expires_at'); insertValues.push(user.guestExpiresAt ?? null)
   }
 
   // 处理created_at / createdAt
@@ -1172,13 +1232,18 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     createdAt: 'created_at',
     updatedAt: 'updated_at',
     commissionRate: 'commission_rate',
-    staffId: 'staff_id'
+    staffId: 'staff_id',
+    accountType: 'account_type',
+    guestOrderId: 'guest_order_id',
+    guestExpiresAt: 'guest_expires_at',
+    deletedAt: 'deleted_at'
   }
 
   const allowedFields = new Set([
     'name', 'email', 'role', 'status', 'balance', 'phone', 'bsb', 'account', 'accountNumber',
     'referralCode', 'referrerId', 'passwordHash', 'passwordSalt', 'commissionBalance',
-    'createdAt', 'updatedAt', 'commissionRate', 'staffId',
+    'createdAt', 'updatedAt', 'commissionRate', 'staffId', 'accountType',
+    'guestOrderId', 'guestExpiresAt', 'deletedAt',
   ])
   for (const key of Object.keys(fields)) {
     if (!allowedFields.has(key)) delete fields[key]
@@ -1469,7 +1534,7 @@ export async function createWithdrawalRequest(
   }
 }
 
-export async function getPendingOrdersWithDetails(c: Context): Promise<any[]> {
+export async function getPendingOrdersWithDetails(c: Context, staffId?: string): Promise<any[]> {
   const db = getDB(c);
   const query = `
     SELECT 
@@ -1484,14 +1549,15 @@ export async function getPendingOrdersWithDetails(c: Context): Promise<any[]> {
     FROM orders o
     JOIN users u ON o.userId = u.id
     JOIN devices d ON o.deviceId = d.id
-    WHERE o.status = 'pending_approval'
+    WHERE o.status = 'pending_approval' ${staffId ? 'AND u.staff_id = ?' : ''}
     ORDER BY o.createdAt DESC
   `;
-  const result = await db.prepare(query).all();
+  const statement = db.prepare(query)
+  const result = staffId ? await statement.bind(staffId).all() : await statement.all();
   return result.results || [];
 }
 
-export async function getStaffDashboardData(c: Context): Promise<any> {
+export async function getStaffDashboardData(c: Context, staffId?: string): Promise<any> {
   const db = getDB(c);
 
   const statsQuery = `
@@ -1508,6 +1574,7 @@ export async function getStaffDashboardData(c: Context): Promise<any> {
     FROM orders o
     LEFT JOIN users u ON o.userId = u.id
     LEFT JOIN devices d ON o.deviceId = d.id
+    ${staffId ? 'WHERE u.staff_id = ?' : ''}
     ORDER BY o.createdAt DESC
     LIMIT 5
   `;
@@ -1516,17 +1583,19 @@ export async function getStaffDashboardData(c: Context): Promise<any> {
     SELECT d.id, d.name, d.status, u.name as customerName
     FROM devices d
     LEFT JOIN (
-      SELECT deviceId, userId FROM orders WHERE status = 'active' OR status = 'paid'
+      SELECT o.deviceId, o.userId FROM orders o JOIN users owner ON o.userId = owner.id WHERE (o.status = 'active' OR o.status = 'paid') ${staffId ? 'AND owner.staff_id = ?' : ''}
     ) o ON d.id = o.deviceId
     LEFT JOIN users u ON o.userId = u.id
     ORDER BY d.createdAt DESC
     LIMIT 5
   `;
 
+  const recentOrdersStatement = db.prepare(recentOrdersQuery)
+  const recentDevicesStatement = db.prepare(recentDevicesQuery)
   const [statsResult, recentOrdersResult, recentDevicesResult] = await Promise.all([
     db.prepare(statsQuery).first(),
-    db.prepare(recentOrdersQuery).all(),
-    db.prepare(recentDevicesQuery).all()
+    staffId ? recentOrdersStatement.bind(staffId).all() : recentOrdersStatement.all(),
+    staffId ? recentDevicesStatement.bind(staffId).all() : recentDevicesStatement.all()
   ]);
 
   return {
@@ -2259,7 +2328,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const userBlockHtml = currentUser
     ? `
-        <span class="user-label">${currentUser.name}</span>
+        <span class="user-label">${currentUser.name}${currentUser.accountType === 'guest' ? ` · 访客（${currentUser.guestExpiresAt || '租期结束'}删除）` : ''}</span>
         <div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div>
         <form method="post" action="/logout" style="display:inline"><button type="submit" class="logout-button">登出</button></form>
       `
@@ -2268,7 +2337,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const navIcons: Record<string, string> = {
     '/customer/dashboard': '◉', '/customer/rentals': '▤', '/customer/orders': '▦',
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦',
-    '/staff/dashboard': '◉', '/staff/orders/pending': '◷', '/staff/contracts': '▤',
+    '/staff/dashboard': '◉', '/staff/orders': '▦', '/staff/orders/pending': '◷', '/staff/customers': '◎', '/staff/contracts': '▤',
     '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
     '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
     '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
@@ -2285,15 +2354,19 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
         <div class="sidebar-section">
           <h3>导航</h3>
           ${currentUser.role === 'CUSTOMER' ? `
-            ${renderNavLink('/customer/dashboard', '控制台')}
-            ${renderNavLink('/customer/rentals', '我的租赁')}
-            ${renderNavLink('/customer/orders', '订单管理')}
-            ${renderNavLink('/customer/profile', '个人资料')}
-            ${renderNavLink('/customer/security', '安全设置')}
-            ${renderNavLink('/customer/referral', '推荐计划')}
+            ${currentUser.accountType === 'guest' ? renderNavLink('/customer/guest', '访客合同中心') : `
+              ${renderNavLink('/customer/dashboard', '控制台')}
+              ${renderNavLink('/customer/rentals', '我的租赁')}
+              ${renderNavLink('/customer/orders', '订单管理')}
+              ${renderNavLink('/customer/profile', '个人资料')}
+              ${renderNavLink('/customer/security', '安全设置')}
+              ${renderNavLink('/customer/referral', '推荐计划')}
+            `}
           ` : ''}
           ${currentUser.role === 'STAFF' ? `
             ${renderNavLink('/staff/dashboard', '工作台')}
+            ${renderNavLink('/staff/customers', '客户管理')}
+            ${renderNavLink('/staff/orders', '订单管理')}
             ${renderNavLink('/staff/orders/pending', '待审订单')}
             ${renderNavLink('/staff/contracts', '合同管理')}
             ${renderNavLink('/staff/contracts/new', '新建合同')}
@@ -2375,7 +2448,7 @@ export async function logError(c: Context, level: ErrorLevel, message: string, e
     const method = c.req.method
 
     await db.prepare(`
-      INSERT INTO error_logs (id, errorLevel, errorMessage, errorStack, contextData, userId, requestUrl, requestMethod, createdAt)
+      INSERT INTO error_logs (id, error_level, error_message, error_stack, context_data, user_id, request_url, request_method, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).bind(errorId, level, message, stackTrace, contextJson, userId, url, method).run()
   } catch (dbError) {
@@ -2395,7 +2468,7 @@ export async function cleanupOldErrorLogs(c: Context) {
 
   try {
     await db.prepare(`
-      DELETE FROM error_logs WHERE createdAt < ?
+      DELETE FROM error_logs WHERE created_at < ?
     `).bind(thirtyDaysAgo.toISOString()).run()
     await logError(c, 'INFO', `Cleaned up error logs older than 30 days`)
   } catch (error) {

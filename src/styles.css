@@ -809,16 +809,21 @@ tr:hover td { background: #f1f5f8; }
 
 /* Public contract signing workstation */
 .signing-shell { width: min(980px, 100%); margin: 0 auto; }
-.signing-header { margin-bottom: 18px; padding: 25px 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; color: #eef3f7; background: var(--graphite); border-bottom: 4px solid var(--accent); box-shadow: var(--shadow-sm); }
-.signing-header h1 { margin: 3px 0 5px; color: #fff; font-size: clamp(1.7rem, 4vw, 2.35rem); letter-spacing: .035em; text-transform: uppercase; }
-.signing-header p:not(.section-code) { margin: 0; color: #bdc8d1; }
-.signing-header .section-code { margin: 0; color: #8fa2b1; }
-.signing-steps { margin: -1px -1px 26px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: var(--bg-subtle); border: 1px solid var(--border); }
-.signing-steps > div { min-height: 60px; padding: 13px 16px; display: flex; align-items: center; gap: 10px; color: var(--text-tertiary); border-top: 3px solid transparent; border-right: 1px solid var(--border); }
-.signing-steps > div:last-child { border-right: 0; }
-.signing-steps > div.is-active { color: var(--primary-dark); background: var(--surface); border-top-color: var(--primary); }
-.signing-steps .mono { font-size: .66rem; letter-spacing: .09em; }
-.signing-steps strong { font-size: .82rem; }
+.signing-page-header .entity-heading > div { min-width: 0; }
+.signing-page-header .entity-heading p:not(.section-code) { overflow-wrap: anywhere; }
+.signing-steps { margin: -1px -1px 26px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); list-style: none; background: #eef2f5; border: 1px solid var(--border); }
+.signing-step { min-width: 0; min-height: 72px; padding: 13px 16px; display: flex; align-items: center; gap: 12px; color: #687682; background: #eef2f5; border-top: 3px solid transparent; border-right: 1px solid var(--border); }
+.signing-step:last-child { border-right: 0; }
+.signing-step__number { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; color: #4d5d69; background: #fff; border: 1px solid #bcc7cf; font: 700 .72rem/1 var(--font-mono); }
+.signing-step__copy { min-width: 0; display: grid; gap: 3px; }
+.signing-step__title { color: inherit; font-size: .86rem; font-weight: 700; line-height: 1.25; white-space: normal; }
+.signing-step__state { color: #7b8994; font: 500 .64rem/1.2 var(--font-mono); letter-spacing: .04em; }
+.signing-step--complete { color: #315c47; background: #eef7f1; }
+.signing-step--complete .signing-step__number { color: #fff; background: var(--success); border-color: var(--success); }
+.signing-step--complete .signing-step__state { color: #4c715e; }
+.signing-step--current { color: #183d83; background: #f7f9ff; border-top-color: var(--primary); }
+.signing-step--current .signing-step__number { color: #fff; background: var(--primary); border-color: var(--primary); }
+.signing-step--current .signing-step__state { color: #315cae; }
 .signing-agreement { max-height: 440px; margin: 18px 0; padding: clamp(18px, 4vw, 34px); overflow: auto; background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--primary); box-shadow: inset 0 1px 7px rgb(19 32 43 / .05); }
 .agreement-confirmation { margin-top: 20px; padding: 15px 17px; display: flex; align-items: flex-start; gap: 11px; background: var(--primary-light); border: 1px solid #bbcbf3; }
 .agreement-confirmation input { margin-top: 3px; accent-color: var(--primary); }
@@ -833,6 +838,10 @@ tr:hover td { background: #f1f5f8; }
 .recorded-account > p { margin: 15px 0 0; color: var(--text-secondary); font-size: .78rem; }
 .phone-field { display: grid; grid-template-columns: minmax(150px, .38fr) minmax(0, 1fr); gap: 9px; }
 .account-choice, .payment-option { cursor: pointer; }
+.guest-credential-card { border-top: 4px solid var(--warning); }
+.guest-credential-value { margin-top: 7px; padding: 12px 14px; display: block; overflow-wrap: anywhere; color: var(--graphite); background: var(--bg-subtle); border: 1px solid var(--border); font-size: 1rem; }
+.guest-account-header .identity-strip { border-bottom-color: var(--warning); }
+.guest-workspace { align-items: start; }
 .account-choice { margin: 8px 0 22px; padding: 15px 17px; display: flex; align-items: flex-start; gap: 11px; background: var(--bg-subtle); border: 1px solid var(--border); }
 .account-choice input, .payment-option input { margin-top: 3px; accent-color: var(--primary); }
 .account-choice small, .payment-option small { margin-top: 3px; display: block; color: var(--text-secondary); font-size: .74rem; font-weight: 400; }
@@ -864,10 +873,9 @@ tr:hover td { background: #f1f5f8; }
   .data-list > div { grid-template-columns: 1fr; gap: 3px; }
   .record-actions { flex-direction: column-reverse; }
   .record-actions .button { width: 100%; }
-  .signing-header { padding: 20px; align-items: flex-start; flex-direction: column; }
   .signing-steps { grid-template-columns: 1fr; }
-  .signing-steps > div { min-height: 46px; padding: 10px 13px; border-top: 0; border-right: 0; border-left: 3px solid transparent; border-bottom: 1px solid var(--border); }
-  .signing-steps > div.is-active { border-top: 0; border-left-color: var(--primary); }
+  .signing-step { min-height: 58px; padding: 10px 13px; border-top: 0; border-right: 0; border-left: 3px solid transparent; border-bottom: 1px solid var(--border); }
+  .signing-step--current { border-top: 0; border-left-color: var(--primary); }
   .recorded-account dl, .bank-transfer-notice dl { grid-template-columns: 1fr; }
   .phone-field { grid-template-columns: 1fr; }
 }

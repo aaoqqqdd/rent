@@ -22,6 +22,7 @@ export * from './customer/rent';
 export * from './customer/referral';
 export * from './customer/security';
 export * from './customer/account';
+export * from './customer/guestAccount';
 
 export * from './staff/dashboard';
 export * from './staff/orders';

@@ -23,9 +23,7 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
     <div class="panel record-panel single-column"><div class="record-grid">
         <section class="record-section"><p class="section-code">PROFILE</p><h3>基本信息</h3><dl class="data-list"><div><dt>客户 ID</dt><dd class="mono">${customer.id}</dd></div><div><dt>名 / Given name</dt><dd>${personName.firstName || '未填写'}</dd></div><div><dt>姓 / Family name</dt><dd>${personName.lastName || '未填写'}</dd></div><div><dt>邮箱</dt><dd>${customer.email}</dd></div><div><dt>手机</dt><dd>${customer.phone ?? '未填写'}</dd></div><div><dt>注册日期</dt><dd>${customer.registrationDate || customer.createdAt || '-'}</dd></div></dl></section>
         <section class="record-section"><p class="section-code">ACCOUNT</p><h3>账户信息</h3><dl class="data-list"><div><dt>余额</dt><dd class="mono">${formatCurrency(customer.balance)}</dd></div><div><dt>BSB</dt><dd class="mono">${customer.bsb || '未填写'}</dd></div><div><dt>银行账号</dt><dd class="mono">${customer.accountNumber || customer.account || '未填写'}</dd></div></dl>
-          <form method="POST" action="/staff/customers/${customer.id}/delete" onsubmit="return confirm('确定要删除此客户吗？');" style="margin-top: 10px;">
-            <button class="button button-danger" type="submit">删除客户</button>
-          </form></section></div>
+        </section></div>
 
       <div class="section-title" style="margin-top: 24px;"><h3>订单历史</h3></div>
       ${orders.length ? `

@@ -101,7 +101,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
                 <div style="font-weight: 600;">${device?.name || 'N/A'}</div>
               </div>
             </div>
-            <a href="/admin/devices/${device?.id}" class="link-button" style="width: 100%; text-align: center; margin-top: 8px;">查看设备详情 →</a>
+            <a href="/admin/devices/${device?.id}/edit" class="link-button" style="width: 100%; text-align: center; margin-top: 8px;">查看/编辑设备 →</a>
           </div>
         </div>
       </div>

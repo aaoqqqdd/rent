@@ -5,17 +5,18 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, getContractBySignToken, hashPassword, verifyPassword, isContractExpired, isContractFinalized, renderContractVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName } from '../src/site'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminContracts } from '../src/pages/admin/contracts'
 import { renderAdminUserNew } from '../src/pages/admin/userNew'
 import { renderStaffCustomerNew } from '../src/pages/staff/customerNew'
+import { renderRegister } from '../src/pages/public/register'
 import { renderNewContractPage } from '../src/pages/staff/newContract'
 import { renderStaffContracts } from '../src/pages/staff/contracts'
 import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { refundableDepositFee, stripePaymentAmounts } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
-import { readContractSignDraft } from '../src/pages/public/contractSign'
+import { readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
@@ -31,6 +32,23 @@ test('PBKDF2 passwords verify without storing plaintext', async () => {
   assert.equal(await verifyPassword('A-secure-password-123', hash), true)
   assert.equal(await verifyPassword('wrong-password', hash), false)
   assert.equal(await verifyPassword('A-secure-password-123', 'pbkdf2$210000$salt$hash'), false)
+})
+
+test('new account passwords require letters, numbers, symbols, and eight characters', () => {
+  assert.equal(isStrongPassword('Abcd123!'), true)
+  assert.equal(isStrongPassword('abcdefg!'), false)
+  assert.equal(isStrongPassword('1234567!'), false)
+  assert.equal(isStrongPassword('Abcd1234'), false)
+  assert.equal(isStrongPassword('Ab1!'), false)
+  assert.equal(isStrongPassword('Abcd123 '), false)
+})
+
+test('guest passwords are strong and generated independently', () => {
+  const first = generateTemporaryPassword()
+  const second = generateTemporaryPassword()
+  assert.equal(isStrongPassword(first), true)
+  assert.equal(isStrongPassword(second), true)
+  assert.notEqual(first, second)
 })
 
 test('terminal order states cannot be reopened', () => {
@@ -80,14 +98,16 @@ test('order numbers are created once after payment and can include Stripe refere
 
 test('order updates never bind undefined values into D1', async () => {
   let bound: unknown[] = []
+  let preparedSql = ''
   const statement = { bind(...values: unknown[]) { bound = values; return this }, async run() { return { success: true } } }
-  const context = { env: { RENT: { prepare: () => statement } } } as any
+  const context = { env: { RENT: { prepare: (sql: string) => { preparedSql = sql; return statement } } } } as any
   await updateOrder(context, {
     id: 'o1', userId: 'u1', deviceId: 'd1', startDate: '2026-08-08', endDate: '2026-08-10',
     status: 'pending_payment', paymentMethod: 'card', totalAmount: 100, depositAmount: 50,
   } as any)
   assert.equal(bound.includes(undefined), false)
   assert.equal(bound.at(-1), 'o1')
+  assert.doesNotMatch(preparedSql, /signedAt/)
 })
 
 test('system settings load in one D1 query instead of eight serial queries', async () => {
@@ -107,6 +127,15 @@ test('contract signing drafts restore only non-sensitive fields for the matching
 test('existing account names are prefilled into separate given and family name fields', () => {
   assert.deepEqual(splitPersonName('Alice Chen'), { firstName: 'Alice', lastName: 'Chen' })
   assert.deepEqual(splitPersonName('何敏康'), { firstName: '敏康', lastName: '何' })
+})
+
+test('contract signing progress renders readable step labels and one current step', () => {
+  const html = renderSigningProgress(2)
+  assert.match(html, /signing-step--complete[^>]*>[\s\S]*同意协议/)
+  assert.match(html, /signing-step--current" aria-current="step"[\s\S]*确认资料/)
+  assert.match(html, /signing-step--upcoming[^>]*>[\s\S]*选择支付/)
+  assert.equal((html.match(/aria-current="step"/g) || []).length, 1)
+  assert.doesNotMatch(html, /\*\*/)
 })
 
 test('Stripe adds 2.5% to the full order principal without changing the refundable base', () => {
@@ -185,6 +214,13 @@ test('user management forms use the shared identity record design', () => {
   assert.match(staffHtml, /name="firstName"/)
   assert.match(staffHtml, /name="lastName"/)
   assert.doesNotMatch(staffHtml, /name="role"/)
+
+  const registrationHtml = renderRegister()
+  assert.match(registrationHtml, /name="firstName"/)
+  assert.match(registrationHtml, /name="lastName"/)
+  assert.doesNotMatch(registrationHtml, /name="name"/)
+  assert.match(registrationHtml, /minlength="8"/)
+  assert.match(registrationHtml, /pattern="\(\?=\.\*\[A-Za-z\]\).*\[0-9\].*\{8,\}"/)
 })
 
 test('new contract delivery form emits valid autocomplete JavaScript', async () => {

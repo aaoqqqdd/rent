@@ -26,12 +26,13 @@ export async function renderStaffCustomers(c: Context, user: any, searchTerm: st
         </form>
       </div>
       <div class="table-wrapper">
-        <table class="table"><thead><tr><th>名</th><th>姓</th><th>邮箱</th><th>手机</th><th>注册日期</th><th>操作</th></tr></thead><tbody>
+        <table class="table"><thead><tr><th>名</th><th>姓</th><th>邮箱</th><th>账户类型</th><th>手机</th><th>注册日期</th><th>操作</th></tr></thead><tbody>
           ${filteredCustomers.map((customer) => { const personName = splitPersonName(customer.name); return `
             <tr>
               <td>${personName.firstName || '-'}</td>
               <td>${personName.lastName || '-'}</td>
               <td>${customer.email}</td>
+              <td><span class="badge ${customer.accountType === 'guest' ? 'badge-warning' : customer.accountType === 'deleted_guest' ? 'badge-danger' : 'badge-success'}">${customer.accountType === 'guest' ? '访客/临时账户' : customer.accountType === 'deleted_guest' ? '已删除访客' : '正式账户'}</span></td>
               <td>${customer.phone ?? 'N/A'}</td>
               <td>${customer.registrationDate}</td>
               <td>
