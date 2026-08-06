@@ -54,6 +54,12 @@ export function combinePersonName(firstName: unknown, lastName: unknown): string
 
 export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
 
+export function canUseAccountBalance(user: any): boolean {
+  const role = String(user?.role || '').trim().toUpperCase()
+  const accountType = String(user?.accountType ?? user?.account_type ?? 'formal').trim().toLowerCase()
+  return Boolean(user && role === 'CUSTOMER' && accountType === 'formal')
+}
+
 export interface User {
   id: string
   name: string
@@ -102,9 +108,17 @@ export interface User {
 export interface Device {
   id: string
   name: string
+  brand?: string
   model: string
+  assetTag?: string
+  asset_tag?: string
   serialNumber: string
   serial_number?: string
+  cpu?: string
+  ram?: string
+  storage?: string
+  gpu?: string
+  os?: string
 
   // camelCase
   pricePerDay: number
@@ -163,7 +177,7 @@ export interface Contract {
   signedAt: string | null
   createdAt?: string
   signToken?: string
-  status: 'draft' | 'pending_sign' | 'signed' | 'cancelled'
+  status: 'draft' | 'pending_sign' | 'signed' | 'completed' | 'cancelled' | 'expired'
   validFrom?: string | null // New field for contract validity start date
   validUntil?: string | null // New field for contract validity end date
   valid_until?: string | null
@@ -208,7 +222,7 @@ export function isContractExpired(contract: Contract, now = Date.now()): boolean
 }
 
 export function isContractFinalized(contract: Contract | null | undefined): boolean {
-  return Boolean(contract && contract.status === 'signed' && contract.signedAt && contract.signed_content)
+  return Boolean(contract && ['signed', 'completed'].includes(contract.status) && contract.signedAt && contract.signed_content)
 }
 
 // 生成一个随机的盐值
@@ -1031,7 +1045,9 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
     systemSettings.paymentMethods = {
       stripe: Boolean((parsedPaymentMethods as any).stripe ?? (parsedPaymentMethods as any).square),
       bankTransfer: Boolean((parsedPaymentMethods as any).bankTransfer),
-      balancePayment: Boolean((parsedPaymentMethods as any).balancePayment),
+      balancePayment: (parsedPaymentMethods as any).balancePayment === undefined
+        ? systemSettings.paymentMethods.balancePayment
+        : Boolean((parsedPaymentMethods as any).balancePayment),
     }
   }
   if (parsedBankDetails) systemSettings.bankDetails = parsedBankDetails
@@ -1303,6 +1319,13 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     sanitizePlainText(device.description, 2000),
   ];
 
+  for (const field of ['brand', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os']) {
+    if (!deviceColumns.includes(field)) continue
+    const sourceKey = field === 'asset_tag' ? 'assetTag' : field
+    insertFields.push(field)
+    insertValues.push(sanitizePlainText((device as any)[sourceKey] ?? (device as any)[field], 200))
+  }
+
   // 处理序列号字段
   if (hasSerialNumberCamel) {
     insertFields.push('serialNumber');
@@ -1363,12 +1386,13 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   if (!existing) return null
 
   const columnMapping: Record<string, string> = {
-    name: 'name', model: 'model', status: 'status', description: 'description',
+    name: 'name', brand: 'brand', model: 'model', assetTag: 'asset_tag', asset_tag: 'asset_tag',
+    cpu: 'cpu', ram: 'ram', storage: 'storage', gpu: 'gpu', os: 'os', status: 'status', description: 'description',
     serialNumber: 'serialNumber', serial_number: 'serial_number',
     pricePerDay: 'pricePerDay', price_per_day: 'price_per_day',
     depositAmount: 'depositAmount', deposit_amount: 'deposit_amount',
   }
-  const plainTextFields = new Set(['name', 'model', 'description', 'serialNumber', 'serial_number'])
+  const plainTextFields = new Set(['name', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
   const setEntries: [string, any][] = []
   for (const [key, value] of Object.entries(data)) {
     const column = columnMapping[key]
@@ -2226,38 +2250,8 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
   const session = await db.prepare('SELECT user_id FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP').bind(tokenHash).first() as any
   if (!session?.user_id) return null
   const id = String(session.user_id)
-
-  const hasReferralCodeSnake = await userHasColumn(c, 'referral_code')
-  const hasReferralCodeCamel = await userHasColumn(c, 'referralCode')
-
-  // users 表字段：兼容 snake_case / camelCase
-  const hasAccountNumberSnake = await userHasColumn(c, 'account_number')
-  const hasAccountNumberCamel = await userHasColumn(c, 'accountNumber')
-  const hasCommissionBalanceSnake = await userHasColumn(c, 'commission_balance')
-  const hasCommissionBalanceCamel = await userHasColumn(c, 'commissionBalance')
-
-  const accountSelect = hasAccountNumberSnake
-    ? 'account_number AS account'
-    : hasAccountNumberCamel
-      ? 'accountNumber AS account'
-      : 'NULL AS account'
-
-  const commissionSelect = hasCommissionBalanceSnake
-    ? 'commission_balance AS commissionBalance'
-    : hasCommissionBalanceCamel
-      ? 'commissionBalance AS commissionBalance'
-      : '0 AS commissionBalance'
-
-  const referralSelect = hasReferralCodeSnake
-    ? 'referral_code AS referralCode'
-    : hasReferralCodeCamel
-      ? 'referralCode AS referralCode'
-      : "'' AS referralCode"
-
-  const selectClause = `id, name, email, role, phone, bsb, ${accountSelect}, ${commissionSelect}, ${referralSelect}`
-
   const user: User | null = await db
-    .prepare(`SELECT ${selectClause} FROM users WHERE id = ? AND status = 'active'`)
+    .prepare("SELECT * FROM users WHERE id = ? AND status = 'active'")
     .bind(id)
     .first()
 
@@ -2337,11 +2331,11 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const navIcons: Record<string, string> = {
     '/customer/dashboard': '◉', '/customer/rentals': '▤', '/customer/orders': '▦',
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦',
-    '/staff/dashboard': '◉', '/staff/orders': '▦', '/staff/orders/pending': '◷', '/staff/customers': '◎', '/staff/contracts': '▤',
+    '/staff/dashboard': '◉', '/staff/orders': '▦', '/staff/orders/ongoing': '◷', '/staff/customers': '◎', '/staff/contracts': '▤',
     '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
     '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
     '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/settings': '⚙'
+    '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/calendar': '▦', '/admin/templates': '▤', '/admin/settings': '⚙'
   }
 
   const renderNavLink = (href: string, text: string) => {
@@ -2366,8 +2360,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'STAFF' ? `
             ${renderNavLink('/staff/dashboard', '工作台')}
             ${renderNavLink('/staff/customers', '客户管理')}
-            ${renderNavLink('/staff/orders', '订单管理')}
-            ${renderNavLink('/staff/orders/pending', '待审订单')}
+            ${renderNavLink('/staff/orders', '订单状态')}
+            ${renderNavLink('/staff/orders/ongoing', '进行中的订单')}
             ${renderNavLink('/staff/contracts', '合同管理')}
             ${renderNavLink('/staff/contracts/new', '新建合同')}
             ${renderNavLink('/staff/devices', '设备管理')}
@@ -2378,9 +2372,11 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/admin/orders', '订单管理')}
             ${renderNavLink('/admin/refunds', '退款管理')}
             ${renderNavLink('/admin/contracts', '合同管理')}
+            ${renderNavLink('/admin/templates', '协议与模板')}
             ${renderNavLink('/admin/finance', '财务管理')}
             ${renderNavLink('/admin/withdrawals', '佣金提现')}
             ${renderNavLink('/admin/devices', '设备管理')}
+            ${renderNavLink('/admin/calendar', '租赁日历')}
             ${renderNavLink('/admin/settings', '系统设置')}
           ` : ''}
         </div>

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getUserById, getDeviceById, formatCurrency } from '../../site';
+import { buildLayout, getUsers, getDevices, formatCurrency } from '../../site';
 import { Context } from 'hono';
 
 export async function renderAdminRefunds(c: Context, user: any) {
@@ -16,11 +16,13 @@ export async function renderAdminRefunds(c: Context, user: any) {
   `).bind(today).all();
   const refundOrders = (result.results || []) as any[];
 
-  // 获取关联数据
-  const ordersWithDetails = await Promise.all(refundOrders.map(async (order) => {
-    const customer = await getUserById(c, order.userId);
-    const device = await getDeviceById(c, order.device_id || order.deviceId);
-    return { ...order, customer, device };
+  const [customers, devices] = await Promise.all([getUsers(c), getDevices(c)]);
+  const customersById = new Map(customers.map(customer => [customer.id, customer]));
+  const devicesById = new Map(devices.map(device => [device.id, device]));
+  const ordersWithDetails = refundOrders.map(order => ({
+    ...order,
+    customer: customersById.get(order.userId) || null,
+    device: devicesById.get(order.device_id || order.deviceId) || null,
   }));
 
   const body = `

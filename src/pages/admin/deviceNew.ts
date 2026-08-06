@@ -3,76 +3,38 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout } from '../../site';
+import { buildLayout } from '../../site'
 
 export function renderAdminDeviceNew(user: any) {
   const body = `
-    <div class="panel hero" style="padding: 32px; margin-bottom: 24px;">
-      <div style="display: flex; align-items: center; gap: 16px;">
-        <div style="width: 64px; height: 64px; background: rgba(255,255,255,0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 32px;">🖥️</div>
-        <div>
-          <h2 style="margin: 0 0 8px 0;">添加入库设备</h2>
-          <p style="margin: 0; opacity: 0.9;">登记一台新的租赁设备，完善设备信息后即可上架出租</p>
-        </div>
-      </div>
-    </div>
+    <div class="page-header"><div><p class="section-code">ASSET INTAKE</p><h2>添加入库设备</h2><p>登记资产身份、硬件配置和租赁价格；这些资料将供员工搜索和选择设备。</p></div><a href="/admin/devices" class="button button-secondary">返回设备列表</a></div>
     <div class="panel">
-      <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-        <h3 style="margin: 0 0 8px 0; color: #0369a1;">📝 设备入库提示</h3>
-        <p style="margin: 0; color: #0c4a6e; font-size: 0.95rem;">请准确填写设备的所有信息，序列号将作为设备的唯一标识，日租金和押金将影响订单计算。</p>
-      </div>
-      <form method="POST" action="/admin/devices/new" class="form-grid" style="gap: 24px;">
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px;">
-          <div class="form-group" style="margin: 0;">
-            <label for="name" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">💻 设备名称</label>
-            <input type="text" id="name" name="name" required style="width: 100%; padding: 12px 16px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="例如：MacBook Pro 14寸">
+      <form method="POST" action="/admin/devices/new" class="asset-editor">
+        <section class="form-section"><div class="form-section-title"><span class="mono">ID</span><div><h3>设备身份</h3><p>名称用于员工端分类，资产编号和序列号用于准确搜索单台设备。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="name">设备名称</label><input class="form-control" id="name" name="name" required maxlength="120" placeholder="例如 MacBook Pro 14"></div>
+            <div class="form-group"><label class="form-label" for="brand">品牌</label><input class="form-control" id="brand" name="brand" required maxlength="120" placeholder="例如 Apple"></div>
+            <div class="form-group"><label class="form-label" for="model">型号</label><input class="form-control" id="model" name="model" required maxlength="120" placeholder="例如 A2918 / Mac15,6"></div>
+            <div class="form-group"><label class="form-label" for="assetTag">资产编号</label><input class="form-control mono" id="assetTag" name="assetTag" required maxlength="120" placeholder="例如 RENT-MBP-001"></div>
+            <div class="form-group"><label class="form-label" for="serialNumber">序列号</label><input class="form-control mono" id="serialNumber" name="serialNumber" required maxlength="120" placeholder="设备唯一序列号"></div>
+            <div class="form-group"><label class="form-label" for="status">初始状态</label><select class="form-control" id="status" name="status"><option value="available">可用</option><option value="maintenance">维修中</option><option value="rented">已出租</option></select></div>
           </div>
-          <div class="form-group" style="margin: 0;">
-            <label for="model" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">🏷️ 设备型号</label>
-            <input type="text" id="model" name="model" required style="width: 100%; padding: 12px 16px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="例如：MKGQ3CH/A">
+        </section>
+        <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3><p>配置字段会直接进入员工端设备搜索。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="cpu">CPU</label><input class="form-control" id="cpu" name="cpu" maxlength="200" placeholder="例如 Apple M3 Pro 12-core"></div>
+            <div class="form-group"><label class="form-label" for="ram">内存</label><input class="form-control" id="ram" name="ram" maxlength="200" placeholder="例如 18GB"></div>
+            <div class="form-group"><label class="form-label" for="storage">存储</label><input class="form-control" id="storage" name="storage" maxlength="200" placeholder="例如 512GB SSD"></div>
+            <div class="form-group"><label class="form-label" for="gpu">显卡</label><input class="form-control" id="gpu" name="gpu" maxlength="200" placeholder="例如 18-core GPU"></div>
+            <div class="form-group"><label class="form-label" for="os">操作系统</label><input class="form-control" id="os" name="os" maxlength="200" placeholder="例如 macOS 15"></div>
           </div>
-        </div>
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px;">
-          <div class="form-group" style="margin: 0;">
-            <label for="serialNumber" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">🔢 序列号 (SN)</label>
-            <input type="text" id="serialNumber" name="serialNumber" required style="width: 100%; padding: 12px 16px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none; font-family: monospace;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="输入设备唯一序列号">
-          </div>
-          <div class="form-group" style="margin: 0;">
-            <label for="status" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">🎯 初始状态</label>
-            <select id="status" name="status" style="width: 100%; padding: 12px 16px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none; background: white;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'">
-              <option value="available" selected>✅ 可用 - 可以出租</option>
-              <option value="maintenance">🔧 维修中 - 暂时不可用</option>
-              <option value="rented">📦 已出租</option>
-            </select>
-          </div>
-        </div>
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px;">
-          <div class="form-group" style="margin: 0;">
-            <label for="pricePerDay" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">💰 日租金 (AUD)</label>
-            <div style="position: relative;">
-              <span style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #6b7280; font-weight: 500;">AUD$</span>
-              <input type="number" id="pricePerDay" name="pricePerDay" min="0" step="0.01" required style="width: 100%; padding: 12px 16px 12px 64px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="0.00">
-            </div>
-          </div>
-          <div class="form-group" style="margin: 0;">
-            <label for="depositAmount" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">💎 押金金额 (AUD)</label>
-            <div style="position: relative;">
-              <span style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #6b7280; font-weight: 500;">AUD$</span>
-              <input type="number" id="depositAmount" name="depositAmount" min="0" step="0.01" required style="width: 100%; padding: 12px 16px 12px 64px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="0.00">
-            </div>
-          </div>
-        </div>
-        <div class="form-group" style="margin: 0;">
-          <label for="description" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">📄 设备配置描述</label>
-          <textarea id="description" name="description" rows="5" style="width: 100%; padding: 16px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 1rem; transition: all 0.2s; outline: none; resize: vertical; min-height: 120px;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'" placeholder="详细描述设备的配置信息，如CPU、内存、硬盘、屏幕尺寸等..."></textarea>
-        </div>
-        <div style="display: flex; gap: 16px; justify-content: flex-end; padding-top: 16px; border-top: 1px solid #e5e7eb;">
-          <a href="/admin/devices" class="button button-secondary" style="padding: 12px 32px; border-radius: 10px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">← 返回设备列表</a>
-          <button type="submit" class="button button-primary" style="padding: 12px 32px; border-radius: 10px; font-weight: 600; font-size: 1rem; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 4px 14px 0 rgba(59,130,246,0.4);">✅ 确认入库</button>
-        </div>
+          <div class="form-group"><label class="form-label" for="description">补充描述</label><textarea class="form-control" id="description" name="description" rows="4" maxlength="2000" placeholder="屏幕尺寸、接口、外观或其他需要员工了解的信息"></textarea></div>
+        </section>
+        <section class="form-section"><div class="form-section-title"><span class="mono">AUD</span><div><h3>租赁价格</h3><p>价格将在建立合同时用于计算租金和押金。</p></div></div>
+          <div class="grid grid-2"><div class="form-group"><label class="form-label" for="pricePerDay">日租金（AUD）</label><input class="form-control" type="number" id="pricePerDay" name="pricePerDay" min="0" step="0.01" required></div><div class="form-group"><label class="form-label" for="depositAmount">押金（AUD）</label><input class="form-control" type="number" id="depositAmount" name="depositAmount" min="0" step="0.01" required></div></div>
+        </section>
+        <div class="record-actions"><a href="/admin/devices" class="button button-secondary">取消</a><button type="submit" class="button button-primary">保存并入库</button></div>
       </form>
-    </div>
-  `;
-
-  return buildLayout('添加入库设备 - 电脑租赁管理系统', body, user);
+    </div>`
+  return buildLayout('添加入库设备 - 电脑租赁管理系统', body, user)
 }

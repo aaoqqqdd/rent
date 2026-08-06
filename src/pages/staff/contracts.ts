@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContractExpired } from '../../site'
+import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContractExpired, isContractFinalized } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string) {
@@ -114,22 +114,25 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                 const statusLabel = expired ? '已过期' : contract.status === 'pending_sign' ? '待签署' : contract.status === 'signed' ? '已签署' : contract.status === 'cancelled' ? '已取消' : contract.status === 'draft' ? '草稿' : contract.status
                 const statusClass = expired ? 'badge-danger' : contract.status === 'signed' ? 'badge-success' : contract.status === 'cancelled' ? 'badge-neutral' : 'badge-warning'
                 const signedAtText = contract.signedAt ? contract.signedAt : (expired ? '签署期限已过' : contract.status === 'cancelled' ? '已取消' : '未签署')
+                const showSigningProgress = contract.status === 'pending_sign' && !expired
+                const canEditData = !expired && !['completed', 'cancelled'].includes(contract.status)
+                const canViewContract = isContractFinalized(contract)
                 return `
                 <tr>
                   <td>${contract.contractNumber}</td>
                   <td>${order?.orderNo ?? '付款后生成'}</td>
                   <td>${customer?.name ?? '未知客户'}</td>
                   ${user.role === 'ADMIN' ? `<td>${usersById.get(contract.createdBy || contract.created_by || '')?.name || '未知'}</td>` : ''}
-                  <td><span class="badge ${statusClass}">${statusLabel}</span></td>
+                  <td><span class="badge ${statusClass}">${statusLabel}</span>${showSigningProgress ? '<div class="inline-signing-progress"><span aria-hidden="true"></span><strong>等待客户签署</strong></div>' : ''}</td>
                   <td>${signedAtText}</td>
                   <td><div class="table-actions">
-                    ${contract.status === 'signed' ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>` : `<a class="button button-sm button-secondary" href="/staff/contracts/${contract.id}/progress">签署进度</a>`}
-                    <a class="button button-sm button-secondary" href="/staff/contracts/${contract.id}/data">编辑资料</a>
+                    ${canViewContract ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>` : ''}
+                    ${canEditData ? `<a class="button button-sm button-secondary" href="/staff/contracts/${contract.id}/data">编辑资料</a>` : ''}
                     ${
                       contract.status === 'pending_sign' && !expired
                         ? `
-                          <button type="button" class="button button-sm button-secondary copy-sign-link" data-sign-token="${contract.signToken}">复制链接</button>
-                          ${canCancel ? `<form action="/staff/contract/${contract.id}/cancel" method="post" class="inline-form"><button type="submit" class="button button-sm button-danger" onclick="return confirm('确定取消合同 ${contract.contractNumber} 吗？取消后客户将无法继续签署。');">取消合同</button></form>` : ''}
+                          <button type="button" class="button button-sm button-secondary contract-list-action copy-sign-link" data-sign-token="${contract.signToken}">复制链接</button>
+                          ${canCancel ? `<form action="/staff/contract/${contract.id}/cancel" method="post" class="inline-form"><button type="submit" class="button button-sm contract-list-action contract-cancel-action" onclick="return confirm('确定取消合同 ${contract.contractNumber} 吗？取消后客户将无法继续签署。');">取消合同</button></form>` : ''}
                         `
                         : ''
                     }
@@ -190,7 +193,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                 const actionButton = hasSignedContract
                   ? `<a class="button button-sm button-primary" href="/staff/orders/${order.id}">待拿取</a>`
                   : order.status === 'active' || order.status === 'pending_return'
-                    ? `<button class="button button-sm button-warning" onclick="const amount = prompt('请输入退还押金金额', '${(order.depositAmount || 0).toFixed(2)}'); if (amount !== null) { const reason = prompt('请输入扣除原因（选填）', ''); window.location.href='/staff/orders/${order.id}/refund?amount=' + encodeURIComponent(amount) + '&reason=' + encodeURIComponent(reason || '') }">退还押金</button>`
+                    ? `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`
                     : `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">待归还</a>`
                 return `
                 <tr>

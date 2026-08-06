@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, splitPersonName } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, splitPersonName, canUseAccountBalance } from '../../site';
 import { Context } from 'hono';
 
 export function readContractSignDraft(cookieHeader: string | undefined, token: string): Record<string, string> {
@@ -15,6 +15,15 @@ export function readContractSignDraft(cookieHeader: string | undefined, token: s
     return Object.fromEntries(['firstName', 'lastName', 'email', 'phoneCode', 'phone', 'referrer', 'createAccount']
       .filter(key => typeof draft[key] === 'string').map(key => [key, draft[key] as string]))
   } catch { return {} }
+}
+
+export function getBankRefundPrefill(user: any): { accountName: string; bsb: string; accountNumber: string } {
+  if (!user) return { accountName: '', bsb: '', accountNumber: '' }
+  return {
+    accountName: String(user.accountName || user.account_name || user.name || ''),
+    bsb: String(user.bsb || ''),
+    accountNumber: String(user.accountNumber || user.account_number || user.account || ''),
+  }
 }
 
 function splitContractPhone(value: string): { phoneCode: string; phone: string } {
@@ -44,6 +53,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
   userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
   const currentUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null);
+  const canUseBalance = canUseAccountBalance(currentUser)
+  const bankRefundPrefill = getBankRefundPrefill(currentUser)
   if (currentUser) {
     const accountName = splitPersonName(currentUser.name)
     const accountPhone = splitContractPhone(String(currentUser.phone || ''))
@@ -235,7 +246,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 <span><strong>银行转账</strong><small>查看账户资料并提交转账凭证截图。</small></span>
               </label>
               ` : ''}
-              ${systemSettings.paymentMethods.balancePayment && currentUser ? `
+              ${systemSettings.paymentMethods.balancePayment && canUseBalance ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="balance" required ${currentUser.balance >= order.totalAmount ? '' : 'disabled'} />
                 <span><strong>账户余额支付</strong><small>当前余额 ${formatCurrency(currentUser.balance || 0)} ${currentUser.balance >= order.totalAmount ? '' : '（余额不足）'}</small></span>
@@ -257,16 +268,19 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ` : ''}
             <div class="card" style="margin-top:20px; padding:16px;">
               <h3 style="margin-top:0;">退款接收方式</h3>
+              ${canUseBalance ? `
               <label style="display:block; margin-bottom:10px;"><input type="radio" name="refundMethod" value="balance" checked> 退回账户余额（默认，到账更快）</label>
               <label style="display:block;"><input type="radio" name="refundMethod" value="original"> 原路退回</label>
+              ` : `<input type="hidden" name="refundMethod" value="original"><div class="alert"><strong>退款将原路退回</strong><p>只有已登录的正式客户账户可以选择退款到账户余额；访客及未登录签署者不能使用余额。</p></div>`}
               <p class="text-muted">信用卡原路退回 Stripe；银行转账原路退回您填写的银行账户；余额付款仍退回余额。</p>
               <div id="bank-refund-fields" style="display:none; margin-top:14px;">
                 <label class="form-label" for="refundAccountName">账户名</label>
-                <input class="form-control" id="refundAccountName" name="refundAccountName" value="${escapeAttribute(currentUser?.name || '')}">
+                <input class="form-control" id="refundAccountName" name="refundAccountName" value="${escapeAttribute(bankRefundPrefill.accountName)}" autocomplete="name">
                 <label class="form-label" for="refundBsb">BSB</label>
-                <input class="form-control" id="refundBsb" name="refundBsb" value="${escapeAttribute(currentUser?.bsb || '')}" placeholder="062-001">
+                <input class="form-control" id="refundBsb" name="refundBsb" value="${escapeAttribute(bankRefundPrefill.bsb)}" placeholder="062-001" maxlength="7" inputmode="numeric">
                 <label class="form-label" for="refundAccountNumber">账号</label>
-                <input class="form-control" id="refundAccountNumber" name="refundAccountNumber" value="${escapeAttribute(currentUser?.accountNumber || currentUser?.account_number || '')}" inputmode="numeric">
+                <input class="form-control" id="refundAccountNumber" name="refundAccountNumber" value="${escapeAttribute(bankRefundPrefill.accountNumber)}" inputmode="numeric" autocomplete="off">
+                <small class="form-text">${currentUser ? '已自动填写系统中保存的银行资料；如本次退款账户不同，可以直接修改。' : '请填写用于接收本次退款的银行账户资料。'}</small>
               </div>
             </div>
             <div style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
@@ -284,7 +298,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const bankInputs = fields.querySelectorAll('input');
               const update = () => {
                 const payment = form.querySelector('input[name="paymentMethod"]:checked')?.value;
-                const refund = form.querySelector('input[name="refundMethod"]:checked')?.value;
+                const refund = form.querySelector('input[name="refundMethod"]:checked')?.value || form.querySelector('input[name="refundMethod"]')?.value;
                 const show = payment === 'bank_transfer' && refund === 'original';
                 fields.style.display = show ? 'block' : 'none';
                 bankInputs.forEach(input => input.required = show);

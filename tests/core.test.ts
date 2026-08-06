@@ -5,18 +5,25 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
 import { renderAdminSettings } from '../src/pages/admin/settings'
+import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
 import { renderAdminContracts } from '../src/pages/admin/contracts'
+import { renderAdminAgreementEditor, renderAdminTemplateHub } from '../src/pages/admin/templates'
 import { renderAdminUserNew } from '../src/pages/admin/userNew'
+import { renderAdminDeviceNew } from '../src/pages/admin/deviceNew'
+import { renderAdminDeviceEdit } from '../src/pages/admin/deviceEdit'
 import { renderStaffCustomerNew } from '../src/pages/staff/customerNew'
 import { renderRegister } from '../src/pages/public/register'
 import { renderNewContractPage } from '../src/pages/staff/newContract'
 import { renderStaffContracts } from '../src/pages/staff/contracts'
 import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
-import { refundableDepositFee, stripePaymentAmounts } from '../src/actions/stripePayments'
+import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
+import { renderStaffDevices } from '../src/pages/staff/devices'
+import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
+import { refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
-import { readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
+import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
@@ -43,12 +50,44 @@ test('new account passwords require letters, numbers, symbols, and eight charact
   assert.equal(isStrongPassword('Abcd123 '), false)
 })
 
+test('only logged-in formal customers can use account balance', () => {
+  assert.equal(canUseAccountBalance(undefined), false)
+  assert.equal(canUseAccountBalance({ role: 'CUSTOMER', accountType: 'guest' }), false)
+  assert.equal(canUseAccountBalance({ role: 'CUSTOMER', account_type: 'deleted_guest' }), false)
+  assert.equal(canUseAccountBalance({ role: 'STAFF', accountType: 'formal' }), false)
+  assert.equal(canUseAccountBalance({ role: 'CUSTOMER', accountType: 'formal' }), true)
+  assert.equal(canUseAccountBalance({ role: 'CUSTOMER' }), true)
+  assert.equal(canUseAccountBalance({ role: 'customer', account_type: 'FORMAL' }), true)
+})
+
+test('session lookup loads the complete user without schema probes', async () => {
+  const statements: string[] = []
+  const db = { prepare(sql: string) { statements.push(sql); return { bind() { return this }, async run() { return { success: true } }, async first() { return sql.includes('auth_sessions') ? { user_id: 'guest-1' } : { id: 'guest-1', name: 'Guest', email: 'guest@example.com', role: 'CUSTOMER', status: 'active', account_type: 'guest', guest_order_id: 'order-1', bsb: '062-001', account: '12345678' } } } } }
+  const user = await findUserBySession({ env: { RENT: db } } as any, `session=${'a'.repeat(32)}`)
+  assert.equal(user?.accountType, 'guest')
+  assert.equal(user?.guestOrderId, 'order-1')
+  assert.equal(user?.accountNumber, '12345678')
+  assert.equal(statements.some(sql => /PRAGMA table_info/i.test(sql)), false)
+  assert.equal(statements.filter(sql => /SELECT \* FROM users/i.test(sql)).length, 1)
+})
+
 test('guest passwords are strong and generated independently', () => {
   const first = generateTemporaryPassword()
   const second = generateTemporaryPassword()
   assert.equal(isStrongPassword(first), true)
   assert.equal(isStrongPassword(second), true)
   assert.notEqual(first, second)
+})
+
+test('guest sessions show their deletion date and only the guest workspace navigation', () => {
+  const html = buildLayout('访客合同中心', '<p>guest</p>', {
+    id: 'guest-1', name: 'Guest User', email: 'guest@example.com', role: 'CUSTOMER',
+    balance: 0, commissionBalance: 0, accountType: 'guest', guestOrderId: 'order-1', guestExpiresAt: '2026-09-30',
+  } as any)
+  assert.match(html, /访客（2026-09-30删除）/)
+  assert.match(html, /访客合同中心/)
+  assert.doesNotMatch(html, /推荐计划/)
+  assert.doesNotMatch(html, /个人资料/)
 })
 
 test('terminal order states cannot be reopened', () => {
@@ -68,6 +107,8 @@ test('contract downloads require a completed signed snapshot', () => {
   const base = { id: 'c1', rentalId: 'o1', contractNumber: 'CT1', content: '', status: 'signed' as const }
   assert.equal(isContractFinalized({ ...base, signedAt: null, signed_content: null }), false)
   assert.equal(isContractFinalized({ ...base, signedAt: '2026-08-06T00:00:00.000Z', signed_content: '<p>signed</p>' }), true)
+  assert.equal(isContractFinalized({ ...base, status: 'completed', signedAt: '2026-08-06T00:00:00.000Z', signed_content: '<p>signed</p>' }), true)
+  assert.equal(isContractFinalized({ ...base, status: 'cancelled', signedAt: '2026-08-06T00:00:00.000Z', signed_content: '<p>signed</p>' }), false)
 })
 
 test('contract links resolve the database orderId field', async () => {
@@ -129,6 +170,16 @@ test('existing account names are prefilled into separate given and family name f
   assert.deepEqual(splitPersonName('何敏康'), { firstName: '敏康', lastName: '何' })
 })
 
+test('saved customer bank details prefill an editable bank refund form', () => {
+  assert.deepEqual(getBankRefundPrefill(undefined), { accountName: '', bsb: '', accountNumber: '' })
+  assert.deepEqual(getBankRefundPrefill({ name: 'Alice Zhang', bsb: '062-001', account: '12345678' }), {
+    accountName: 'Alice Zhang', bsb: '062-001', accountNumber: '12345678',
+  })
+  assert.deepEqual(getBankRefundPrefill({ name: 'Alice Zhang', account_name: 'A Zhang', account_number: '87654321' }), {
+    accountName: 'A Zhang', bsb: '', accountNumber: '87654321',
+  })
+})
+
 test('contract signing progress renders readable step labels and one current step', () => {
   const html = renderSigningProgress(2)
   assert.match(html, /signing-step--complete[^>]*>[\s\S]*同意协议/)
@@ -141,6 +192,14 @@ test('contract signing progress renders readable step labels and one current ste
 test('Stripe adds 2.5% to the full order principal without changing the refundable base', () => {
   assert.deepEqual(stripePaymentAmounts(1100), { baseCents: 110000, feeCents: 2750, chargedCents: 112750 })
   assert.deepEqual(stripePaymentAmounts(99.99), { baseCents: 9999, feeCents: 250, chargedCents: 10249 })
+})
+
+test('Stripe checkout separates rent, deposit, and processing fee', () => {
+  assert.deepEqual(stripeCheckoutItems({ totalAmount: 1100, depositAmount: 1000, rentalPeriod: 5, startDate: '2026-08-10', endDate: '2026-08-15' }), [
+    { name: '设备租金（5 天，2026-08-10 至 2026-08-15）', amountCents: 10000 },
+    { name: '设备押金', amountCents: 100000 },
+    { name: 'Stripe 支付手续费（2.5%）', amountCents: 2750 },
+  ])
 })
 
 test('only deposit refunds return the fee attributable to the refunded deposit principal', () => {
@@ -181,16 +240,29 @@ test('rich text editor pages emit valid browser JavaScript', async () => {
   const user = { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }
   const settingsHtml = renderAdminSettings(user)
   assertInlineScriptsParse(settingsHtml)
-  assert.match(settingsHtml, /id="userTermsEditor"/)
-  assert.match(settingsHtml, /id="rentalTermsEditor"/)
-  assert.match(settingsHtml, /合同管理 → 合同模板编辑/)
+  assert.doesNotMatch(settingsHtml, /id="userTermsEditor"/)
+  assert.doesNotMatch(settingsHtml, /id="rentalTermsEditor"/)
+  assert.match(settingsHtml, /href="\/admin\/templates"/)
+  assert.match(settingsHtml, /完整邮件变量索引/)
+  assert.doesNotMatch(settingsHtml, /邮件通知模板可用变量/)
+
+  const hubHtml = renderAdminTemplateHub(user)
+  assert.match(hubHtml, /href="\/admin\/templates\/user"/)
+  assert.match(hubHtml, /href="\/admin\/templates\/rental"/)
+  assert.match(hubHtml, /href="\/admin\/templates\/contract"/)
+  assertInlineScriptsParse(renderAdminAgreementEditor(user, 'user'))
+  assertInlineScriptsParse(renderAdminAgreementEditor(user, 'rental'))
 
   const statement = {
     bind() { return this },
     async first() { return null },
   }
   const context = { env: { RENT: { prepare: () => statement } } } as any
-  assertInlineScriptsParse(await renderAdminContracts(context, user))
+  const contractTemplateHtml = await renderAdminContracts(context, user)
+  assert.match(contractTemplateHtml, /返回协议与模板/)
+  assert.match(contractTemplateHtml, /完整合同变量索引/)
+  assert.doesNotMatch(contractTemplateHtml, /合同模板可用变量/)
+  assertInlineScriptsParse(contractTemplateHtml)
 })
 
 test('site layout loads the external stylesheet and resolves template slots', () => {
@@ -223,9 +295,18 @@ test('user management forms use the shared identity record design', () => {
   assert.match(registrationHtml, /pattern="\(\?=\.\*\[A-Za-z\]\).*\[0-9\].*\{8,\}"/)
 })
 
+test('admin device forms edit every field used by staff device search', () => {
+  const user = { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }
+  const newHtml = renderAdminDeviceNew(user)
+  for (const field of ['name', 'brand', 'model', 'assetTag', 'serialNumber', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description']) {
+    assert.match(newHtml, new RegExp(`name="${field}"`))
+  }
+  const editHtml = renderAdminDeviceEdit(user, { id: 'd1', name: 'MacBook Pro', brand: 'Apple', model: 'A2918', asset_tag: 'RENT-001', serialNumber: 'SN1', cpu: 'M3 Pro', ram: '18GB', storage: '512GB SSD', gpu: '18-core', os: 'macOS 15', description: '14 inch', pricePerDay: 50, depositAmount: 1000, status: 'available' })
+  for (const expected of ['Apple', 'RENT-001', 'M3 Pro', '18GB', '512GB SSD', '18-core', 'macOS 15']) assert.match(editHtml, new RegExp(expected))
+})
+
 test('new contract delivery form emits valid autocomplete JavaScript', async () => {
-  const statement = { bind() { return this }, async first() { return null }, async all() { return { results: [] } } }
-  const context = { env: { RENT: { prepare: () => statement } } } as any
+  const context = { env: { RENT: { prepare(sql: string) { return { bind() { return this }, async first() { return null }, async all() { return { results: sql.includes('FROM devices') ? [{ id: 'device-rented', name: 'MacBook', brand: 'Apple', model: 'Pro', asset_tag: 'RENT-001', serialNumber: 'SN1', cpu: 'M3 Pro', ram: '18GB', storage: '512GB SSD', gpu: '18-core', os: 'macOS 15', pricePerDay: 20, depositAmount: 500, status: 'rented' }] : [] } } } } } } } as any
   const html = await renderNewContractPage(context, { id: 'staff', name: 'Staff', email: 'staff@example.com', role: 'STAFF' })
   assertInlineScriptsParse(html)
   assert.match(html, /id="delivery-address-search"/)
@@ -234,7 +315,38 @@ test('new contract delivery form emits valid autocomplete JavaScript', async () 
   assert.match(html, /id="return-method"/)
   assert.match(html, /value="CourierPickup"/)
   assert.match(html, /value="StoreReturn"/)
+  assert.match(html, /value="device-rented"/)
+  assert.match(html, /id="device-search"/)
+  assert.match(html, /data-group-pagination/)
+  assert.match(html, /data-group-toggle/)
+  assert.match(html, /devicePageSize = 4/)
+  assert.match(html, /data-device-search=/)
+  assert.match(html, /SN1/)
+  assert.match(html, /M3 Pro · 18GB · 512GB SSD · 18-core · macOS 15/)
+  assert.match(html, /RENT-001/)
+  assert.match(html, /id="booking-calendar"/)
+  assert.match(html, /id="booking-prev"/)
+  assert.match(html, /selectBookingDate/)
+  assert.match(html, /setCustomValidity/)
+  assert.match(html, /请手动选择设备/)
+
+  const adminHtml = await renderNewContractPage(context, { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' })
+  assertInlineScriptsParse(adminHtml)
+  assert.match(adminHtml, /id="booking-calendar"/)
+  assert.match(adminHtml, /selectBookingDate/)
   assert.doesNotMatch(html, /GOOGLE_MAPS_API_KEY/)
+})
+
+test('admin rental calendar filters all devices or a single device', async () => {
+  const context = { env: { RENT: { prepare(sql: string) { return { async all() { return { results: sql.includes('FROM orders') ? [{ id: 'o1', deviceId: 'd1', deviceName: 'MacBook', customerName: 'Customer', startDate: '2026-08-10', endDate: '2026-08-12', status: 'paid' }] : [{ id: 'd1', name: 'MacBook', serialNumber: 'SN1', status: 'rented' }] } } } } } } } as any
+  const html = await renderAdminDeviceCalendar(context, { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' })
+  assertInlineScriptsParse(html)
+  assert.match(html, /全部出租设备/)
+  assert.match(html, /value="d1"/)
+  assert.match(html, /id="fleet-calendar"/)
+  assert.match(html, /id="calendar-prev"/)
+  assert.match(html, /id="calendar-next"/)
+  assert.doesNotMatch(html, /type="month"/)
 })
 
 test('joined referral users see their referral workspace instead of the join prompt', async () => {
@@ -276,6 +388,28 @@ test('staff contract lists exclude contracts created by other employees', async 
   const html = await renderStaffContracts({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff One', role: 'STAFF' })
   assert.match(html, /OWN-CONTRACT/)
   assert.doesNotMatch(html, /OTHER-CONTRACT/)
+  assert.match(html, /等待客户签署/)
+  assert.doesNotMatch(html, />签署进度</)
+  assert.match(html, /contract-list-action copy-sign-link/)
+  assert.match(html, /contract-list-action contract-cancel-action/)
+})
+
+test('terminal contracts hide progress and editing while only finalized contracts can be viewed', async () => {
+  const rows: Record<string, any[]> = {
+    contracts: [
+      { id: 'ct-pending', orderId: 'o1', contractNumber: 'PENDING', status: 'pending_sign', created_by: 'staff-1' },
+      { id: 'ct-cancelled', orderId: 'o2', contractNumber: 'CANCELLED', status: 'cancelled', created_by: 'staff-1' },
+      { id: 'ct-completed', orderId: 'o3', contractNumber: 'COMPLETED', status: 'completed', signedAt: '2026-08-01', signed_content: '<p>signed</p>', created_by: 'staff-1' },
+    ],
+    orders: ['o1','o2','o3'].map(id => ({ id, userId: 'u1', deviceId: 'd1', status: 'active', startDate: '2026-08-01', endDate: '2026-08-02' })),
+    users: [{ id: 'staff-1', name: 'Staff', role: 'STAFF' }, { id: 'u1', name: 'Customer', role: 'CUSTOMER' }], devices: [{ id: 'd1', name: 'Laptop' }],
+  }
+  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
+  const html = await renderStaffContracts({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff', email: 'staff@example.com', role: 'STAFF' }, 'completed')
+  assert.match(html, /COMPLETED/)
+  assert.match(html, /contract\/view\/ct-completed/)
+  assert.doesNotMatch(html, /ct-completed\/data/)
+  assert.doesNotMatch(html, /ct-completed\/progress/)
 })
 
 test('staff cannot open a customer assigned to another employee', async () => {
@@ -283,4 +417,32 @@ test('staff cannot open a customer assigned to another employee', async () => {
   const html = await renderStaffCustomerDetail({ env: { RENT: { prepare: () => statement } } } as any, { id: 'staff-1', name: 'Staff One', email: 'staff@example.com', role: 'STAFF' }, 'customer')
   assert.match(html, /客户未找到/)
   assert.doesNotMatch(html, /other@example\.com/)
+})
+
+test('staff ongoing orders are read-only and limited to assigned customers', async () => {
+  const rows: Record<string, any[]> = {
+    orders: [
+      { id: 'own-active', orderNo: 'OWN-1', userId: 'own-customer', deviceId: 'd1', status: 'active', startDate: '2026-08-01', endDate: '2026-08-10', totalAmount: 100 },
+      { id: 'other-active', orderNo: 'OTHER-1', userId: 'other-customer', deviceId: 'd1', status: 'active', startDate: '2026-08-01', endDate: '2026-08-10', totalAmount: 100 },
+      { id: 'own-pending-review', orderNo: 'REVIEW-1', userId: 'own-customer', deviceId: 'd1', status: 'pending_approval', startDate: '2026-08-01', endDate: '2026-08-10', totalAmount: 100 },
+    ],
+    users: [{ id: 'own-customer', name: 'Own', staff_id: 'staff-1' }, { id: 'other-customer', name: 'Other', staff_id: 'staff-2' }],
+    devices: [{ id: 'd1', name: 'Laptop' }],
+  }
+  const db = { prepare(sql: string) { const table = /FROM\s+(orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
+  const html = await renderStaffOrdersOngoing({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff', email: 'staff@example.com', role: 'STAFF' })
+  assert.match(html, /OWN-1/)
+  assert.doesNotMatch(html, /OTHER-1|REVIEW-1/)
+  assert.doesNotMatch(html, />批准<|>拒绝<|approve|reject/)
+  assert.match(html, /归还验机/)
+})
+
+test('staff device and customer pages hide administrator-only mutations', async () => {
+  const db = { prepare(sql: string) { return { bind() { return this }, async first() { return { id: 'customer', name: 'Customer One', email: 'customer@example.com', role: 'CUSTOMER', staff_id: 'staff-1', balance: 50 } }, async all() { return { results: sql.includes('FROM devices') ? [{ id: 'd1', name: 'Laptop', model: 'Pro', serialNumber: 'SN1', pricePerDay: 20, status: 'available' }] : [] } } } } }
+  const user = { id: 'staff-1', name: 'Staff', email: 'staff@example.com', role: 'STAFF' }
+  const devicesHtml = await renderStaffDevices({ env: { RENT: db } } as any, user)
+  assert.doesNotMatch(devicesHtml, /添加设备|\/staff\/devices\/new|\/staff\/devices\/d1\/edit/)
+  const customerHtml = await renderStaffCustomerEdit({ env: { RENT: db } } as any, user, 'customer')
+  assert.doesNotMatch(customerHtml, /name="balance"/)
+  assert.match(customerHtml, /name="bsb"/)
 })

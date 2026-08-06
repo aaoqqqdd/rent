@@ -32,7 +32,7 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
             <label class="form-label">邮箱</label>
             <input class="form-control" name="email" value="${customer.email}" readonly />
           </div>
-        </div></section><section class="form-section"><div class="form-section-title"><span class="mono">02</span><div><h3>账户资料</h3><p>余额和银行退款信息。</p></div></div>
+        </div></section><section class="form-section"><div class="form-section-title"><span class="mono">02</span><div><h3>退款账户</h3><p>维护客户提供的银行退款信息；账户余额由管理员管理。</p></div></div>
         <div class="grid grid-2">
           <div>
             <label class="form-label">手机</label>
@@ -48,10 +48,7 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
             <label class="form-label">Account</label>
             <input class="form-control" name="account" value="${customer.account ?? ''}" />
           </div>
-          <div>
-            <label class="form-label">余额</label>
-            <input class="form-control" type="number" step="0.01" name="balance" value="${customer.balance}" />
-          </div>
+          ${user.role === 'ADMIN' ? `<div><label class="form-label">余额</label><input class="form-control" type="number" step="0.01" name="balance" value="${customer.balance}" /></div>` : ''}
         </div></section><div class="record-actions"><a class="button button-secondary" href="/staff/customers/${customer.id}">取消</a><button class="button button-primary" type="submit">保存修改</button></div>
       </form>
     </div>

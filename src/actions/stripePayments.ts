@@ -20,6 +20,23 @@ export function stripePaymentAmounts(orderTotal: number): { baseCents: number; f
   return { baseCents, feeCents, chargedCents: baseCents + feeCents }
 }
 
+export function stripeCheckoutItems(order: any): Array<{ name: string; amountCents: number }> {
+  const totalCents = cents(order.totalAmount)
+  const depositCents = cents(order.depositAmount || 0)
+  if (depositCents < 0 || depositCents > totalCents) throw new Error('订单押金金额无效')
+  const rentalCents = totalCents - depositCents
+  const period = Number(order.rentalPeriod ?? order.rental_period ?? 0)
+  const rentalLabel = period > 0
+    ? `设备租金（${period} 天，${order.startDate} 至 ${order.endDate}）`
+    : `设备租金（${order.startDate} 至 ${order.endDate}）`
+  const feeCents = stripePaymentAmounts(order.totalAmount).feeCents
+  return [
+    { name: rentalLabel, amountCents: rentalCents },
+    { name: '设备押金', amountCents: depositCents },
+    { name: 'Stripe 支付手续费（2.5%）', amountCents: feeCents },
+  ].filter(item => item.amountCents > 0)
+}
+
 export function refundableDepositFee(refundAmount: number, payment: any): number {
   if (payment?.payment_method !== 'card' || Number(payment?.processing_fee || 0) <= 0) return 0
   return Math.round(cents(refundAmount) * STRIPE_PROCESSING_FEE_RATE) / 100
@@ -43,17 +60,9 @@ export async function createStripeCheckout(c: Context, user: any, orderId: strin
   const origin = new URL(c.req.url).origin
   const params = new URLSearchParams({
     mode: 'payment',
-    'line_items[0][price_data][currency]': 'aud',
-    'line_items[0][price_data][unit_amount]': String(baseCents),
-    'line_items[0][price_data][product_data][name]': order.orderNo ? `电脑租赁订单 ${order.orderNo}` : '电脑租赁合同付款',
-    'line_items[0][quantity]': '1',
-    'line_items[1][price_data][currency]': 'aud',
-    'line_items[1][price_data][unit_amount]': String(feeCents),
-    'line_items[1][price_data][product_data][name]': 'Stripe 支付手续费（2.5%，不可退款）',
-    'line_items[1][quantity]': '1',
     customer_email: user.email,
     success_url: `${origin}/payment/result?orderId=${encodeURIComponent(order.id)}&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}/customer/orders/${encodeURIComponent(order.id)}`,
+    cancel_url: `${origin}/payment/result?orderId=${encodeURIComponent(order.id)}&cancelled=1`,
     'metadata[order_id]': order.id,
     'metadata[customer_id]': user.id,
     'metadata[rental_amount]': String(cents(order.totalAmount - order.depositAmount)),
@@ -61,7 +70,13 @@ export async function createStripeCheckout(c: Context, user: any, orderId: strin
     'metadata[processing_fee]': String(feeCents),
     'payment_intent_data[metadata][order_id]': order.id,
   })
-  const session = await stripeRequest(c, 'checkout/sessions', params, `checkout-fee-v1-${order.id}`)
+  stripeCheckoutItems(order).forEach((item, index) => {
+    params.set(`line_items[${index}][price_data][currency]`, 'aud')
+    params.set(`line_items[${index}][price_data][unit_amount]`, String(item.amountCents))
+    params.set(`line_items[${index}][price_data][product_data][name]`, item.name)
+    params.set(`line_items[${index}][quantity]`, '1')
+  })
+  const session = await stripeRequest(c, 'checkout/sessions', params, `checkout-v2-${order.id}-${nanoid(12)}`)
   if (!session.id || !session.url) return c.text('Stripe 未返回有效支付链接', 502)
 
   const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any

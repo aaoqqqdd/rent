@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, buildLayout
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, buildLayout, canUseAccountBalance
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { createStripeCheckout } from '../stripePayments';
@@ -231,7 +231,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
         
         const { paymentMethod } = body;
-        const refundMethod = body.refundMethod === 'original' ? 'original' : 'balance'
+        const canUseBalance = canUseAccountBalance(currentUser)
+        const refundMethod = canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original'
         const refundBsb = String(body.refundBsb || '').trim()
         const refundAccountNumber = String(body.refundAccountNumber || '').replace(/\s/g, '')
         const refundAccountName = String(body.refundAccountName || '').trim()
@@ -245,8 +246,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const enabledMethods = [
           ...(getSystemSettings().paymentMethods.stripe ? ['stripe'] : []),
           ...(getSystemSettings().paymentMethods.bankTransfer ? ['bank_transfer'] : []),
-          ...(getSystemSettings().paymentMethods.balancePayment ? ['balance'] : []),
+          ...(getSystemSettings().paymentMethods.balancePayment && canUseBalance ? ['balance'] : []),
         ]
+        if (paymentMethod === 'balance' && !canUseBalance) throw new Error('只有已登录的正式客户账户可以使用余额支付')
         if (!enabledMethods.includes(paymentMethod)) throw new Error('所选支付方式当前不可用')
         if (paymentMethod === 'stripe') await getStripeRuntimeConfig(c)
         if (paymentMethod === 'bank_transfer' && refundMethod === 'original') {

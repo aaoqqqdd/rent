@@ -3,18 +3,22 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getSystemSettings, updateSystemSettings, CONTRACT_VARIABLE_GROUPS } from '../../site';
+import { buildLayout, getSystemSettings } from '../../site';
 
 export function renderAdminSettings(user: any, stripe: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
-  const userTermsJson = JSON.stringify(settings.userTerms).replace(/</g, '\\u003c')
-  const rentalTermsJson = JSON.stringify(settings.rentalTerms).replace(/</g, '\\u003c')
   const emailTemplateJson = JSON.stringify(settings.emailTemplate).replace(/</g, '\\u003c')
-  const completeVariableIndex = CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')
+  const emailVariables = ['user_name', 'user_email', 'order_no', 'contract_number', 'device_name', 'sign_link', 'expire_time']
+  const emailVariableIndex = `<section class="contract-variable-group"><h5>邮件通知</h5><div class="variable-chip-list">${emailVariables.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>系统设置</h2><span class="section-note">配置系统各项参数，包括租赁条款、支付方式和推荐分成规则。</span></div>
+      <div class="section-title"><h2>系统设置</h2><span class="section-note">配置公司资料、支付方式和推荐分成规则。</span></div>
+
+      <div class="template-settings-notice">
+        <div><strong>协议与合同模板已集中管理</strong><p>用户协议、租赁协议和正式合同模板现在分别在独立页面编辑。</p></div>
+        <a href="/admin/templates" class="button button-secondary">前往协议与模板</a>
+      </div>
 
       <form id="systemSettingsForm">
         <div class="form-group">
@@ -32,58 +36,6 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
             <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
           </div>
         </div>
-        <section class="legal-template-workspace">
-          <div class="section-title"><h3>协议内容</h3><span class="section-note">分别控制注册页与合同签署页显示的法律文本。</span></div>
-          <div class="legal-template-card">
-            <div class="legal-template-heading"><div><strong>用户协议</strong><p>显示在注册页面的“用户协议”链接中。</p></div><span class="status-badge">REGISTRATION</span></div>
-            <div id="userTermsEditor" class="quill-editor legal-editor"></div>
-            <textarea id="userTerms" name="userTerms" style="display:none;"></textarea>
-          </div>
-        <div class="form-group legal-template-card">
-          <div class="legal-template-heading"><div><strong>租赁协议</strong><p>客户签署合同 Step 1 阅读并同意的内容。</p></div><span class="status-badge">SIGNING STEP 1</span></div>
-          <details class="variable-index"><summary>查看完整合同变量索引</summary>${completeVariableIndex}</details>
-          <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
-             <strong style="color: #155e75; display: block; margin-bottom: 12px;">📋 租赁条款模板可用变量：</strong>
-             <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
-               <table style="width: 100%; border-collapse: collapse; background: white;">
-                 <thead>
-                   <tr style="background: var(--primary-light);">
-                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
-                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">数据来源</th>
-                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">说明</th>
-                   </tr>
-                 </thead>
-                 <tbody>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${contract_number}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同编号</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_address}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司地址</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_phone}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司电话</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${company_contact}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统设置</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">公司联系人</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${customer_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">承租方姓名</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${device_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备表</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备名称</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${start_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁起始日</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${end_date}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">员工填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁结束日</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${total_rent}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统计算</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租金总额</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace;">\${deposit_amount}</td><td style="padding: 6px 12px;">员工填写</td><td style="padding: 6px 12px;">押金金额</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${device_condition}</td><td>员工填写</td><td>出租时设备状况</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${device_accessories}</td><td>员工填写</td><td>配件列表</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${late_fee_per_day}</td><td>员工填写</td><td>每日逾期费用</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${repair_cost}</td><td>员工后续填写</td><td>损坏维修金额</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${pickup_location}</td><td>员工填写</td><td>取货地点</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${return_location}</td><td>员工填写</td><td>归还地点</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${company_abn}</td><td>系统设置</td><td>公司 ABN</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${gst_included}</td><td>系统设置</td><td>是否含 GST</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${esign_ip}</td><td>系统记录</td><td>电子签约 IP</td></tr>
-                   <tr><td style="padding:6px 12px;font-family:monospace;">\${esign_device}</td><td>系统记录</td><td>签约设备</td></tr>
-                 </tbody>
-               </table>
-             </div>
-           </div>
-          <div id="rentalTermsEditor" style="height: 250px;"></div>
-          <textarea id="rentalTerms" name="rentalTerms" style="display:none;"></textarea>
-        </div>
-        <p class="section-note">正式合同正文请前往 <a href="/admin/contracts">合同管理 → 合同模板编辑</a>。</p>
-        </section>
-
         <div class="form-group">
           <label for="priceStrategy">价格策略配置</label>
           <textarea id="priceStrategy" name="priceStrategy" rows="5" class="form-control">${settings.priceStrategy}</textarea>
@@ -148,29 +100,7 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
 
         <div class="form-group">
           <label for="emailTemplate">邮件通知模板</label>
-          <div style="background: var(--info-light); padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--info);">
-             <strong style="color: #155e75; display: block; margin-bottom: 12px;">📧 邮件通知模板可用变量：</strong>
-             <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
-               <table style="width: 100%; border-collapse: collapse; background: white;">
-                 <thead>
-                   <tr style="background: var(--primary-light);">
-                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">变量名</th>
-                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">数据来源</th>
-                     <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);">说明</th>
-                   </tr>
-                 </thead>
-                 <tbody>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${user_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">收件人姓名</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${user_email}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">客户填写</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">收件人邮箱</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${order_no}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">订单编号</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${contract_number}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同编号</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${device_name}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">设备表</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">租赁设备名称</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace; border-bottom: 1px solid var(--border);">\${sign_link}</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">系统生成</td><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">合同签署链接</td></tr>
-                   <tr><td style="padding: 6px 12px; font-family: monospace;">\${expire_time}</td><td style="padding: 6px 12px;">系统设置</td><td style="padding: 6px 12px;">签署链接有效期</td></tr>
-                 </tbody>
-               </table>
-             </div>
-           </div>
+          <details class="variable-index"><summary>完整邮件变量索引（${emailVariables.length} 项）</summary>${emailVariableIndex}</details>
           <div id="emailTemplateEditor" style="height: 150px;"></div>
           <textarea id="emailTemplate" name="emailTemplate" style="display:none;"></textarea>
         </div>
@@ -196,23 +126,6 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
 
     <script>
       document.addEventListener('DOMContentLoaded', function() {
-        // 初始化协议编辑器
-        const userTermsEditor = window.createRichTextEditor('#userTermsEditor', {
-          theme: 'snow',
-          modules: { toolbar: [[{ 'header': [1, 2, 3, false] }], ['bold', 'italic', 'underline'], [{ 'list': 'ordered'}, { 'list': 'bullet' }], ['link'], ['clean']] }
-        });
-        const rentalTermsEditor = window.createRichTextEditor('#rentalTermsEditor', {
-          theme: 'snow',
-          modules: {
-            toolbar: [
-              [{ 'header': [1, 2, 3, false] }],
-              ['bold', 'italic', 'underline'],
-              [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-              ['link', 'image'],
-              ['clean']
-            ]
-          }
-        });
         const emailTemplateEditor = window.createRichTextEditor('#emailTemplateEditor', {
           theme: 'snow',
           modules: {
@@ -221,25 +134,13 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         });
 
         // 将数据库中的内容加载到编辑器
-        const userTermsContent = ${userTermsJson};
-        const rentalTermsContent = ${rentalTermsJson};
         const emailTemplateContent = ${emailTemplateJson};
-        if (userTermsContent) {
-          userTermsEditor.root.innerHTML = userTermsContent;
-        }
-        if (rentalTermsContent) {
-          rentalTermsEditor.root.innerHTML = rentalTermsContent;
-        }
         if (emailTemplateContent) {
           emailTemplateEditor.root.innerHTML = emailTemplateContent;
         }
         
         // 隐藏的 textarea 用于表单提交
-        const userTermsTextarea = document.getElementById('userTerms');
-        const rentalTermsTextarea = document.getElementById('rentalTerms');
         const emailTemplateTextarea = document.getElementById('emailTemplate');
-        userTermsTextarea.value = userTermsContent;
-        rentalTermsTextarea.value = rentalTermsContent;
         emailTemplateTextarea.value = emailTemplateContent;
 
 
@@ -247,14 +148,10 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         event.preventDefault();
         
         // 提交前，将编辑器内容同步到隐藏的 textarea
-        userTermsTextarea.value = userTermsEditor.root.innerHTML;
-        rentalTermsTextarea.value = rentalTermsEditor.root.innerHTML;
         emailTemplateTextarea.value = emailTemplateEditor.root.innerHTML;
 
         const formData = new FormData(this);
         const newSettings = {
-          userTerms: formData.get('userTerms'),
-          rentalTerms: formData.get('rentalTerms'),
           priceStrategy: formData.get('priceStrategy'),
           paymentMethods: {
             stripe: formData.has('enableStripe'),

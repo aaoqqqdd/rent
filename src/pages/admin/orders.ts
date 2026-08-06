@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrders, getDeviceById, getUserById, getUsers, formatCurrency } from '../../site';
+import { buildLayout, getOrders, getDevices, getUsers, formatCurrency } from '../../site';
 import { Context } from 'hono';
 
 export const adminOrderStatusMap: Record<string, { text: string; class: string }> = {
@@ -27,19 +27,19 @@ export async function getFilteredAdminOrders(
     dateTo?: string;
   }
 ) {
-  const allOrders = await getOrders(c);
+  const [allOrders, allUsers, allDevices] = await Promise.all([getOrders(c), getUsers(c), getDevices(c)]);
   const userIdFilter = (filters?.userId || '').trim();
   const statusFilter = filters?.status || 'all';
   const searchTerm = (filters?.search || '').trim();
   const dateFrom = (filters?.dateFrom || '').trim();
   const dateTo = (filters?.dateTo || '').trim();
 
-  const ordersWithDetail = await Promise.all(allOrders.map(async (order: any) => {
-    const customerId = order.userId;
-    const deviceId = order.device_id || order.deviceId;
-    const customer = customerId ? await getUserById(c, customerId) : null;
-    const device = deviceId ? await getDeviceById(c, deviceId) : null;
-    return { ...order, customer, device };
+  const usersById = new Map(allUsers.map(item => [item.id, item]));
+  const devicesById = new Map(allDevices.map(item => [item.id, item]));
+  const ordersWithDetail = allOrders.map((order: any) => ({
+    ...order,
+    customer: usersById.get(order.userId) || null,
+    device: devicesById.get(order.device_id || order.deviceId) || null,
   }));
 
   return ordersWithDetail.filter((order: any) => {

@@ -4,7 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono';
-import { User, getDeviceById, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, updateDeviceStatus } from '../../site';
+import { User, getDeviceById, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract } from '../../site';
 import { nanoid, customAlphabet } from 'nanoid';
 
 // 自定义nanoid，只使用大写字母和数字，确保合同编号只包含大写字母和数字
@@ -51,17 +51,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const device = await getDeviceById(c, deviceId);
 
   const normalizedStatus = String(device?.status || '').toLowerCase();
-  const activeOrder = await c.env.RENT.prepare(`
-    SELECT id FROM orders WHERE deviceId = ? AND status IN ('active', 'paid')
-  `).bind(deviceId).first();
-
-  if (!device || activeOrder) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备不存在或当前不可用')}`);
-  }
-
-  if (normalizedStatus !== 'available' && normalizedStatus !== 'new' && normalizedStatus !== 'idle') {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备当前不可用于新建合同')}`);
-  }
+  if (!device || ['maintenance', 'retired'].includes(normalizedStatus)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('维修或退役设备不能新建合同')}`)
 
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -133,7 +123,6 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   await insertOrder(c, newOrder);
   await insertContract(c, newContract);
-  await updateDeviceStatus(c, device.id, 'rented');
 
   const fullSignUrl = `${new URL(c.req.url).origin}/contract/sign?token=${newContract.signToken}&step=1`;
   const successPage = `

@@ -18,7 +18,7 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>设备详情 - ${device.name}</h2><span class="section-note">查看设备详细信息、租赁历史及管理。</span></div>
+      <div class="section-title"><h2>设备详情 - ${device.name}</h2><span class="section-note">查看设备详细信息和自己负责的租赁记录。</span></div>
       <div class="grid grid-2">
         <div>
           <h3>基本信息</h3>
@@ -28,10 +28,7 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
           <p><strong>日租金:</strong> ${formatCurrency(device.pricePerDay ?? device.dailyRate ?? 0)}</p>
           <p><strong>状态:</strong> ${device.status}</p>
         </div>
-        <div>
-          <h3>操作</h3>
-          <a class="button" href="/staff/devices/${device.id}/edit">编辑设备信息</a>
-        </div>
+        <div><h3>维护权限</h3><p class="section-note">设备身份、配置、价格和状态由管理员维护。</p></div>
       </div>
 
       <div class="section-title" style="margin-top: 24px;"><h3>租赁历史</h3></div>

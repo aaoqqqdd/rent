@@ -25,9 +25,9 @@ export function renderStaffDashboard(user: any, dashboardData: any) {
         <div class="trend">正在进行中的订单</div>
       </div>
       <div class="stat-card warning">
-        <h3>待处理订单</h3>
-        <div class="value">${stats.pendingOrders || 0} 笔</div>
-        <div class="trend">需要您处理的订单</div>
+        <h3>进行中的订单</h3>
+        <div class="value">${stats.activeRentals || 0} 笔</div>
+        <div class="trend">查看订单状态和租赁进度</div>
       </div>
       <div class="stat-card info">
         <h3>可用设备</h3>

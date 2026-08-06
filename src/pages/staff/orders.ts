@@ -23,7 +23,7 @@ export async function renderStaffOrders(c: Context, user: any, searchTerm: strin
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>订单管理</h2><span class="section-note">管理所有客户订单。</span></div>
+      <div class="section-title"><h2>订单状态</h2><span class="section-note">查看自己负责客户的订单；审核、付款确认、退款和取消由管理员处理。</span></div>
       <div class="search-bar" style="margin-bottom: 20px;">
         <form action="/staff/orders" method="GET" style="display: flex; gap: 10px;">
           <input type="text" name="searchTerm" class="form-control" placeholder="搜索订单号、客户或设备..." value="${searchTerm}" style="flex-grow: 1;" />
@@ -41,5 +41,5 @@ export async function renderStaffOrders(c: Context, user: any, searchTerm: strin
       </div>
     </div>
   `;
-  return buildLayout('订单管理 - 电脑租赁管理系统', body, user);
+  return buildLayout('订单状态 - 电脑租赁管理系统', body, user);
 }

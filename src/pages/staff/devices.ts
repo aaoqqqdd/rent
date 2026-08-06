@@ -10,7 +10,7 @@ export async function renderStaffDevices(c: Context, user: any) {
   const devices = await getDevices(c)
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>设备管理</h2><a class="button" href="/staff/devices/new">添加设备</a></div>
+      <div class="section-title"><h2>设备目录</h2><span class="section-note">查看设备资料和租赁状态；设备信息由管理员维护。</span></div>
       <div class="table-wrapper">
         <table class="table">
           <thead>
@@ -31,7 +31,7 @@ export async function renderStaffDevices(c: Context, user: any) {
                 <td>${device.serialNumber}</td>
                 <td>${formatCurrency(device.pricePerDay ?? device.price_per_day ?? 0)}</td>
                 <td>${device.status}</td>
-                <td><a class="link-button" href="/staff/devices/${device.id}">查看</a><a class="link-button" href="/staff/devices/${device.id}/edit">编辑</a></td>
+                <td><a class="link-button" href="/staff/devices/${device.id}">查看</a></td>
               </tr>
             `).join('')}
           </tbody>
@@ -39,5 +39,5 @@ export async function renderStaffDevices(c: Context, user: any) {
       </div>
     </div>
   `
-  return buildLayout('设备管理 - 电脑租赁管理系统', body, user)
+  return buildLayout('设备目录 - 电脑租赁管理系统', body, user)
 }

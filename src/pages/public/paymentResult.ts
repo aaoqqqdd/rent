@@ -6,11 +6,11 @@
 import { buildLayout, getOrderById, getContractByOrderId, formatCurrency } from '../../site';
 import type { Context } from 'hono';
 
-export async function renderPaymentResult(c: Context, orderId: string, user: any) {
+export async function renderPaymentResult(c: Context, orderId: string, user: any, cancelled = false) {
   const order = await getOrderById(c, orderId);
   const contract = order ? await getContractByOrderId(c, order.id) : null;
   const payment = order ? await c.env.RENT.prepare("SELECT status, amount, processing_fee FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any : null
-  const status = payment?.status === 'paid' || order?.status === 'paid' ? 'success' : payment?.status === 'failed' ? 'fail' : 'pending'
+  const status = cancelled ? 'cancelled' : payment?.status === 'paid' || order?.status === 'paid' ? 'success' : payment?.status === 'failed' ? 'fail' : 'pending'
 
   let title = '';
   let message = '';
@@ -28,6 +28,13 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
       </div>
     `;
     cardClass = 'success';
+  } else if (status === 'cancelled') {
+    title = '已取消 Stripe 支付';
+    message = '本次没有扣款，订单仍等待付款。您可以登录客户账户后重新选择 Stripe 或其他付款方式。';
+    icon = '<div class="icon-wrapper danger">×</div>';
+    cardClass = 'danger';
+    buttonText = user?.role === 'CUSTOMER' ? '返回订单重新支付' : '登录后重新支付';
+    buttonLink = user?.role === 'CUSTOMER' ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   } else if (status === 'fail') {
     title = '支付失败';
     message = `合同付款未能成功。请重试或选择其他支付方式。`;

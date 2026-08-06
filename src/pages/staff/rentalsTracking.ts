@@ -116,9 +116,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
                       return `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`;
                     }
                     // 订单状态为已完成
-                    if (order.status === 'completed') {
-                      return `<button class="button button-sm button-warning" onclick="const amount = prompt('请输入退还押金金额', '${(order.depositAmount || 0).toFixed(2)}'); if (amount !== null) { const reason = prompt('请输入扣除原因（选填）', ''); window.location.href='/staff/orders/${order.id}/refund?amount=' + encodeURIComponent(amount) + '&reason=' + encodeURIComponent(reason || '') }">退还押金</button>`;
-                    }
+                    if (order.status === 'completed') return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
                     // 其他已签署状态，例如刚签署完成，但订单状态还未更新为pending_pickup
                     return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
                    }

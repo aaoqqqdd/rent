@@ -29,7 +29,9 @@ export async function renderAdminUserDetail(c: Context, user: any, targetUserId:
     targetUser.referrerId ? getUserById(c, targetUser.referrerId) : Promise.resolve(null),
   ])
 
+  const accountNotice = targetUser.accountType === 'guest' ? `<div class="alert"><strong>访客/临时账户</strong> · 关联订单 ${targetUser.guestOrderId || '-'} · 计划删除日期 ${targetUser.guestExpiresAt || '租期结束'}</div>` : targetUser.accountType === 'deleted_guest' ? '<div class="alert alert-error"><strong>已删除访客账户</strong> · 登录权限和个人联系方式已清除。</div>' : ''
   const body = `
+    ${accountNotice}
     <div class="entity-header"><div class="identity-strip mono"><span>USER / ${targetUser.id}</span><span>${targetUser.role}</span></div><div class="entity-heading"><div><p class="section-code">IDENTITY RECORD</p><h2>${targetUser.name}</h2><p>${targetUser.email}</p></div><div class="entity-heading-actions"><a href="/admin/users" class="button button-secondary">返回列表</a><a href="/admin/users/${targetUser.id}/edit" class="button">编辑用户</a></div></div></div>
     <div class="panel record-panel single-column"><div class="record-grid">
         <section class="record-section"><p class="section-code">ACCOUNT</p><h3>基本信息</h3><dl class="data-list">

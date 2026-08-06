@@ -12,34 +12,49 @@ export async function renderNewContractPage(c: Context, user: any) {
   const escape = (value: unknown) => sanitizePlainText(value, 300).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const locationOptions = pickupLocations.map(location => `<option value="${escape(location)}">${escape(location)}</option>`).join('')
   const allDevices = await getDevices(c);
-  const activeOrderDevices = new Set(
-    (await c.env.RENT.prepare(`
-      SELECT deviceId FROM orders WHERE status IN ('active', 'paid')
-    `).all()).results?.map((row: any) => row.deviceId) || []
-  );
-
-  const devices = allDevices.filter((device) => {
-    const normalizedStatus = String(device.status || '').toLowerCase();
-    if (normalizedStatus === 'available') {
-      return true;
-    }
-    if (normalizedStatus === 'rented' || normalizedStatus === 'active') {
-      return false;
-    }
-    return !activeOrderDevices.has(device.id);
-  });
+  const devices = allDevices.filter(device => !['maintenance', 'retired'].includes(String(device.status || '').toLowerCase()))
+  const deviceGroups = new Map<string, any[]>()
+  for (const device of devices) {
+    const groupName = `${String(device.name || '未命名设备')}\u0000${String(device.model || '未登记型号')}`
+    deviceGroups.set(groupName, [...(deviceGroups.get(groupName) || []), device])
+  }
+  const deviceCatalog = [...deviceGroups.entries()].sort(([left], [right]) => left.localeCompare(right, 'zh-CN')).map(([groupName, groupDevices]) => {
+    const [name, model] = groupName.split('\u0000')
+    return `
+    <section class="device-catalog-group" data-device-group data-group-page="0">
+      <button class="device-catalog-group__heading" type="button" data-group-toggle aria-expanded="true"><span><strong>${escape(name)}</strong><small>${escape(model)}</small></span><span class="mono" data-group-count>${groupDevices.length} 台</span></button>
+      <div class="device-catalog-grid">
+        ${groupDevices.sort((left, right) => String(left.model || '').localeCompare(String(right.model || ''), 'zh-CN')).map(device => {
+          const serial = device.serialNumber || device.serial_number || '未登记'
+          const assetTag = device.assetTag || device.asset_tag || device.id
+          const configuration = [device.cpu, device.ram, device.storage, device.gpu, device.os].filter(Boolean).join(' · ') || device.description || '暂无配置说明'
+          const searchText = [device.name, device.brand, device.model, serial, assetTag, configuration].filter(Boolean).join(' ').toLocaleLowerCase('zh-CN')
+          return `<button class="device-catalog-card" type="button" data-device-id="${escape(device.id)}" data-device-search="${escape(searchText)}" aria-pressed="false"><span class="device-catalog-card__top"><strong>${escape(device.model || '未登记型号')}</strong><span class="badge ${device.status === 'rented' ? 'badge-warning' : 'badge-success'}">${device.status === 'rented' ? '有租赁档期' : '可安排'}</span></span><span class="device-catalog-card__config">${escape(configuration)}</span><span class="device-catalog-card__meta"><span>SN ${escape(serial)}</span><span>资产 ${escape(assetTag)}</span></span></button>`
+        }).join('')}
+      </div>
+      <div class="device-group-pagination" data-group-pagination><button class="button button-sm button-secondary" data-group-prev type="button">上一页</button><span class="mono" data-group-page-status></span><button class="button button-sm button-secondary" data-group-next type="button">下一页</button></div>
+    </section>`
+  }).join('')
+  const bookingRanges = ((await c.env.RENT.prepare(`SELECT id, deviceId, startDate, endDate, status FROM orders WHERE status NOT IN ('completed', 'cancelled') ORDER BY startDate`).all()).results || []) as any[]
+  const bookingData = JSON.stringify(bookingRanges).replace(/</g, '\\u003c')
 
   const formHtml = `
     <div class="page-header"><div><p class="section-code">CONTRACT WORKFLOW</p><h2>新增租赁合同</h2><p>选择设备、租期与交付方式，生成客户签署链接。</p></div><a class="button button-secondary" href="/staff/contracts">返回合同管理</a></div>
     <div class="panel">
       <form action="/staff/contracts/create" method="post">
-        <div class="form-group">
-          <label for="device-select" class="form-label">选择设备</label>
-          <select id="device-select" name="deviceId" class="select-control" required>
-            <option value="">请选择一个可用设备</option>
-            ${devices.map(device => `<option value="${device.id}">${device.name} (${device.model}) - ${device.serialNumber}</option>`).join('')}
+        <section class="device-catalog" aria-labelledby="device-catalog-title">
+          <div class="device-catalog__header"><div><p class="section-code">ASSET DIRECTORY</p><h3 id="device-catalog-title">选择设备</h3><p>按名称分组显示；可搜索名称、型号、序列号、资产编号和设备配置。</p></div><span id="device-result-count" class="badge badge-neutral">${devices.length} 台设备</span></div>
+          <label for="device-search" class="form-label">搜索设备</label>
+          <div class="device-search-control"><input id="device-search" class="form-control" type="search" autocomplete="off" placeholder="搜索 MacBook、序列号、M2 / 16GB / 512GB…"><span class="mono" aria-hidden="true">SEARCH</span></div>
+          <div id="device-catalog-results" class="device-catalog-results">${deviceCatalog}</div>
+          <p id="device-empty-state" class="device-empty-state" hidden>没有符合条件的设备，请尝试其他名称、型号、序列号或配置。</p>
+          <label for="device-select" class="visually-hidden">已选择设备</label>
+          <select id="device-select" name="deviceId" class="visually-hidden" required>
+            <option value="">请选择设备</option>
+            ${devices.map(device => `<option value="${device.id}">${device.name} (${device.model}) - ${device.serialNumber}${device.status === 'rented' ? ' · 有租赁档期' : ''}</option>`).join('')}
           </select>
-        </div>
+        </section>
+        <section class="booking-picker" aria-labelledby="booking-picker-title"><div class="booking-picker__header"><div><p class="section-code">DEVICE AVAILABILITY</p><h3 id="booking-picker-title">设备租赁日历</h3><p>请手动选择设备，再在日历中选择开始日期和归还日期；红色日期已有租赁。</p></div><span id="booking-status" class="badge badge-neutral">请先选择设备</span></div><div class="booking-month-nav" aria-label="切换租赁日历月份"><button class="button button-sm button-secondary" id="booking-prev" type="button" aria-label="上个月">←</button><strong id="booking-month-label"></strong><button class="button button-sm button-secondary" id="booking-today" type="button">本月</button><button class="button button-sm button-secondary" id="booking-next" type="button" aria-label="下个月">→</button></div><div class="booking-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div><div id="booking-calendar" class="booking-calendar"></div><div id="booking-conflict" class="field-error" role="alert"></div></section>
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="start-date" class="form-label">租赁开始日期</label>
@@ -95,7 +110,7 @@ export async function renderNewContractPage(c: Context, user: any) {
           <button type="submit" class="button">生成签约链接</button>
         </div>
       </form>
-      ${devices.length === 0 ? '<p style="margin-top: 16px; color: var(--text-secondary);">当前没有可用的设备，请先添加设备或等待已出租的设备归还。</p>' : ''}
+      ${devices.length === 0 ? '<p style="margin-top: 16px; color: var(--text-secondary);">当前没有可出租设备；维修或退役设备不会显示。</p>' : ''}
     </div>
     <script>
       const urlParams = new URLSearchParams(window.location.search);
@@ -110,6 +125,81 @@ export async function renderNewContractPage(c: Context, user: any) {
       // 默认设置合同有效期为租赁期限，与租赁开始/结束日期保持一致
       const startDateInput = document.getElementById('start-date');
       const endDateInput = document.getElementById('end-date');
+      const deviceSelect = document.getElementById('device-select');
+      const deviceSearch = document.getElementById('device-search');
+      const deviceCards = Array.from(document.querySelectorAll('[data-device-id]'));
+      const deviceGroups = Array.from(document.querySelectorAll('[data-device-group]'));
+      const deviceResultCount = document.getElementById('device-result-count');
+      const deviceEmptyState = document.getElementById('device-empty-state');
+      const bookings = ${bookingData};
+      const bookingCalendar = document.getElementById('booking-calendar');
+      const bookingStatus = document.getElementById('booking-status');
+      const bookingConflict = document.getElementById('booking-conflict');
+      const bookingMonthLabel = document.getElementById('booking-month-label');
+      const now = new Date();
+      let bookingMonth = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+      const devicePageSize = 4;
+      const isoDate = date => date.toISOString().slice(0, 10);
+      const selectedBookings = () => bookings.filter(item => item.deviceId === deviceSelect.value);
+      function selectDevice(card) {
+        deviceSelect.value = card.dataset.deviceId;
+        deviceCards.forEach(item => { const selected = item === card; item.classList.toggle('is-selected', selected); item.setAttribute('aria-pressed', String(selected)); });
+        validateBookingDates();
+      }
+      function filterDevices() {
+        const query = deviceSearch.value.trim().toLocaleLowerCase('zh-CN');
+        const terms = query.split(/\\s+/).filter(Boolean);
+        const matches = deviceCards.filter(card => terms.every(term => card.dataset.deviceSearch.includes(term)));
+        const matchSet = new Set(matches);
+        deviceGroups.forEach(group => {
+          const groupMatches = Array.from(group.querySelectorAll('[data-device-id]')).filter(card => matchSet.has(card));
+          const pageCount = Math.max(1, Math.ceil(groupMatches.length / devicePageSize));
+          const page = Math.min(Number(group.dataset.groupPage || 0), pageCount - 1);
+          group.dataset.groupPage = String(page);
+          const pageCards = new Set(groupMatches.slice(page * devicePageSize, (page + 1) * devicePageSize));
+          group.querySelectorAll('[data-device-id]').forEach(card => { card.hidden = !pageCards.has(card); });
+          group.hidden = groupMatches.length === 0;
+          group.querySelector('[data-group-count]').textContent = groupMatches.length + ' 台';
+          group.querySelector('[data-group-page-status]').textContent = '第 ' + (page + 1) + ' / ' + pageCount + ' 页';
+          group.querySelector('[data-group-prev]').disabled = page === 0;
+          group.querySelector('[data-group-next]').disabled = page >= pageCount - 1;
+          group.querySelector('[data-group-pagination]').hidden = groupMatches.length <= devicePageSize;
+        });
+        deviceResultCount.textContent = matches.length + ' 台设备';
+        deviceEmptyState.hidden = matches.length !== 0;
+      }
+      function renderBookingCalendar() {
+        bookingCalendar.replaceChildren();
+        const first = new Date(bookingMonth);
+        bookingMonthLabel.textContent = first.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', timeZone: 'UTC' });
+        const offset = (first.getUTCDay() + 6) % 7;
+        const gridStart = new Date(first); gridStart.setUTCDate(first.getUTCDate() - offset);
+        const ranges = selectedBookings();
+        for (let index = 0; index < 42; index += 1) {
+          const date = new Date(gridStart); date.setUTCDate(gridStart.getUTCDate() + index);
+          const value = isoDate(date); const blocked = ranges.some(item => item.startDate <= value && item.endDate > value);
+          const inRange = startDateInput.value && endDateInput.value && startDateInput.value <= value && value < endDateInput.value;
+          const cell = document.createElement('button'); cell.type = 'button'; cell.dataset.date = value; cell.className = 'booking-day' + (date.getUTCMonth() !== first.getUTCMonth() ? ' is-outside' : '') + (blocked ? ' is-booked' : '') + (inRange ? ' is-selected-range' : '') + (startDateInput.value === value ? ' is-range-start' : '') + (endDateInput.value === value ? ' is-range-end' : ''); cell.textContent = String(date.getUTCDate()); cell.title = blocked ? '该设备此日已有租赁' : deviceSelect.value ? '选择 ' + value : '请先选择设备'; cell.disabled = blocked || !deviceSelect.value; cell.addEventListener('click', () => selectBookingDate(value)); bookingCalendar.appendChild(cell);
+        }
+        bookingStatus.textContent = deviceSelect.value ? first.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', timeZone: 'UTC' }) : '请先选择设备';
+      }
+      function selectBookingDate(value) {
+        if (!startDateInput.value || endDateInput.value || value < startDateInput.value) { startDateInput.value = value; endDateInput.value = ''; }
+        else if (value === startDateInput.value) { const next = new Date(value + 'T00:00:00Z'); next.setUTCDate(next.getUTCDate() + 1); endDateInput.value = isoDate(next); }
+        else endDateInput.value = value;
+        updateValidityDates(); validateBookingDates();
+      }
+      function moveBookingMonth(offset) { bookingMonth.setUTCMonth(bookingMonth.getUTCMonth() + offset); renderBookingCalendar(); }
+      function validateBookingDates() {
+        const invalidRange = startDateInput.value && endDateInput.value && endDateInput.value <= startDateInput.value;
+        const conflict = !invalidRange && deviceSelect.value && startDateInput.value && endDateInput.value && selectedBookings().find(item => startDateInput.value < item.endDate && endDateInput.value > item.startDate);
+        const message = invalidRange ? '归还日期必须晚于租赁开始日期。' : conflict ? '所选日期与已有租赁重叠：' + conflict.startDate + ' 至 ' + conflict.endDate : '';
+        startDateInput.setCustomValidity(message); endDateInput.setCustomValidity(message); bookingConflict.textContent = message;
+        bookingStatus.className = 'badge ' + (message ? 'badge-danger' : deviceSelect.value ? 'badge-success' : 'badge-neutral');
+        if (!message && deviceSelect.value) bookingStatus.textContent = '所选日期可用';
+        renderBookingCalendar();
+        return !message;
+      }
       
       function updateValidityDates() {
         if (startDateInput.value && endDateInput.value) {
@@ -129,8 +219,22 @@ export async function renderNewContractPage(c: Context, user: any) {
 
       // 当初始化和日期选择变化时更新有效期
       updateValidityDates();
-      startDateInput.addEventListener('change', updateValidityDates);
-      endDateInput.addEventListener('change', updateValidityDates);
+      startDateInput.addEventListener('change', () => { if (startDateInput.value) { const selected = new Date(startDateInput.value + 'T00:00:00Z'); bookingMonth = new Date(Date.UTC(selected.getUTCFullYear(), selected.getUTCMonth(), 1)); } updateValidityDates(); validateBookingDates(); });
+      endDateInput.addEventListener('change', () => { updateValidityDates(); validateBookingDates(); });
+      deviceSelect.addEventListener('change', validateBookingDates);
+      deviceCards.forEach(card => card.addEventListener('click', () => selectDevice(card)));
+      deviceSearch.addEventListener('input', () => { deviceGroups.forEach(group => { group.dataset.groupPage = '0'; }); filterDevices(); });
+      deviceGroups.forEach(group => {
+        group.querySelector('[data-group-prev]').addEventListener('click', () => { group.dataset.groupPage = String(Math.max(0, Number(group.dataset.groupPage || 0) - 1)); filterDevices(); });
+        group.querySelector('[data-group-next]').addEventListener('click', () => { group.dataset.groupPage = String(Number(group.dataset.groupPage || 0) + 1); filterDevices(); });
+        group.querySelector('[data-group-toggle]').addEventListener('click', event => { const expanded = event.currentTarget.getAttribute('aria-expanded') === 'true'; event.currentTarget.setAttribute('aria-expanded', String(!expanded)); group.classList.toggle('is-collapsed', expanded); });
+      });
+      document.getElementById('booking-prev').addEventListener('click', () => moveBookingMonth(-1));
+      document.getElementById('booking-next').addEventListener('click', () => moveBookingMonth(1));
+      document.getElementById('booking-today').addEventListener('click', () => { const today = new Date(); bookingMonth = new Date(Date.UTC(today.getFullYear(), today.getMonth(), 1)); renderBookingCalendar(); });
+      document.querySelector('form[action="/staff/contracts/create"]').addEventListener('submit', event => { if (!validateBookingDates()) { event.preventDefault(); startDateInput.reportValidity(); } });
+      renderBookingCalendar();
+      filterDevices();
 
       const deliveryMethod = document.getElementById('delivery-method');
       const pickupLocation = document.getElementById('pickup-location');

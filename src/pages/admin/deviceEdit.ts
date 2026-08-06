@@ -3,74 +3,41 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout } from '../../site';
+import { buildLayout, sanitizePlainText } from '../../site'
 
 export function renderAdminDeviceEdit(user: any, device: any) {
-  if (!device) {
-    return buildLayout('编辑设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求的设备不存在。</p></div>', user);
-  }
-
-  // 兼容snake_case和camelCase字段名
-  const name = device.name || ''
-  const model = device.model || ''
-  const serialNumber = device.serialNumber || device.serial_number || ''
-  const pricePerDay = device.pricePerDay || device.price_per_day || 0
-  const depositAmount = device.depositAmount || device.deposit_amount || 0
-  const description = device.description || ''
+  if (!device) return buildLayout('编辑设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求的设备不存在。</p></div>', user)
+  const esc = (value: unknown) => sanitizePlainText(value, 2000).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const value = (camel: string, snake = camel) => esc(device[camel] ?? device[snake] ?? '')
   const status = device.status || 'available'
-
   const body = `
+    <div class="page-header"><div><p class="section-code">ASSET RECORD</p><h2>编辑设备</h2><p>${value('name')} · <span class="mono">${value('assetTag', 'asset_tag') || value('id')}</span></p></div><a href="/admin/devices" class="button button-secondary">返回设备列表</a></div>
     <div class="panel">
-      <div class="section-title">
-        <div>
-          <h2>编辑设备 - ${name}</h2>
-          <p style="color: var(--text-secondary); margin-top: 4px; font-size: 0.9rem;">更新设备信息和租赁状态。</p>
-        </div>
-        <a href="/admin/devices" class="button button-secondary">← 返回列表</a>
-      </div>
-      <form method="POST" action="/admin/devices/${device.id}/edit" style="max-width: 600px;">
-        <div class="form-group">
-          <label class="form-label">💻 设备名称</label>
-          <input class="form-control" name="name" value="${name}" required />
-        </div>
-        <div class="form-group">
-          <label class="form-label">🏷️ 型号</label>
-          <input class="form-control" name="model" value="${model}" required />
-        </div>
-        <div class="form-group">
-          <label class="form-label">🔢 序列号</label>
-          <input class="form-control" name="serialNumber" value="${serialNumber}" required style="font-family: monospace;" />
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-          <div class="form-group">
-            <label class="form-label">💰 日租金 (AUD$)</label>
-            <input type="number" class="form-control" name="pricePerDay" value="${pricePerDay}" min="0" step="0.01" required />
+      <form method="POST" action="/admin/devices/${value('id')}/edit" class="asset-editor">
+        <section class="form-section"><div class="form-section-title"><span class="mono">ID</span><div><h3>设备身份</h3><p>更新后，员工端设备目录和搜索结果会使用这里的资料。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="name">设备名称</label><input class="form-control" id="name" name="name" value="${value('name')}" required maxlength="120"></div>
+            <div class="form-group"><label class="form-label" for="brand">品牌</label><input class="form-control" id="brand" name="brand" value="${value('brand')}" required maxlength="120"></div>
+            <div class="form-group"><label class="form-label" for="model">型号</label><input class="form-control" id="model" name="model" value="${value('model')}" required maxlength="120"></div>
+            <div class="form-group"><label class="form-label" for="assetTag">资产编号</label><input class="form-control mono" id="assetTag" name="assetTag" value="${value('assetTag', 'asset_tag')}" required maxlength="120"></div>
+            <div class="form-group"><label class="form-label" for="serialNumber">序列号</label><input class="form-control mono" id="serialNumber" name="serialNumber" value="${value('serialNumber', 'serial_number')}" required maxlength="120"></div>
+            <div class="form-group"><label class="form-label" for="status">状态</label><select class="form-control" id="status" name="status"><option value="available" ${status === 'available' ? 'selected' : ''}>可用</option><option value="rented" ${status === 'rented' ? 'selected' : ''}>已出租</option><option value="maintenance" ${status === 'maintenance' ? 'selected' : ''}>维修中</option></select></div>
           </div>
-          <div class="form-group">
-            <label class="form-label">💎 押金 (AUD$)</label>
-            <input type="number" class="form-control" name="depositAmount" value="${depositAmount}" min="0" step="0.01" required />
+        </section>
+        <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3><p>各字段均可被员工端设备搜索匹配。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="cpu">CPU</label><input class="form-control" id="cpu" name="cpu" value="${value('cpu')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="ram">内存</label><input class="form-control" id="ram" name="ram" value="${value('ram')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="storage">存储</label><input class="form-control" id="storage" name="storage" value="${value('storage')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="gpu">显卡</label><input class="form-control" id="gpu" name="gpu" value="${value('gpu')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="os">操作系统</label><input class="form-control" id="os" name="os" value="${value('os')}" maxlength="200"></div>
           </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">🎯 状态</label>
-          <select class="form-control" name="status">
-            <option value="available" ${status === 'available' ? 'selected' : ''}>✅ 可用</option>
-            <option value="rented" ${status === 'rented' ? 'selected' : ''}>📦 已租出</option>
-            <option value="maintenance" ${status === 'maintenance' ? 'selected' : ''}>🔧 维护中</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">📄 设备配置描述</label>
-          <textarea class="form-control" name="description" rows="4">${description}</textarea>
-        </div>
-        <div style="display: flex; gap: 12px; margin-top: 24px;">
-          <button class="button button-primary" type="submit">💾 保存修改</button>
-          <button form="delete-device-form" type="submit" class="button button-danger">🗑️ 删除设备</button>
-        </div>
+          <div class="form-group"><label class="form-label" for="description">补充描述</label><textarea class="form-control" id="description" name="description" rows="4" maxlength="2000">${value('description')}</textarea></div>
+        </section>
+        <section class="form-section"><div class="form-section-title"><span class="mono">AUD</span><div><h3>租赁价格</h3><p>修改价格不会改写已经建立的历史合同。</p></div></div><div class="grid grid-2"><div class="form-group"><label class="form-label" for="pricePerDay">日租金（AUD）</label><input class="form-control" type="number" id="pricePerDay" name="pricePerDay" value="${value('pricePerDay', 'price_per_day') || '0'}" min="0" step="0.01" required></div><div class="form-group"><label class="form-label" for="depositAmount">押金（AUD）</label><input class="form-control" type="number" id="depositAmount" name="depositAmount" value="${value('depositAmount', 'deposit_amount') || '0'}" min="0" step="0.01" required></div></div></section>
+        <div class="record-actions"><button form="delete-device-form" type="submit" class="button button-danger">删除设备</button><button class="button button-primary" type="submit">保存设备资料</button></div>
       </form>
-      <form id="delete-device-form" method="post" action="/admin/devices/${device.id}/delete" onsubmit="return confirm('确定要删除此设备吗？此操作不可恢复。')"></form>
-    </div>
-  `;
-
-  return buildLayout('编辑设备 - 电脑租赁管理系统', body, user);
+      <form id="delete-device-form" method="post" action="/admin/devices/${value('id')}/delete" onsubmit="return confirm('确定要删除此设备吗？此操作不可恢复。')"></form>
+    </div>`
+  return buildLayout('编辑设备 - 电脑租赁管理系统', body, user)
 }

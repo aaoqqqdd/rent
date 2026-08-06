@@ -38,7 +38,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         </div>
         <div>
           <h3>操作</h3>
-          ${order.status === 'pending_approval' ? `
+          ${user.role === 'ADMIN' && order.status === 'pending_approval' ? `
             <form method="POST" action="/staff/orders/${order.id}/approve" style="margin-bottom: 10px;">
               <button class="button button-primary" type="submit">批准订单</button>
             </form>
@@ -53,7 +53,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           ${order.status === 'active' ? `
             <a class="button button-success" href="/staff/orders/${order.id}/inspection">归还验机</a>
           ` : ''}
-          ${order.status === 'active' || order.status === 'paid' ? `
+          ${user.role === 'ADMIN' && (order.status === 'active' || order.status === 'paid') ? `
             <form method="POST" action="/staff/orders/${order.id}/cancel">
               <button class="button button-danger" type="submit">取消订单</button>
             </form>

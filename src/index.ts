@@ -54,8 +54,10 @@ import {
   buildLayout,
   getSystemSettings,
   loadSystemSettingsFromDB,
+  updateSystemSettings,
   combinePersonName,
-  isStrongPassword
+  isStrongPassword,
+  isContractExpired
 } from './site'
 import { nanoid, customAlphabet } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -486,7 +488,7 @@ app.post('/staff/customers/:id/edit', async (c) => {
   const form = await c.req.parseBody()
   const name = combinePersonName(form.firstName, form.lastName)
   if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim()) return c.html(await pages.renderStaffCustomerEdit(c, user, customerId, '请分别填写名和姓'), 400)
-  await updateUser(c, customerId, { name, phone: String(form.phone || ''), bsb: String(form.bsb || ''), account: String(form.account || ''), balance: Number(form.balance || 0) })
+  await updateUser(c, customerId, { name, phone: String(form.phone || ''), bsb: String(form.bsb || ''), account: String(form.account || ''), ...(user.role === 'ADMIN' ? { balance: Number(form.balance || 0) } : {}) })
   return c.redirect(`/staff/customers/${customerId}`)
 })
 
@@ -505,7 +507,7 @@ app.get('/staff/orders', async (c) => {
 app.use('/staff/orders/*', async (c, next) => {
   const user = c.get('user')
   const orderId = c.req.path.split('/')[3]
-  if (user?.role === 'STAFF' && orderId && orderId !== 'pending') {
+  if (user?.role === 'STAFF' && orderId && !['pending', 'ongoing'].includes(orderId)) {
     const order = await getOrderById(c, orderId)
     const customer = order ? await getUserById(c, order.userId) : null
     if (!order || customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
@@ -514,11 +516,15 @@ app.use('/staff/orders/*', async (c, next) => {
 })
 
 app.get('/staff/orders/pending', async (c) => {
+  return c.redirect('/staff/orders/ongoing', 301)
+})
+
+app.get('/staff/orders/ongoing', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderStaffOrdersPending(c, user))
+  return c.html(await pages.renderStaffOrdersOngoing(c, user))
 })
 
 app.get('/staff/orders/:id', async (c) => {
@@ -553,7 +559,7 @@ app.post('/staff/orders/:orderId/return', async (c) => {
 
 app.post('/staff/orders/:orderId/approve', async (c) => {
   const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
   if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id)) return c.text('订单状态无效或设备档期冲突', 409)
   await updateOrderStatus(c, order.id, 'approved')
@@ -562,7 +568,7 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
 
 app.post('/staff/orders/:orderId/reject', async (c) => {
   const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
   if (order) {
     await updateOrderStatus(c, order.id, 'cancelled')
@@ -626,7 +632,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
 
 app.post('/staff/orders/:orderId/cancel', async (c) => {
   const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.html(renderForbidden(), 403)
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
   if (order) {
     await updateOrderStatus(c, order.id, 'cancelled')
@@ -666,13 +672,13 @@ app.get('/staff/devices', async (c) => {
 
 app.get('/staff/devices/new', (c) => {
   const user = c.get('user')
-  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   return c.html(pages.renderStaffDeviceNew(user))
 })
 
 app.post('/staff/devices/new', async (c) => {
   const user = c.get('user')
-  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const form = await c.req.parseBody()
   const name = String(form.name || '').trim()
   const model = String(form.model || '').trim()
@@ -686,13 +692,13 @@ app.post('/staff/devices/new', async (c) => {
 
 app.get('/staff/devices/:id/edit', async (c) => {
   const user = c.get('user')
-  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id')))
 })
 
 app.post('/staff/devices/:id/edit', async (c) => {
   const user = c.get('user')
-  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const form = await c.req.parseBody()
   const pricePerDay = Number(form.dailyRate)
   const status = String(form.status || 'available')
@@ -731,7 +737,10 @@ app.get('/staff/contracts/:id/progress', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderStaffContractProgress(c, user, c.req.param('id')))
+  const contract = await getContractById(c, c.req.param('id'))
+  if (!contract || (user.role !== 'ADMIN' && (contract.createdBy || contract.created_by) !== user.id)) return c.html(renderForbidden(), 403)
+  if (contract.status !== 'pending_sign' || isContractExpired(contract)) return c.redirect('/staff/contracts')
+  return c.html(await pages.renderStaffContractProgress(c, user, contract.id))
 })
 
 app.get('/staff/contracts/:id/data', async (c) => {
@@ -739,6 +748,7 @@ app.get('/staff/contracts/:id/data', async (c) => {
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
   const contract = await getContractById(c, c.req.param('id'))
   if (!contract || (user.role !== 'ADMIN' && (contract.createdBy || contract.created_by) !== user.id)) return c.html(renderForbidden(), 403)
+  if (isContractExpired(contract) || ['completed', 'cancelled'].includes(contract.status)) return c.html(renderForbidden(), 403)
   return c.html(await pages.renderAdminContractData(c, user, contract.id))
 })
 
@@ -747,6 +757,7 @@ app.post('/staff/contracts/:id/data', async (c) => {
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
   const contract = await getContractById(c, c.req.param('id'))
   if (!contract || (user.role !== 'ADMIN' && (contract.createdBy || contract.created_by) !== user.id)) return c.html(renderForbidden(), 403)
+  if (isContractExpired(contract) || ['completed', 'cancelled'].includes(contract.status)) return c.html(renderForbidden(), 403)
   const form = parseFormBody(await c.req.text())
   const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
   const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
@@ -816,9 +827,10 @@ app.get('/contract/view/:id', async (c) => {
 
 app.get('/payment/result', async (c) => {
   const orderId = c.req.query('orderId') || ''
+  const cancelled = c.req.query('cancelled') === '1'
   const user = c.get('user') as any
   if (user?.accountType === 'guest' && orderId !== user.guestOrderId) return c.html(renderForbidden(), 403)
-  return c.html(await pages.renderPaymentResult(c, orderId, user))
+  return c.html(await pages.renderPaymentResult(c, orderId, user, cancelled))
 })
 
 app.get('/orders/:id/invoice', async (c) => {
@@ -994,6 +1006,8 @@ app.post('/customer/security', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
+  if (![form.name, form.brand, form.model, form.assetTag, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号、资产编号和序列号', 400)
+  if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
   const currentPassword = form.currentPassword?.trim()
   const newPassword = form.newPassword?.trim()
   const confirmPassword = (form.confirmPassword || form.confirmNewPassword)?.trim()
@@ -1027,6 +1041,12 @@ app.get('/admin/dashboard', async (c) => {
   const users = await getUsersAsync(c)
   const devices = await getDevicesAsync(c)
   return c.html(pages.renderAdminDashboard(user, orders, users, devices))
+})
+
+app.get('/admin/calendar', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminDeviceCalendar(c, user))
 })
 
 app.get('/admin/users', async (c) => {
@@ -1234,7 +1254,7 @@ app.get('/admin/contracts', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderAdminContracts(c, user))
+  return c.html(pages.renderAdminContractManagement(user))
 })
 
 
@@ -1408,11 +1428,20 @@ app.post('/admin/devices/new', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
+  if (![form.name, form.brand, form.model, form.assetTag, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号、资产编号和序列号', 400)
+  if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
   if (!['available', 'rented', 'maintenance'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   await insertDevice(c, {
     name: form.name || '',
+    brand: form.brand || '',
     model: form.model || '',
+    assetTag: form.assetTag || '',
     serialNumber: form.serialNumber || '',
+    cpu: form.cpu || '',
+    ram: form.ram || '',
+    storage: form.storage || '',
+    gpu: form.gpu || '',
+    os: form.os || '',
     pricePerDay: Number(form.pricePerDay) || 0,
     depositAmount: Number(form.depositAmount) || 0,
     status: (form.status as any) || 'available',
@@ -1443,10 +1472,17 @@ app.post('/admin/devices/:id/edit', async (c) => {
   if (!['available', 'rented', 'maintenance'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   await updateDevice(c, c.req.param('id'), {
     name: form.name,
+    brand: form.brand,
     model: form.model,
+    assetTag: form.assetTag,
     serialNumber: form.serialNumber,
-    pricePerDay: form.pricePerDay ? Number(form.pricePerDay) : undefined,
-    depositAmount: form.depositAmount ? Number(form.depositAmount) : undefined,
+    cpu: form.cpu,
+    ram: form.ram,
+    storage: form.storage,
+    gpu: form.gpu,
+    os: form.os,
+    pricePerDay: Number(form.pricePerDay),
+    depositAmount: Number(form.depositAmount),
     status: form.status as any,
     description: form.description
   })
@@ -1470,6 +1506,38 @@ app.get('/admin/settings', async (c) => {
   }
   await loadSystemSettingsFromDB(c)
   return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c)))
+})
+
+app.get('/admin/templates', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(pages.renderAdminTemplateHub(user))
+})
+
+app.get('/admin/templates/:kind', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const kind = c.req.param('kind')
+  if (kind === 'contract') return c.html(await pages.renderAdminContracts(c, user))
+  if (kind !== 'user' && kind !== 'rental') return c.html(renderNotFound(), 404)
+  await loadSystemSettingsFromDB(c)
+  return c.html(pages.renderAdminAgreementEditor(user, kind))
+})
+
+app.post('/admin/templates/:kind', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限保存协议' }, 403)
+  const kind = c.req.param('kind')
+  if (kind !== 'user' && kind !== 'rental') return c.json({ success: false, error: '未知的协议类型' }, 404)
+  try {
+    const payload = await c.req.json()
+    const content = sanitizeRichHtml(payload?.content || '')
+    await loadSystemSettingsFromDB(c)
+    await updateSystemSettings(c, kind === 'user' ? { userTerms: content } : { rentalTerms: content })
+    return c.json({ success: true })
+  } catch (error: any) {
+    return c.json({ success: false, error: error?.message || '协议保存失败' }, 400)
+  }
 })
 
 app.post('/admin/settings/save', async (c) => {
