@@ -8,9 +8,9 @@ import { Context } from 'hono';
 
 export function renderAdminContractManagement(user: any) {
   const body = `
-    <div class="panel">
+    <div class="panel template-editor-page">
       <div class="section-title"><div><h2>合同管理</h2><p class="section-note">查看合同签署状态和已归档合同。</p></div><a href="/admin/templates" class="button button-secondary">协议与模板</a></div>
-      <div class="admin-contract-sections">
+      <div class="template-editor-workspace">
         <div class="section"><h4>合同签署状态</h4><p>查看所有进行中合同的签署进度和状态。</p><a href="/admin/contracts/signing-status" class="button button-secondary">查看签署状态</a></div>
         <div class="section"><h4>合同归档管理</h4><p>管理已完成或已取消的合同归档。</p><a href="/admin/contracts/archive" class="button button-secondary">管理归档</a></div>
       </div>
@@ -30,8 +30,8 @@ export async function renderAdminContracts(c: Context, user: any) {
 
       <div class="admin-contract-sections">
         <div class="section">
-          <h4>合同模板编辑</h4>
-          <p>在这里编辑租赁合同的默认模板。支持富文本编辑（前端需集成编辑器）。</p>
+          <h4>合同模板正文</h4>
+          <p>变量会在客户完成签署时替换，并冻结为正式合同快照。</p>
           <form id="contractTemplateForm">
             <div class="form-group">
               <label for="templateName">模板名称</label>

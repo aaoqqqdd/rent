@@ -1254,7 +1254,7 @@ app.get('/admin/contracts', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(pages.renderAdminContractManagement(user))
+  return c.html(await pages.renderStaffContracts(c, user, c.req.query('status'), undefined, undefined, c.req.query('searchTerm')))
 })
 
 

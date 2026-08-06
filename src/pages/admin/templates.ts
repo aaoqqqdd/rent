@@ -9,27 +9,21 @@ type AgreementKind = 'user' | 'rental'
 
 export function renderAdminTemplateHub(user: any) {
   const body = `
-    <div class="panel template-library">
-      <div class="section-title">
-        <div><h2>协议与合同模板</h2><p class="section-note">先选择要维护的页面，再进入对应的独立编辑器。</p></div>
-      </div>
-      <div class="template-choice-grid">
-        <a class="template-choice-card" href="/admin/templates/user">
-          <span class="template-choice-index">01</span>
-          <div><h3>用户协议</h3><p>注册及创建正式账户时向用户展示的协议。</p></div>
-          <span class="template-choice-action">进入编辑 <span aria-hidden="true">→</span></span>
-        </a>
-        <a class="template-choice-card" href="/admin/templates/rental">
-          <span class="template-choice-index">02</span>
-          <div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意的租赁条款。</p></div>
-          <span class="template-choice-action">进入编辑 <span aria-hidden="true">→</span></span>
-        </a>
-        <a class="template-choice-card" href="/admin/templates/contract">
-          <span class="template-choice-index">03</span>
-          <div><h3>正式合同模板</h3><p>签署完成后生成正式合同所使用的正文模板。</p></div>
-          <span class="template-choice-action">进入编辑 <span aria-hidden="true">→</span></span>
-        </a>
-      </div>
+    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>DOCUMENT CONTROL</span><span>3 ACTIVE TEMPLATES</span></div><div class="entity-heading"><div><p class="section-code">LEGAL & CONTRACTS</p><h2>协议与合同模板</h2><p>管理客户注册、签署和正式合同生成时使用的文本。</p></div><a class="button button-secondary" href="/admin/contracts">返回合同管理</a></div></div>
+    <div class="panel template-register">
+      <div class="template-register__labels mono"><span>文档</span><span>显示位置</span><span>类型</span><span>操作</span></div>
+      <article class="template-register__row">
+        <div class="template-register__document"><span class="document-mark">UA</span><div><h3>用户协议</h3><p>账户注册与正式账户升级时确认。</p></div></div>
+        <p>注册页面</p><span class="badge badge-neutral">法律文本</span><a class="button button-sm button-secondary" href="/admin/templates/user">编辑协议</a>
+      </article>
+      <article class="template-register__row">
+        <div class="template-register__document"><span class="document-mark">RA</span><div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意。</p></div></div>
+        <p>签署步骤 1</p><span class="badge badge-warning">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a>
+      </article>
+      <article class="template-register__row">
+        <div class="template-register__document"><span class="document-mark">CT</span><div><h3>正式合同模板</h3><p>签署完成后冻结并生成可下载合同。</p></div></div>
+        <p>正式合同</p><span class="badge badge-success">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/contract">编辑模板</a>
+      </article>
     </div>`
   return buildLayout('协议与合同模板 - 电脑租赁管理系统', body, user)
 }

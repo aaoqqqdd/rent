@@ -6,22 +6,33 @@
 import { buildLayout, getOrderById, getContractByOrderId, formatCurrency } from '../../site';
 import type { Context } from 'hono';
 
+export function paymentResultState(order: any, payment: any, cancelled = false): 'cancelled' | 'success' | 'fail' | 'bank_pending' | 'stripe_pending' {
+  if (cancelled) return 'cancelled'
+  if (payment?.status === 'paid' || order?.status === 'paid') return 'success'
+  if (payment?.status === 'failed') return 'fail'
+  return order?.paymentMethod === 'bank_transfer' || order?.payment_method === 'bank_transfer' ? 'bank_pending' : 'stripe_pending'
+}
+
 export async function renderPaymentResult(c: Context, orderId: string, user: any, cancelled = false) {
   const order = await getOrderById(c, orderId);
   const contract = order ? await getContractByOrderId(c, order.id) : null;
-  const payment = order ? await c.env.RENT.prepare("SELECT status, amount, processing_fee FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any : null
-  const status = cancelled ? 'cancelled' : payment?.status === 'paid' || order?.status === 'paid' ? 'success' : payment?.status === 'failed' ? 'fail' : 'pending'
+  const paymentMethod = String(order?.paymentMethod ?? 'card')
+  const payment = order ? await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod).first() as any : null
+  const status = paymentResultState(order, payment, cancelled)
 
   let title = '';
   let message = '';
   let icon = '';
   let buttonText = '查看订单详情';
-  let buttonLink = `/customer/orders/${orderId}`;
+  const canOpenCustomerOrder = user?.role === 'CUSTOMER' && order?.userId === user.id
+  let buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   let cardClass = '';
 
   if (status === 'success') {
-    title = '支付成功！';
-    message = `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已成功支付 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>${Number(payment?.processing_fee || 0) ? `，其中支付手续费为 ${formatCurrency(payment.processing_fee)}（仅退还押金时退回相应部分）` : ''}。网站发票与收据已生成。`;
+    title = paymentMethod === 'balance' ? '余额支付已完成' : '支付成功！';
+    message = paymentMethod === 'balance'
+      ? `已从您的账户余额即时扣除 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>，订单已完成付款，网站发票与收据已生成。`
+      : `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已成功支付 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>${Number(payment?.processing_fee || 0) ? `，其中支付手续费为 ${formatCurrency(payment.processing_fee)}（仅退还押金时退回相应部分）` : ''}。网站发票与收据已生成。`;
     icon = `
       <div class="icon-wrapper success">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-check"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -34,7 +45,13 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     icon = '<div class="icon-wrapper danger">×</div>';
     cardClass = 'danger';
     buttonText = user?.role === 'CUSTOMER' ? '返回订单重新支付' : '登录后重新支付';
-    buttonLink = user?.role === 'CUSTOMER' ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
+    buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
+  } else if (status === 'bank_pending') {
+    title = '银行转账等待审核';
+    message = '转账资料已提交，管理员核对到账信息后会更新订单状态。银行转账不经过 Stripe，无需等待 Stripe 确认。';
+    icon = '<div class="icon-wrapper">⌛</div>';
+    buttonText = '查看订单与审核状态';
+    buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   } else if (status === 'fail') {
     title = '支付失败';
     message = `合同付款未能成功。请重试或选择其他支付方式。`;
@@ -45,9 +62,9 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     `;
     cardClass = 'danger';
     buttonText = '返回订单支付';
-    buttonLink = `/customer/orders/${orderId}`;
+    buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   } else {
-    title = '正在确认支付';
+    title = '正在确认 Stripe 支付';
     message = `Stripe 正在确认合同付款结果；确认后会生成订单编号，本页面会自动刷新。`;
     icon = '<div class="icon-wrapper" style="background:#e0f2fe;color:#0369a1;">…</div>';
     cardClass = '';
@@ -120,7 +137,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
         </div>
       </div>
     </div>
-    ${status === 'pending' ? '<script>setTimeout(() => window.location.reload(), 3000)</script>' : ''}
+    ${status === 'stripe_pending' ? '<script>setTimeout(() => window.location.reload(), 3000)</script>' : ''}
   `;
 
   return buildLayout('支付结果 - 电脑租赁管理系统', body, user);

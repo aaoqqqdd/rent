@@ -53,38 +53,20 @@
 
 .template-settings-notice p { margin: 4px 0 0; color: var(--text-muted); }
 
-.template-choice-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  margin-top: 28px;
-}
-
-.template-choice-card {
-  display: flex;
-  min-height: 245px;
-  padding: 24px;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 24px;
-  color: inherit;
-  text-decoration: none;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface, #fff);
-  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
-}
-
-.template-choice-card:hover {
-  transform: translateY(-3px);
-  border-color: var(--primary);
-  box-shadow: 0 14px 30px rgba(15, 23, 42, .09);
-}
-
-.template-choice-card h3 { margin: 0 0 10px; }
-.template-choice-card p { margin: 0; color: var(--text-muted); line-height: 1.7; }
-.template-choice-index { color: var(--primary); font-family: var(--font-mono); font-weight: 700; letter-spacing: .08em; }
-.template-choice-action { color: var(--primary); font-weight: 700; }
+.template-library-header .identity-strip { border-bottom-color: #6b7f92; }
+.template-register { padding: 0; overflow: hidden; }
+.template-register__labels,
+.template-register__row { display: grid; grid-template-columns: minmax(280px, 1.6fr) minmax(130px, .7fr) minmax(110px, .55fr) auto; align-items: center; gap: 20px; }
+.template-register__labels { padding: 10px 22px; color: var(--text-tertiary); background: var(--bg-subtle); border-bottom: 1px solid var(--border); font-size: .64rem; letter-spacing: .08em; }
+.template-register__row { min-height: 112px; padding: 20px 22px; border-bottom: 1px solid var(--border); }
+.template-register__row:last-child { border-bottom: 0; }
+.template-register__row:hover { background: #f8fafc; }
+.template-register__row > p { margin: 0; color: var(--text-secondary); font-size: .82rem; }
+.template-register__document { min-width: 0; display: flex; align-items: center; gap: 16px; }
+.template-register__document h3 { margin: 0 0 4px; font-size: 1rem; }
+.template-register__document p { margin: 0; color: var(--text-secondary); font-size: .76rem; }
+.document-mark { width: 44px; height: 52px; flex: 0 0 auto; display: grid; place-items: center; color: #e7edf2; background: var(--graphite); border-bottom: 4px solid var(--primary); font: 700 .75rem var(--font-mono); letter-spacing: .08em; }
+.template-editor-workspace > .section { padding: 0; }
 .template-editor-heading { align-items: flex-start; }
 .breadcrumb-link { display: inline-block; margin-bottom: 12px; color: var(--text-muted); text-decoration: none; font-size: .9rem; }
 .breadcrumb-link:hover { color: var(--primary); }
@@ -95,8 +77,11 @@
 .template-save-status.is-error { color: var(--danger, #b91c1c); }
 
 @media (max-width: 900px) {
-  .template-choice-grid { grid-template-columns: 1fr; }
-  .template-choice-card { min-height: 190px; }
+  .template-register__labels { display: none; }
+  .template-register__row { grid-template-columns: minmax(0, 1fr) auto; gap: 14px; }
+  .template-register__row > p { grid-column: 1; padding-left: 60px; }
+  .template-register__row > .badge { grid-column: 1; width: max-content; margin-left: 60px; }
+  .template-register__row > .button { grid-column: 2; grid-row: 1 / span 3; }
 }
 
 @media (max-width: 600px) {

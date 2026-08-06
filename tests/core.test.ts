@@ -24,6 +24,7 @@ import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
 import { refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
+import { paymentResultState } from '../src/pages/public/paymentResult'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
@@ -200,6 +201,12 @@ test('Stripe checkout separates rent, deposit, and processing fee', () => {
     { name: '设备押金', amountCents: 100000 },
     { name: 'Stripe 支付手续费（2.5%）', amountCents: 2750 },
   ])
+})
+
+test('payment results distinguish Stripe, bank transfer, and immediate balance payment', () => {
+  assert.equal(paymentResultState({ paymentMethod: 'card', status: 'pending_payment' }, { status: 'pending' }), 'stripe_pending')
+  assert.equal(paymentResultState({ paymentMethod: 'bank_transfer', status: 'pending_payment' }, { status: 'pending' }), 'bank_pending')
+  assert.equal(paymentResultState({ paymentMethod: 'balance', status: 'paid' }, { status: 'paid' }), 'success')
 })
 
 test('only deposit refunds return the fee attributable to the refunded deposit principal', () => {

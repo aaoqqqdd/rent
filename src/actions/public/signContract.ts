@@ -347,10 +347,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           
           if (currentBalance >= totalAmount) {
             // 扣除余额
-            await c.env.RENT.prepare(`
+            const deduction = await c.env.RENT.prepare(`
               UPDATE users SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `).bind(totalAmount, userId).run();
+              WHERE id = ? AND balance >= ?
+            `).bind(totalAmount, userId, totalAmount).run();
+            const deducted = Number((deduction as any).meta?.changes ?? (deduction as any).changes ?? 0)
+            if (deducted < 1) throw new Error('账户余额已发生变化，当前余额不足，请刷新后重试')
             orderStatus = 'paid'; // 余额支付成功，直接标记为已支付
             await logError(c, 'INFO', `Balance payment processed successfully`, undefined, { token, userId, amount: totalAmount, remainingBalance: currentBalance - totalAmount });
           } else {

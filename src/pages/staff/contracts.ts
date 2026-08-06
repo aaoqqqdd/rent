@@ -7,6 +7,8 @@ import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContra
 import type { Context } from 'hono'
 
 export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string) {
+  const isAdmin = user.role === 'ADMIN'
+  const basePath = isAdmin ? '/admin/contracts' : '/staff/contracts'
   let [allContracts, allOrders, allUsers, allDevices] = await Promise.all([getAllContracts(c), getOrders(c), getUsers(c), getDevices(c)])
   const ordersById = new Map(allOrders.map(order => [order.id, order]))
   const usersById = new Map(allUsers.map(account => [account.id, account]))
@@ -66,7 +68,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>合同与租赁进度管理</h2><span class="section-note">统一管理所有租赁合同的签署状态和租赁进度。</span></div>
+      <div class="section-title"><div><h2>合同与租赁进度管理</h2><span class="section-note">${isAdmin ? '查看全部员工创建的合同、签署状态和租赁进度。' : '管理自己负责的租赁合同、签署状态和租赁进度。'}</span></div><div class="record-actions"><a class="button" href="/staff/contracts/new">新建合同</a>${isAdmin ? '<a class="button button-secondary" href="/admin/templates">协议与模板</a><a class="button button-secondary" href="/admin/calendar">租赁日历</a>' : ''}</div></div>
 
       ${successMessage ? `<div class="alert alert-success">${successMessage}</div>` : ''}
       ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
@@ -74,17 +76,17 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       <!-- 统一的筛选按钮 - 包含合同和租赁状态 -->
       <div class="subsection-heading"><div><p class="section-code">CONTRACTS</p><h3>合同管理</h3></div></div>
       <div class="filter-tabs">
-        <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
-        <a href="/staff/contracts?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
-        <a href="/staff/contracts?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
-        <a href="/staff/contracts?status=expired" class="button ${status === 'expired' ? 'button-primary' : 'button-secondary'}">已过期</a>
-        <a href="/staff/contracts?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
-        <a href="/staff/contracts?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
+        <a href="${basePath}" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
+        <a href="${basePath}?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
+        <a href="${basePath}?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
+        <a href="${basePath}?status=expired" class="button ${status === 'expired' ? 'button-primary' : 'button-secondary'}">已过期</a>
+        <a href="${basePath}?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
+        <a href="${basePath}?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
       </div>
       
       <!-- 搜索功能 -->
       <div class="search-bar">
-        <form action="/staff/contracts" method="GET" class="search-form">
+        <form action="${basePath}" method="GET" class="search-form">
           <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" />
           ${status ? `<input type="hidden" name="status" value="${status}" />` : ''}
           <button type="submit" class="button button-primary">搜索</button>
@@ -127,7 +129,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                   <td>${signedAtText}</td>
                   <td><div class="table-actions">
                     ${canViewContract ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>` : ''}
-                    ${canEditData ? `<a class="button button-sm button-secondary" href="/staff/contracts/${contract.id}/data">编辑资料</a>` : ''}
+                    ${canEditData ? `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/contracts/${contract.id}/data` : `/staff/contracts/${contract.id}/data`}">编辑资料</a>` : ''}
                     ${
                       contract.status === 'pending_sign' && !expired
                         ? `
@@ -136,7 +138,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                         `
                         : ''
                     }
-                    ${order?.status === 'active' ? `<a class="button button-sm button-info" href="/staff/orders/${contract.rentalId}">租赁详情</a>` : ''}
+                    ${order?.status === 'active' ? `<a class="button button-sm button-info" href="${isAdmin ? `/admin/orders/${contract.rentalId}` : `/staff/orders/${contract.rentalId}`}">租赁详情</a>` : ''}
                   </div></td>
                 </tr>
               `
@@ -151,16 +153,16 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       <div class="subsection-heading subsection-heading-spaced"><div><p class="section-code">RENTALS</p><h3>租赁管理</h3></div></div>
 
       <div class="filter-tabs">
-        <a href="/staff/contracts" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部租赁</a>
-        <a href="/staff/contracts?status=active" class="button ${status === 'active' ? 'button-primary' : 'button-secondary'}">当前租赁中</a>
-        <a href="/staff/contracts?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
-        <a href="/staff/contracts?status=pending_return" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
-        <a href="/staff/contracts?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
+        <a href="${basePath}" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部租赁</a>
+        <a href="${basePath}?status=active" class="button ${status === 'active' ? 'button-primary' : 'button-secondary'}">当前租赁中</a>
+        <a href="${basePath}?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
+        <a href="${basePath}?status=pending_return" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
+        <a href="${basePath}?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
       </div>
       
       <!-- 搜索功能 -->
       <div class="search-bar">
-        <form action="/staff/contracts" method="GET" class="search-form">
+        <form action="${basePath}" method="GET" class="search-form">
           <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" />
           ${status ? `<input type="hidden" name="status" value="${status}" />` : ''}
           <button type="submit" class="button button-primary">搜索</button>
@@ -191,10 +193,10 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                 const statusText = order.status === 'pending_pickup' ? '待拿取' : order.status === 'pending_return' ? '待归还' : order.status === 'active' ? '当前租赁中' : order.status === 'completed' ? '已完成' : order.status === 'cancelled' ? '已取消' : order.status
                 const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
                 const actionButton = hasSignedContract
-                  ? `<a class="button button-sm button-primary" href="/staff/orders/${order.id}">待拿取</a>`
+                  ? `<a class="button button-sm button-primary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待拿取</a>`
                   : order.status === 'active' || order.status === 'pending_return'
                     ? `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`
-                    : `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">待归还</a>`
+                    : `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待归还</a>`
                 return `
                 <tr>
                   <td>${contract?.contractNumber ?? '—'}</td>

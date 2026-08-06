@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractById, getOrderById, getUserById, getDeviceById, formatCurrency, renderContractVariables, getContractVariableData, sanitizeRichHtml } from '../../site';
+import { buildLayout, getContractById, getOrderById, getUserById, getDeviceById, formatCurrency, renderContractVariables, getContractVariableData } from '../../site';
 import { Context } from 'hono';
 
 export async function renderAdminContractDetail(c: Context, user: any, contractId: string) {
@@ -27,7 +27,7 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
   const customer = order ? await getUserById(c, order.userId) : null;
   const device = order ? await getDeviceById(c, order.deviceId) : null
   const creator = contract.createdBy || contract.created_by ? await getUserById(c, contract.createdBy || contract.created_by || '') : null
-  const renderedContract = contract.signed_content ? sanitizeRichHtml(contract.signed_content) : renderContractVariables(contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
+  const renderedContract = renderContractVariables(contract.signed_content || contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
 
   const body = `
     <div class="panel">
