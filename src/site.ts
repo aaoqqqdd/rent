@@ -1261,6 +1261,33 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   const sql = `INSERT INTO users (${insertFields.join(', ')}) VALUES (${placeholders})`;
 
   await db.prepare(sql).bind(...insertValues).run()
+
+  const usersOldTable = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users_old'").first()
+  if (usersOldTable) {
+    await db.prepare(`
+      INSERT OR IGNORE INTO users_old
+        (id, name, email, phone, passwordHash, role, status, bsb, accountNumber,
+         referrerId, commissionBalance, balance, referralCode, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      user.id,
+      user.name,
+      user.email,
+      user.phone || null,
+      passwordHashToStore ?? '',
+      user.role,
+      user.status ?? 'active',
+      user.bsb || null,
+      user.accountNumber || null,
+      user.referrerId || null,
+      user.commissionBalance ?? 0,
+      user.balance ?? 0,
+      user.referralCode ?? null,
+      user.createdAt ?? new Date().toISOString(),
+      user.updatedAt ?? new Date().toISOString()
+    ).run()
+  }
+
   const insertedRow = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as any | null
   if (!insertedRow) return null as any
   const inserted = normalizeUserRow(insertedRow)

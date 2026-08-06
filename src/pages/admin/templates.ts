@@ -111,7 +111,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         }
 
         function getAgreementContent() {
-          if (agreementContentMarkdown && agreementContentMarkdown.style.display === 'block') {
+          if (form.classList.contains('is-markdown-mode')) {
             return window.markdownToHtml(agreementContentMarkdown.value);
           }
           return editor.root.innerHTML;
@@ -121,14 +121,12 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           if (!agreementModeHtml || !agreementModeMd || !agreementContentMarkdown) return;
           if (toMd) {
             agreementContentMarkdown.value = window.htmlToMarkdown(editor.root.innerHTML);
-            agreementContentMarkdown.style.display = 'block';
-            editor.root.parentElement.style.display = 'none';
+            form.classList.add('is-markdown-mode');
             agreementModeMd.classList.add('active');
             agreementModeHtml.classList.remove('active');
           } else {
             editor.root.innerHTML = window.markdownToHtml(agreementContentMarkdown.value);
-            agreementContentMarkdown.style.display = 'none';
-            editor.root.parentElement.style.display = 'block';
+            form.classList.remove('is-markdown-mode');
             agreementModeMd.classList.remove('active');
             agreementModeHtml.classList.add('active');
           }

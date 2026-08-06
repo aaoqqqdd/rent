@@ -4,9 +4,9 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono';
-import { 
+import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
-  updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession, 
+  updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
   getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, buildLayout, canUseAccountBalance
 } from '../../site';
@@ -19,10 +19,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
   const currentUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null)
 
   // 记录进入签约流程的日志
-  await logError(c, 'DEBUG', `Entering contract signing process`, undefined, { 
+  await logError(c, 'DEBUG', `Entering contract signing process`, undefined, {
     identifier: token, // 使用明确定义的 token
-    step, 
-    requestBody: Object.keys(body) 
+    step,
+    requestBody: Object.keys(body)
   });
 
   let contract = await getContractBySignToken(c, token); // 使用明确定义的 token
@@ -31,14 +31,23 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
     return new Response('合同链接无效或已过期', { status: 404 });
   }
 
+  // 步骤 3 完成后合同已签署；访客没有登录态，返回/重复提交时不能再次进入付款选择页。
+  if (step === 3 && (contract.status === 'signed' || contract.signedAt)) {
+    const orderId = contract.rentalId || contract.rental_id
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `/payment/result?orderId=${encodeURIComponent(String(orderId || ''))}` },
+    })
+  }
+
   // 检查合同是否已过期
   const signExpiresAt = contract.signExpiresAt || contract.sign_expires_at;
   if (signExpiresAt && contract.status === 'pending_sign') {
     const now = new Date();
     const expiryDate = new Date(signExpiresAt);
     if (now > expiryDate) {
-      await logError(c, 'WARNING', `Contract signing link has expired`, undefined, { 
-        token, 
+      await logError(c, 'WARNING', `Contract signing link has expired`, undefined, {
+        token,
         contractId: contract.id,
         expiresAt: signExpiresAt,
         currentTime: now.toISOString()
@@ -71,23 +80,23 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
       case 1:
         // Step 1: 同意协议
         await logError(c, 'DEBUG', `Processing step 1: Agreement acceptance`, undefined, { token, body });
-        
+
         if (!body.agreeTerms) {
           await logError(c, 'INFO', `User did not agree to terms`, undefined, { token });
           throw new Error('您必须同意租赁协议才能继续。');
         }
-        
+
         // 更新会话数据
         await updateSignSession(c, token, { agreedToTerms: true });
         await logError(c, 'INFO', `User agreed to terms, proceeding to step 2`, undefined, { token });
-        
+
         redirectUrl = `/contract/sign?token=${token}&step=2`;
         break;
 
       case 2:
         // Step 2: 填写用户信息并创建账户
         await logError(c, 'DEBUG', `Processing step 2: User information submission`, undefined, { token });
-        
+
         if (!signSession.agreedToTerms) {
           await logError(c, 'WARNING', `User attempted to access step 2 without agreeing to terms`, undefined, { token });
           throw new Error('请先同意租赁协议。');
@@ -101,13 +110,13 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const name = `${cleanFirstName} ${cleanLastName}`.trim()
         const email = String(body.email || '').trim().toLowerCase()
         const submittedPhone = phone
-        
+
         // 验证必填字段
         if (!cleanFirstName || !cleanLastName || !email || !submittedPhone || esignSignature?.trim() !== name) {
-          await logError(c, 'INFO', `Missing required fields in step 2`, undefined, { 
-            token, 
-            hasName: !!name, 
-            hasEmail: !!email, 
+          await logError(c, 'INFO', `Missing required fields in step 2`, undefined, {
+            token,
+            hasName: !!name,
+            hasEmail: !!email,
             hasPhoneCode: !!phoneCode,
             hasPhone: !!submittedPhone
           });
@@ -116,7 +125,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (cleanFirstName.length > 100 || cleanLastName.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           throw new Error('姓名或电子邮箱格式不正确。')
         }
-        
+
         // 如果选择创建账户，密码是必填的
         if (!currentUser && createAccount && (!password || !passwordConfirm)) {
           await logError(c, 'INFO', `Missing password for account creation`, undefined, { token });
@@ -129,7 +138,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (!currentUser && createAccount && !isStrongPassword(password)) {
           throw new Error('密码至少需要 8 位，并同时包含字母、数字和符号。');
         }
-        
+
         // 验证电话号码格式 - 先清理空格、连字符和国际前缀，再按各国规则校验
         const normalizedPhone = String(submittedPhone || '').replace(/\D/g, '');
         let phoneToValidate = normalizedPhone;
@@ -155,7 +164,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           '+82': /^1[0-9]\d{7,8}$/, // 韩国：手机以1开头，共9-10位
           '+81': /^[789]0\d{8}$/ // 日本：手机以70/80/90开头，共10位
         };
-        
+
         const pattern = phonePatterns[phoneCode];
         if (pattern && !pattern.test(phoneToValidate)) {
           // 详细的错误提示信息
@@ -171,11 +180,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             '+82': '韩国手机号需要9-10位，必须以1开头',
             '+81': '日本手机号需要10位，必须以70/80/90开头'
           };
-          
+
           await logError(c, 'INFO', `Invalid phone number format`, undefined, { token, phoneCode, phone });
           throw new Error(errorMessages[phoneCode] || '电话号码格式不正确，请检查国家代码和手机号。');
         }
-        
+
         // 从数据库检查邮箱是否已存在
         const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() as any
         if (currentUser) {
@@ -213,7 +222,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           userInfo: { ...body, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone }
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
-        
+
         redirectUrl = `/contract/sign?token=${token}&step=3`;
         break;
 
@@ -224,12 +233,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const signingOrder = await getOrderById(c, contract.rentalId)
         if (!signingOrder) throw new Error('合同关联的订单不存在。')
         const order = signingOrder
-        
+
         if (!signSession.userInfo) {
           await logError(c, 'WARNING', `User attempted to access step 3 without providing user info`, undefined, { token });
           throw new Error('请先填写您的个人信息。');
         }
-        
+
         const { paymentMethod } = body;
         const canUseBalance = canUseAccountBalance(currentUser)
         const refundMethod = canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original'
@@ -272,7 +281,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           const newUserId = `u-${nanoid(8)}`;
           userId = newUserId;
           await logError(c, 'INFO', `Creating new user for contract`, undefined, { token, newUserId, email: userInfo.email });
-          
+
           // 处理推荐人关系
           let referrerId = null;
           if (userInfo.referrer) {
@@ -285,16 +294,16 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               await logError(c, 'INFO', `Invalid referral code provided`, undefined, { token, referrerCode: normalizedReferrerCode });
             }
           }
-          
+
           // 将referrerId保存到会话中，以便后续处理佣金
           await updateSignSession(c, token, { referrerId });
-          
+
           // 仅当用户选择创建账户时才处理密码
           // let password_hash = null;
           // if (userInfo.createAccount && userInfo.password) {
           //   password_hash = await hashPassword(userInfo.password);
           // }
-          
+
           const isGuest = userInfo.accountMode === 'guest'
           if (isGuest && !guestPassword) {
             guestPassword = generateTemporaryPassword()
@@ -314,20 +323,31 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             withdrawnCommission: 0,
             referralCode: null as any,
             referrerId: referrerId ?? null as any,
-            staffId: contract.createdBy || contract.created_by || undefined,
+            // 历史合同的创建人可能已被删除；staff_id 有外键约束，只保存仍存在的员工/管理员。
+            staffId: undefined,
             accountType: isGuest ? 'guest' : 'formal',
             guestOrderId: isGuest ? contract.rentalId : null,
             guestExpiresAt: isGuest ? signingOrder.endDate : null,
             createdAt: new Date().toISOString(),
             registrationDate: new Date().toISOString(),
           };
+          const contractOwner = contract.createdBy || contract.created_by
+          if (contractOwner) {
+            const owner = await c.env.RENT.prepare("SELECT id FROM users WHERE id = ? AND role IN ('STAFF', 'ADMIN')").bind(contractOwner).first()
+            if (owner) newUser.staffId = contractOwner
+          }
           await insertUser(c, newUser);
           await updateSignSession(c, token, { userIdToLink: newUserId });
           await logError(c, 'INFO', `New user created successfully`, undefined, { token, newUserId });
         } else {
           await logError(c, 'INFO', `Linking existing user to contract`, undefined, { token, userId });
           const contractOwner = contract.createdBy || contract.created_by
-          if (contractOwner) await c.env.RENT.prepare('UPDATE users SET staff_id = COALESCE(staff_id, ?) WHERE id = ?').bind(contractOwner, userId).run()
+          if (contractOwner) {
+            const owner = await c.env.RENT.prepare("SELECT id FROM users WHERE id = ? AND role IN ('STAFF', 'ADMIN')").bind(contractOwner).first()
+            if (owner) {
+              await c.env.RENT.prepare('UPDATE users SET staff_id = COALESCE(staff_id, ?) WHERE id = ?').bind(contractOwner, userId).run()
+            }
+          }
         }
 
         // 2. 更新订单信息
@@ -338,27 +358,27 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           if (existingBalancePayment) {
             orderStatus = 'paid'
           } else {
-          // 获取用户当前余额
-          const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any;
-          const currentBalance = user?.balance || 0;
-          // 获取订单总金额
-          const rental = await c.env.RENT.prepare('SELECT totalAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
-          const totalAmount = rental?.totalAmount || 0;
-          
-          if (currentBalance >= totalAmount) {
-            // 扣除余额
-            const deduction = await c.env.RENT.prepare(`
+            // 获取用户当前余额
+            const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any;
+            const currentBalance = user?.balance || 0;
+            // 获取订单总金额
+            const rental = await c.env.RENT.prepare('SELECT totalAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
+            const totalAmount = rental?.totalAmount || 0;
+
+            if (currentBalance >= totalAmount) {
+              // 扣除余额
+              const deduction = await c.env.RENT.prepare(`
               UPDATE users SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP
               WHERE id = ? AND balance >= ?
             `).bind(totalAmount, userId, totalAmount).run();
-            const deducted = Number((deduction as any).meta?.changes ?? (deduction as any).changes ?? 0)
-            if (deducted < 1) throw new Error('账户余额已发生变化，当前余额不足，请刷新后重试')
-            orderStatus = 'paid'; // 余额支付成功，直接标记为已支付
-            await logError(c, 'INFO', `Balance payment processed successfully`, undefined, { token, userId, amount: totalAmount, remainingBalance: currentBalance - totalAmount });
-          } else {
-            await logError(c, 'WARNING', `Insufficient balance for payment`, undefined, { token, userId, balance: currentBalance, required: totalAmount });
-            throw new Error('账户余额不足，无法使用余额支付');
-          }
+              const deducted = Number((deduction as any).meta?.changes ?? (deduction as any).changes ?? 0)
+              if (deducted < 1) throw new Error('账户余额已发生变化，当前余额不足，请刷新后重试')
+              orderStatus = 'paid'; // 余额支付成功，直接标记为已支付
+              await logError(c, 'INFO', `Balance payment processed successfully`, undefined, { token, userId, amount: totalAmount, remainingBalance: currentBalance - totalAmount });
+            } else {
+              await logError(c, 'WARNING', `Insufficient balance for payment`, undefined, { token, userId, balance: currentBalance, required: totalAmount });
+              throw new Error('账户余额不足，无法使用余额支付');
+            }
           }
         }
 
@@ -410,10 +430,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           await ensureOrderNumber(c, contract.rentalId)
           await issueInvoice(c, contract.rentalId)
         }
-        await logError(c, 'INFO', `Order updated with user and payment method`, undefined, { 
-          token, 
-          orderId: contract.rentalId, 
-          userId, 
+        await logError(c, 'INFO', `Order updated with user and payment method`, undefined, {
+          token,
+          orderId: contract.rentalId,
+          userId,
           paymentMethod,
           status: orderStatus
         });
@@ -448,7 +468,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await updateContractStatusInDB(c, contract.id, 'signed', signedAt);
         await logError(c, 'INFO', `Contract signed successfully`, undefined, { token, contractId: contract.id });
 
-        
+
         // 4. 如果有推荐人，计算并记录佣金
         const referrerId = signSession.referrerId as string | null;
         const newUserId = userId;
@@ -463,10 +483,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             const commissionRate = referrer?.commission_rate || 25.0; // 默认25%
             const commissionAmount = (rental.totalAmount * commissionRate) / 100;
 
-            await logError(c, 'INFO', `Calculated commission for referrer`, undefined, { 
-              token, 
-              referrerId, 
-              commissionAmount, 
+            await logError(c, 'INFO', `Calculated commission for referrer`, undefined, {
+              token,
+              referrerId,
+              commissionAmount,
               commissionRate,
               rentalTotal: rental.totalAmount
             });
@@ -477,7 +497,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               INSERT OR IGNORE INTO commission_records (id, referrer_id, rental_id, customer_id, amount, rate, status)
               VALUES (?, ?, ?, ?, ?, ?, 'pending')
             `).bind(commissionId, referrerId, contract.rentalId, newUserId, commissionAmount, commissionRate).run();
-            
+
             // 仅首次创建佣金记录时增加余额，付款重试不会重复计佣。
             if (Number((commissionInsert as any).meta?.changes ?? (commissionInsert as any).changes ?? 0) > 0) {
               await c.env.RENT.prepare(`
@@ -485,16 +505,16 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
                 WHERE id = ?
               `).bind(commissionAmount, referrerId).run();
             }
-            
-            await logError(c, 'INFO', `Commission recorded and referrer balance updated`, undefined, { 
-              token, 
-              commissionId, 
-              referrerId, 
-              commissionAmount 
+
+            await logError(c, 'INFO', `Commission recorded and referrer balance updated`, undefined, {
+              token,
+              commissionId,
+              referrerId,
+              commissionAmount
             });
           }
         }
-        
+
         // 5. 清理会话
         await deleteSignSession(c, token);
         signingCompleted = true;
@@ -503,7 +523,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (guestPassword) {
           const paymentUrl = stripeResponse?.headers.get('Location') || `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
           const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${stripeResponse ? '继续前往 Stripe 支付' : '查看付款结果'}</a></div></div>`
-          return c.html(buildLayout('保存访客登录资料', guestPage))
+          const response = c.html(buildLayout('保存访客登录资料', guestPage))
+          response.headers.append('Set-Cookie', 'contract_sign_draft=; Path=/contract/sign; Max-Age=0; SameSite=Lax')
+          return response
         }
         if (stripeResponse) {
           const headers = new Headers(stripeResponse.headers)
@@ -511,9 +533,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           return new Response(stripeResponse.body, { status: stripeResponse.status, statusText: stripeResponse.statusText, headers })
         }
         redirectUrl = `/payment/result?orderId=${contract.rentalId}`;
-        await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, { 
-          token, 
-          contractId: contract.id, 
+        await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, {
+          token,
+          contractId: contract.id,
           orderId: contract.rentalId,
           redirectUrl
         });
@@ -525,12 +547,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
     }
   } catch (e: any) {
     errorMessage = e.message;
-    await logError(c, 'ERROR', `Error in contract signing process`, e as Error, { 
-      token, 
-      step, 
-      errorMessage 
+    await logError(c, 'ERROR', `Error in contract signing process`, e as Error, {
+      token,
+      step,
+      errorMessage
     });
-    
+
     // 如果出错，重定向回当前步骤并显示错误消息
     const stepToRedirect = (step > 1 && step <= 3) ? step : 1;
     redirectUrl = `/contract/sign?token=${token}&step=${stepToRedirect}&error=${encodeURIComponent(errorMessage || '')}`;

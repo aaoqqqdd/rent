@@ -80,9 +80,15 @@
 
     window.markdownToHtml = function (markdown) {
       if (window.marked && typeof window.marked.parse === 'function') {
-        return window.marked.parse(String(markdown || ''));
+        return window.marked.parse(String(markdown || ''), { breaks: true, gfm: true });
       }
-      return String(markdown || '');
+      if (typeof window.marked === 'function') return window.marked(String(markdown || ''));
+      return String(markdown || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/^### (.*)$/gm, '<h3>$1</h3>').replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')
+        .replace(/^/, '<p>').replace(/$/, '</p>');
     };
 
     window.htmlToMarkdown = function (html) {
@@ -93,7 +99,7 @@
           return String(html || '').replace(/<[^>]+>/g, '');
         }
       }
-      return String(html || '').replace(/<[^>]+>/g, '');
+      return String(html || '').replace(/<[^>]+>/g, '').trim();
     };
 
     (function () {
