@@ -1416,8 +1416,17 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     return db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
   }
 
-  // 应用字段名映射，确保使用数据库中存在的列名
-  const mappedSetEntries = setEntries.map(([k, v]) => [fieldMapping[k] || k, v])
+  const tableInfo = await db.prepare('PRAGMA table_info(users)').all() as any
+  const columns = new Set((tableInfo.results || []).map((column: any) => column.name))
+  const mappedSetEntries = setEntries
+    .map(([key, value]) => {
+      const mappedKey = fieldMapping[key] || key
+      if (columns.has(mappedKey)) return [mappedKey, value]
+      if (columns.has(key)) return [key, value]
+      return null
+    })
+    .filter((entry): entry is [string, any] => Boolean(entry))
+  if (!mappedSetEntries.length) return getUserById(c, userId)
   const setClause = mappedSetEntries.map(([k]) => `${k} = ?`).join(', ')
   const values = mappedSetEntries.map(([, v]) => v)
 
@@ -1510,16 +1519,13 @@ export async function updatePassword(c: Context, userId: string, newPassword: st
 }
 
 export async function bindReferrer(c: Context, userId: string, referrerId: string): Promise<User | null> {
-  // 绑定后不可更改：如果 referrer_id 已存在则不更新
-  const db = getDB(c)
-  await db.prepare('UPDATE users SET referrer_id = ? WHERE id = ? AND referrer_id IS NULL').bind(referrerId, userId).run()
-  return getUserById(c, userId)
+  const user = await getUserById(c, userId)
+  if (!user || user.referrerId) return user
+  return updateUser(c, userId, { referrerId })
 }
 
 export async function unbindReferrer(c: Context, userId: string): Promise<User | null> {
-  const db = getDB(c)
-  await db.prepare('UPDATE users SET referrer_id = NULL WHERE id = ?').bind(userId).run()
-  return getUserById(c, userId)
+  return updateUser(c, userId, { referrerId: null as any })
 }
 
 export async function updateDevice(c: Context, deviceId: string, data: Partial<Device>): Promise<Device | null> {

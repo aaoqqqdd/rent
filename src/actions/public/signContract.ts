@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, buildLayout, canUseAccountBalance
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { createStripeCheckout } from '../stripePayments';
@@ -190,8 +190,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (currentUser) {
           if (existingUser && existingUser.id !== currentUser.id) throw new Error('该邮箱已被其他账户使用，请更换电子邮箱。')
           const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
-          await c.env.RENT.prepare('UPDATE users SET name = ?, email = ?, phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-            .bind(name, email, fullPhone, currentUser.id).run()
+          await updateUser(c, currentUser.id, { name, email, phone: fullPhone })
           await updateSignSession(c, token, { userIdToLink: currentUser.id });
         } else if (existingUser) {
           await logError(c, 'INFO', `Existing user found with email, will link account`, undefined, { token, email, existingUserId: existingUser.id });
@@ -345,7 +344,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           if (contractOwner) {
             const owner = await c.env.RENT.prepare("SELECT id FROM users WHERE id = ? AND role IN ('STAFF', 'ADMIN')").bind(contractOwner).first()
             if (owner) {
-              await c.env.RENT.prepare('UPDATE users SET staff_id = COALESCE(staff_id, ?) WHERE id = ?').bind(contractOwner, userId).run()
+              const linkedUser = await getUserById(c, userId)
+              if (!linkedUser?.staffId) await updateUser(c, userId, { staffId: contractOwner })
             }
           }
         }

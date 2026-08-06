@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, splitPersonName, canUseAccountBalance } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, splitPersonName, canUseAccountBalance } from '../../site';
 import { Context } from 'hono';
 
 export function readContractSignDraft(cookieHeader: string | undefined, token: string): Record<string, string> {
@@ -53,8 +53,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
   userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
   const currentUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null);
-  const canUseBalance = canUseAccountBalance(currentUser)
-  const bankRefundPrefill = getBankRefundPrefill(currentUser)
   if (currentUser) {
     const accountName = splitPersonName(currentUser.name)
     const accountPhone = splitContractPhone(String(currentUser.phone || ''))
@@ -76,6 +74,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   if (!contract) {
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
   }
+
+  const signSession = await getOrCreateSignSession(c, token, contract.signToken || token)
+  const paymentUser = currentUser || (signSession.userIdToLink ? await getUserById(c, signSession.userIdToLink) : null)
+  const canUseBalance = canUseAccountBalance(paymentUser)
+  const bankRefundPrefill = getBankRefundPrefill(paymentUser)
 
 
   // 检查合同是否已过期
@@ -272,8 +275,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ` : ''}
               ${systemSettings.paymentMethods.balancePayment && canUseBalance ? `
               <label class="payment-option">
-                <input type="radio" name="paymentMethod" value="balance" required ${currentUser.balance >= order.totalAmount ? '' : 'disabled'} />
-                <span><strong>账户余额支付</strong><small>当前余额 ${formatCurrency(currentUser.balance || 0)} ${currentUser.balance >= order.totalAmount ? '' : '（余额不足）'}</small></span>
+                <input type="radio" name="paymentMethod" value="balance" required ${Number(paymentUser?.balance || 0) >= order.totalAmount ? '' : 'disabled'} />
+                <span><strong>账户余额支付</strong><small>当前余额 ${formatCurrency(paymentUser?.balance || 0)} ${Number(paymentUser?.balance || 0) >= order.totalAmount ? '' : '（余额不足）'}</small></span>
               </label>
               ` : ''}
             </div>
@@ -281,7 +284,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">2.5%</span></div>
-              <p>选择 Stripe 信用卡支付时，将在租金和押金合计金额上加收由支付提供商收取的手续费。付款由 Stripe 安全处理，本网站不保存信用卡卡号、有效期或安全码。</p>
+              <p>选择 Stripe 信用卡支付时，将在租金和押金合计金额上加收由支付提供商收取的手续费。付款由 Stripe 安全处理，本网站不保存任何信息。</p>
               <dl>
                 <div><dt>订单本金（含押金）</dt><dd>${formatCurrency(order.totalAmount)}</dd></div>
                 <div><dt>Stripe 支付手续费</dt><dd>${formatCurrency(stripeFee)}</dd></div>
@@ -295,7 +298,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${canUseBalance ? `
               <label style="display:block; margin-bottom:10px;"><input type="radio" name="refundMethod" value="balance" checked> 退回账户余额（默认，到账更快）</label>
               <label style="display:block;"><input type="radio" name="refundMethod" value="original"> 原路退回</label>
-              ` : `<input type="hidden" name="refundMethod" value="original"><div class="alert"><strong>退款将原路退回</strong><p>只有已登录的正式客户账户可以选择退款到账户余额；访客及未登录签署者不能使用余额。</p></div>`}
+              ` : `<input type="hidden" name="refundMethod" value="original"><div class="alert"><strong>退款将原路退回</strong><p>只有已登录的正式客户账户可以选择退款到账户余额；访客及未登录签署者不能退回余额。</p></div>`}
               <p class="text-muted">信用卡原路退回 Stripe；银行转账原路退回您填写的银行账户；余额付款仍退回余额。</p>
               <div id="bank-refund-fields" style="display:none; margin-top:14px;">
                 <label class="form-label" for="refundAccountName">账户名</label>
