@@ -757,7 +757,7 @@ export async function updateOrder(c: Context, order: Order): Promise<void> {
       order.paymentMethod ?? null,
       Number(order.totalAmount ?? 0),
       Number(order.depositAmount ?? 0),
-      order.contractId ?? null,
+      order.contractId || null,
       order.id
     )
     .run()

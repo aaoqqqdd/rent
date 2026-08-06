@@ -386,6 +386,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           userId: userId,
           paymentMethod: (paymentMethod === 'stripe' ? 'card' : paymentMethod) as Order['paymentMethod'],
           status: orderStatus,
+          contractId: contract.id,
         });
         await c.env.RENT.prepare(`UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?`)
           .bind(refundMethod, refundMethod === 'original' ? refundBsb || null : null, refundMethod === 'original' ? refundAccountNumber || null : null, refundMethod === 'original' ? refundAccountName || null : null, contract.rentalId).run()
