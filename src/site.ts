@@ -75,6 +75,8 @@ export interface User {
   accountNumber?: string // camelCase兼容前端代码
   balance: number
   status?: 'active' | 'inactive'
+  accountStatus?: 'active' | 'banned' | 'inactive' | 'departed'
+  account_status?: 'active' | 'banned' | 'inactive' | 'departed'
   commissionRate?: number
   referrerId?: string
   referralCode?: string
@@ -327,6 +329,7 @@ function normalizeUserRow(row: any): User {
   const referrerId = row.referrerId ?? row.referrer_id ?? row.referrerId
   const staffId = row.staffId ?? row.staff_id
   const accountType = row.accountType ?? row.account_type ?? 'formal'
+  const accountStatus = row.accountStatus ?? row.account_status ?? (row.status === 'inactive' ? 'inactive' : 'active')
   const guestOrderId = row.guestOrderId ?? row.guest_order_id ?? null
   const guestExpiresAt = row.guestExpiresAt ?? row.guest_expires_at ?? null
   const deletedAt = row.deletedAt ?? row.deleted_at ?? null
@@ -348,6 +351,8 @@ function normalizeUserRow(row: any): User {
     staff_id: staffId,
     accountType,
     account_type: accountType,
+    accountStatus,
+    account_status: accountStatus,
     guestOrderId,
     guest_order_id: guestOrderId,
     guestExpiresAt,
@@ -1112,6 +1117,7 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   const hasStaffIdSnake = await userHasColumn(c, 'staff_id')
   const hasStaffIdCamel = await userHasColumn(c, 'staffId')
   const hasAccountType = await userHasColumn(c, 'account_type')
+  const hasAccountStatus = await userHasColumn(c, 'account_status')
   const hasGuestOrderId = await userHasColumn(c, 'guest_order_id')
   const hasGuestExpiresAt = await userHasColumn(c, 'guest_expires_at')
 
@@ -1174,6 +1180,9 @@ export async function insertUser(c: Context, user: any): Promise<User> {
 
   if (hasAccountType) {
     insertFields.push('account_type'); insertValues.push(user.accountType ?? 'formal')
+  }
+  if (hasAccountStatus) {
+    insertFields.push('account_status'); insertValues.push(user.accountStatus ?? (user.status === 'active' ? 'active' : 'inactive'))
   }
   if (hasGuestOrderId) {
     insertFields.push('guest_order_id'); insertValues.push(user.guestOrderId ?? null)
@@ -1250,6 +1259,7 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     commissionRate: 'commission_rate',
     staffId: 'staff_id',
     accountType: 'account_type',
+    accountStatus: 'account_status',
     guestOrderId: 'guest_order_id',
     guestExpiresAt: 'guest_expires_at',
     deletedAt: 'deleted_at'
@@ -1258,7 +1268,7 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
   const allowedFields = new Set([
     'name', 'email', 'role', 'status', 'balance', 'phone', 'bsb', 'account', 'accountNumber',
     'referralCode', 'referrerId', 'passwordHash', 'passwordSalt', 'commissionBalance',
-    'createdAt', 'updatedAt', 'commissionRate', 'staffId', 'accountType',
+    'createdAt', 'updatedAt', 'commissionRate', 'staffId', 'accountType', 'accountStatus',
     'guestOrderId', 'guestExpiresAt', 'deletedAt',
   ])
   for (const key of Object.keys(fields)) {

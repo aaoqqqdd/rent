@@ -5,6 +5,7 @@
 
 import { buildLayout, getOrders, getDevices, getUsers, formatCurrency } from '../../site';
 import { Context } from 'hono';
+import { renderOrderStatusFeedback } from './orderStatusFeedback';
 
 export const adminOrderStatusMap: Record<string, { text: string; class: string }> = {
   all: { text: '全部', class: 'badge-info' },
@@ -186,7 +187,7 @@ export async function renderAdminOrders(c: Context, user: any) {
         共 ${filteredOrders.length} 条订单
         ${userIdFilter ? ' · 当前查看用户关联订单' : ''}
       </div>
-      <form method="POST" action="/admin/orders/bulk-update">
+      <form id="bulk-order-form" method="POST" action="/admin/orders/bulk-update">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
           <label style="display: inline-flex; align-items: center; gap: 8px; margin: 0;">
             <input type="checkbox" id="select-all-orders" />
@@ -202,6 +203,7 @@ export async function renderAdminOrders(c: Context, user: any) {
           </select>
           <button type="submit" class="button button-primary" style="padding: 8px 16px;">批量更新</button>
         </div>
+      </form>
         <table>
           <thead>
             <tr>
@@ -225,7 +227,7 @@ export async function renderAdminOrders(c: Context, user: any) {
     const createdAt = order.created_at || order.createdAt;
     return `
                 <tr>
-                  <td><input type="checkbox" name="orderIds" value="${order.id}" class="order-checkbox" /></td>
+                  <td><input type="checkbox" name="orderIds" value="${order.id}" class="order-checkbox" form="bulk-order-form" /></td>
                   <td style="font-family: monospace;">${order.id}</td>
                   <td>
                     <div><strong>${order.customer?.name || '未知用户'}</strong></div>
@@ -238,7 +240,7 @@ export async function renderAdminOrders(c: Context, user: any) {
                   <td>${createdAt ? new Date(createdAt).toLocaleDateString('zh-CN') : '-'}</td>
                   <td>
                     <div style="display: flex; flex-direction: column; gap: 8px; min-width: 160px;">
-                      <form method="POST" action="/admin/orders/${order.id}/update" style="display: flex; gap: 8px; align-items: center;">
+                      <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; gap: 8px; align-items: center;">
                         <select name="status" class="form-control" style="min-width: 110px; padding: 6px 10px; font-size: 0.85rem;">
                           <option value="pending_payment" ${order.status === 'pending_payment' ? 'selected' : ''}>待支付</option>
                           <option value="paid" ${order.status === 'paid' ? 'selected' : ''}>已支付</option>
@@ -256,7 +258,6 @@ export async function renderAdminOrders(c: Context, user: any) {
   }).join('')}
           </tbody>
         </table>
-      </form>
       `}
     </div>
   `;
@@ -277,5 +278,5 @@ export async function renderAdminOrders(c: Context, user: any) {
     </script>
   `;
 
-  return buildLayout('订单管理 - 电脑租赁管理系统', body + selectAllScript, user);
+  return buildLayout('订单管理 - 电脑租赁管理系统', body + renderOrderStatusFeedback() + selectAllScript, user);
 }

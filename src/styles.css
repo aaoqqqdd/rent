@@ -833,12 +833,19 @@ tr:hover td { background: #f1f5f8; }
 .inline-form { margin: 0; display: inline-flex; align-items: stretch; }
 .table-actions .button { height: 32px; min-height: 32px; margin: 0; padding: 5px 11px; border-radius: 3px !important; box-shadow: none !important; font-size: .78rem; line-height: 1.25; }
 .contract-list-action { min-width: 72px; }
+.contract-owner-filter { margin: 18px 0 24px; padding: 14px 16px; display: flex; align-items: end; gap: 12px; background: var(--bg-subtle); border: 1px solid var(--border); }
+.contract-owner-filter .form-group { width: min(100%, 320px); margin: 0; }
 .contract-cancel-action { color: var(--danger); background: var(--surface-strong) !important; border-color: #d89999; }
 .contract-cancel-action:hover { color: #fff; background: var(--danger) !important; border-color: var(--danger); }
 .badge-neutral { color: var(--text-secondary); background: var(--bg-subtle); }
 .badge-neutral::before { background: var(--text-tertiary); }
 .action-toast { position: fixed; z-index: 100; right: 22px; bottom: 22px; max-width: min(360px, calc(100vw - 44px)); padding: 12px 16px; color: #fff; background: var(--graphite); border-left: 4px solid var(--success); box-shadow: var(--shadow-lg); font-weight: 600; }
 .action-toast[data-state="error"] { border-left-color: var(--danger); }
+.feedback-dialog { width: min(440px, calc(100vw - 32px)); padding: 28px; color: var(--text-primary); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); text-align: center; }
+.feedback-dialog::backdrop { background: rgba(15, 23, 42, 0.58); backdrop-filter: blur(3px); }
+.feedback-dialog-icon { display: grid; place-items: center; width: 44px; height: 44px; margin: 0 auto 14px; color: #fff; background: var(--danger); border-radius: 50%; font: 700 24px/1 var(--font-mono); }
+.feedback-dialog h3 { margin: 0 0 8px; }
+.feedback-dialog p { margin: 0 0 22px; color: var(--text-secondary); white-space: pre-wrap; }
 
 .delivery-address { margin-top: 28px; padding: 22px; background: var(--bg-subtle); border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 3px; }
 .address-autocomplete { position: relative; z-index: 5; }

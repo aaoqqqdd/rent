@@ -31,7 +31,7 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>合同详情</h2><span class="section-note">合同编号: ${contract.contractNumber}</span></div>
+      <div class="section-title"><div><h2>合同详情</h2><span class="section-note">合同编号: ${contract.contractNumber}</span></div><a class="button button-secondary" href="/admin/contracts">返回上一步</a></div>
 
       <div class="contract-header">
         <h3>合同编号: ${contract.contractNumber}</h3>

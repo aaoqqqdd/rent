@@ -11,6 +11,7 @@ import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
 import { renderAdminContracts } from '../src/pages/admin/contracts'
 import { renderAdminAgreementEditor, renderAdminTemplateHub } from '../src/pages/admin/templates'
 import { renderAdminUserNew } from '../src/pages/admin/userNew'
+import { renderAdminUserEdit } from '../src/pages/admin/userEdit'
 import { renderAdminDeviceNew } from '../src/pages/admin/deviceNew'
 import { renderAdminDeviceEdit } from '../src/pages/admin/deviceEdit'
 import { renderStaffCustomerNew } from '../src/pages/staff/customerNew'
@@ -25,6 +26,7 @@ import { refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts } from 
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
+import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
@@ -280,7 +282,16 @@ test('site layout loads the external stylesheet and resolves template slots', ()
   assert.match(html, /<section id="test-content">内容<\/section>/)
 })
 
-test('user management forms use the shared identity record design', () => {
+test('order status failures stay on the page and use a modal dialog', () => {
+  const html = renderOrderStatusFeedback()
+  assert.match(html, /data-order-status-dialog/)
+  assert.match(html, /\.js-order-status-form/)
+  assert.match(html, /Accept: 'application\/json'/)
+  assert.match(html, /showModal/)
+  assertInlineScriptsParse(html)
+})
+
+test('user management forms use the shared identity record design', async () => {
   const html = renderAdminUserNew({ id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' })
   assert.match(html, /class="identity-strip mono"/)
   assert.match(html, /class="record-form"/)
@@ -300,6 +311,27 @@ test('user management forms use the shared identity record design', () => {
   assert.doesNotMatch(registrationHtml, /name="name"/)
   assert.match(registrationHtml, /minlength="8"/)
   assert.match(registrationHtml, /pattern="\(\?=\.\*\[A-Za-z\]\).*\[0-9\].*\{8,\}"/)
+
+  const rows = [
+    { id: 'customer-1', name: 'Kai Chen', email: 'kai@example.com', role: 'CUSTOMER', status: 'active', account_status: 'active', staff_id: 'staff-1' },
+    { id: 'staff-1', name: 'Alex Wu', email: 'alex@example.com', role: 'STAFF', status: 'active', account_status: 'active' },
+    { id: 'staff-departed', name: 'Former Staff', email: 'former@example.com', role: 'STAFF', status: 'inactive', account_status: 'departed' },
+  ]
+  const context = { env: { RENT: { prepare(sql: string) { return { bind(...values: unknown[]) { return { async first() { return sql.includes('WHERE id = ?') ? rows.find(row => row.id === values[0]) ?? null : null } } }, async all() { return { results: rows } } } } } } } as any
+  const editHtml = await renderAdminUserEdit(context, { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }, 'customer-1')
+  assert.match(editHtml, /name="accountStatus"/)
+  for (const status of ['active', 'banned', 'inactive', 'departed']) assert.match(editHtml, new RegExp(`value="${status}"`))
+  assert.match(editHtml, /name="staffId"/)
+  assert.match(editHtml, /Alex Wu/)
+  assert.doesNotMatch(editHtml, /Former Staff/)
+  assertInlineScriptsParse(editHtml)
+
+  const currentAdminRows = [{ id: 'admin', name: 'Admin User', email: 'admin@example.com', role: 'ADMIN', status: 'active', account_status: 'active' }]
+  const currentAdminContext = { env: { RENT: { prepare(sql: string) { return { bind(...values: unknown[]) { return { async first() { return sql.includes('WHERE id = ?') ? currentAdminRows.find(row => row.id === values[0]) ?? null : null } } }, async all() { return { results: currentAdminRows } } } } } } } as any
+  const currentAdminHtml = await renderAdminUserEdit(currentAdminContext, currentAdminRows[0], 'admin')
+  assert.match(currentAdminHtml, /id="user-role" name="role" disabled/)
+  assert.match(currentAdminHtml, /id="account-status" name="accountStatus" disabled/)
+  assert.match(currentAdminHtml, /当前正在使用的管理员账号不能更改账户状态/)
 })
 
 test('admin device forms edit every field used by staff device search', () => {
@@ -399,6 +431,20 @@ test('staff contract lists exclude contracts created by other employees', async 
   assert.doesNotMatch(html, />签署进度</)
   assert.match(html, /contract-list-action copy-sign-link/)
   assert.match(html, /contract-list-action contract-cancel-action/)
+
+  const adminHtml = await renderStaffContracts({ env: { RENT: db } } as any, { id: 'admin', name: 'Admin', role: 'ADMIN' })
+  assert.match(adminHtml, /OWN-CONTRACT/)
+  assert.match(adminHtml, /OTHER-CONTRACT/)
+  assert.match(adminHtml, /href="\/admin\/templates"/)
+  assert.match(adminHtml, /action="\/admin\/contracts"/)
+
+  const filteredAdminHtml = await renderStaffContracts({ env: { RENT: db } } as any, { id: 'admin', name: 'Admin', role: 'ADMIN' }, undefined, undefined, undefined, undefined, 'staff-1')
+  assert.match(filteredAdminHtml, /id="contract-staff-filter"/)
+  assert.match(filteredAdminHtml, /负责员工/)
+  assert.match(filteredAdminHtml, /员工账户请前往用户管理创建或停用/)
+  assert.match(filteredAdminHtml, /value="staff-1" selected/)
+  assert.match(filteredAdminHtml, /OWN-CONTRACT/)
+  assert.doesNotMatch(filteredAdminHtml, /OTHER-CONTRACT/)
 })
 
 test('terminal contracts hide progress and editing while only finalized contracts can be viewed', async () => {

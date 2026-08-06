@@ -1079,7 +1079,7 @@ app.post('/admin/users/new', async (c) => {
   const status = String(form.status || 'active')
   if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email || !isStrongPassword(password) || !['CUSTOMER', 'STAFF', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user), 400)
   if (await findUserByEmail(c, email)) return c.html(pages.renderAdminUserNew(user), 409)
-  await insertUser(c, { id: `u-${nanoid(10)}`, name, email, password, role, status, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
+  await insertUser(c, { id: `u-${nanoid(10)}`, name, email, password, role, status, accountStatus: status, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
   return c.redirect('/admin/users')
 })
 
@@ -1106,14 +1106,38 @@ app.post('/admin/users/:id/edit', async (c) => {
   }
   const targetUserId = c.req.param('id')
   const form = await c.req.parseBody()
+  const targetUser = await getUserById(c, targetUserId)
+  if (!targetUser) return c.html(renderNotFound(), 404)
+  const role = String(form.role || targetUser.role)
+  const accountStatus = String(form.accountStatus || 'active')
+  const staffId = String(form.staffId || '').trim()
+  if (!['CUSTOMER', 'STAFF', 'ADMIN'].includes(role) || !['active', 'banned', 'inactive', 'departed'].includes(accountStatus)) {
+    return c.html(await pages.renderAdminUserEdit(c, user, targetUserId, '账户角色或状态无效'), 400)
+  }
+  if (accountStatus === 'departed' && role !== 'STAFF') {
+    return c.html(await pages.renderAdminUserEdit(c, user, targetUserId, '“已离职”状态仅适用于员工账户'), 400)
+  }
+  if (targetUserId === user.id && (role !== 'ADMIN' || accountStatus !== 'active')) {
+    return c.html(await pages.renderAdminUserEdit(c, user, targetUserId, '不能停用、封禁或降低当前登录管理员自己的权限'), 400)
+  }
+  if (role === 'CUSTOMER' && staffId) {
+    const assignedStaff = await getUserById(c, staffId)
+    const assignedStatus = assignedStaff?.accountStatus ?? assignedStaff?.account_status ?? (assignedStaff?.status === 'active' ? 'active' : 'inactive')
+    if (!assignedStaff || assignedStaff.role !== 'STAFF' || assignedStaff.status !== 'active' || assignedStatus !== 'active') {
+      return c.html(await pages.renderAdminUserEdit(c, user, targetUserId, '只能绑定用户管理中状态正常的现有员工'), 400)
+    }
+  }
 
   const dataToUpdate: any = {
     name: combinePersonName(form.firstName, form.lastName),
     phone: form.phone?.toString() || '',
     bsb: form.bsb?.toString() || '',
-    account_number: form.account_number?.toString() || '',
+    accountNumber: form.account_number?.toString() || '',
     balance: parseFloat(form.balance?.toString() || '0'),
-    role: form.role?.toString() || 'CUSTOMER'
+    role,
+    accountStatus,
+    status: accountStatus === 'active' ? 'active' : 'inactive',
+    staffId: role === 'CUSTOMER' ? (staffId || null) : null,
   }
 
   if (!dataToUpdate.name || !String(form.firstName || '').trim() || !String(form.lastName || '').trim()) {
@@ -1122,6 +1146,7 @@ app.post('/admin/users/:id/edit', async (c) => {
 
   // 如果提供了密码，更新密码
   if (form.password && form.password.toString().length > 0) {
+    if (!isStrongPassword(form.password.toString())) return c.html(await pages.renderAdminUserEdit(c, user, targetUserId, '新密码至少需要 8 位，并同时包含字母、数字和符号'), 400)
     dataToUpdate.password = form.password.toString()
   }
 
@@ -1254,7 +1279,7 @@ app.get('/admin/contracts', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderStaffContracts(c, user, c.req.query('status'), undefined, undefined, c.req.query('searchTerm')))
+  return c.html(await pages.renderStaffContracts(c, user, c.req.query('status'), undefined, undefined, c.req.query('searchTerm'), c.req.query('staffId')))
 })
 
 
@@ -1305,17 +1330,19 @@ app.get('/admin/orders/:id', async (c) => {
 })
 
 app.post('/admin/orders/:id/update', async (c) => {
+  const wantsJson = c.req.header('accept')?.includes('application/json') || c.req.header('x-requested-with') === 'XMLHttpRequest'
   const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  if (!user || user.role !== 'ADMIN') return wantsJson ? c.json({ ok: false, error: '登录已失效或没有管理员权限' }, 403) : c.html(renderForbidden(), 403)
   const status = String((await c.req.parseBody()).status || '')
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || !['pending_payment', 'paid', 'active', 'completed', 'cancelled'].includes(status) || !canTransitionOrder(order.status, status)) return c.text('不允许的订单状态转换', 409)
+  if (!order || !['pending_payment', 'paid', 'active', 'completed', 'cancelled'].includes(status) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
   if (status === 'completed') {
     const contract = await c.env.RENT.prepare('SELECT contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
-    if (!JSON.parse(contract?.contract_data || '{}').inspection_date) return c.text('完成订单前必须提交归还验机', 409)
+    if (!JSON.parse(contract?.contract_data || '{}').inspection_date) return wantsJson ? c.json({ ok: false, error: '完成订单前必须提交归还验机' }, 409) : c.text('完成订单前必须提交归还验机', 409)
   }
   await updateOrderStatus(c, order.id, status)
   if (status === 'paid') await ensureOrderNumber(c, order.id)
+  if (wantsJson) return c.json({ ok: true })
   return c.redirect(`/admin/orders/${c.req.param('id')}`)
 })
 

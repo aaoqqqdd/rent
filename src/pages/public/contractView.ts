@@ -21,10 +21,11 @@ export async function renderContractView(c: Context, contractId: string, user: a
   const device = order ? await getDeviceById(c, order.deviceId) : null;
   const customer = order ? await getUserById(c, order.userId) : null;
   const renderedContract = renderContractVariables(contract.signed_content || contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order))
+  const returnUrl = user.role === 'ADMIN' ? '/admin/contracts' : user.role === 'STAFF' ? '/staff/contracts' : order ? `/customer/orders/${order.id}` : '/customer/dashboard'
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>租赁合同 #${contract.contractNumber}</h2><span class="section-note">查看合同详情。</span></div>
+      <div class="section-title"><div><h2>租赁合同 #${contract.contractNumber}</h2><span class="section-note">查看合同详情。</span></div><a class="button button-secondary" href="${returnUrl}">返回上一步</a></div>
       <div class="contract-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <p><strong>状态:</strong> ${contract.status}</p>
         <p><strong>签署日期:</strong> ${contract.signedAt ?? '未签署'}</p>

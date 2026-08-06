@@ -18,7 +18,9 @@ export async function renderAdminUsers(user: any, c: any) {
 
   const statusMap: Record<string, { text: string; class: string }> = {
     'active': { text: '正常', class: 'badge-success' },
-    'inactive': { text: '禁用', class: 'badge-danger' }
+    'banned': { text: '已封禁', class: 'badge-danger' },
+    'inactive': { text: '已停用', class: 'badge-neutral' },
+    'departed': { text: '已离职', class: 'badge-warning' }
   };
 
   const body = `
@@ -56,7 +58,8 @@ export async function renderAdminUsers(user: any, c: any) {
         <tbody>
           ${allUsers.map(u => {
             const role = roleMap[u.role] || { text: u.role, class: 'badge-info' };
-            const status = statusMap[u.status || 'active'] || { text: u.status, class: 'badge-info' };
+            const managementStatus = u.accountStatus ?? u.account_status ?? (u.status === 'active' ? 'active' : 'inactive')
+            const status = statusMap[managementStatus] || { text: managementStatus, class: 'badge-info' };
             const personName = splitPersonName(u.name)
             return `
               <tr>

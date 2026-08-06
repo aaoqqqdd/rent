@@ -3,19 +3,25 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContractExpired, isContractFinalized } from '../../site'
+import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContractExpired, isContractFinalized, sanitizePlainText } from '../../site'
 import type { Context } from 'hono'
 
-export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string) {
+export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string, staffId?: string) {
   const isAdmin = user.role === 'ADMIN'
   const basePath = isAdmin ? '/admin/contracts' : '/staff/contracts'
   let [allContracts, allOrders, allUsers, allDevices] = await Promise.all([getAllContracts(c), getOrders(c), getUsers(c), getDevices(c)])
   const ordersById = new Map(allOrders.map(order => [order.id, order]))
   const usersById = new Map(allUsers.map(account => [account.id, account]))
   const devicesById = new Map(allDevices.map(device => [device.id, device]))
+  const staffAccounts = allUsers.filter(account => account.role === 'STAFF' && (!account.status || account.status === 'active') && (account.accountStatus ?? account.account_status ?? 'active') === 'active')
+  const selectedStaffId = isAdmin && staffAccounts.some(account => account.id === staffId) ? staffId : undefined
+  const ownerOnlyQuery = selectedStaffId ? `?staffId=${encodeURIComponent(selectedStaffId)}` : ''
+  const ownerQuery = selectedStaffId ? `&staffId=${encodeURIComponent(selectedStaffId)}` : ''
   if (user.role !== 'ADMIN') allContracts = allContracts.filter(contract => (contract.createdBy || contract.created_by) === user.id)
+  if (selectedStaffId) allContracts = allContracts.filter(contract => (contract.createdBy || contract.created_by) === selectedStaffId)
   const visibleOrderIds = new Set(allContracts.map(contract => contract.rentalId))
-  const visibleOrders = user.role === 'ADMIN' ? allOrders : allOrders.filter(order => visibleOrderIds.has(order.id))
+  const visibleOrders = user.role === 'ADMIN' && !selectedStaffId ? allOrders : allOrders.filter(order => visibleOrderIds.has(order.id))
+  const escapeAttribute = (value: unknown) => sanitizePlainText(value, 200).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
   const contractStatuses = ['pending_sign', 'signed', 'cancelled', 'completed', 'expired']
   const rentalStatuses = ['active', 'pending_pickup', 'pending_return', 'completed', 'cancelled']
@@ -73,15 +79,17 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       ${successMessage ? `<div class="alert alert-success">${successMessage}</div>` : ''}
       ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
 
+      ${isAdmin ? `<form class="contract-owner-filter" action="${basePath}" method="get"><div class="form-group"><label class="form-label" for="contract-staff-filter">负责员工</label><select class="form-control" id="contract-staff-filter" name="staffId" onchange="this.form.submit()"><option value="">全部现有员工</option>${staffAccounts.map(account => `<option value="${escapeAttribute(account.id)}" ${selectedStaffId === account.id ? 'selected' : ''}>${escapeAttribute(account.name || account.email || account.id)}</option>`).join('')}</select><small class="form-text">员工账户请前往用户管理创建或停用。</small></div>${status ? `<input type="hidden" name="status" value="${escapeAttribute(status)}">` : ''}${searchTerm ? `<input type="hidden" name="searchTerm" value="${escapeAttribute(searchTerm)}">` : ''}</form>` : ''}
+
       <!-- 统一的筛选按钮 - 包含合同和租赁状态 -->
       <div class="subsection-heading"><div><p class="section-code">CONTRACTS</p><h3>合同管理</h3></div></div>
       <div class="filter-tabs">
-        <a href="${basePath}" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
-        <a href="${basePath}?status=pending_sign" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
-        <a href="${basePath}?status=signed" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
-        <a href="${basePath}?status=expired" class="button ${status === 'expired' ? 'button-primary' : 'button-secondary'}">已过期</a>
-        <a href="${basePath}?status=cancelled" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
-        <a href="${basePath}?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
+        <a href="${basePath}${ownerOnlyQuery}" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部合同</a>
+        <a href="${basePath}?status=pending_sign${ownerQuery}" class="button ${status === 'pending_sign' ? 'button-primary' : 'button-secondary'}">待签署</a>
+        <a href="${basePath}?status=signed${ownerQuery}" class="button ${status === 'signed' ? 'button-primary' : 'button-secondary'}">已签署</a>
+        <a href="${basePath}?status=expired${ownerQuery}" class="button ${status === 'expired' ? 'button-primary' : 'button-secondary'}">已过期</a>
+        <a href="${basePath}?status=cancelled${ownerQuery}" class="button ${status === 'cancelled' ? 'button-primary' : 'button-secondary'}">已取消</a>
+        <a href="${basePath}?status=completed${ownerQuery}" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
       </div>
       
       <!-- 搜索功能 -->
@@ -89,6 +97,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         <form action="${basePath}" method="GET" class="search-form">
           <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" />
           ${status ? `<input type="hidden" name="status" value="${status}" />` : ''}
+          ${selectedStaffId ? `<input type="hidden" name="staffId" value="${escapeAttribute(selectedStaffId)}" />` : ''}
           <button type="submit" class="button button-primary">搜索</button>
         </form>
       </div>
@@ -102,7 +111,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
               <th>合同编号</th>
               <th>订单编号</th>
               <th>客户</th>
-              ${user.role === 'ADMIN' ? '<th>创建员工</th>' : ''}
+              ${user.role === 'ADMIN' ? '<th>负责员工</th>' : ''}
               <th>状态</th>
               <th>签署日期</th>
               <th>操作</th>
@@ -153,11 +162,11 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
       <div class="subsection-heading subsection-heading-spaced"><div><p class="section-code">RENTALS</p><h3>租赁管理</h3></div></div>
 
       <div class="filter-tabs">
-        <a href="${basePath}" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部租赁</a>
-        <a href="${basePath}?status=active" class="button ${status === 'active' ? 'button-primary' : 'button-secondary'}">当前租赁中</a>
-        <a href="${basePath}?status=pending_pickup" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
-        <a href="${basePath}?status=pending_return" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
-        <a href="${basePath}?status=completed" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
+        <a href="${basePath}${ownerOnlyQuery}" class="button ${!status ? 'button-primary' : 'button-secondary'}">全部租赁</a>
+        <a href="${basePath}?status=active${ownerQuery}" class="button ${status === 'active' ? 'button-primary' : 'button-secondary'}">当前租赁中</a>
+        <a href="${basePath}?status=pending_pickup${ownerQuery}" class="button ${status === 'pending_pickup' ? 'button-primary' : 'button-secondary'}">待拿取</a>
+        <a href="${basePath}?status=pending_return${ownerQuery}" class="button ${status === 'pending_return' ? 'button-primary' : 'button-secondary'}">待归还</a>
+        <a href="${basePath}?status=completed${ownerQuery}" class="button ${status === 'completed' ? 'button-primary' : 'button-secondary'}">已完成</a>
       </div>
       
       <!-- 搜索功能 -->
@@ -165,6 +174,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         <form action="${basePath}" method="GET" class="search-form">
           <input type="text" name="searchTerm" class="form-control" placeholder="搜索合同编号、订单编号、客户姓名/邮箱/电话..." value="${searchTerm || ''}" />
           ${status ? `<input type="hidden" name="status" value="${status}" />` : ''}
+          ${selectedStaffId ? `<input type="hidden" name="staffId" value="${escapeAttribute(selectedStaffId)}" />` : ''}
           <button type="submit" class="button button-primary">搜索</button>
         </form>
       </div>

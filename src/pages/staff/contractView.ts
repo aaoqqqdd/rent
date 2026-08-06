@@ -37,7 +37,7 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>合同详情</h2><span class="section-note">订单号: ${order.orderNo}</span></div>
+      <div class="section-title"><div><h2>合同详情</h2><span class="section-note">订单号: ${order.orderNo}</span></div><a class="button button-secondary" href="${user.role === 'ADMIN' ? '/admin/contracts' : '/staff/contracts'}">返回上一步</a></div>
 
       <div class="contract-header">
         <h3>合同编号: ${contract.contractNumber}</h3>
