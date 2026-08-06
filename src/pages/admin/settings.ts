@@ -102,15 +102,21 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
           <label for="emailTemplate">邮件通知模板</label>
           <details class="variable-index"><summary>完整邮件变量索引（${emailVariables.length} 项）</summary>${emailVariableIndex}</details>
           <input type="hidden" id="emailTemplateKind" name="kind" value="email">
-          <div class="editor-mode-toggle" style="margin-bottom:12px;">
+          <div class="editor-mode-toggle">
             <button type="button" id="emailTemplateModeHtml" class="active">可视编辑</button>
             <button type="button" id="emailTemplateModeMd">Markdown</button>
           </div>
-          <div id="emailTemplateEditor" style="height: 150px;"></div>
+          <div class="editor-card">
+            <div class="editor-toolbar-placeholder"></div>
+            <div id="emailTemplateEditor" class="quill-editor"></div>
+          </div>
           <textarea id="emailTemplateMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
           <textarea id="emailTemplate" name="emailTemplate" style="display:none;"></textarea>
-          <button type="button" id="emailTemplatePreviewButton" class="button button-secondary" style="margin-top: 16px;">预览变量替换</button>
-          <div id="emailTemplatePreview" class="template-preview" style="margin-top: 16px; border:1px solid #d1d5db; padding:16px; border-radius:8px; background:#fff; min-height: 120px;"></div>
+          <div class="template-controls">
+            <button type="button" id="emailTemplatePreviewButton" class="button button-secondary">预览变量替换</button>
+            <span class="section-note">预览当前邮件模板并替换示例变量。</span>
+          </div>
+          <div id="emailTemplatePreview" class="template-preview"></div>
         </div>
 
         <div class="form-group">
@@ -128,7 +134,9 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
           <input type="number" id="referralSettlementPeriod" name="referralSettlementPeriod" class="form-control" value="${settings.referralSettings.settlementPeriod}" min="1">
         </div>
 
-        <button type="submit" class="button button-primary">保存设置</button>
+        <div class="form-actions form-actions-right">
+          <button type="submit" class="button button-primary">保存设置</button>
+        </div>
       </form>
     </div>
 

@@ -49,27 +49,37 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
   const body = `
     <div class="panel template-editor-page">
       <div class="section-title template-editor-heading">
-        <div><a class="breadcrumb-link" href="/admin/templates">← 返回协议与模板</a><h2>${title}</h2><p class="section-note">${description}</p></div>
+        <div>
+          <a class="breadcrumb-link" href="/admin/templates">← 返回协议与模板</a>
+          <h2>${title}</h2>
+          <p class="section-note">${description}</p>
+        </div>
       </div>
-      <form id="agreementTemplateForm" data-kind="${kind}">
+      <form id="agreementTemplateForm" data-kind="${kind}" class="editor-layout-form">
         <input type="hidden" id="agreementKind" name="kind" value="${kind}">
         ${variableIndex}
         <div class="form-group">
           <label for="agreementContentEditor">协议内容</label>
-          <div class="editor-mode-toggle" style="margin-bottom:12px;">
+          <div class="editor-mode-toggle">
             <button type="button" id="agreementModeHtml" class="active">可视编辑</button>
             <button type="button" id="agreementModeMd">Markdown</button>
           </div>
-          <div id="agreementContentEditor" class="quill-editor template-rich-editor"></div>
+          <div class="editor-card">
+            <div class="editor-toolbar-placeholder"></div>
+            <div id="agreementContentEditor" class="quill-editor template-rich-editor"></div>
+          </div>
           <textarea id="agreementContentMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
           <textarea id="agreementContent" name="content" hidden></textarea>
         </div>
-        <button type="button" id="agreementPreviewButton" class="button button-secondary">预览变量效果</button>
-        <div id="agreementPreview" class="template-preview" style="margin-top: 16px; border:1px solid #d1d5db; padding:16px; border-radius:8px; background:#fff; min-height: 140px;"></div>
+        <div class="template-controls">
+          <button type="button" id="agreementPreviewButton" class="button button-secondary">预览变量效果</button>
+          <span class="section-note">点击后将通过示例数据渲染当前内容。</span>
+        </div>
+        <div id="agreementPreview" class="template-preview"></div>
         <div id="templateSaveStatus" class="template-save-status" role="status" aria-live="polite"></div>
-        <div class="form-actions">
-          <button type="submit" class="button button-primary">保存${title.replace('编辑', '')}</button>
+        <div class="form-actions form-actions-right">
           <a href="/admin/templates" class="button button-secondary">取消</a>
+          <button type="submit" class="button button-primary">保存${title.replace('编辑', '')}</button>
         </div>
       </form>
     </div>

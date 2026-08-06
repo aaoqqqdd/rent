@@ -41,21 +41,26 @@ export async function renderAdminContracts(c: Context, user: any) {
             <div class="form-group">
               <details class="variable-index" open><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${completeVariableIndex}</details>
               <label for="templateContentEditor">模板内容</label>
-              <div class="editor-mode-toggle" style="margin-bottom:12px;">
+              <div class="editor-mode-toggle">
                 <button type="button" id="templateModeHtml" class="active">可视编辑</button>
                 <button type="button" id="templateModeMd">Markdown</button>
               </div>
-              <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;"></div>
+              <div class="editor-card">
+                <div class="editor-toolbar-placeholder"></div>
+                <div id="templateContentEditor" class="quill-editor"></div>
+              </div>
               <textarea id="templateContentMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
               <input type="hidden" id="templateContent" name="templateContent" value="${safeTemplateContent}">
               <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们；也可以通过编辑器里的“分页”按钮插入分页符。</small>
             </div>
-            <div style="display:flex; gap:12px; align-items:center; margin-bottom: 16px;">
+            <div class="template-controls">
               <button type="button" id="contractTemplatePreviewButton" class="button button-secondary">预览变量效果</button>
               <span class="section-note">点击预览当前模板在示例订单中的变量替换效果。</span>
             </div>
-            <div id="contractTemplatePreview" class="template-preview" style="margin-bottom: 16px; border:1px solid #d1d5db; padding:16px; border-radius:8px; background:#fff; min-height:160px;"></div>
-            <button type="submit" class="button button-primary">保存模板</button>
+            <div id="contractTemplatePreview" class="template-preview"></div>
+            <div class="form-actions form-actions-right">
+              <button type="submit" class="button button-primary">保存模板</button>
+            </div>
           </form>
         </div>
 

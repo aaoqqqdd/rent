@@ -35,7 +35,13 @@
   <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.min.js"></script>
   <script>
     window.createRichTextEditor = function (selector, options) {
-      if (window.Quill) return new window.Quill(selector, options);
+      if (window.Quill) {
+        try {
+          return new window.Quill(selector, options);
+        } catch (error) {
+          console.error('Quill initialization failed, falling back to contentEditable:', error);
+        }
+      }
       const root = document.querySelector(selector);
       if (!root) throw new Error('Rich text editor element not found: ' + selector);
       root.contentEditable = 'true';
