@@ -270,6 +270,13 @@ export async function generateReferralCode(length: number = 6): Promise<string> 
   return nanoid();
 }
 
+export function generateUserId(role: 'ADMIN' | 'STAFF' | 'CUSTOMER', accountType: 'formal' | 'guest' = 'formal'): string {
+  const prefix = accountType === 'guest' ? 'VS' : role === 'ADMIN' ? 'AD' : role === 'STAFF' ? 'ST' : 'US'
+  const bytes = new Uint8Array(8)
+  crypto.getRandomValues(bytes)
+  return `${prefix}-${Array.from(bytes, byte => String(byte % 10)).join('')}`
+}
+
 export async function hashPassword(password: string): Promise<string> {
   const iterations = PBKDF2_ITERATIONS
   const salt = generateSalt()
@@ -778,9 +785,25 @@ export async function updateOrder(c: Context, order: Order): Promise<void> {
 
 // Compatibility aliases expected by legacy code
 export async function updateOrderInDB(c: Context, orderId: string, data: Partial<Order>): Promise<void> {
-  const existing = await getOrderById(c, orderId)
+  const fields: Array<[string, unknown]> = [
+    ['orderNo', data.orderNo],
+    ['userId', data.userId],
+    ['deviceId', data.deviceId],
+    ['startDate', data.startDate],
+    ['endDate', data.endDate],
+    ['status', data.status],
+    ['paymentMethod', data.paymentMethod],
+    ['totalAmount', data.totalAmount],
+    ['depositAmount', data.depositAmount],
+    ['contractId', data.contractId],
+  ]
+  const updates = fields.filter(([, value]) => value !== undefined)
+  if (!updates.length) return
+  const existing = await c.env.RENT.prepare('SELECT id FROM orders WHERE id = ?').bind(orderId).first()
   if (!existing) return
-  await updateOrder(c, { ...existing, ...data, id: orderId } as Order)
+  await c.env.RENT.prepare(`UPDATE orders SET ${updates.map(([field]) => `${field} = ?`).join(', ')} WHERE id = ?`)
+    .bind(...updates.map(([, value]) => value), orderId)
+    .run()
 }
 
 

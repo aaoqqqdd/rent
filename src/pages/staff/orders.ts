@@ -35,7 +35,7 @@ export async function renderStaffOrders(c: Context, user: any, searchTerm: strin
           ${filteredOrders.map((order) => {
             const customer = usersData.find(u => u.id === order.userId);
             const device = devicesData.find(d => d.id === order.deviceId);
-            return `<tr><td>${order.orderNo || '<span class="text-muted">付款后生成</span>'}</td><td>${customer?.name ?? 'N/A'}</td><td>${device?.name ?? 'N/A'}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">查看</a></td></tr>`;
+            return `<tr><td>${order.orderNo || '<span class="text-muted">付款后生成</span>'}</td><td>${customer?.name ?? 'N/A'}${customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</td><td>${device?.name ?? 'N/A'}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">查看</a></td></tr>`;
           }).join('')}
         </tbody></table>
       </div>

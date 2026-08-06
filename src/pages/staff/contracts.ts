@@ -131,7 +131,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                 <tr>
                   <td>${contract.contractNumber}</td>
                   <td>${order?.orderNo ?? '付款后生成'}</td>
-                  <td>${customer?.name ?? '未知客户'}</td>
+                  <td>${customer?.name ?? '未知客户'}${customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</td>
                   ${user.role === 'ADMIN' ? `<td>${usersById.get(contract.createdBy || contract.created_by || '')?.name || '未知'}</td>` : ''}
                   <td><span class="badge ${statusClass}">${statusLabel}</span>${showSigningProgress ? '<div class="inline-signing-progress"><span aria-hidden="true"></span><strong>等待客户签署</strong></div>' : ''}</td>
                   <td>${signedAtText}</td>
