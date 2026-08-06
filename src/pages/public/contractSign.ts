@@ -225,7 +225,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 summary.hidden = valid; return valid;
               };
               const accountChoice = document.getElementById('createAccountCheckbox');
-              const updateAccountFields = () => { const fields = document.getElementById('passwordFields'); const formal = Boolean(accountChoice?.checked); if (!fields) return; fields.hidden = !formal; fields.querySelectorAll('input').forEach(input => input.required = formal); };
+              const updateAccountFields = () => { const fields = document.getElementById('passwordFields'); const formal = Boolean(accountChoice?.checked); if (!fields) return; fields.hidden = !formal; fields.querySelectorAll('input').forEach(input => { input.required = formal; input.disabled = !formal; if (!formal) input.value = ''; }); };
               const saveDraft = () => {
                 const draft = { token: ${JSON.stringify(token).replace(/</g, '\\u003c')}, firstName: document.getElementById('firstName')?.value || '', lastName: document.getElementById('lastName')?.value || '', email: document.getElementById('email')?.value || '', phoneCode: document.getElementById('phoneCode')?.value || '', phone: document.getElementById('phone')?.value || '', referrer: document.getElementById('referrer')?.value || '', createAccount: String(Boolean(accountChoice?.checked)) };
                 document.cookie = 'contract_sign_draft=' + encodeURIComponent(JSON.stringify(draft)) + '; Path=/contract/sign; Max-Age=604800; SameSite=Lax' + (location.protocol === 'https:' ? '; Secure' : '');

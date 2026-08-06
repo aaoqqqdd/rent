@@ -14,7 +14,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
   const visibleOrderIds = new Set(visibleContracts.map(contract => contract.rentalId))
   const visibleOrders = user.role === 'ADMIN' ? allOrders : allOrders.filter(order => visibleOrderIds.has(order.id))
 
-  const rentalStatuses = ['pending_pickup', 'pending_return', 'active', 'paid', 'approved']
+  const rentalStatuses = ['draft', 'pending_approval', 'approved', 'pending_payment', 'paid', 'active', 'pending_pickup', 'pending_return']
   const allStatuses = [...rentalStatuses, 'completed', 'cancelled', 'expiring']
   
   // 根据URL参数筛选订单
@@ -97,12 +97,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
               .map((order: any) => {
                 const contract = visibleContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
                 const hasSignedContract = contract?.status === 'signed'
-                const statusText = order.status === 'pending_pickup' ? '待拿取' : 
-                                  order.status === 'pending_return' ? '待归还' : 
-                                  order.status === 'active' ? '当前租赁中' : 
-                                  order.status === 'completed' ? '已完成' : 
-                                  order.status === 'cancelled' ? '已取消' : 
-                                  order.status;
+                const statusText: Record<string, string> = { draft: '草稿', pending_approval: '待审核', approved: '待付款', pending_payment: '待付款', paid: '已付款', active: '当前租赁中', pending_pickup: '待拿取', pending_return: '待归还', completed: '已完成', cancelled: '已取消' };
                 const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
                 const actionButton = (() => {
                   // 合同已签署
@@ -128,7 +123,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
                   <td>${contract?.contractNumber ?? '—'}</td>
                   <td>${order.orderNo}</td>
                   <td>${order.customer?.name ?? '待客户填写'}</td>
-                  <td>${statusText}</td>
+                  <td>${statusText[order.status] ?? order.status ?? '未知状态'}</td>
                   <td>${order.startDate ?? '—'}</td>
                   <td>${order.endDate ?? '—'}</td>
                   <td>${rentalDays}</td>

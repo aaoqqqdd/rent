@@ -358,6 +358,11 @@
   padding: 0;
 }
 
+/* Utility attributes must win over layout helpers such as .grid. */
+[hidden] {
+  display: none !important;
+}
+
 html {
   font-size: 15px;
 }
@@ -2306,11 +2311,7 @@ tr:hover td {
   }
 
   .main-nav {
-    order: 3;
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 6px;
+    display: none;
   }
 
   .main-nav a {
@@ -2465,6 +2466,62 @@ tr:hover td {
   td {
     padding: 10px 11px;
   }
+}
+
+/* Final responsive/editor overrides: keep the compact header and Quill popovers in-flow. */
+@media (max-width: 980px) {
+  header {
+    width: 100%;
+    min-height: 62px;
+    overflow: hidden;
+  }
+
+  .logo-copy {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .editor-card .ql-toolbar.ql-snow {
+    position: relative;
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+
+  .editor-card .ql-toolbar.ql-snow .ql-formats {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
+.editor-card .ql-toolbar.ql-snow .ql-picker {
+  position: relative;
+}
+
+.editor-card .ql-toolbar.ql-snow .ql-picker-options {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  display: none;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 32px));
+  max-height: 280px;
+  overflow: auto;
+  margin-top: 4px;
+  padding: 8px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #d7dee7);
+  box-shadow: var(--shadow-lg, 0 12px 28px rgba(15, 23, 42, .14));
+}
+
+.editor-card .ql-toolbar.ql-snow .ql-picker.ql-expanded .ql-picker-options {
+  display: block;
+}
+
+.editor-card .ql-toolbar.ql-snow .ql-color-picker .ql-picker-options,
+.editor-card .ql-toolbar.ql-snow .ql-background .ql-picker-options {
+  width: 152px;
+  white-space: normal;
 }
 
 @media (prefers-reduced-motion: reduce) {

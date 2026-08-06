@@ -10,7 +10,11 @@ export async function renderCustomerRentals(c: Context, user: any) {
   const rentals = await getOrdersForUser(c, user.id);
 
   const statusMap: Record<string, string> = {
+    'pending_approval': '待审核',
+    'approved': '待付款',
     'pending_payment': '待支付',
+    'pending_pickup': '待取件',
+    'pending_return': '待归还',
     'paid': '已支付',
     'active': '租赁中',
     'completed': '已完成',
@@ -38,13 +42,13 @@ export async function renderCustomerRentals(c: Context, user: any) {
           </thead>
           <tbody>
             ${await Promise.all(rentals.filter(r => r.status === 'active').map(async (rental: any) => {
-              const device = await getDeviceById(c, rental.device_id || rental.deviceId);
+              const device = await getDeviceById(c, rental.deviceId ?? rental.device_id);
               return `
                 <tr>
                   <td><strong>${device?.name ?? '未知设备'}</strong></td>
-                  <td>${rental.start_date || rental.startDate} 至 ${rental.end_date || rental.endDate}</td>
-                  <td>${formatCurrency((device?.price_per_day || device?.pricePerDay) ?? 0)}</td>
-                  <td>${formatCurrency(rental.deposit_amount || rental.depositAmount)}</td>
+                  <td>${rental.startDate ?? rental.start_date ?? '—'} 至 ${rental.endDate ?? rental.end_date ?? '—'}</td>
+                  <td>${formatCurrency(device?.pricePerDay ?? device?.price_per_day ?? 0)}</td>
+                  <td>${formatCurrency(rental.depositAmount ?? rental.deposit_amount ?? 0)}</td>
                   <td><span class="badge badge-primary">${statusMap[rental.status] || rental.status}</span></td>
                 </tr>
               `;
@@ -67,12 +71,12 @@ export async function renderCustomerRentals(c: Context, user: any) {
           </thead>
           <tbody>
             ${await Promise.all(rentals.filter(r => r.status !== 'active').map(async (rental: any) => {
-              const device = await getDeviceById(c, rental.device_id || rental.deviceId);
+              const device = await getDeviceById(c, rental.deviceId ?? rental.device_id);
               return `
                 <tr>
                   <td><strong>${device?.name ?? '未知设备'}</strong></td>
-                  <td>${rental.start_date || rental.startDate} 至 ${rental.end_date || rental.endDate}</td>
-                  <td>${formatCurrency(rental.total_amount || rental.totalAmount)}</td>
+                  <td>${rental.startDate ?? rental.start_date ?? '—'} 至 ${rental.endDate ?? rental.end_date ?? '—'}</td>
+                  <td>${formatCurrency(rental.totalAmount ?? rental.total_amount ?? 0)}</td>
                   <td><span class="badge badge-info">${statusMap[rental.status] || rental.status}</span></td>
                   <td><a class="link-button" href="/customer/orders/${rental.id}">查看详情</a></td>
                 </tr>

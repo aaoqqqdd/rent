@@ -778,7 +778,8 @@ app.post('/staff/contracts/:id/data', async (c) => {
   const form = parseFormBody(await c.req.text())
   const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
   const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
-  const submitted = Object.entries(form).filter(([name]) => allowed.has(name as any) && (contract.status !== 'signed' || !CONTRACT_SIGNED_FIELDS.has(name))).map(([name, value]) => [name, String(value).trim().slice(0, 4000)])
+  // 已签署字段直接忽略，不报错；签署记录始终保持原值。
+  const submitted = Object.entries(form).filter(([name]) => allowed.has(name as any) && !(contract.status === 'signed' && CONTRACT_SIGNED_FIELDS.has(name))).map(([name, value]) => [name, String(value).trim().slice(0, 4000)])
   const submittedData = Object.fromEntries(submitted)
   if (submittedData.damage_photos) {
     try { submittedData.damage_photos = validateHostedImageUrls(submittedData.damage_photos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
@@ -1322,7 +1323,8 @@ app.post('/admin/contracts/:id/data', async (c) => {
   const form = parseFormBody(await c.req.text())
   const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
   const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
-  const submitted = Object.entries(form).filter(([name]) => allowed.has(name as any) && (contract.status !== 'signed' || !CONTRACT_SIGNED_FIELDS.has(name))).map(([name, value]) => [name, String(value).trim().slice(0, 4000)])
+  // 已签署字段直接忽略，不报错；签署记录始终保持原值。
+  const submitted = Object.entries(form).filter(([name]) => allowed.has(name as any) && !(contract.status === 'signed' && CONTRACT_SIGNED_FIELDS.has(name))).map(([name, value]) => [name, String(value).trim().slice(0, 4000)])
   const submittedData = Object.fromEntries(submitted)
   if (submittedData.damage_photos) {
     try { submittedData.damage_photos = validateHostedImageUrls(submittedData.damage_photos).join('\n') } catch (error: any) { return c.text(error.message, 400) }

@@ -77,8 +77,8 @@ test('session lookup loads the complete user without schema probes', async () =>
 test('guest passwords are strong and generated independently', () => {
   const first = generateTemporaryPassword()
   const second = generateTemporaryPassword()
-  assert.equal(isStrongPassword(first), true)
-  assert.equal(isStrongPassword(second), true)
+  assert.match(first, /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d]{8}$/)
+  assert.match(second, /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d]{8}$/)
   assert.notEqual(first, second)
 })
 

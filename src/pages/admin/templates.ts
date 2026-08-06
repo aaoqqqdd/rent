@@ -91,8 +91,8 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           theme: 'snow',
           modules: {
             toolbar: [
-              [{ font: [] }, { size: ['small', false, 'large', 'huge'] }, 'bold', 'italic', 'underline', 'strike', { color: [] }, { background: [] }],
-              [{ header: [1, 2, 3, false] }, { list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }, { align: [] }, 'blockquote', 'link', 'clean']
+              [{ header: [1, 2, 3, false] }, { size: ['small', false, 'large', 'huge'] }, 'bold', 'italic', 'underline', 'strike'],
+              [{ list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }, { align: [] }, 'blockquote', 'link', { color: [] }, { background: [] }, 'clean']
             ]
           }
         });

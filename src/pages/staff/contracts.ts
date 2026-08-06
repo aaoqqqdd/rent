@@ -24,7 +24,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
   const escapeAttribute = (value: unknown) => sanitizePlainText(value, 200).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
   const contractStatuses = ['pending_sign', 'signed', 'cancelled', 'completed', 'expired']
-  const rentalStatuses = ['active', 'pending_pickup', 'pending_return', 'completed', 'cancelled']
+  const rentalStatuses = ['draft', 'pending_approval', 'approved', 'pending_payment', 'paid', 'active', 'pending_pickup', 'pending_return', 'completed', 'cancelled']
 
   if (status && contractStatuses.includes(status)) {
     allContracts = allContracts.filter((ct) => status === 'expired' ? isContractExpired(ct) : ct.status === status && !isContractExpired(ct))
@@ -34,7 +34,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
   if (status && rentalStatuses.includes(status)) {
     filteredOrders = visibleOrders.filter((r: any) => r.status === status)
   } else if (!status) {
-    filteredOrders = visibleOrders.filter((r: any) => ['active', 'pending_pickup', 'pending_return'].includes(r.status))
+    filteredOrders = visibleOrders.filter((r: any) => !['cancelled'].includes(r.status))
   }
 
   if (searchTerm && searchTerm.trim()) {
@@ -125,7 +125,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           const statusClass = expired ? 'badge-danger' : contract.status === 'signed' ? 'badge-success' : contract.status === 'cancelled' ? 'badge-neutral' : 'badge-warning'
           const signedAtText = contract.signedAt ? contract.signedAt : (expired ? '签署期限已过' : contract.status === 'cancelled' ? '已取消' : '未签署')
           const showSigningProgress = contract.status === 'pending_sign' && !expired
-          const canEditData = !expired && !['completed', 'cancelled'].includes(contract.status)
+          const canEditData = !expired && !['signed', 'completed', 'cancelled'].includes(contract.status)
           const canViewContract = isContractFinalized(contract)
           return `
                 <tr>
@@ -137,7 +137,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                   <td>${signedAtText}</td>
                   <td><div class="table-actions">
                     ${canViewContract ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>` : ''}
-                    ${canEditData ? `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/contracts/${contract.id}/data` : `/staff/contracts/${contract.id}/data`}">编辑资料</a>` : ''}
+                    ${canEditData ? `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/contracts/${contract.id}/data` : `/staff/contracts/${contract.id}/data`}">编辑资料</a>` : contract.status === 'signed' ? '<span class="section-note">电子签约记录已锁定</span>' : ''}
                     ${contract.status === 'pending_sign' && !expired
               ? `
                           <button type="button" class="button button-sm button-secondary contract-list-action copy-sign-link" data-sign-token="${contract.signToken}">复制链接</button>
@@ -197,10 +197,10 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         .map((order: any) => {
           const contract = allContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
           const hasSignedContract = contract?.status === 'signed'
-          const statusText = order.status === 'pending_pickup' ? '待拿取' : order.status === 'pending_return' ? '待归还' : order.status === 'active' ? '当前租赁中' : order.status === 'completed' ? '已完成' : order.status === 'cancelled' ? '已取消' : order.status
+          const statusText: Record<string, string> = { draft: '草稿', pending_approval: '待审核', approved: '待付款', pending_payment: '待付款', paid: '已付款', active: '当前租赁中', pending_pickup: '待拿取', pending_return: '待归还', completed: '已完成', cancelled: '已取消' }
           const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
           const actionButton = hasSignedContract
-            ? `<a class="button button-sm button-primary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待拿取</a>`
+            ? `<a class="button button-sm button-primary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">${order.status === 'pending_pickup' ? '待拿取' : order.status === 'pending_return' ? '待归还' : '查看租赁'}</a>`
             : order.status === 'active' || order.status === 'pending_return'
               ? `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`
               : `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待归还</a>`
@@ -209,7 +209,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                   <td>${contract?.contractNumber ?? '—'}</td>
                   <td>${order.orderNo || '付款后生成'}</td>
                   <td>${order.customer?.name ?? '待客户填写'}</td>
-                  <td>${statusText}</td>
+                  <td>${statusText[order.status] ?? order.status ?? '未知状态'}</td>
                   <td>${order.startDate ?? '—'}</td>
                   <td>${order.endDate ?? '—'}</td>
                   <td>${rentalDays}</td>

@@ -386,7 +386,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           userId: userId,
           paymentMethod: (paymentMethod === 'stripe' ? 'card' : paymentMethod) as Order['paymentMethod'],
           status: orderStatus,
-          contractId: contract.id,
+          // 合同已经通过 contracts.orderId 关联订单；不要在签署时写入可选的反向外键，
+          // 兼容旧数据库中 contractId 外键定义不一致的订单表。
+          contractId: null as any,
         });
         await c.env.RENT.prepare(`UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?`)
           .bind(refundMethod, refundMethod === 'original' ? refundBsb || null : null, refundMethod === 'original' ? refundAccountNumber || null : null, refundMethod === 'original' ? refundAccountName || null : null, contract.rentalId).run()

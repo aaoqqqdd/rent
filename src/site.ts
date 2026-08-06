@@ -284,11 +284,24 @@ export function isStrongPassword(password: unknown): boolean {
 }
 
 export function generateTemporaryPassword(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
-  const bytes = new Uint8Array(12)
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const lower = 'abcdefghijkmnopqrstuvwxyz'
+  const digits = '23456789'
+  const alphabet = upper + lower + digits
+  const bytes = new Uint8Array(8)
   crypto.getRandomValues(bytes)
-  const random = Array.from(bytes, byte => alphabet[byte % alphabet.length]).join('')
-  return `${random.slice(0, 4)}-${random.slice(4, 8)}-${random.slice(8)}!7`
+  const password = [
+    upper[bytes[0] % upper.length],
+    lower[bytes[1] % lower.length],
+    digits[bytes[2] % digits.length],
+    ...Array.from(bytes.slice(3), byte => alphabet[byte % alphabet.length]),
+  ]
+  // Fisher-Yates shuffle so the required character classes are not fixed in position.
+  for (let index = password.length - 1; index > 0; index -= 1) {
+    const swapIndex = bytes[index] % (index + 1)
+    ;[password[index], password[swapIndex]] = [password[swapIndex], password[index]]
+  }
+  return password.join('')
 }
 
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
@@ -820,6 +833,7 @@ export async function cleanupExpiredAndCancelledContracts(c: Context): Promise<n
 }
 
 export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
+  // 访客租期结束后先立即撤销登录权限并清除凭据；保留匿名业务记录，避免破坏合同/订单/付款外键。
   const expired = await c.env.RENT.prepare(`
     SELECT id FROM users
     WHERE account_type = 'guest' AND guest_expires_at IS NOT NULL
@@ -830,9 +844,22 @@ export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
   const placeholders = ids.map(() => '?').join(', ')
   await c.env.RENT.batch([
     c.env.RENT.prepare(`DELETE FROM auth_sessions WHERE user_id IN (${placeholders})`).bind(...ids),
-    c.env.RENT.prepare(`UPDATE users SET account_type = 'deleted_guest', status = 'inactive', email = 'deleted-guest-' || id || '@invalid.local', phone = NULL, password_hash = 'disabled', password_salt = 'disabled', deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...ids),
+    c.env.RENT.prepare(`UPDATE users SET account_type = 'deleted_guest', status = 'inactive', email = 'deleted-guest-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, password_hash = 'disabled', password_salt = 'disabled', guest_order_id = NULL, guest_expires_at = NULL, deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...ids),
   ])
-  return ids.length
+
+  // 再保留 30 天后删除没有业务外键引用的访客用户行。
+  // 仍被历史订单/付款引用的行保留为匿名墓碑，确保业务记录和外键完整。
+  const purgeResult = await c.env.RENT.prepare(`
+    DELETE FROM users
+    WHERE account_type = 'deleted_guest'
+      AND deleted_at IS NOT NULL
+      AND datetime(deleted_at) < datetime('now', '-30 days')
+      AND NOT EXISTS (SELECT 1 FROM orders WHERE orders.userId = users.id)
+      AND NOT EXISTS (SELECT 1 FROM payments WHERE payments.customer_id = users.id)
+      AND NOT EXISTS (SELECT 1 FROM commission_records WHERE commission_records.customer_id = users.id)
+      AND NOT EXISTS (SELECT 1 FROM addresses WHERE addresses.user_id = users.id)
+  `).run() as any
+  return ids.length + Number(purgeResult.meta?.changes ?? purgeResult.changes ?? 0)
 }
 
 // Compatibility alias expected by legacy code
