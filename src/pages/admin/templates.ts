@@ -9,7 +9,7 @@ type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'copyright'
 
 export function renderAdminTemplateHub(user: any) {
   const body = `
-    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>DOCUMENT CONTROL</span><span>6 ACTIVE TEMPLATES</span></div><div class="entity-heading"><div><p class="section-code">LEGAL & CONTRACTS</p><h2>协议与合同模板</h2><p>管理注册、租赁签署、网站法律信息和正式合同文本。</p></div><a class="button button-secondary" href="/admin/contracts">返回合同管理</a></div></div>
+    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>DOCUMENT CONTROL</span><span>6 ACTIVE TEMPLATES</span></div><div class="entity-heading"><div><p class="section-code">LEGAL & CONTRACTS</p><h2>协议与合同模板</h2><p>管理注册、租赁签署、网站法律信息和正式合同文本。</p></div></div></div>
     <div class="panel template-register">
       <div class="template-register__labels mono"><span>文档</span><span>显示位置</span><span>类型</span><span>操作</span></div>
       <article class="template-register__row">
