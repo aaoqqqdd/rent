@@ -277,6 +277,15 @@ export function generateUserId(role: 'ADMIN' | 'STAFF' | 'CUSTOMER', accountType
   return `${prefix}-${Array.from(bytes, byte => String(byte % 10)).join('')}`
 }
 
+export async function generateUniqueUserId(c: Context, role: 'ADMIN' | 'STAFF' | 'CUSTOMER', accountType: 'formal' | 'guest' = 'formal'): Promise<string> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const id = generateUserId(role, accountType)
+    const existing = await c.env.RENT.prepare('SELECT id FROM users WHERE id = ?').bind(id).first()
+    if (!existing) return id
+  }
+  throw new Error('无法生成唯一用户 ID，请稍后重试')
+}
+
 export async function hashPassword(password: string): Promise<string> {
   const iterations = PBKDF2_ITERATIONS
   const salt = generateSalt()

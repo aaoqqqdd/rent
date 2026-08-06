@@ -59,10 +59,10 @@ import {
   updateSystemSettings,
   combinePersonName,
   isStrongPassword,
-  generateUserId,
+  generateUniqueUserId,
   isContractExpired
 } from './site'
-import { nanoid, customAlphabet } from 'nanoid'
+import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund } from './actions/stripePayments'
 import siteStyles from './styles.css'
@@ -316,7 +316,7 @@ app.post('/register', async (c) => {
     }
   }
 
-  const newUserId = generateUserId('CUSTOMER')
+  const newUserId = await generateUniqueUserId(c, 'CUSTOMER')
   const fullPhone = `${countryCode}${phone}`
   const newUser = {
     id: newUserId,
@@ -485,7 +485,7 @@ app.post('/staff/customers/new', async (c) => {
   if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email) return c.html(pages.renderStaffCustomerNew(user, '请完整填写名、姓和邮箱'), 400)
   if (!isStrongPassword(password)) return c.html(pages.renderStaffCustomerNew(user, '密码至少需要 8 位，并同时包含字母、数字和符号'), 400)
   if (await findUserByEmail(c, email)) return c.html(pages.renderStaffCustomerNew(user, '该邮箱已被使用'), 409)
-  const customer = await insertUser(c, { id: generateUserId('CUSTOMER'), name, email, phone: String(form.phone || '').trim(), password, role: 'CUSTOMER', status: 'active', staffId: user.id, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
+  const customer = await insertUser(c, { id: await generateUniqueUserId(c, 'CUSTOMER'), name, email, phone: String(form.phone || '').trim(), password, role: 'CUSTOMER', status: 'active', staffId: user.id, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
   return c.redirect(`/staff/customers/${customer.id}`)
 })
 
@@ -1096,7 +1096,7 @@ app.post('/admin/users/new', async (c) => {
   const status = String(form.status || 'active')
   if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email || !isStrongPassword(password) || !['CUSTOMER', 'STAFF', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user), 400)
   if (await findUserByEmail(c, email)) return c.html(pages.renderAdminUserNew(user), 409)
-  await insertUser(c, { id: generateUserId(role as 'ADMIN' | 'STAFF' | 'CUSTOMER'), name, email, password, role, status, accountStatus: status, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
+  await insertUser(c, { id: await generateUniqueUserId(c, role as 'ADMIN' | 'STAFF' | 'CUSTOMER'), name, email, password, role, status, accountStatus: status, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
   return c.redirect('/admin/users')
 })
 

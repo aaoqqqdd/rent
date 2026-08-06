@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUserId, buildLayout, canUseAccountBalance
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, buildLayout, canUseAccountBalance
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { createStripeCheckout } from '../stripePayments';
@@ -278,7 +278,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         // 1. 如果没有已存在的用户ID，则创建新用户
         if (!userId) {
-          const newUserId = generateUserId('CUSTOMER', userInfo.accountMode === 'guest' ? 'guest' : 'formal');
+          const newUserId = await generateUniqueUserId(c, 'CUSTOMER', userInfo.accountMode === 'guest' ? 'guest' : 'formal');
           userId = newUserId;
           await logError(c, 'INFO', `Creating new user for contract`, undefined, { token, newUserId, email: userInfo.email });
 
