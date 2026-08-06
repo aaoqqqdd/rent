@@ -42,7 +42,7 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
     `<option value="${country.code}" ${country.code === selectedCountryCode ? 'selected' : ''}>${country.name} (${country.code})</option>`
   ).join('');
   
-  const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
+  const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const body = `
     <div class="panel">
       <div class="section-title"><h2>个人信息管理</h2><span class="section-note">编辑您的基本资料和支付账户信息。</span></div>

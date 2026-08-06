@@ -18,7 +18,7 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
   const body = `
     <div class="panel">
       <div class="section-title"><h2>租赁设备: ${device.name}</h2><span class="section-note">填写租赁信息并确认订单。</span></div>
-      ${errorMessage ? `<div class="alert alert-error">${errorMessage}</div>` : ''}
+      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
       <form method="POST" action="/customer/rent/${device.id}">
         <div class="form-group">
           <label class="form-label" for="deviceName">设备名称</label>

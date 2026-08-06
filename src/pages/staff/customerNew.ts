@@ -7,7 +7,7 @@ export function renderStaffCustomerNew(user: any, errorMessage?: string) {
   const body = `
     <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / NEW</span><span>STAFF RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER CONTROL</p><h2>创建客户账户</h2><p>建立客户登录身份和联系方式。</p></div><a href="/staff/customers" class="button button-secondary">返回客户列表</a></div></div>
     <div class="panel record-panel single-column">
-      ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
+      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
       <form method="POST" action="/staff/customers/new" class="record-form">
         <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>客户资料</h3><p>名和姓需要分别填写。</p></div></div><div class="grid grid-2">
           <div class="form-group"><label class="form-label" for="firstName">名 / Given name</label><input class="form-control" id="firstName" name="firstName" required autocomplete="given-name"></div>

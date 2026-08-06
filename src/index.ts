@@ -1437,6 +1437,22 @@ app.post('/admin/orders/:id/cancel-and-refund', async (c) => {
   }
 })
 
+app.post('/admin/orders/:id/delete', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order) return c.redirect('/admin/orders?error=' + encodeURIComponent('订单不存在或已被删除'))
+  if (['paid', 'active', 'completed'].includes(order.status)) {
+    return c.redirect('/admin/orders?error=' + encodeURIComponent('只能删除未付款或已取消的订单，请先确认订单状态'))
+  }
+  await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM contracts WHERE orderId = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM payments WHERE rental_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM payment_proofs WHERE payment_id IN (SELECT id FROM payments WHERE rental_id = ?)').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM payment_refunds WHERE order_id = ?').bind(order.id).run()
+  return c.redirect('/admin/orders?success=' + encodeURIComponent('订单已删除'))
+})
+
 app.get('/admin/finance', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {

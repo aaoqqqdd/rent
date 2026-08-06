@@ -18,7 +18,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   const device = await getDeviceById(c, order.deviceId)
   const contract = await getContractByOrderId(c, order.id)
   const contractExpired = contract ? isContractExpired(contract) : false
-  const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
+  const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
 
   const body = `
     <div class="panel">

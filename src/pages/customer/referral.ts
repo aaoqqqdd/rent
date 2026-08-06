@@ -80,7 +80,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
   const body = `
     <div class="panel">
       <div class="section-title"><h2>我的推荐</h2><span class="section-note">邀请好友，赚取佣金。</span></div>
-      ${message ? `<div class="alert alert-${type || 'info'}">${message}</div>` : ''}
+      ${message ? `<div class="page-notification page-notification--${type || 'info'}">${message}</div>` : ''}
 
       ${!currentUser.referralCode ? `
         <div style="margin-bottom: 30px; padding: 24px; background: var(--surface-secondary); border-radius: 12px; text-align: center;">

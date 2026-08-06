@@ -25,7 +25,7 @@ export function renderRegister(errorMessage?: string) {
           <div class="login-logo"><span class="logo-mark">▣</span>PC Rental</div>
           <p class="login-subtitle">创建您的专业设备租赁账户</p>
           <form method="POST" action="/register">
-            ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
+            ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
             <div class="grid grid-2"><div><label class="form-label" for="firstName">名 / Given name</label><input class="form-control" id="firstName" name="firstName" autocomplete="given-name" required /></div><div><label class="form-label" for="lastName">姓 / Family name</label><input class="form-control" id="lastName" name="lastName" autocomplete="family-name" required /></div></div>
             <label class="form-label">邮箱地址</label>
             <input class="form-control" type="email" name="email" placeholder="name@example.com" required />

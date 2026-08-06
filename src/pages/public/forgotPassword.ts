@@ -13,7 +13,7 @@ export function renderForgotPassword(message?: string) {
           <img src="/public/logo.svg" alt="Logo" style="width: 64px; height: 64px;"/>
           <h2 style="margin-top: 12px;">找回密码</h2>
         </div>
-        ${message ? `<div class="alert">${message}</div>` : ''}
+        ${message ? `<div class="page-notification page-notification--info">${message}</div>` : ''}
         <form method="POST" action="/forgot-password" style="text-align: left;">
           <label class="form-label">请输入您注册时使用的邮箱</label>
           <input class="form-control" type="email" name="email" placeholder="请输入邮箱" />

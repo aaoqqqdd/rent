@@ -21,7 +21,7 @@ export function renderLogin(errorMessage?: string) {
               <label class="form-check"><input type="checkbox" name="remember" /> 记住我</label>
               <a class="link-button" href="/forgot-password">忘记密码？</a>
             </div>
-            ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
+            ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
             <div class="alert alert-info">
               <div>
                 <strong style="display:block; margin-bottom:6px;">📋 测试账号</strong>

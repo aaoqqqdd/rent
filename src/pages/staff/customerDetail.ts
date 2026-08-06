@@ -18,7 +18,7 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
   const deviceMap = new Map(devices.map((device) => [device.id, device]))
   const personName = splitPersonName(customer.name)
 
-  const accountNotice = customer.accountType === 'guest' ? `<div class="alert"><strong>访客/临时账户</strong> · 仅限订单 ${customer.guestOrderId || '-'} · 计划删除日期 ${customer.guestExpiresAt || '租期结束'}</div>` : customer.accountType === 'deleted_guest' ? '<div class="alert alert-error"><strong>已删除访客账户</strong> · 登录权限和个人联系方式已清除。</div>' : ''
+  const accountNotice = customer.accountType === 'guest' ? `<div class="page-notification page-notification--info"><strong>访客/临时账户</strong> · 仅限订单 ${customer.guestOrderId || '-'} · 计划删除日期 ${customer.guestExpiresAt || '租期结束'}</div>` : customer.accountType === 'deleted_guest' ? '<div class="page-notification page-notification--error"><strong>已删除访客账户</strong> · 登录权限和个人联系方式已清除。</div>' : ''
   const body = `
     ${accountNotice}
     <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>ACTIVE RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>${customer.name}</h2><p>${customer.email}</p></div><div class="entity-heading-actions"><a class="button button-secondary" href="/staff/customers">返回客户列表</a><a class="button" href="/staff/customers/${customer.id}/edit">编辑客户</a></div></div></div>

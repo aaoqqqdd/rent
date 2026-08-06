@@ -46,7 +46,6 @@ export async function renderAdminContracts(c: Context, user: any) {
                 <button type="button" id="templateModeMd">Markdown</button>
               </div>
               <div class="editor-card">
-                <div class="editor-toolbar-placeholder"></div>
                 <div id="templateContentEditor" class="quill-editor"></div>
               </div>
               <textarea id="templateContentMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>

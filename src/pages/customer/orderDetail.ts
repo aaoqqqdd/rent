@@ -14,7 +14,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const device = await getDeviceById(c, order.deviceId)
   const contract = await getContractByOrderId(c, order.id)
   const transferProof = order.paymentMethod === 'bank_transfer' ? await c.env.RENT.prepare("SELECT pp.status, pp.reference_number, pp.rejection_reason FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any : null
-  const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : ''
+  const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const stripeFee = Math.round(Number(order.totalAmount) * 100 * 0.025) / 100
   const stripeTotal = Number(order.totalAmount) + stripeFee
 

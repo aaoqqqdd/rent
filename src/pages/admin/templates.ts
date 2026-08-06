@@ -65,7 +65,6 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
             <button type="button" id="agreementModeMd">Markdown</button>
           </div>
           <div class="editor-card">
-            <div class="editor-toolbar-placeholder"></div>
             <div id="agreementContentEditor" class="quill-editor template-rich-editor"></div>
           </div>
           <textarea id="agreementContentMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
@@ -93,7 +92,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           modules: {
             toolbar: [
               [{ font: [] }, { size: ['small', false, 'large', 'huge'] }, 'bold', 'italic', 'underline', 'strike', { color: [] }, { background: [] }],
-              [{ header: [1, 2, 3, false] }, { list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }, { align: [] }, 'blockquote', 'code-block', 'link', 'clean']
+              [{ header: [1, 2, 3, false] }, { list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }, { align: [] }, 'blockquote', 'link', 'clean']
             ]
           }
         });

@@ -76,8 +76,8 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
     <div class="panel">
       <div class="section-title"><div><h2>合同与租赁进度管理</h2><span class="section-note">${isAdmin ? '查看全部员工创建的合同、签署状态和租赁进度。' : '管理自己负责的租赁合同、签署状态和租赁进度。'}</span></div><div class="record-actions"><a class="button" href="/staff/contracts/new">新建合同</a>${isAdmin ? '<a class="button button-secondary" href="/admin/templates">协议与模板</a><a class="button button-secondary" href="/admin/calendar">租赁日历</a>' : ''}</div></div>
 
-      ${successMessage ? `<div class="alert alert-success">${successMessage}</div>` : ''}
-      ${errorMessage ? `<div class="alert alert-danger">${errorMessage}</div>` : ''}
+      ${successMessage ? `<div class="page-notification page-notification--success">${successMessage}</div>` : ''}
+      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
 
       ${isAdmin ? `<form class="contract-owner-filter" action="${basePath}" method="get"><div class="form-group"><label class="form-label" for="contract-staff-filter">负责员工</label><select class="form-control" id="contract-staff-filter" name="staffId" onchange="this.form.submit()"><option value="">全部现有员工</option>${staffAccounts.map(account => `<option value="${escapeAttribute(account.id)}" ${selectedStaffId === account.id ? 'selected' : ''}>${escapeAttribute(account.name || account.email || account.id)}</option>`).join('')}</select><small class="form-text">员工账户请前往用户管理创建或停用。</small></div>${status ? `<input type="hidden" name="status" value="${escapeAttribute(status)}">` : ''}${searchTerm ? `<input type="hidden" name="searchTerm" value="${escapeAttribute(searchTerm)}">` : ''}</form>` : ''}
 

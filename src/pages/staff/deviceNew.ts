@@ -9,7 +9,7 @@ export function renderStaffDeviceNew(user: any, errorMessage?: string) {
   const body = `
     <div class="panel">
       <div class="section-title"><h2>添加新设备</h2><span class="section-note">填写设备详细信息以添加到库存。</span></div>
-      ${errorMessage ? `<div class="alert">${errorMessage}</div>` : ''}
+      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
       <form method="POST" action="/staff/devices/new">
         <label class="form-label">设备名称</label>
         <input class="form-control" name="name" placeholder="例如：MacBook Pro 16寸" />

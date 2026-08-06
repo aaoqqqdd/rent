@@ -80,6 +80,8 @@ export async function renderAdminOrders(c: Context, user: any) {
   const dateFrom = (url.searchParams.get('dateFrom') || '').trim();
   const dateTo = (url.searchParams.get('dateTo') || '').trim();
 
+  const errorMessage = url.searchParams.get('error')?.trim() || '';
+  const successMessage = url.searchParams.get('success')?.trim() || '';
   const allUsers = await getUsers(c);
   const filteredOrders = await getFilteredAdminOrders(c, {
     userId: userIdFilter,
@@ -114,6 +116,9 @@ export async function renderAdminOrders(c: Context, user: any) {
         </div>
       </div>
 
+      ${successMessage ? `<div class="page-notification page-notification--success">${successMessage}</div>` : ''}
+      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 20px 0;">
         <div class="panel" style="padding: 18px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe;">
           <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 8px;">总订单</div>
@@ -132,7 +137,6 @@ export async function renderAdminOrders(c: Context, user: any) {
           <div style="font-size: 1.6rem; font-weight: 700;">${formatCurrency(totalRevenue)}</div>
         </div>
       </div>
-
       <div class="panel" style="margin: 20px 0; background: #f8fafc; border: 1px solid var(--border);">
         <form method="GET" action="/admin/orders" style="display: flex; flex-wrap: wrap; gap: 12px; align-items: end;">
           <div style="flex: 1 1 180px; min-width: 180px;">
@@ -198,11 +202,11 @@ export async function renderAdminOrders(c: Context, user: any) {
             <option value="pending_payment">待支付</option>
             <option value="paid">已支付</option>
             <option value="active">租赁中</option>
-            <option value="completed">已完成</option>
             <option value="cancelled">已取消</option>
           </select>
           <button type="submit" class="button button-primary" style="padding: 8px 16px;">批量更新</button>
         </div>
+        <div style="color: var(--text-secondary); font-size: 0.85rem; margin-top: -8px; margin-bottom: 12px;">已完成状态必须逐笔执行归还验机，批量操作暂不支持。</div>
       </form>
         <table>
           <thead>

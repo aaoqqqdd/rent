@@ -20,8 +20,8 @@ export async function renderAdminUserEdit(c: Context, user: any, targetUserId: s
 
   const body = `
     <div class="entity-header"><div class="identity-strip mono"><span>USER / ${targetUser.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">IDENTITY CONTROL</p><h2>编辑用户</h2><p>${targetUser.name} · 修改资料、权限和账户信息。</p></div><a href="/admin/users/${targetUser.id}" class="button button-secondary">返回用户详情</a></div></div>
+    ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
     <div class="panel record-panel single-column">
-      ${errorMessage ? `<div class="alert alert-danger" style="background: var(--danger-light); color: var(--danger); padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;">${errorMessage}</div>` : ''}
       <form method="POST" action="/admin/users/${targetUser.id}/edit" class="record-form">
         <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>基本资料</h3><p>姓名、邮箱和联系电话。</p></div></div><div class="grid grid-2">
           <div class="form-group">

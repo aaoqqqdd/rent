@@ -132,7 +132,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
         <div class="panel">
           ${progressBar}
           <h2>阅读并同意租赁协议</h2>
-          ${errorMessage ? `<div class="alert" style="background:#fee2e2;border-color:#fecaca;">${errorMessage}</div>` : ''}
+          ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
           
           <p class="section-note">本步骤仅用于确认租赁协议。正式合同将在完成电子签署后生成。</p>
           <div class="contract-content signing-agreement">
@@ -158,7 +158,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           ${progressBar}
           <h2>${title}</h2>
           
-          ${errorMessage ? `<div class="alert alert-danger"><strong>无法保存资料</strong><p>${errorMessage}</p>${!currentUser && errorMessage.includes('已注册') ? `<a class="button button-secondary" href="/login?redirect=${encodeURIComponent(`/contract/sign?token=${token}&step=2`)}">登录后继续</a>` : ''}</div>` : ''}
+          ${errorMessage ? `<div class="page-notification page-notification--error"><strong>无法保存资料</strong><p>${errorMessage}</p>${!currentUser && errorMessage.includes('已注册') ? `<a class="button button-secondary" href="/login?redirect=${encodeURIComponent(`/contract/sign?token=${token}&step=2`)}">登录后继续</a>` : ''}</div>` : ''}
 
           <form method="POST" action="/contract/sign?token=${token}&step=2" id="sign-form" class="signing-form" novalidate>
             ${currentUser ? `
@@ -226,7 +226,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
         <div class="panel">
           ${progressBar}
           <h2>${title}</h2>
-          ${errorMessage ? `<div class="alert" style="background:#fee2e2;border-color:#fecaca;">${errorMessage}</div>` : ''}
+          ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
           
           <div class="alert">
             <strong>应付总额: ${formatCurrency(order.totalAmount)}</strong> (租金 + 押金)

@@ -107,7 +107,6 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
             <button type="button" id="emailTemplateModeMd">Markdown</button>
           </div>
           <div class="editor-card">
-            <div class="editor-toolbar-placeholder"></div>
             <div id="emailTemplateEditor" class="quill-editor"></div>
           </div>
           <textarea id="emailTemplateMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>

@@ -23,10 +23,10 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const completedRefund = await c.env.RENT.prepare("SELECT type, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any;
   const transferProof = await c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any;
   let proofImage = ''
-  try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch {}
+  try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
 
-  const statusLabels: Record<string, {label: string, color: string, bg: string, icon: string}> = {
+  const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
     'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
     'paid': { label: '已付款', color: '#059669', bg: '#d1fae5', icon: '💳' },
     'active': { label: '租赁中', color: '#2563eb', bg: '#dbeafe', icon: '📦' },
@@ -34,7 +34,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     'cancelled': { label: '已取消', color: '#dc2626', bg: '#fee2e2', icon: '❌' }
   };
   const currentStatus = statusLabels[order.status] || { label: order.status, color: '#6b7280', bg: '#f3f4f6', icon: '❓' };
-  
+
   const body = `
     <div class="panel hero" style="padding: 32px; margin-bottom: 24px;">
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px;">
@@ -49,7 +49,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       </div>
     </div>
 
-    ${['paid','active','completed'].includes(order.status) ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / Credit Note</a></p>` : ''}
+    ${['paid', 'active', 'completed'].includes(order.status) ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / Credit Note</a></p>` : ''}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
@@ -146,8 +146,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           ${order.status === 'paid' && order.startDate > today && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/cancel-and-refund" onsubmit="return confirm('确定取消订单并全额退还 ${formatCurrency(order.totalAmount)} 吗？');">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先完成银行转账，再确认取消订单。</div>' : ''}<button type="submit" class="button button-danger">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '确认已转账并取消订单' : '取消并全额退款'}</button></form>` : ''}
         </div>
       </div>
-      <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
+      <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
         <a href="/admin/orders" class="button button-secondary" style="padding: 12px 32px; border-radius: 10px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">← 返回订单列表</a>
+        <form method="POST" action="/admin/orders/${order.id}/delete" onsubmit="return confirm('删除订单是不可恢复的操作。确定要删除此订单吗？');">
+          <button type="submit" class="button button-danger" style="padding: 12px 32px; border-radius: 10px;">删除订单</button>
+        </form>
       </div>
     </div>
   `;

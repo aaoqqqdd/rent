@@ -15,8 +15,8 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
 
   const body = `
     <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>编辑客户</h2><p>${customer.name} · 修改联系方式和退款账户。</p></div><a href="/staff/customers/${customer.id}" class="button button-secondary">返回客户详情</a></div></div>
+    ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
     <div class="panel record-panel single-column">
-      ${errorMessage ? `<div class="alert">${errorMessage}</div>` : ''}
       <form method="POST" action="/staff/customers/${customer.id}/edit" class="record-form">
         <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>基本资料</h3><p>客户身份及联系方式。</p></div></div>
         <div class="grid grid-2">

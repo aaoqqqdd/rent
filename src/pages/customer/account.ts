@@ -12,7 +12,7 @@ export async function renderCustomerAccount(user: any, message?: string, type: '
     return buildLayout('我的账户 - 电脑租赁管理系统', '<div class="panel"><h2>用户未找到</h2><p>您的账户信息无法加载。</p></div>', user)
   }
 
-  const alertMessage = message ? `<div class="alert" style="background:${type === 'success' ? '#dcfce7' : '#fee2e2'}; border-color:${type === 'success' ? '#bbf7d0' : '#fecaca'};">${message}</div>` : '';
+  const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : '';
 
   const body = `
     <div class="panel">

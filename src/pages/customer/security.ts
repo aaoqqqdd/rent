@@ -14,8 +14,8 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
   const body = `
     <div class="panel">
       <div class="section-title"><h2>安全设置</h2><span class="section-note">管理您的账户安全。</span></div>
-      ${errorMessage ? `<div class="alert alert-error">${errorMessage}</div>` : ''}
-      ${successMessage ? `<div class="alert alert-success">${successMessage}</div>` : ''}
+      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+      ${successMessage ? `<div class="page-notification page-notification--success">${successMessage}</div>` : ''}
 
       <h3>修改密码</h3>
       <form method="POST" action="/customer/security" id="passwordChangeForm">
