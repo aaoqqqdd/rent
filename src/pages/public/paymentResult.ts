@@ -41,7 +41,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     cardClass = 'success';
   } else if (status === 'cancelled') {
     title = '已取消 Stripe 支付';
-    message = '本次没有扣款，订单仍等待付款。您可以登录客户账户后重新选择 Stripe 或其他付款方式。';
+    message = '本次没有扣款，订单仍等待付款。您可以手动返回选择其他支付方式；页面将在 <strong id="cancelled-payment-countdown">5</strong> 秒后自动返回。';
     icon = '<div class="icon-wrapper danger">×</div>';
     cardClass = 'danger';
     buttonText = user?.role === 'CUSTOMER' ? '返回订单重新支付' : '登录后重新支付';
@@ -137,7 +137,20 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
         </div>
       </div>
     </div>
-    ${status === 'stripe_pending' ? '<script>setTimeout(() => window.location.reload(), 3000)</script>' : ''}
+    ${status === 'cancelled' ? `<script>
+      (() => {
+        let seconds = 5;
+        const countdown = document.getElementById('cancelled-payment-countdown');
+        const timer = setInterval(() => {
+          seconds -= 1;
+          if (countdown) countdown.textContent = String(seconds);
+          if (seconds <= 0) {
+            clearInterval(timer);
+            window.location.href = ${JSON.stringify(buttonLink)};
+          }
+        }, 1000);
+      })();
+    </script>` : status === 'stripe_pending' ? '<script>setTimeout(() => window.location.reload(), 3000)</script>' : ''}
   `;
 
   return buildLayout('支付结果 - 电脑租赁管理系统', body, user);

@@ -725,6 +725,15 @@ export async function updateDeviceStatus(c: Context, deviceId: string, status: s
   await db.prepare('UPDATE devices SET status = ? WHERE id = ?').bind(status, deviceId).run();
 }
 
+export async function releaseDeviceIfUnbooked(c: Context, deviceId: string): Promise<void> {
+  const activeOrder = await c.env.RENT.prepare(`
+    SELECT id FROM orders
+    WHERE deviceId = ? AND status IN ('paid', 'active', 'pending_pickup', 'pending_return')
+    LIMIT 1
+  `).bind(deviceId).first()
+  if (!activeOrder) await updateDeviceStatus(c, deviceId, 'available')
+}
+
 export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
   const db = getDB(c);
   await db.prepare('UPDATE orders SET status = ? WHERE id = ?').bind(status, orderId).run();

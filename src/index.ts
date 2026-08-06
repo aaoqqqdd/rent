@@ -45,6 +45,7 @@ import {
   renderSiteVariables,
   renderContractVariables,
   updateDeviceStatus,
+  releaseDeviceIfUnbooked,
   getContractById,
   updateContractTemplate,
   CONTRACT_OPERATIONAL_FIELDS,
@@ -139,7 +140,7 @@ app.use('*', async (c, next) => {
 
 app.use('*', async (c, next) => {
   const user = c.get('user') as any
-  if (user?.accountType === 'guest') {
+  if (user?.accountType === 'guest' && user.role === 'CUSTOMER') {
     const path = c.req.path
     const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result'])
     const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/checkout|bank-transfer-proof))?$/)
@@ -1358,7 +1359,8 @@ app.post('/admin/orders/:id/update', async (c) => {
     const contract = await c.env.RENT.prepare('SELECT contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
     if (!JSON.parse(contract?.contract_data || '{}').inspection_date) return wantsJson ? c.json({ ok: false, error: '完成订单前必须提交归还验机' }, 409) : c.text('完成订单前必须提交归还验机', 409)
   }
-  await updateOrderStatus(c, order.id, status)
+    await updateOrderStatus(c, order.id, status)
+    if (status === 'cancelled' || status === 'completed') await releaseDeviceIfUnbooked(c, order.deviceId)
   if (status === 'paid') await ensureOrderNumber(c, order.id)
   if (wantsJson) return c.json({ ok: true })
   return c.redirect(`/admin/orders/${c.req.param('id')}`)

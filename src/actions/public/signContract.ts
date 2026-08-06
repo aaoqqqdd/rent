@@ -523,7 +523,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         signingCompleted = true;
         await logError(c, 'INFO', `Sign session deleted after successful completion`, undefined, { token });
 
-        if (guestPassword) {
+        if (guestPassword && orderStatus === 'paid') {
           const paymentUrl = stripeResponse?.headers.get('Location') || `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
           const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${stripeResponse ? '继续前往 Stripe 支付' : '查看付款结果'}</a></div></div>`
           const response = c.html(buildLayout('保存访客登录资料', guestPage))

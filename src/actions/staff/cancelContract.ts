@@ -4,7 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono';
-import { getContractById, updateContractStatus, logError, findUserBySession, getOrderById, updateDeviceStatus } from '../../site'; // 导入 getOrderById 和 updateDeviceStatus
+import { getContractById, updateContractStatus, logError, findUserBySession, getOrderById, releaseDeviceIfUnbooked } from '../../site';
 
 export async function handleCancelContractAction(c: Context): Promise<Response> {
   const contractId = c.req.param('id');
@@ -47,7 +47,7 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
     if (contract.rentalId) {
       const order = await getOrderById(c, contract.rentalId);
       if (order && order.deviceId) {
-        await updateDeviceStatus(c, order.deviceId, 'available');
+        await releaseDeviceIfUnbooked(c, order.deviceId);
         await logError(c, 'INFO', `Device ${order.deviceId} status updated to 'available' after contract ${contractId} cancellation.`);
       }
     }
