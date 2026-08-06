@@ -41,7 +41,12 @@ export async function renderAdminContracts(c: Context, user: any) {
             <div class="form-group">
               <details class="variable-index" open><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${completeVariableIndex}</details>
               <label for="templateContentEditor">模板内容</label>
+              <div class="editor-mode-toggle" style="margin-bottom:12px;">
+                <button type="button" id="templateModeHtml" class="active">可视编辑</button>
+                <button type="button" id="templateModeMd">Markdown</button>
+              </div>
               <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;"></div>
+              <textarea id="templateContentMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
               <input type="hidden" id="templateContent" name="templateContent" value="${safeTemplateContent}">
               <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们；也可以通过编辑器里的“分页”按钮插入分页符。</small>
             </div>
@@ -60,32 +65,17 @@ export async function renderAdminContracts(c: Context, user: any) {
     <script>
       document.addEventListener('DOMContentLoaded', function() {
         const pageBreakHtml = ${pageBreakMarkup};
-        const insertPageBreak = () => {
-          const quill = window.__contractTemplateQuill;
-          if (!quill) return;
-          const range = quill.getSelection(true);
-          const index = range ? range.index : quill.getLength();
-          quill.clipboard.dangerouslyPasteHTML(index, pageBreakHtml);
-          if (range) {
-            quill.setSelection(index + 1, 0);
-          }
-        };
-        const quill = window.createRichTextEditor('#templateContentEditor', {
+        const editor = window.createRichTextEditor('#templateContentEditor', {
           theme: 'snow',
           modules: {
             toolbar: [
-              [{ header: [1, 2, 3, false] }],
-              ['bold', 'italic', 'underline', 'strike'],
-              [{ list: 'ordered' }, { list: 'bullet' }],
-              ['blockquote', 'code-block'],
-              [{ color: [] }, { background: [] }],
-              [{ align: [] }],
-              ['link', 'clean']
+              [{ font: [] }, { size: ['small', false, 'large', 'huge'] }, 'bold', 'italic', 'underline', 'strike', { color: [] }, { background: [] }],
+              [{ header: [1, 2, 3, false] }, { list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }, { align: [] }, 'blockquote', 'code-block', 'link', 'clean']
             ]
           }
         });
-        window.__contractTemplateQuill = quill;
-        const toolbar = quill.getModule ? quill.getModule('toolbar').container : null;
+
+        const toolbar = editor.getModule ? editor.getModule('toolbar').container : null;
         if (toolbar) {
           const pageBreakButton = document.createElement('button');
           pageBreakButton.type = 'button';
@@ -94,30 +84,52 @@ export async function renderAdminContracts(c: Context, user: any) {
           pageBreakButton.textContent = '分页';
           pageBreakButton.addEventListener('click', function(event) {
             event.preventDefault();
-            insertPageBreak();
+            const range = editor.getSelection ? editor.getSelection(true) : null;
+            const index = range ? range.index : (editor.root ? editor.root.innerHTML.length : 0);
+            if (editor.clipboard && typeof editor.clipboard.dangerouslyPasteHTML === 'function') {
+              editor.clipboard.dangerouslyPasteHTML(index, pageBreakHtml);
+            } else if (editor.root) {
+              editor.root.innerHTML += pageBreakHtml;
+            }
           });
           toolbar.appendChild(pageBreakButton);
         }
 
-        const updateContractTemplate = async (template) => {
-          const response = await fetch('/admin/contracts/template', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(template),
-          });
-          const contentType = response.headers.get('content-type') || '';
-          const result = contentType.includes('application/json')
-            ? await response.json()
-            : { error: '服务器返回了无法识别的响应（HTTP ' + response.status + '）' };
-          if (!response.ok) {
-            throw new Error(result.error || '合同模板保存失败');
-          }
-          if (!result.success) throw new Error(result.error || '合同模板保存失败');
-          return result.template;
-        };
-
+        const templateModeHtml = document.getElementById('templateModeHtml');
+        const templateModeMd = document.getElementById('templateModeMd');
+        const templateContentMarkdown = document.getElementById('templateContentMarkdown');
+        const hiddenTemplateContent = document.getElementById('templateContent');
         const contractTemplatePreviewButton = document.getElementById('contractTemplatePreviewButton');
         const contractTemplatePreview = document.getElementById('contractTemplatePreview');
+        const templateForm = document.getElementById('contractTemplateForm');
+
+        if (templateContentMarkdown) {
+          templateContentMarkdown.style.display = 'none';
+        }
+
+        function getContractTemplateContent() {
+          if (templateContentMarkdown && templateContentMarkdown.style.display === 'block') {
+            return window.markdownToHtml(templateContentMarkdown.value);
+          }
+          return editor.root ? editor.root.innerHTML : '';
+        }
+
+        function switchContractMode(toMd) {
+          if (!templateModeHtml || !templateModeMd || !templateContentMarkdown) return;
+          if (toMd) {
+            templateContentMarkdown.value = window.htmlToMarkdown(editor.root.innerHTML);
+            templateContentMarkdown.style.display = 'block';
+            editor.root.parentElement.style.display = 'none';
+            templateModeMd.classList.add('active');
+            templateModeHtml.classList.remove('active');
+          } else {
+            editor.root.innerHTML = window.markdownToHtml(templateContentMarkdown.value);
+            templateContentMarkdown.style.display = 'none';
+            editor.root.parentElement.style.display = 'block';
+            templateModeMd.classList.remove('active');
+            templateModeHtml.classList.add('active');
+          }
+        }
 
         async function updateContractTemplatePreview() {
           if (!contractTemplatePreview) return;
@@ -126,7 +138,7 @@ export async function renderAdminContracts(c: Context, user: any) {
             const response = await fetch('/admin/templates/preview', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ kind: 'contract', content: quill.root.innerHTML })
+              body: JSON.stringify({ kind: 'contract', content: getContractTemplateContent() })
             });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
@@ -137,18 +149,23 @@ export async function renderAdminContracts(c: Context, user: any) {
         }
 
         contractTemplatePreviewButton?.addEventListener('click', updateContractTemplatePreview);
+        templateModeHtml?.addEventListener('click', function () { switchContractMode(false); });
+        templateModeMd?.addEventListener('click', function () { switchContractMode(true); });
 
-        // 初始化编辑器内容
-        const initialContent = document.getElementById('templateContent').value;
+        const initialContent = hiddenTemplateContent ? hiddenTemplateContent.value : '';
         if (initialContent) {
-          quill.root.innerHTML = initialContent;
+          editor.root.innerHTML = initialContent;
+          if (templateContentMarkdown) {
+            templateContentMarkdown.value = window.htmlToMarkdown(initialContent);
+          }
         }
+        switchContractMode(false);
 
-        document.getElementById('contractTemplateForm').addEventListener('submit', function(event) {
+        templateForm?.addEventListener('submit', function(event) {
           event.preventDefault();
-          const contentHtml = quill.root.innerHTML;
-          document.getElementById('templateContent').value = contentHtml;
-
+          if (hiddenTemplateContent) {
+            hiddenTemplateContent.value = getContractTemplateContent();
+          }
           const formData = new FormData(this);
           const newTemplate = {
             id: '${currentTemplate?.id ?? 'default'}',
@@ -160,18 +177,16 @@ export async function renderAdminContracts(c: Context, user: any) {
             alert('合同模板已保存成功！');
             updateContractTemplatePreview?.();
           }).catch(error => {
-            alert('保存失败: ' + error.message);
+            alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台')); 
           });
         });
 
-        // 添加变量复制功能
         document.querySelectorAll('.variable-chip-list code').forEach(item => {
-          item.style.cursor = 'pointer'; // 添加手型光标
-          item.title = '点击复制'; // 添加提示
+          item.style.cursor = 'pointer';
+          item.title = '点击复制';
           item.addEventListener('click', function() {
             const variableName = this.innerText;
             navigator.clipboard.writeText(variableName).then(() => {
-              // 简单的视觉反馈
               this.style.backgroundColor = 'var(--primary-light)';
               setTimeout(() => {
                 this.style.backgroundColor = '';

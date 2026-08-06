@@ -52,10 +52,16 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         <div><a class="breadcrumb-link" href="/admin/templates">← 返回协议与模板</a><h2>${title}</h2><p class="section-note">${description}</p></div>
       </div>
       <form id="agreementTemplateForm" data-kind="${kind}">
+        <input type="hidden" id="agreementKind" name="kind" value="${kind}">
         ${variableIndex}
         <div class="form-group">
           <label for="agreementContentEditor">协议内容</label>
+          <div class="editor-mode-toggle" style="margin-bottom:12px;">
+            <button type="button" id="agreementModeHtml" class="active">可视编辑</button>
+            <button type="button" id="agreementModeMd">Markdown</button>
+          </div>
           <div id="agreementContentEditor" class="quill-editor template-rich-editor"></div>
+          <textarea id="agreementContentMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
           <textarea id="agreementContent" name="content" hidden></textarea>
         </div>
         <button type="button" id="agreementPreviewButton" class="button button-secondary">预览变量效果</button>
@@ -76,31 +82,61 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           theme: 'snow',
           modules: {
             toolbar: [
-              [{ header: [1, 2, 3, false] }],
-              ['bold', 'italic', 'underline', 'strike'],
-              [{ list: 'ordered' }, { list: 'bullet' }],
-              ['blockquote'],
-              [{ color: [] }, { background: [] }],
-              [{ align: [] }],
-              ['link'],
-              ['clean']
+              [{ font: [] }, { size: ['small', false, 'large', 'huge'] }, 'bold', 'italic', 'underline', 'strike', { color: [] }, { background: [] }],
+              [{ header: [1, 2, 3, false] }, { list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }, { align: [] }, 'blockquote', 'code-block', 'link', 'clean']
             ]
           }
         });
-        const initialContent = ${initialContent};
-        if (initialContent) editor.root.innerHTML = initialContent;
-
+        const agreementModeHtml = document.getElementById('agreementModeHtml');
+        const agreementModeMd = document.getElementById('agreementModeMd');
+        const agreementContentMarkdown = document.getElementById('agreementContentMarkdown');
         const previewButton = document.getElementById('agreementPreviewButton');
         const previewContainer = document.getElementById('agreementPreview');
 
-        async function updateAgreementPreview() {
+        const initialContent = ${initialContent};
+        if (initialContent) {
+          editor.root.innerHTML = initialContent;
+          if (agreementContentMarkdown) {
+            agreementContentMarkdown.value = window.htmlToMarkdown(initialContent);
+          }
+        }
+
+        function getAgreementContent() {
+          if (agreementContentMarkdown && agreementContentMarkdown.style.display === 'block') {
+            return window.markdownToHtml(agreementContentMarkdown.value);
+          }
+          return editor.root.innerHTML;
+        }
+
+        function switchAgreementMode(toMd) {
+          if (!agreementModeHtml || !agreementModeMd || !agreementContentMarkdown) return;
+          if (toMd) {
+            agreementContentMarkdown.value = window.htmlToMarkdown(editor.root.innerHTML);
+            agreementContentMarkdown.style.display = 'block';
+            editor.root.parentElement.style.display = 'none';
+            agreementModeMd.classList.add('active');
+            agreementModeHtml.classList.remove('active');
+          } else {
+            editor.root.innerHTML = window.markdownToHtml(agreementContentMarkdown.value);
+            agreementContentMarkdown.style.display = 'none';
+            editor.root.parentElement.style.display = 'block';
+            agreementModeMd.classList.remove('active');
+            agreementModeHtml.classList.add('active');
+          }
+        }
+
+        const agreementKindInput = document.getElementById('agreementKind');
+
+        async function updateAgreementPreview(event) {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
           if (!previewContainer) return;
           previewContainer.textContent = '正在生成预览...';
           try {
+            const kind = String(form.dataset.kind || (agreementKindInput ? agreementKindInput.value : '')).trim();
             const response = await fetch('/admin/templates/preview', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ kind: form.dataset.kind, content: editor.root.innerHTML })
+              body: JSON.stringify({ kind, content: getAgreementContent() })
             });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
@@ -110,7 +146,11 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           }
         }
 
-        previewButton?.addEventListener('click', updateAgreementPreview);
+        agreementModeHtml?.addEventListener('click', function () { switchAgreementMode(false); });
+        agreementModeMd?.addEventListener('click', function () { switchAgreementMode(true); });
+        previewButton?.addEventListener('click', function(event) { updateAgreementPreview(event); });
+
+        switchAgreementMode(false);
 
         form.addEventListener('submit', async function(event) {
           event.preventDefault();
@@ -121,7 +161,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
             const response = await fetch('/admin/templates/' + form.dataset.kind, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ content: editor.root.innerHTML })
+              body: JSON.stringify({ content: getAgreementContent() })
             });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || '保存失败');

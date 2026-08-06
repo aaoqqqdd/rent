@@ -101,7 +101,13 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
         <div class="form-group">
           <label for="emailTemplate">邮件通知模板</label>
           <details class="variable-index"><summary>完整邮件变量索引（${emailVariables.length} 项）</summary>${emailVariableIndex}</details>
+          <input type="hidden" id="emailTemplateKind" name="kind" value="email">
+          <div class="editor-mode-toggle" style="margin-bottom:12px;">
+            <button type="button" id="emailTemplateModeHtml" class="active">可视编辑</button>
+            <button type="button" id="emailTemplateModeMd">Markdown</button>
+          </div>
           <div id="emailTemplateEditor" style="height: 150px;"></div>
+          <textarea id="emailTemplateMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
           <textarea id="emailTemplate" name="emailTemplate" style="display:none;"></textarea>
           <button type="button" id="emailTemplatePreviewButton" class="button button-secondary" style="margin-top: 16px;">预览变量替换</button>
           <div id="emailTemplatePreview" class="template-preview" style="margin-top: 16px; border:1px solid #d1d5db; padding:16px; border-radius:8px; background:#fff; min-height: 120px;"></div>
@@ -132,25 +138,49 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
           theme: 'snow',
           modules: {
             toolbar: [
-              ['bold', 'italic', 'underline', 'strike'],
-              [{ color: [] }, { background: [] }],
-              [{ align: [] }],
-              ['link', 'clean']
+              [{ font: [] }, { size: ['small', false, 'large', 'huge'] }, 'bold', 'italic', 'underline', 'strike', { color: [] }, { background: [] }],
+              [{ header: [1, 2, 3, false] }, { list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }, { align: [] }, 'blockquote', 'code-block', 'link', 'clean']
             ]
           }
         });
 
+        const emailTemplateMarkdown = document.getElementById('emailTemplateMarkdown');
+        const emailTemplateModeHtml = document.getElementById('emailTemplateModeHtml');
+        const emailTemplateModeMd = document.getElementById('emailTemplateModeMd');
+        const emailTemplateKindInput = document.getElementById('emailTemplateKind');
         const emailTemplatePreviewButton = document.getElementById('emailTemplatePreviewButton');
         const emailTemplatePreview = document.getElementById('emailTemplatePreview');
 
-        async function updateEmailTemplatePreview() {
-          if (!emailTemplatePreviewButton || !emailTemplatePreview) return;
+        function switchEmailTemplateMode(toMd) {
+          if (!emailTemplateEditor || !emailTemplateMarkdown || !emailTemplateModeHtml || !emailTemplateModeMd) return;
+          if (toMd) {
+            emailTemplateMarkdown.value = window.htmlToMarkdown(emailTemplateEditor.root.innerHTML);
+            emailTemplateMarkdown.style.display = 'block';
+            emailTemplateEditor.root.parentElement.style.display = 'none';
+            emailTemplateModeMd.classList.add('active');
+            emailTemplateModeHtml.classList.remove('active');
+          } else {
+            emailTemplateEditor.root.innerHTML = window.markdownToHtml(emailTemplateMarkdown.value);
+            emailTemplateMarkdown.style.display = 'none';
+            emailTemplateEditor.root.parentElement.style.display = 'block';
+            emailTemplateModeMd.classList.remove('active');
+            emailTemplateModeHtml.classList.add('active');
+          }
+        }
+
+        async function updateEmailTemplatePreview(event) {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          if (!emailTemplatePreview) return;
           emailTemplatePreview.textContent = '正在生成预览...';
           try {
+            const kind = String(emailTemplateKindInput ? emailTemplateKindInput.value : 'email').trim();
+            const content = emailTemplateMarkdown && emailTemplateMarkdown.style.display === 'block'
+              ? window.markdownToHtml(emailTemplateMarkdown.value)
+              : emailTemplateEditor.root.innerHTML;
             const response = await fetch('/admin/templates/preview', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ kind: 'email', content: emailTemplateEditor.root.innerHTML })
+              body: JSON.stringify({ kind, content })
             });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
@@ -160,24 +190,35 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
           }
         }
 
-        emailTemplatePreviewButton?.addEventListener('click', updateEmailTemplatePreview);
+        emailTemplateModeHtml?.addEventListener('click', function () { switchEmailTemplateMode(false); });
+        emailTemplateModeMd?.addEventListener('click', function () { switchEmailTemplateMode(true); });
+        emailTemplatePreviewButton?.addEventListener('click', function(event) { updateEmailTemplatePreview(event); });
 
         // 将数据库中的内容加载到编辑器
         const emailTemplateContent = ${emailTemplateJson};
         if (emailTemplateContent) {
           emailTemplateEditor.root.innerHTML = emailTemplateContent;
+          if (emailTemplateMarkdown) {
+            emailTemplateMarkdown.value = window.htmlToMarkdown(emailTemplateContent);
+            emailTemplateMarkdown.style.display = 'none';
+          }
         }
+
+        switchEmailTemplateMode(false);
         
         // 隐藏的 textarea 用于表单提交
         const emailTemplateTextarea = document.getElementById('emailTemplate');
         emailTemplateTextarea.value = emailTemplateContent;
 
 
-      document.getElementById('systemSettingsForm').addEventListener('submit', function(event) {
+        document.getElementById('systemSettingsForm').addEventListener('submit', function(event) {
         event.preventDefault();
         
         // 提交前，将编辑器内容同步到隐藏的 textarea
-        emailTemplateTextarea.value = emailTemplateEditor.root.innerHTML;
+        const emailContent = emailTemplateMarkdown && emailTemplateMarkdown.style.display === 'block'
+          ? window.markdownToHtml(emailTemplateMarkdown.value)
+          : emailTemplateEditor.root.innerHTML;
+        emailTemplateTextarea.value = emailContent;
 
         const formData = new FormData(this);
         const newSettings = {
