@@ -15,8 +15,8 @@ function renderLayoutTemplate(values: Record<string, string>): string {
 
 export function sanitizeRichHtml(value: unknown): string {
   return sanitizeHtml(String(value ?? ''), {
-    allowedTags: ['h1','h2','h3','h4','p','br','strong','b','em','i','u','s','ol','ul','li','table','thead','tbody','tr','th','td','blockquote','a','span','div','hr','code','pre'],
-    allowedAttributes: { a: ['href','target','rel'], '*': ['class','style'] },
+    allowedTags: ['h1', 'h2', 'h3', 'h4', 'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ol', 'ul', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'blockquote', 'a', 'span', 'div', 'hr', 'code', 'pre'],
+    allowedAttributes: { a: ['href', 'target', 'rel'], '*': ['class', 'style'] },
     allowedSchemes: ['http', 'https', 'mailto'],
     allowedSchemesByTag: { a: ['http', 'https', 'mailto'] },
     allowedStyles: {
@@ -28,6 +28,8 @@ export function sanitizeRichHtml(value: unknown): string {
         width: [/^\d+(\.\d+)?(%|px)$/],
         margin: [/^[\d\s.%px-]+$/], padding: [/^[\d\s.%px-]+$/],
         border: [/^[\d\s.#a-z()-]+$/i], 'border-collapse': [/^(collapse|separate)$/],
+        'page-break-after': [/^(always|avoid|auto|left|right)$/],
+        'break-after': [/^(auto|avoid|always|page|column|region)$/],
       },
     },
     transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer' }, true) },
@@ -38,6 +40,10 @@ export function sanitizePlainText(value: unknown, maxLength = 500): string {
   return sanitizeHtml(String(value ?? ''), { allowedTags: [], allowedAttributes: {} })
     .trim()
     .slice(0, maxLength)
+}
+
+export function createPageBreakHtml(): string {
+  return '<div class="page-break" style="page-break-after: always; break-after: page;"></div><p><br></p>'
 }
 
 export function splitPersonName(value: unknown): { firstName: string; lastName: string } {
@@ -1787,40 +1793,40 @@ function escapeContractValue(value: unknown): string {
 }
 
 export const CONTRACT_VARIABLE_NAMES = [
-  'contract_number','agreement_version','contract_status','created_time','updated_time','jurisdiction',
-  'company_name','company_abn','company_address','company_phone','company_email','company_website','company_logo',
-  'customer_name','customer_phone','customer_email','customer_address','customer_dob','customer_country','customer_id_type','customer_id_number','customer_driver_expiry','emergency_contact','emergency_phone',
-  'device_id','asset_tag','device_name','device_brand','device_model','device_cpu','device_ram','device_storage','device_gpu','device_os','device_sn','charger_sn','battery_health','battery_cycles','device_condition','device_accessories',
-  'start_date','end_date','rental_days','pickup_location','return_location','delivery_method','delivery_fee','return_method','return_date','return_status',
-  'currency','daily_rate','subtotal','gst_included','gst_amount','discount','coupon_code','total_rent','deposit_amount','deposit_paid','rent_paid','amount_due','payment_method','payment_date','payment_reference',
-  'bank_name','account_name','bank_bsb','bank_account',
-  'late_days','late_fee_per_day','late_fee',
-  'inspection_date','inspection_by','screen_condition','keyboard_condition','trackpad_condition','body_condition','camera_condition','wifi_condition','power_test','inspection_notes',
-  'damage_description','damage_photos','repair_cost','replacement_cost','deduction_amount','repair_invoice',
-  'deposit_refund','refund_amount','refund_date',
-  'signer_name','sign_time','esign_signature','company_signature','esign_ip','esign_device','esign_browser','esign_os',
-  'company_representative','customer_initials','insurance_selected','insurance_fee',
-  'pickup_time','return_time','accessories_returned','customer_acknowledgement',
-  'created_by','approved_by','notes','qr_code','contract_url','invoice_number','invoice_url',
+  'contract_number', 'agreement_version', 'contract_status', 'created_time', 'updated_time', 'jurisdiction',
+  'company_name', 'company_abn', 'company_address', 'company_phone', 'company_email', 'company_website', 'company_logo',
+  'customer_name', 'customer_phone', 'customer_email', 'customer_address', 'customer_dob', 'customer_country', 'customer_id_type', 'customer_id_number', 'customer_driver_expiry', 'emergency_contact', 'emergency_phone',
+  'device_id', 'asset_tag', 'device_name', 'device_brand', 'device_model', 'device_cpu', 'device_ram', 'device_storage', 'device_gpu', 'device_os', 'device_sn', 'charger_sn', 'battery_health', 'battery_cycles', 'device_condition', 'device_accessories',
+  'start_date', 'end_date', 'rental_days', 'pickup_location', 'return_location', 'delivery_method', 'delivery_fee', 'return_method', 'return_date', 'return_status',
+  'currency', 'daily_rate', 'subtotal', 'gst_included', 'gst_amount', 'discount', 'coupon_code', 'total_rent', 'deposit_amount', 'deposit_paid', 'rent_paid', 'amount_due', 'payment_method', 'payment_date', 'payment_reference',
+  'bank_name', 'account_name', 'bank_bsb', 'bank_account',
+  'late_days', 'late_fee_per_day', 'late_fee',
+  'inspection_date', 'inspection_by', 'screen_condition', 'keyboard_condition', 'trackpad_condition', 'body_condition', 'camera_condition', 'wifi_condition', 'power_test', 'inspection_notes',
+  'damage_description', 'damage_photos', 'repair_cost', 'replacement_cost', 'deduction_amount', 'repair_invoice',
+  'deposit_refund', 'refund_amount', 'refund_date',
+  'signer_name', 'sign_time', 'esign_signature', 'company_signature', 'esign_ip', 'esign_device', 'esign_browser', 'esign_os',
+  'company_representative', 'customer_initials', 'insurance_selected', 'insurance_fee',
+  'pickup_time', 'return_time', 'accessories_returned', 'customer_acknowledgement',
+  'created_by', 'approved_by', 'notes', 'qr_code', 'contract_url', 'invoice_number', 'invoice_url',
 ] as const
 
 export const CONTRACT_VARIABLE_GROUPS = [
-  ['合同', ['contract_number','agreement_version','contract_status','created_time','updated_time','jurisdiction']],
-  ['公司', ['company_name','company_abn','company_address','company_phone','company_email','company_website','company_logo']],
-  ['客户', ['customer_name','customer_phone','customer_email','customer_address','customer_dob','customer_country','customer_id_type','customer_id_number','customer_driver_expiry','emergency_contact','emergency_phone']],
-  ['设备', ['device_id','asset_tag','device_name','device_brand','device_model','device_cpu','device_ram','device_storage','device_gpu','device_os','device_sn','charger_sn','battery_health','battery_cycles','device_condition','device_accessories']],
-  ['租赁', ['start_date','end_date','rental_days','pickup_location','return_location','delivery_method','delivery_fee','return_method','return_date','return_status']],
-  ['付款', ['currency','daily_rate','subtotal','gst_included','gst_amount','discount','coupon_code','total_rent','deposit_amount','deposit_paid','rent_paid','amount_due','payment_method','payment_date','payment_reference']],
-  ['银行', ['bank_name','account_name','bank_bsb','bank_account']],
-  ['逾期归还', ['late_days','late_fee_per_day','late_fee']],
-  ['验机', ['inspection_date','inspection_by','screen_condition','keyboard_condition','trackpad_condition','body_condition','camera_condition','wifi_condition','power_test','inspection_notes']],
-  ['损坏', ['damage_description','damage_photos','repair_cost','replacement_cost','deduction_amount','repair_invoice']],
-  ['退款', ['deposit_refund','refund_amount','refund_date']],
-  ['电子签名', ['signer_name','sign_time','esign_signature','company_signature','esign_ip','esign_device','esign_browser','esign_os']],
-  ['代表与确认', ['company_representative','customer_initials']],
-  ['保险', ['insurance_selected','insurance_fee']],
-  ['取还时间', ['pickup_time','return_time','accessories_returned','customer_acknowledgement']],
-  ['系统', ['created_by','approved_by','notes','qr_code','contract_url','invoice_number','invoice_url']],
+  ['合同', ['contract_number', 'agreement_version', 'contract_status', 'created_time', 'updated_time', 'jurisdiction']],
+  ['公司', ['company_name', 'company_abn', 'company_address', 'company_phone', 'company_email', 'company_website', 'company_logo']],
+  ['客户', ['customer_name', 'customer_phone', 'customer_email', 'customer_address', 'customer_dob', 'customer_country', 'customer_id_type', 'customer_id_number', 'customer_driver_expiry', 'emergency_contact', 'emergency_phone']],
+  ['设备', ['device_id', 'asset_tag', 'device_name', 'device_brand', 'device_model', 'device_cpu', 'device_ram', 'device_storage', 'device_gpu', 'device_os', 'device_sn', 'charger_sn', 'battery_health', 'battery_cycles', 'device_condition', 'device_accessories']],
+  ['租赁', ['start_date', 'end_date', 'rental_days', 'pickup_location', 'return_location', 'delivery_method', 'delivery_fee', 'return_method', 'return_date', 'return_status']],
+  ['付款', ['currency', 'daily_rate', 'subtotal', 'gst_included', 'gst_amount', 'discount', 'coupon_code', 'total_rent', 'deposit_amount', 'deposit_paid', 'rent_paid', 'amount_due', 'payment_method', 'payment_date', 'payment_reference']],
+  ['银行', ['bank_name', 'account_name', 'bank_bsb', 'bank_account']],
+  ['逾期归还', ['late_days', 'late_fee_per_day', 'late_fee']],
+  ['验机', ['inspection_date', 'inspection_by', 'screen_condition', 'keyboard_condition', 'trackpad_condition', 'body_condition', 'camera_condition', 'wifi_condition', 'power_test', 'inspection_notes']],
+  ['损坏', ['damage_description', 'damage_photos', 'repair_cost', 'replacement_cost', 'deduction_amount', 'repair_invoice']],
+  ['退款', ['deposit_refund', 'refund_amount', 'refund_date']],
+  ['电子签名', ['signer_name', 'sign_time', 'esign_signature', 'company_signature', 'esign_ip', 'esign_device', 'esign_browser', 'esign_os']],
+  ['代表与确认', ['company_representative', 'customer_initials']],
+  ['保险', ['insurance_selected', 'insurance_fee']],
+  ['取还时间', ['pickup_time', 'return_time', 'accessories_returned', 'customer_acknowledgement']],
+  ['系统', ['created_by', 'approved_by', 'notes', 'qr_code', 'contract_url', 'invoice_number', 'invoice_url']],
 ] as const
 
 export function renderContractVariables(content: string, contract: Contract, order?: any, device?: any, customer?: any, extra: Record<string, unknown> = {}, includeInternal = false): string {
@@ -1904,25 +1910,25 @@ export function renderContractVariables(content: string, contract: Contract, ord
 }
 
 export const CONTRACT_OPERATIONAL_FIELDS = [
-  ['agreement_version','合同版本'], ['jurisdiction','司法管辖区'],
-  ['customer_address','客户地址'], ['customer_dob','客户出生日期'], ['customer_country','客户国家'], ['customer_id_type','证件类型'], ['customer_id_number','证件号码'], ['customer_driver_expiry','驾照到期日'], ['emergency_contact','紧急联系人'], ['emergency_phone','紧急联系电话'],
-  ['invoice_number','发票编号'], ['delivery_method','配送方式（Pickup / Delivery）'], ['delivery_fee','配送费'], ['return_method','归还方式（CourierPickup / StoreReturn）'], ['pickup_location','取货地点'], ['return_location','归还地点'], ['pickup_time','取货时间'], ['return_time','归还时间'],
-  ['return_status','归还状态'], ['return_date','实际归还日期'], ['inspection_date','检查日期'], ['inspection_by','检查员工'],
-  ['device_brand','设备品牌'], ['device_cpu','CPU'], ['device_ram','内存'], ['device_storage','存储'], ['device_gpu','显卡'], ['device_os','设备操作系统'],
-  ['battery_health','电池健康'], ['charger_sn','充电器 SN'], ['asset_tag','公司资产编号'], ['device_condition','设备状况'], ['device_accessories','交付配件'],
-  ['esign_signature','客户电子签名'], ['company_signature','公司电子签名'], ['esign_location','签约 GPS 位置'], ['esign_browser','签约浏览器'], ['esign_os','签约操作系统'], ['company_representative','公司代表'], ['customer_initials','客户姓名首字母'],
-  ['discount','优惠金额'], ['coupon_code','优惠码'],
-  ['damage_description','损坏说明'], ['damage_photos','损坏照片 URL'], ['repair_invoice','维修发票'], ['replacement_cost','更换费用'], ['repair_cost','维修费用'],
-  ['collection_required','是否需要追回'], ['collection_date','回收日期'],
-  ['screen_condition','屏幕状况'], ['keyboard_condition','键盘状况'], ['trackpad_condition','触控板状况'], ['body_condition','外壳状况'], ['camera_condition','摄像头状况'], ['wifi_condition','WiFi 状况'], ['battery_cycles','电池循环次数'], ['power_test','开机测试'], ['inspection_notes','验机备注'], ['accessories_returned','已归还配件'], ['customer_acknowledgement','客户确认'],
-  ['approved_by','审批员工'], ['notes','内部备注'], ['qr_code','合同二维码图片 URL'],
-  ['insurance_selected','是否选择保险'], ['insurance_fee','保险费用'], ['insurance_provider','保险公司'], ['waiver_signed','是否签署免责'], ['privacy_version','隐私政策版本'],
+  ['agreement_version', '合同版本'], ['jurisdiction', '司法管辖区'],
+  ['customer_address', '客户地址'], ['customer_dob', '客户出生日期'], ['customer_country', '客户国家'], ['customer_id_type', '证件类型'], ['customer_id_number', '证件号码'], ['customer_driver_expiry', '驾照到期日'], ['emergency_contact', '紧急联系人'], ['emergency_phone', '紧急联系电话'],
+  ['invoice_number', '发票编号'], ['delivery_method', '配送方式（Pickup / Delivery）'], ['delivery_fee', '配送费'], ['return_method', '归还方式（CourierPickup / StoreReturn）'], ['pickup_location', '取货地点'], ['return_location', '归还地点'], ['pickup_time', '取货时间'], ['return_time', '归还时间'],
+  ['return_status', '归还状态'], ['return_date', '实际归还日期'], ['inspection_date', '检查日期'], ['inspection_by', '检查员工'],
+  ['device_brand', '设备品牌'], ['device_cpu', 'CPU'], ['device_ram', '内存'], ['device_storage', '存储'], ['device_gpu', '显卡'], ['device_os', '设备操作系统'],
+  ['battery_health', '电池健康'], ['charger_sn', '充电器 SN'], ['asset_tag', '公司资产编号'], ['device_condition', '设备状况'], ['device_accessories', '交付配件'],
+  ['esign_signature', '客户电子签名'], ['company_signature', '公司电子签名'], ['esign_location', '签约 GPS 位置'], ['esign_browser', '签约浏览器'], ['esign_os', '签约操作系统'], ['company_representative', '公司代表'], ['customer_initials', '客户姓名首字母'],
+  ['discount', '优惠金额'], ['coupon_code', '优惠码'],
+  ['damage_description', '损坏说明'], ['damage_photos', '损坏照片 URL'], ['repair_invoice', '维修发票'], ['replacement_cost', '更换费用'], ['repair_cost', '维修费用'],
+  ['collection_required', '是否需要追回'], ['collection_date', '回收日期'],
+  ['screen_condition', '屏幕状况'], ['keyboard_condition', '键盘状况'], ['trackpad_condition', '触控板状况'], ['body_condition', '外壳状况'], ['camera_condition', '摄像头状况'], ['wifi_condition', 'WiFi 状况'], ['battery_cycles', '电池循环次数'], ['power_test', '开机测试'], ['inspection_notes', '验机备注'], ['accessories_returned', '已归还配件'], ['customer_acknowledgement', '客户确认'],
+  ['approved_by', '审批员工'], ['notes', '内部备注'], ['qr_code', '合同二维码图片 URL'],
+  ['insurance_selected', '是否选择保险'], ['insurance_fee', '保险费用'], ['insurance_provider', '保险公司'], ['waiver_signed', '是否签署免责'], ['privacy_version', '隐私政策版本'],
 ] as const
 
 export const CONTRACT_COMPUTED_FIELDS = [
-  ['device_id','系统内部设备 ID'], ['currency','币种'], ['deposit_paid','已支付押金'], ['rent_paid','已支付租金'], ['amount_due','剩余应付款'], ['payment_date','付款日期'], ['payment_reference','银行 Reference'],
-  ['subtotal','小计'], ['gst_amount','GST 金额'], ['refund_amount','退款金额'], ['deposit_refund','押金退款'], ['refund_date','退款日期'], ['deduction_amount','押金扣除金额'],
-  ['late_days','逾期天数'], ['late_fee','逾期费用'], ['created_by','创建员工'], ['created_time','创建时间'], ['updated_time','更新时间'], ['contract_status','合同状态'], ['deleted','是否删除'],
+  ['device_id', '系统内部设备 ID'], ['currency', '币种'], ['deposit_paid', '已支付押金'], ['rent_paid', '已支付租金'], ['amount_due', '剩余应付款'], ['payment_date', '付款日期'], ['payment_reference', '银行 Reference'],
+  ['subtotal', '小计'], ['gst_amount', 'GST 金额'], ['refund_amount', '退款金额'], ['deposit_refund', '押金退款'], ['refund_date', '退款日期'], ['deduction_amount', '押金扣除金额'],
+  ['late_days', '逾期天数'], ['late_fee', '逾期费用'], ['created_by', '创建员工'], ['created_time', '创建时间'], ['updated_time', '更新时间'], ['contract_status', '合同状态'], ['deleted', '是否删除'],
 ] as const
 
 export const CONTRACT_SIGNED_FIELDS = new Set([

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractTemplate, CONTRACT_VARIABLE_GROUPS } from '../../site';
+import { buildLayout, getContractTemplate, CONTRACT_VARIABLE_GROUPS, createPageBreakHtml } from '../../site';
 import { Context } from 'hono';
 
 export function renderAdminContractManagement(user: any) {
@@ -23,6 +23,7 @@ export async function renderAdminContracts(c: Context, user: any) {
   const safeTemplateName = String(currentTemplate?.name ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const safeTemplateContent = String(currentTemplate?.content ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const completeVariableIndex = CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')
+  const pageBreakMarkup = JSON.stringify(createPageBreakHtml())
 
   const body = `
     <div class="panel">
@@ -42,7 +43,7 @@ export async function renderAdminContracts(c: Context, user: any) {
               <label for="templateContentEditor">模板内容</label>
               <div id="templateContentEditor" class="quill-editor" style="min-height: 320px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px;"></div>
               <input type="hidden" id="templateContent" name="templateContent" value="${safeTemplateContent}">
-              <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们。</small>
+              <small class="form-text text-muted">已集成 Quill 富文本编辑器，可直接格式化合同文本。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们；也可以通过编辑器里的“分页”按钮插入分页符。</small>
             </div>
             <button type="submit" class="button button-primary">保存模板</button>
           </form>
@@ -53,6 +54,17 @@ export async function renderAdminContracts(c: Context, user: any) {
 
     <script>
       document.addEventListener('DOMContentLoaded', function() {
+        const pageBreakHtml = ${pageBreakMarkup};
+        const insertPageBreak = () => {
+          const quill = window.__contractTemplateQuill;
+          if (!quill) return;
+          const range = quill.getSelection(true);
+          const index = range ? range.index : quill.getLength();
+          quill.clipboard.dangerouslyPasteHTML(index, pageBreakHtml);
+          if (range) {
+            quill.setSelection(index + 1, 0);
+          }
+        };
         const quill = window.createRichTextEditor('#templateContentEditor', {
           theme: 'snow',
           modules: {
@@ -66,6 +78,20 @@ export async function renderAdminContracts(c: Context, user: any) {
             ]
           }
         });
+        window.__contractTemplateQuill = quill;
+        const toolbar = quill.getModule ? quill.getModule('toolbar').container : null;
+        if (toolbar) {
+          const pageBreakButton = document.createElement('button');
+          pageBreakButton.type = 'button';
+          pageBreakButton.className = 'ql-page-break';
+          pageBreakButton.title = '插入分页符';
+          pageBreakButton.textContent = '分页';
+          pageBreakButton.addEventListener('click', function(event) {
+            event.preventDefault();
+            insertPageBreak();
+          });
+          toolbar.appendChild(pageBreakButton);
+        }
 
         const updateContractTemplate = async (template) => {
           const response = await fetch('/admin/contracts/template', {

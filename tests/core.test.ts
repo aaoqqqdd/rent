@@ -5,7 +5,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
 import { renderAdminContracts } from '../src/pages/admin/contracts'
@@ -245,6 +245,14 @@ test('plain text and contract HTML reject script injection', () => {
   assert.match(cleaned, /<a rel="noopener noreferrer">link<\/a>/)
 })
 
+test('page break markup can be inserted into contract templates', () => {
+  const html = createPageBreakHtml()
+  const cleaned = sanitizeRichHtml(html)
+  assert.match(html, /class="page-break"/)
+  assert.match(html, /page-break-after:/)
+  assert.match(cleaned, /page-break-after:/)
+})
+
 test('rich text editor pages emit valid browser JavaScript', async () => {
   const user = { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }
   const settingsHtml = renderAdminSettings(user)
@@ -466,7 +474,7 @@ test('terminal contracts hide progress and editing while only finalized contract
       { id: 'ct-cancelled', orderId: 'o2', contractNumber: 'CANCELLED', status: 'cancelled', created_by: 'staff-1' },
       { id: 'ct-completed', orderId: 'o3', contractNumber: 'COMPLETED', status: 'completed', signedAt: '2026-08-01', signed_content: '<p>signed</p>', created_by: 'staff-1' },
     ],
-    orders: ['o1','o2','o3'].map(id => ({ id, userId: 'u1', deviceId: 'd1', status: 'active', startDate: '2026-08-01', endDate: '2026-08-02' })),
+    orders: ['o1', 'o2', 'o3'].map(id => ({ id, userId: 'u1', deviceId: 'd1', status: 'active', startDate: '2026-08-01', endDate: '2026-08-02' })),
     users: [{ id: 'staff-1', name: 'Staff', role: 'STAFF' }, { id: 'u1', name: 'Customer', role: 'CUSTOMER' }], devices: [{ id: 'd1', name: 'Laptop' }],
   }
   const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
