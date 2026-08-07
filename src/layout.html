@@ -17,17 +17,23 @@
 
 <body class="{{BODY_CLASS}}">
   <div class="page">
-    <header>
+    <header class="desktop-header">
       <a href="/" class="logo"><span class="logo-mark">PR</span><span class="logo-copy">PC
           Rental<small>设备租赁控制台</small></span></a>
       <span class="asset-tag mono">ASSET OPS / MEL</span>
       <nav class="main-nav">{{TOP_NAV}}</nav>
       <div class="user-block">{{USER_BLOCK}}</div>
     </header>
+    <header class="mobile-header">
+      <a href="/" class="logo"><span class="logo-mark">PR</span><span class="logo-copy">PC Rental</span></a>
+      <span class="mobile-header__label">{{MOBILE_LABEL}}</span>
+      <div class="user-block">{{MOBILE_USER_BLOCK}}</div>
+    </header>
     <div class="container">
       {{SIDEBAR}}
       <main class="content">{{CONTENT}}</main>
     </div>
+    <nav class="mobile-bottom-nav" aria-label="移动端导航">{{MOBILE_NAV}}</nav>
     {{FOOTER}}
   </div>
   <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>

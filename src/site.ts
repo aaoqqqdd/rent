@@ -2554,6 +2554,17 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     return `<a href="${href}"><span class="nav-icon">${icon}</span>${text}</a>`
   }
 
+  const mobileLinks = currentUser?.role === 'ADMIN'
+    ? [['/admin/dashboard', '控制台', '◉'], ['/admin/orders', '订单', '▦'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
+    : currentUser?.role === 'STAFF'
+      ? [['/staff/dashboard', '工作台', '◉'], ['/staff/orders', '订单', '▦'], ['/staff/contracts', '合同', '▤'], ['/staff/customers', '客户', '◎']]
+      : currentUser?.accountType === 'guest'
+        ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
+        : [['/customer/dashboard', '首页', '◉'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/profile', '我的', '◎']]
+  const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span>${icon}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span>↗</span><small>登录</small></a><a href="/register"><span>+</span><small>注册</small></a>`
+  const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
+  const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${sanitizePlainText(currentUser.name.charAt(0).toUpperCase(), 1)}</span>` : ''
+
   const sidebar = currentUser
     ? `<aside class="sidebar">
         <div class="sidebar-section">
@@ -2605,6 +2616,9 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     BODY_CLASS: isAuthPage ? 'auth-page' : currentUser ? 'app-page' : 'public-page',
     TOP_NAV: topNav,
     USER_BLOCK: userBlockHtml,
+    MOBILE_NAV: mobileNav,
+    MOBILE_LABEL: mobileLabel,
+    MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
     FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/copyright">版权说明</a></nav></footer>`
