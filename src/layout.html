@@ -111,6 +111,17 @@
     };
 
     document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('table:not(.official-document__table)').forEach(function (table) {
+        const labels = Array.from(table.querySelectorAll('thead th')).map(function (header) { return header.textContent.trim(); });
+        table.querySelectorAll('tbody tr').forEach(function (row) {
+          Array.from(row.children).forEach(function (cell, index) {
+            if (cell instanceof HTMLElement) cell.dataset.label = labels[index] || '';
+          });
+        });
+      });
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
       document.querySelectorAll('textarea.markdown-editor').forEach(function (editor) {
         if (editor.dataset.markdownReady === 'true') return;
         editor.dataset.markdownReady = 'true';
@@ -173,6 +184,40 @@
           });
         });
       }
+
+      const mobileMotion = gsap.matchMedia();
+      mobileMotion.add('(max-width: 640px)', () => {
+        const mobileHeader = document.querySelector('.mobile-header');
+        const bottomNav = document.querySelector('.mobile-bottom-nav');
+        const mobileCards = root.querySelectorAll('.panel, .card, tbody tr');
+        const mobileTimeline = gsap.timeline({ defaults: { ease: 'power3.out' } });
+        if (mobileHeader) mobileTimeline.fromTo(mobileHeader, { y: -18, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .42 });
+        if (bottomNav) mobileTimeline.fromTo(bottomNav, { y: 30, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .42 }, '-=.18');
+        if (mobileCards.length) mobileTimeline.fromTo(mobileCards, { y: 14, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .32, stagger: .035 }, '-=.18');
+        return () => mobileTimeline.kill();
+      });
+
+      const desktopMotion = gsap.matchMedia();
+      desktopMotion.add('(min-width: 641px)', () => {
+        const desktopHeader = document.querySelector('.desktop-header');
+        const sidebar = document.querySelector('.sidebar');
+        const navLinks = document.querySelectorAll('.desktop-header .main-nav a, .sidebar-section a');
+        const desktopCards = root.querySelectorAll('.panel, .card, .stats-card, .metric-card');
+        const statusBadges = root.querySelectorAll('.badge-success, .badge-warning, .badge-info, .badge-primary');
+        const timeline = gsap.timeline({ defaults: { ease: 'power3.out' } });
+        if (desktopHeader) timeline.fromTo(desktopHeader, { y: -16, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .48 });
+        if (sidebar) timeline.fromTo(sidebar, { x: -18, autoAlpha: 0 }, { x: 0, autoAlpha: 1, duration: .5 }, '-=.28');
+        if (navLinks.length) timeline.fromTo(navLinks, { y: -8, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .28, stagger: .035 }, '-=.25');
+        if (desktopCards.length) timeline.fromTo(desktopCards, { y: 16, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .38, stagger: .045 }, '-=.18');
+        statusBadges.forEach((badge) => {
+          gsap.to(badge, { boxShadow: '0 0 0 5px rgba(36, 99, 235, .08)', duration: 1.8, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+        });
+        desktopCards.forEach((card) => {
+          card.addEventListener('mouseenter', () => gsap.to(card, { y: -3, duration: .24, ease: 'power2.out', overwrite: 'auto' }));
+          card.addEventListener('mouseleave', () => gsap.to(card, { y: 0, duration: .28, ease: 'power2.out', overwrite: 'auto' }));
+        });
+        return () => { timeline.kill(); gsap.killTweensOf(statusBadges); };
+      });
 
       buttons.forEach((button) => {
         button.addEventListener('pointerenter', () => gsap.to(button, { y: -2, duration: .18, ease: 'power2.out', overwrite: 'auto' }));
