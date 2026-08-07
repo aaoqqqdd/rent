@@ -102,6 +102,31 @@
       return String(html || '').replace(/<[^>]+>/g, '').trim();
     };
 
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('textarea.markdown-editor').forEach(function (editor) {
+        editor.removeAttribute('disabled');
+        editor.removeAttribute('readonly');
+        editor.setAttribute('spellcheck', 'false');
+        const toolbar = document.createElement('div');
+        toolbar.className = 'markdown-editor-toolbar';
+        [['标题', '# '], ['粗体', '**文字**'], ['斜体', '*文字*'], ['列表', '- 项目'], ['分隔线', '\n---\n']].forEach(function (item) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = item[0];
+          button.addEventListener('click', function () {
+            const start = editor.selectionStart || 0;
+            const end = editor.selectionEnd || start;
+            const selected = editor.value.slice(start, end) || item[1];
+            editor.setRangeText(item[0] === '标题' ? '# ' + selected : item[1].includes('文字') ? item[1].replace('文字', selected) : item[1], start, end, 'end');
+            editor.dispatchEvent(new Event('input', { bubbles: true }));
+            editor.focus();
+          });
+          toolbar.appendChild(button);
+        });
+        editor.parentNode.insertBefore(toolbar, editor);
+      });
+    });
+
     (function () {
       const path = window.location.pathname.replace(/\/$/, '') || '/';
       const links = Array.from(document.querySelectorAll('.sidebar-section a'));

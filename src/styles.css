@@ -966,6 +966,23 @@ header {
   resize: vertical;
   line-height: 1.6;
   box-sizing: border-box;
+  pointer-events: auto !important;
+  user-select: text !important;
+  opacity: 1 !important;
+  position: relative;
+  z-index: 2;
+}
+
+.markdown-editor-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.markdown-editor-toolbar button {
+  min-height: 32px;
+  padding: 5px 9px;
+  cursor: pointer;
 }
 
 .editor-layout-form.is-markdown-mode .editor-card {
