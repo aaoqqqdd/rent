@@ -51,7 +51,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
             <p class="alert">银行转账需由管理员审核客户提交的 Reference 后确认付款。</p>
           ` : ''}
           ${order.status === 'paid' ? `
-            <form method="POST" action="/staff/orders/${order.id}/pickup" onsubmit="return confirm('确认客户已完成取货吗？确认后订单将变为租赁中。');">
+            <form method="POST" action="/staff/orders/${order.id}/pickup" data-site-confirm="确认客户已完成取货吗？确认后订单将变为租赁中。">
               <button class="button button-primary" type="submit">已拿取</button>
             </form>
           ` : ''}

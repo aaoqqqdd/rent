@@ -104,7 +104,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
                   if (hasSignedContract) {
                     // 订单状态为待拿取
                     if (order.status === 'paid') {
-                      return `<button class="button button-sm button-primary" onclick="if (confirm('确认客户已完成取货吗？确认后订单将变为租赁中。')) fetch('/staff/orders/${order.id}/pickup', { method: 'POST' }).then((response) => { if (!response.ok) throw new Error('取货确认失败'); window.location.reload(); }).catch((error) => window.alert(error.message));">已拿取</button>`;
+                      return `<button class="button button-sm button-primary" onclick="window.siteConfirm('确认客户已完成取货吗？确认后订单将变为租赁中。', () => fetch('/staff/orders/${order.id}/pickup', { method: 'POST' }).then((response) => { if (!response.ok) throw new Error('取货确认失败'); window.location.reload(); }).catch((error) => window.alert(error.message)));">已拿取</button>`;
                     }
                     // 订单状态为待归还
                     if (order.status === 'pending_return') {

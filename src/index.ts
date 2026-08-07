@@ -67,6 +67,7 @@ import {
   ,createDueDateNotifications
   ,sanitizePlainText
   ,renderNotificationMarkdown
+  ,ensureNotificationsTable
 } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -451,6 +452,7 @@ app.post('/customer/orders/:id/returned', async (c) => {
 app.get('/notifications', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
+  await ensureNotificationsTable(c)
   const notifications = await getNotifications(c, user.id)
   const sentAnnouncements = user.role === 'ADMIN' ? ((await c.env.RENT.prepare("SELECT MAX(id) AS id, title, message, created_at FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC LIMIT 100").bind(user.id).all()).results || []) : []
   const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人</label><select class="form-control" id="notificationRecipient" name="recipientId" required><option value="">请选择收件人</option>${(await getUsersAsync(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive').map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<article class="notification-item ${item.read_at ? '' : 'is-unread'}"><div><strong>${item.title}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div>${item.order_id ? `<a class="button button-sm button-secondary" href="${user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`}" >查看订单</a>` : ''}</article>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
@@ -460,6 +462,7 @@ app.get('/notifications', async (c) => {
 app.get('/notifications/announcements', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ announcements: [] }, 401)
+  await ensureNotificationsTable(c)
   const result = await c.env.RENT.prepare("SELECT id, title, message, created_at FROM notifications WHERE recipient_id = ? AND type = 'announcement' AND read_at IS NULL ORDER BY created_at DESC LIMIT 5").bind(user.id).all()
   return c.json({ announcements: (result.results || []).map((item: any) => ({ ...item, message_html: renderNotificationMarkdown(item.message) })) })
 })
@@ -467,6 +470,7 @@ app.get('/notifications/announcements', async (c) => {
 app.get('/notifications/unread', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [] }, 401)
+  await ensureNotificationsTable(c)
   const result = await c.env.RENT.prepare('SELECT id, type, title, message, order_id, created_at FROM notifications WHERE recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10').bind(user.id).all()
   return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message_html: renderNotificationMarkdown(item.message) })) })
 })
@@ -474,6 +478,7 @@ app.get('/notifications/unread', async (c) => {
 app.post('/notifications/announcements/:id/dismiss', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ ok: false }, 401)
+  await ensureNotificationsTable(c)
   await c.env.RENT.prepare("UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND recipient_id = ? AND type = 'announcement'").bind(c.req.param('id'), user.id).run()
   return c.json({ ok: true })
 })
@@ -481,6 +486,7 @@ app.post('/notifications/announcements/:id/dismiss', async (c) => {
 app.post('/notifications/:id/dismiss', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ ok: false }, 401)
+  await ensureNotificationsTable(c)
   await c.env.RENT.prepare('UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), user.id).run()
   return c.json({ ok: true })
 })
@@ -488,6 +494,7 @@ app.post('/notifications/:id/dismiss', async (c) => {
 app.post('/notifications/announcements/:id/delete', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  await ensureNotificationsTable(c)
   await c.env.RENT.prepare("UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE sender_id = ? AND type = 'announcement' AND title = (SELECT title FROM notifications WHERE id = ? AND sender_id = ?) AND message = (SELECT message FROM notifications WHERE id = ? AND sender_id = ?) AND created_at = (SELECT created_at FROM notifications WHERE id = ? AND sender_id = ?)").bind(user.id, c.req.param('id'), user.id, c.req.param('id'), user.id, c.req.param('id'), user.id).run()
   return c.redirect('/notifications')
 })

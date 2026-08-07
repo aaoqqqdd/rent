@@ -3139,6 +3139,19 @@ tr:hover td {
   letter-spacing: .12em;
 }
 
+.notification-toast__mark {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 7px;
+  color: #fff;
+  background: var(--primary);
+  border-radius: 7px;
+  font: 700 .72rem var(--font-mono);
+}
+
 .announcement-card h2 { margin: 12px 0 10px; }
 .announcement-card p { margin: 0 0 24px; color: var(--text-secondary); white-space: pre-wrap; }
 
@@ -3168,6 +3181,8 @@ tr:hover td {
   gap: 12px;
 }
 
+.notification-toast__header strong { flex: 1; }
+
 .notification-toast__header button {
   padding: 0 4px;
   color: var(--text-tertiary);
@@ -3180,6 +3195,45 @@ tr:hover td {
 
 .notification-toast__card p { margin: 7px 0 0; color: var(--text-secondary); font-size: .88rem; white-space: pre-wrap; }
 .notification-toast__card > .button { display: inline-flex; margin-top: 12px; }
+
+.site-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1210;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, .58);
+  backdrop-filter: blur(6px);
+  animation: feedback-dialog-in 180ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.site-confirm-card {
+  width: min(440px, 100%);
+  padding: 30px;
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+
+.site-confirm-card__mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 14px;
+  color: #fff;
+  background: var(--primary);
+  border-radius: 50%;
+  font: 700 1.4rem var(--font-mono);
+}
+
+.site-confirm-card h2 { margin: 0 0 10px; font-size: 1.2rem; }
+.site-confirm-card p { margin: 0 0 24px; color: var(--text-secondary); white-space: pre-wrap; }
+.site-confirm-actions { display: flex; justify-content: center; gap: 10px; }
 
 @media (prefers-reduced-motion: reduce) {
   .announcement-overlay, .notification-toast { animation: none; }

@@ -110,6 +110,26 @@
       return String(html || '').replace(/<[^>]+>/g, '').trim();
     };
 
+    window.siteConfirm = function (message, onConfirm) {
+      const overlay = document.createElement('div');
+      overlay.className = 'site-confirm-overlay';
+      overlay.innerHTML = '<div class="site-confirm-card" role="dialog" aria-modal="true" aria-labelledby="site-confirm-title"><span class="site-confirm-card__mark">?</span><h2 id="site-confirm-title">请确认操作</h2><p></p><div class="site-confirm-actions"><button type="button" class="button button-secondary" data-confirm-cancel>取消</button><button type="button" class="button button-primary" data-confirm-ok>确认</button></div></div>';
+      overlay.querySelector('p').textContent = message || '确定继续吗？';
+      const close = function () { overlay.remove(); };
+      overlay.querySelector('[data-confirm-cancel]').addEventListener('click', close);
+      overlay.querySelector('[data-confirm-ok]').addEventListener('click', function () { close(); onConfirm(); });
+      document.body.appendChild(overlay);
+    };
+
+    document.addEventListener('submit', function (event) {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement) || !form.dataset.siteConfirm) return;
+      event.preventDefault();
+      const message = form.dataset.siteConfirm;
+      delete form.dataset.siteConfirm;
+      window.siteConfirm(message, function () { form.requestSubmit(); });
+    }, true);
+
     document.addEventListener('DOMContentLoaded', function () {
       fetch('/notifications/unread', { headers: { Accept: 'application/json' } }).then(function (response) { return response.ok ? response.json() : null; }).then(function (payload) {
         if (!payload || !payload.notifications || !payload.notifications.length) return;
@@ -119,8 +139,8 @@
         const overlay = document.createElement('div');
         overlay.className = isAnnouncement ? 'announcement-overlay' : 'notification-toast';
         overlay.innerHTML = isAnnouncement
-          ? '<div class="announcement-card" role="dialog" aria-modal="true" aria-labelledby="announcement-title"><span class="announcement-card__label">SITE ANNOUNCEMENT</span><h2 id="announcement-title"></h2><p></p><button class="button button-primary" type="button">以后不再展示此通告</button></div>'
-          : '<article class="notification-toast__card" role="status"><div class="notification-toast__header"><strong></strong><button type="button" aria-label="关闭通知">×</button></div><p></p><a class="button button-sm button-secondary" href="/notifications">查看通知</a></article>';
+          ? '<div class="announcement-card" role="dialog" aria-modal="true" aria-labelledby="announcement-title"><span class="announcement-card__label">网站通告</span><h2 id="announcement-title"></h2><p></p><button class="button button-primary" type="button">以后不再展示此通告</button></div>'
+          : '<article class="notification-toast__card" role="status"><div class="notification-toast__header"><span class="notification-toast__mark">N</span><strong></strong><button type="button" aria-label="关闭通知">×</button></div><p></p><a class="button button-sm button-secondary" href="/notifications">查看通知</a></article>';
         overlay.querySelector('strong, h2').textContent = notification.title || (isAnnouncement ? '网站通告' : '新通知');
         overlay.querySelector('p').innerHTML = isAnnouncement ? (notification.message_html || '') : ('你收到了 ' + unreadCount + ' 条新消息');
         const dismiss = function () { fetch('/notifications/' + encodeURIComponent(notification.id) + '/dismiss', { method: 'POST' }).finally(function () { overlay.remove(); }); };

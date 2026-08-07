@@ -213,17 +213,39 @@ export interface Order {
 }
 
 export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string }): Promise<void> {
+  await ensureNotificationsTable(c)
   const id = `nt-${crypto.randomUUID()}`
   await c.env.RENT.prepare('INSERT INTO notifications (id, recipient_id, type, title, message, order_id, sender_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null).run()
 }
 
+export async function ensureNotificationsTable(c: Context): Promise<void> {
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    order_id TEXT,
+    sender_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    read_at TEXT,
+    deleted_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run()
+  try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN sender_id TEXT REFERENCES users(id) ON DELETE SET NULL').run() } catch (_) { /* column already exists */ }
+  try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN deleted_at TEXT').run() } catch (_) { /* column already exists */ }
+  await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created ON notifications(recipient_id, read_at, created_at DESC)').run()
+  await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_sender_created ON notifications(sender_id, deleted_at, created_at DESC)').run()
+}
+
 export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
+  await ensureNotificationsTable(c)
   const result = await c.env.RENT.prepare('SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 100').bind(recipientId).all()
   return result.results || []
 }
 
 export async function createDueDateNotifications(c: Context): Promise<number> {
+  await ensureNotificationsTable(c)
   const today = new Date()
   const notices = [
     { days: 3, type: 'due_soon_3d', title: '租赁即将到期', text: '您的设备租赁将在 3 天后到期，请提前安排归还或联系工作人员续租。' },
@@ -2596,7 +2618,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦',
     '/staff/dashboard': '◉', '/staff/orders': '▦', '/staff/orders/ongoing': '◷', '/staff/customers': '◎', '/staff/contracts': '▤',
     '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
-    '/notifications': '🔔', '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
+    '/notifications': 'N', '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
     '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/calendar': '▦', '/admin/templates': '▤', '/admin/settings': '⚙'
   }
@@ -2607,12 +2629,12 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   }
 
   const mobileLinks = currentUser?.role === 'ADMIN'
-    ? [['/admin/dashboard', '控制台', '◉'], ['/admin/orders', '订单', '▦'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
+    ? [['/admin/dashboard', '控制台', '◉'], ['/notifications', '通知', 'N'], ['/admin/orders', '订单', '▦'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
     : currentUser?.role === 'STAFF'
-      ? [['/staff/dashboard', '工作台', '◉'], ['/staff/orders', '订单', '▦'], ['/staff/contracts', '合同', '▤'], ['/staff/customers', '客户', '◎']]
+      ? [['/staff/dashboard', '工作台', '◉'], ['/notifications', '通知', 'N'], ['/staff/orders', '订单', '▦'], ['/staff/contracts', '合同', '▤'], ['/staff/customers', '客户', '◎']]
       : currentUser?.accountType === 'guest'
         ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
-        : [['/customer/dashboard', '首页', '◉'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/profile', '我的', '◎']]
+        : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/profile', '我的', '◎']]
   const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span>${icon}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span>↗</span><small>登录</small></a><a href="/register"><span>+</span><small>注册</small></a>`
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
   const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${sanitizePlainText(currentUser.name.charAt(0).toUpperCase(), 1)}</span>` : ''
@@ -2621,10 +2643,10 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     ? `<aside class="sidebar">
         <div class="sidebar-section">
           <h3>导航</h3>
-          ${renderNavLink('/notifications', '通知中心')}
           ${currentUser.role === 'CUSTOMER' ? `
             ${currentUser.accountType === 'guest' ? renderNavLink('/customer/guest', '访客合同中心') : `
               ${renderNavLink('/customer/dashboard', '控制台')}
+              ${renderNavLink('/notifications', '通知中心')}
               ${renderNavLink('/customer/rentals', '我的租赁')}
               ${renderNavLink('/customer/orders', '订单管理')}
               ${renderNavLink('/customer/profile', '个人资料')}
@@ -2634,6 +2656,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ` : ''}
           ${currentUser.role === 'STAFF' ? `
             ${renderNavLink('/staff/dashboard', '工作台')}
+            ${renderNavLink('/notifications', '通知中心')}
             ${renderNavLink('/staff/customers', '客户管理')}
             ${renderNavLink('/staff/orders', '订单状态')}
             ${renderNavLink('/staff/orders/ongoing', '进行中的订单')}
@@ -2643,6 +2666,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
+            ${renderNavLink('/notifications', '通知中心')}
             ${renderNavLink('/admin/users', '用户管理')}
             ${renderNavLink('/admin/orders', '订单管理')}
             ${renderNavLink('/admin/refunds', '退款管理')}
