@@ -36,8 +36,8 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
   const maskedCustomerAccount = customer && customer.accountNumber ? `****${customer.accountNumber.substring(customer.accountNumber.length - 4)}` : 'N/A';
 
   const body = `
-    <div class="panel">
-      <div class="section-title"><div><h2>合同详情</h2><span class="section-note">订单号: ${order.orderNo}</span></div><a class="button button-secondary" href="${user.role === 'ADMIN' ? '/admin/contracts' : '/staff/contracts'}">返回上一步</a></div>
+    <div class="panel contract-viewer">
+      <div class="contract-toolbar"><strong>租赁合同 #${contract.contractNumber}</strong><span class="section-note">正式 A4 合同快照 · 订单号 ${order.orderNo}</span><button class="button button-secondary" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="${user.role === 'ADMIN' ? '/admin/contracts' : '/staff/contracts'}">返回</a></div>
 
       <div class="contract-header">
         <h3>合同编号: ${contract.contractNumber}</h3>
@@ -62,7 +62,7 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
         <p>押金: $${order.depositAmount}</p>
       </div>
 
-      <div class="contract-section contract-content">
+      <div class="a4-document contract-section contract-content">
         <h4>合同内容</h4>
         <div class="contract-text">
           ${renderedContract}
