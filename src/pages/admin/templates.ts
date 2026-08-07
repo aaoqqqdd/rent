@@ -18,7 +18,7 @@ export function renderAdminTemplateHub(user: any) {
       </article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">ST</span><div><h3>网站服务条款</h3><p>说明网站功能、合理使用和服务规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/service">编辑条款</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">PP</span><div><h3>隐私政策</h3><p>说明个人资料、付款信息和保存方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/privacy">编辑政策</a></article>
-      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">CR</span><div><h3>版权说明</h3><p>说明网站内容权利及源代码许可。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">版权许可</span><a class="button button-sm button-secondary" href="/admin/templates/copyright">编辑说明</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">RF</span><div><h3>退款政策</h3><p>说明订单取消、押金退还和退款方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">退款规则</span><a class="button button-sm button-secondary" href="/admin/templates/copyright">编辑政策</a></article>
       <article class="template-register__row">
         <div class="template-register__document"><span class="document-mark">RA</span><div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意。</p></div></div>
         <p>签署步骤 1</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a>
@@ -39,7 +39,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
     rental: ['编辑租赁协议', '用于合同签署流程第一步。变量会在展示时替换为对应合同数据。', settings.rentalTerms],
     service: ['编辑网站服务条款', '显示在全站右下角的服务条款页面。', settings.serviceTerms],
     privacy: ['编辑隐私政策', '显示在全站右下角的隐私政策页面。', settings.privacyPolicy],
-    copyright: ['编辑版权说明', '显示在全站右下角的版权与代码许可页面。', settings.copyrightNotice],
+    copyright: ['编辑退款政策', '显示在全站右下角的退款政策页面。', settings.copyrightNotice],
   }[kind]
   const [title, description, content] = documentMeta
   const initialContent = JSON.stringify(content).replace(/</g, '\\u003c')

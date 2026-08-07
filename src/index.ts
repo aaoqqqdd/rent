@@ -62,6 +62,11 @@ import {
   isStrongPassword,
   generateUniqueUserId,
   isContractExpired
+  ,createNotification
+  ,getNotifications
+  ,createDueDateNotifications
+  ,sanitizePlainText
+  ,renderNotificationMarkdown
 } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -277,7 +282,8 @@ app.get('/terms', async (c) => {
 for (const [path, title, key, code] of [
   ['/service-terms', '网站服务条款', 'serviceTerms', 'LEGAL / SERVICE TERMS'],
   ['/privacy', '隐私政策', 'privacyPolicy', 'LEGAL / PRIVACY'],
-  ['/copyright', '版权说明', 'copyrightNotice', 'LEGAL / COPYRIGHT'],
+  ['/refund-policy', '退款政策', 'copyrightNotice', 'LEGAL / REFUND POLICY'],
+  ['/copyright', '退款政策', 'copyrightNotice', 'LEGAL / REFUND POLICY'],
 ] as const) {
   app.get(path, async (c) => {
     const settings = await loadSystemSettingsFromDB(c)
@@ -424,7 +430,91 @@ app.post('/customer/orders/:id/early-return', async (c) => {
   if (!order || order.userId !== user.id) return c.html(renderForbidden(), 403)
   if (order.status !== 'active') return c.redirect(`/customer/orders/${order.id}?error=${encodeURIComponent('当前订单不能申请提前归还')}`)
   await updateOrderStatus(c, order.id, 'pending_return')
+  const customer = await getUserById(c, user.id)
+  if (customer?.staffId) await createNotification(c, { recipientId: customer.staffId, type: 'early_return', title: '客户申请提前归还', message: `${customer.name || '客户'} 已申请订单 ${order.orderNo || order.id} 提前归还，请安排验机。`, orderId: order.id })
   return c.redirect(`/customer/orders/${order.id}?success=${encodeURIComponent('已提交提前归还申请，请等待工作人员验机')}`)
+})
+
+app.post('/customer/orders/:id/returned', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || order.userId !== user.id) return c.html(renderForbidden(), 403)
+  if (order.status !== 'active') return c.redirect(`/customer/orders/${order.id}?error=${encodeURIComponent('当前订单不能提交已归还通知')}`)
+  await updateOrderStatus(c, order.id, 'pending_return')
+  const customer = await getUserById(c, user.id)
+  const admins = (await getUsersAsync(c)).filter((account: any) => account.role === 'ADMIN' && account.status !== 'inactive')
+  await Promise.all(admins.map((admin: any) => createNotification(c, { recipientId: admin.id, type: 'returned_review', title: '客户已归还设备，等待审核', message: `${customer?.name || '客户'} 已提交订单 ${order.orderNo || order.id} 的已归还通知，请审核并安排验机。`, orderId: order.id })))
+  return c.redirect(`/customer/orders/${order.id}?success=${encodeURIComponent('已通知管理员，等待审核验机')}`)
+})
+
+app.get('/notifications', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.redirect('/login')
+  const notifications = await getNotifications(c, user.id)
+  const sentAnnouncements = user.role === 'ADMIN' ? ((await c.env.RENT.prepare("SELECT MAX(id) AS id, title, message, created_at FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC LIMIT 100").bind(user.id).all()).results || []) : []
+  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人</label><select class="form-control" id="notificationRecipient" name="recipientId" required><option value="">请选择收件人</option>${(await getUsersAsync(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive').map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<article class="notification-item ${item.read_at ? '' : 'is-unread'}"><div><strong>${item.title}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div>${item.order_id ? `<a class="button button-sm button-secondary" href="${user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`}" >查看订单</a>` : ''}</article>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
+  return c.html(buildLayout('通知中心', body, user))
+})
+
+app.get('/notifications/announcements', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.json({ announcements: [] }, 401)
+  const result = await c.env.RENT.prepare("SELECT id, title, message, created_at FROM notifications WHERE recipient_id = ? AND type = 'announcement' AND read_at IS NULL ORDER BY created_at DESC LIMIT 5").bind(user.id).all()
+  return c.json({ announcements: (result.results || []).map((item: any) => ({ ...item, message_html: renderNotificationMarkdown(item.message) })) })
+})
+
+app.get('/notifications/unread', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.json({ notifications: [] }, 401)
+  const result = await c.env.RENT.prepare('SELECT id, type, title, message, order_id, created_at FROM notifications WHERE recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10').bind(user.id).all()
+  return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message_html: renderNotificationMarkdown(item.message) })) })
+})
+
+app.post('/notifications/announcements/:id/dismiss', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.json({ ok: false }, 401)
+  await c.env.RENT.prepare("UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND recipient_id = ? AND type = 'announcement'").bind(c.req.param('id'), user.id).run()
+  return c.json({ ok: true })
+})
+
+app.post('/notifications/:id/dismiss', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.json({ ok: false }, 401)
+  await c.env.RENT.prepare('UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), user.id).run()
+  return c.json({ ok: true })
+})
+
+app.post('/notifications/announcements/:id/delete', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  await c.env.RENT.prepare("UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE sender_id = ? AND type = 'announcement' AND title = (SELECT title FROM notifications WHERE id = ? AND sender_id = ?) AND message = (SELECT message FROM notifications WHERE id = ? AND sender_id = ?) AND created_at = (SELECT created_at FROM notifications WHERE id = ? AND sender_id = ?)").bind(user.id, c.req.param('id'), user.id, c.req.param('id'), user.id, c.req.param('id'), user.id).run()
+  return c.redirect('/notifications')
+})
+
+app.post('/notifications/announcement', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const title = String(form.title || '').trim().slice(0, 120)
+  const message = String(form.message || '').trim().slice(0, 2000)
+  if (!title || !message) return c.text('通告标题和内容不能为空', 400)
+  const recipients = (await getUsersAsync(c)).filter((account: any) => ['CUSTOMER', 'STAFF'].includes(account.role) && account.status !== 'inactive')
+  await Promise.all(recipients.map((recipient: any) => createNotification(c, { recipientId: recipient.id, senderId: user.id, type: 'announcement', title, message })))
+  return c.redirect('/notifications')
+})
+
+app.post('/notifications/send', async (c) => {
+  const user = c.get('user')
+  if (!user || !['ADMIN', 'STAFF'].includes(user.role)) return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const recipientId = String(form.recipientId || '').trim()
+  const title = String(form.title || '').trim().slice(0, 120)
+  const message = String(form.message || '').trim().slice(0, 1000)
+  const recipient = await getUserById(c, recipientId)
+  if (!recipient || !['CUSTOMER', 'STAFF'].includes(recipient.role) || recipient.status === 'inactive' || (user.role === 'STAFF' && (recipient.role !== 'CUSTOMER' || recipient.staffId !== user.id)) || !title || !message) return c.text('收件人或通知内容无效', 400)
+  await createNotification(c, { recipientId, type: 'manual', title, message })
+  return c.redirect('/notifications')
 })
 
 app.get('/customer/devices', async (c) => {
@@ -568,7 +658,7 @@ app.get('/staff/orders/:id', async (c) => {
   return c.html(await pages.renderStaffOrderDetail(c, user, c.req.param('id')))
 })
 
-// 新增：员工操作 - 标记订单为已拿取
+// 员工操作 - 已付款订单完成取货后进入租赁中
 app.post('/staff/orders/:orderId/pickup', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
@@ -576,9 +666,9 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
   }
   const orderId = c.req.param('orderId')
   const pickupOrder = await getOrderById(c, orderId)
-  if (!pickupOrder || !canTransitionOrder(pickupOrder.status, 'pending_return')) return c.json({ success: false, message: '当前订单状态不能标记为已拿取' }, 409)
-  await updateOrderStatus(c, orderId, 'pending_return') // 从待拿取变为待归还
-  return c.json({ success: true, message: '订单已标记为已拿取' })
+  if (!pickupOrder || pickupOrder.status !== 'paid') return c.json({ success: false, message: '只有已付款订单可以确认取货' }, 409)
+  await updateOrderStatus(c, orderId, 'active')
+  return c.json({ success: true, message: '订单已进入租赁中' })
 })
 
 // 新增：员工操作 - 标记订单为已归还
@@ -1369,12 +1459,14 @@ app.post('/admin/orders/:id/update', async (c) => {
   const wantsJson = c.req.header('accept')?.includes('application/json') || c.req.header('x-requested-with') === 'XMLHttpRequest'
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return wantsJson ? c.json({ ok: false, error: '登录已失效或没有管理员权限' }, 403) : c.html(renderForbidden(), 403)
-  const status = String((await c.req.parseBody()).status || '')
+  const form = await c.req.parseBody()
+  const status = String(form.status || '')
+  const force = String(form.force || '') === '1'
   const order = await getOrderById(c, c.req.param('id'))
   if (!order || !['pending_payment', 'paid', 'active', 'completed', 'cancelled'].includes(status) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
   if (status === 'completed') {
     const contract = await c.env.RENT.prepare('SELECT contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
-    if (!JSON.parse(contract?.contract_data || '{}').inspection_date) return wantsJson ? c.json({ ok: false, error: '完成订单前必须提交归还验机' }, 409) : c.text('完成订单前必须提交归还验机', 409)
+    if (!JSON.parse(contract?.contract_data || '{}').inspection_date && !force) return wantsJson ? c.json({ ok: false, error: '完成订单前必须提交归还验机' }, 409) : c.text('完成订单前必须提交归还验机', 409)
   }
     await updateOrderStatus(c, order.id, status)
     if (status === 'cancelled' || status === 'completed') await releaseDeviceIfUnbooked(c, order.deviceId)
@@ -1853,9 +1945,11 @@ export default {
           const deletedCount = await cleanupExpiredAndCancelledContracts(c)
           const expiredGuestCount = await cleanupExpiredGuestAccounts(c)
           const expiredPaymentCount = await cancelExpiredPendingPaymentOrders(c)
+          const dueNotificationCount = await createDueDateNotifications(c)
           console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
           console.log(`Scheduled guest cleanup completed: disabled ${expiredGuestCount} expired guest accounts`)
           console.log(`Scheduled payment cleanup completed: cancelled ${expiredPaymentCount} unpaid orders`)
+          console.log(`Scheduled due notifications completed: created ${dueNotificationCount} reminders`)
         } catch (error) {
           await logError(c, 'ERROR', 'Failed to run scheduled contract cleanup', error as Error)
           console.error('Scheduled contract cleanup failed:', error)

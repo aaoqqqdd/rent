@@ -23,6 +23,7 @@ export function renderOrderStatusFeedback(): string {
         document.querySelectorAll('.js-order-status-form').forEach((form) => {
           form.addEventListener('submit', async (event) => {
             event.preventDefault();
+            if (form.dataset.forceConfirm === 'true' && !window.confirm('确定要跳过归还验机并强制将此订单标记为已完成吗？此操作会释放设备，且不能撤销。')) return;
             const button = form.querySelector('button[type="submit"]');
             button.disabled = true;
             button.setAttribute('aria-busy', 'true');

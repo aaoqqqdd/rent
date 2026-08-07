@@ -63,6 +63,20 @@ export function sanitizePlainText(value: unknown, maxLength = 500): string {
     .slice(0, maxLength)
 }
 
+export function renderNotificationMarkdown(value: unknown): string {
+  const escaped = sanitizePlainText(value, 2000)
+    .replace(/^###\s+(.+)$/gm, '<h4>$1</h4>')
+    .replace(/^##\s+(.+)$/gm, '<h3>$1</h3>')
+    .replace(/^#\s+(.+)$/gm, '<h2>$1</h2>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(.+?)__/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>')
+    .replace(/\n/g, '<br>')
+  return sanitizeRichHtml(escaped)
+}
+
 export function createPageBreakHtml(): string {
   return '<div class="page-break" style="page-break-after: always; break-after: page;"></div><p><br></p>'
 }
@@ -196,6 +210,42 @@ export interface Order {
   refundBsb?: string
   refundAccountNumber?: string
   refundAccountName?: string
+}
+
+export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string }): Promise<void> {
+  const id = `nt-${crypto.randomUUID()}`
+  await c.env.RENT.prepare('INSERT INTO notifications (id, recipient_id, type, title, message, order_id, sender_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null).run()
+}
+
+export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
+  const result = await c.env.RENT.prepare('SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 100').bind(recipientId).all()
+  return result.results || []
+}
+
+export async function createDueDateNotifications(c: Context): Promise<number> {
+  const today = new Date()
+  const notices = [
+    { days: 3, type: 'due_soon_3d', title: '租赁即将到期', text: '您的设备租赁将在 3 天后到期，请提前安排归还或联系工作人员续租。' },
+    { days: 0, type: 'due_today', title: '租赁今日到期', text: '您的设备租赁今天到期，请尽快归还设备并等待验机。' },
+  ]
+  let created = 0
+  for (const notice of notices) {
+    const due = new Date(today)
+    due.setUTCDate(due.getUTCDate() + notice.days)
+    const date = due.toISOString().slice(0, 10)
+    const rows = await c.env.RENT.prepare(`
+      SELECT o.id, o.orderNo, o.userId, o.endDate, u.name
+      FROM orders o JOIN users u ON u.id = o.userId
+      WHERE o.endDate = ? AND o.status IN ('paid', 'active') AND u.role = 'CUSTOMER'
+        AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.recipient_id = o.userId AND n.order_id = o.id AND n.type = ?)
+    `).bind(date, notice.type).all()
+    for (const order of (rows.results || []) as any[]) {
+      await createNotification(c, { recipientId: order.userId, type: notice.type, title: notice.title, message: `${notice.text} 订单：${order.orderNo || order.id}。`, orderId: order.id })
+      created += 1
+    }
+  }
+  return created
 }
 
 export interface Contract {
@@ -1892,10 +1942,12 @@ export const systemSettings = {
 <h2>使用目的</h2><p>信息用于创建和履行租赁合同、处理付款和退款、交付设备、客户支持、防止欺诈及履行法律义务。</p>
 <h2>付款资料</h2><p>信用卡付款由第三方支付服务商处理，本网站不保存完整信用卡号码或安全码。</p>
 <h2>保存与权利</h2><p>我们仅在提供服务或法律要求所需期限内保存信息。您可以联系我们申请查阅或更正个人资料。</p>`,
-  copyrightNotice: `<h1>版权说明</h1>
-<p>© 2026 PC Rental。网站内容、界面设计、商标、文字及其他原创材料的权利归其合法权利人所有。</p>
-<h2>网站代码许可</h2><p>本项目源代码依照仓库 LICENSE 文件所列的 PolyForm Noncommercial 1.0.0 条款提供。允许非商业使用、修改和分发，但必须保留原始版权说明及 LICENSE 文件。</p>
-<h2>限制</h2><p>未经书面授权，不得将网站代码或原创内容用于商业目的，也不得删除或淡化版权与许可信息。</p>`,
+  copyrightNotice: `<h1>退款政策</h1>
+<p>本政策说明 PC Rental 在订单取消、押金退还和提前归还情况下的退款处理方式。</p>
+<h2>订单取消</h2><p>订单在付款前取消时不会产生退款；已经付款的订单按照订单状态和实际产生的费用处理。</p>
+<h2>押金退还</h2><p>设备完成归还验机后，管理员会根据设备状况处理押金。正常归还时退还可退金额；如有损坏、缺件或逾期费用，将先扣除相应费用并说明原因。</p>
+<h2>退款方式</h2><p>客户可以按照订单页面提供的选项选择退回账户余额或原支付方式。银行转账退款可能需要额外处理时间。</p>
+<h2>申请与联系</h2><p>如对退款金额或处理结果有疑问，请通过订单详情联系管理员，并提供订单编号。</p>`,
   rentalTerms,
   priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
   paymentMethods: {
@@ -2544,7 +2596,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦',
     '/staff/dashboard': '◉', '/staff/orders': '▦', '/staff/orders/ongoing': '◷', '/staff/customers': '◎', '/staff/contracts': '▤',
     '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
-    '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
+    '/notifications': '🔔', '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
     '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/calendar': '▦', '/admin/templates': '▤', '/admin/settings': '⚙'
   }
@@ -2569,6 +2621,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     ? `<aside class="sidebar">
         <div class="sidebar-section">
           <h3>导航</h3>
+          ${renderNavLink('/notifications', '通知中心')}
           ${currentUser.role === 'CUSTOMER' ? `
             ${currentUser.accountType === 'guest' ? renderNavLink('/customer/guest', '访客合同中心') : `
               ${renderNavLink('/customer/dashboard', '控制台')}
@@ -2621,7 +2674,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
-    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/copyright">版权说明</a></nav></footer>`
+    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/copyright">退款政策</a></nav></footer>`
   })
 }
 

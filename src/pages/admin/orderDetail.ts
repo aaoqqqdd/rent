@@ -130,6 +130,12 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             </div>
             <button type="submit" class="button button-primary" style="padding: 14px; border-radius: 12px; font-weight: 600; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 4px 14px 0 rgba(59,130,246,0.4);">💾 更新状态</button>
           </form>
+          ${['active', 'pending_return'].includes(String(order.status)) ? `<form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form force-complete-form" data-force-confirm="true" style="margin-top: 12px;">
+            <input type="hidden" name="status" value="completed">
+            <input type="hidden" name="force" value="1">
+            <button type="submit" class="button button-warning" style="width: 100%;">⚠️ 强制标记为已完成</button>
+            <small class="form-text">跳过归还验机，仅在设备已实际归还但无法完成验机时使用。</small>
+          </form>` : ''}
         </div>
 
         <div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
