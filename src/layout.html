@@ -33,6 +33,8 @@
   <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
   <script>
     window.createRichTextEditor = function (selector, options) {
       if (window.Quill) {
@@ -104,8 +106,15 @@
 
     document.addEventListener('DOMContentLoaded', function () {
       document.querySelectorAll('textarea.markdown-editor').forEach(function (editor) {
+        if (editor.dataset.markdownReady === 'true') return;
+        editor.dataset.markdownReady = 'true';
         editor.removeAttribute('disabled');
         editor.removeAttribute('readonly');
+        editor.style.display = 'block';
+        editor.style.pointerEvents = 'auto';
+        editor.style.userSelect = 'text';
+        editor.style.visibility = 'visible';
+        editor.style.opacity = '1';
         editor.setAttribute('spellcheck', 'false');
         const toolbar = document.createElement('div');
         toolbar.className = 'markdown-editor-toolbar';
@@ -124,6 +133,46 @@
           toolbar.appendChild(button);
         });
         editor.parentNode.insertBefore(toolbar, editor);
+      });
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+      if (!window.gsap) return;
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const gsap = window.gsap;
+      if (window.ScrollTrigger) gsap.registerPlugin(window.ScrollTrigger);
+      const root = document.querySelector('.content') || document.body;
+      const pageHeader = root.querySelector('.page-header, .entity-header, .signing-page-header');
+      const panels = Array.from(root.querySelectorAll('.panel, .card')).filter((item) => !item.closest('.a4-document, .official-document'));
+      const rows = Array.from(root.querySelectorAll('tbody tr')).slice(0, 30);
+      const buttons = root.querySelectorAll('.button, .link-button');
+
+      if (reduceMotion) {
+        gsap.set([pageHeader, ...panels, ...rows], { clearProps: 'all' });
+        return;
+      }
+
+      gsap.set([pageHeader, ...panels, ...rows].filter(Boolean), { autoAlpha: 0, y: 14 });
+      const intro = gsap.timeline({ defaults: { ease: 'power3.out' } });
+      if (pageHeader) intro.to(pageHeader, { autoAlpha: 1, y: 0, duration: .55 });
+      if (panels.length) intro.to(panels.slice(0, 3), { autoAlpha: 1, y: 0, duration: .45, stagger: .07 }, '-=.28');
+      if (rows.length) intro.to(rows, { autoAlpha: 1, y: 0, duration: .28, stagger: .025 }, '-=.18');
+
+      if (window.ScrollTrigger) {
+        root.querySelectorAll('.panel, .card, .record-panel, .official-document').forEach((element) => {
+          if (element === pageHeader || element.closest('.a4-document')) return;
+          gsap.fromTo(element, { autoAlpha: 0, y: 18 }, {
+            autoAlpha: 1, y: 0, duration: .55, ease: 'power3.out',
+            scrollTrigger: { trigger: element, start: 'top 88%', once: true }
+          });
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener('pointerenter', () => gsap.to(button, { y: -2, duration: .18, ease: 'power2.out', overwrite: 'auto' }));
+        button.addEventListener('pointerleave', () => gsap.to(button, { y: 0, duration: .22, ease: 'power2.out', overwrite: 'auto' }));
+        button.addEventListener('pointerdown', () => gsap.to(button, { scale: .97, duration: .1, overwrite: 'auto' }));
+        button.addEventListener('pointerup', () => gsap.to(button, { scale: 1, duration: .2, ease: 'back.out(1.4)', overwrite: 'auto' }));
       });
     });
 
