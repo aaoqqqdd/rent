@@ -3,11 +3,13 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getDeviceById, formatCurrency } from '../../site';
+import { buildLayout, getDeviceById, formatCurrency, getSystemSettings, loadSystemSettingsFromDB } from '../../site';
 import type { Context } from 'hono';
 
 export async function renderCustomerRent(c: Context, deviceId: string, user: any, errorMessage?: string) {
   const device = await getDeviceById(c, deviceId);
+  await loadSystemSettingsFromDB(c)
+  const rentalRules = getSystemSettings().rentalRules
 
   if (!device) {
     return buildLayout('租赁设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求租赁的设备不存在。</p></div>', user);
@@ -45,9 +47,12 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
           <label class="form-label" for="endDate">结束日期</label>
           <input type="date" id="endDate" name="endDate" class="form-control" min="${today}" required />
         </div>
+        <div class="alert" id="rentalRuleMessage">最短租赁时间：${rentalRules.minimumRentalDays} 天。不可用日期：${rentalRules.unavailableDates.length ? rentalRules.unavailableDates.join('、') : '无'}。</div>
+        <div class="card" id="quotePreview"><strong>租赁报价</strong><p>请选择租期后查看租金、押金和配送费用。</p></div>
 
         <button type="submit" class="button button-primary" style="margin-top: 20px;">确认租赁</button>
       </form>
+    </div><script>(()=>{const start=document.getElementById('startDate'),end=document.getElementById('endDate'),message=document.getElementById('rentalRuleMessage'),quote=document.getElementById('quotePreview');const unavailable=${JSON.stringify(rentalRules.unavailableDates)},minDays=${rentalRules.minimumRentalDays},rate=${Number(device.pricePerDay||device.dailyRate||0)},deposit=${Number(device.depositAmount||0)};const update=()=>{const s=start.value,e=end.value;if(!s||!e)return;const days=Math.ceil((new Date(e+'T00:00:00Z')-new Date(s+'T00:00:00Z'))/86400000),blocked=unavailable.find(d=>d>=s&&d<e);const error=days<minDays?'最短租赁时间为 '+minDays+' 天。':blocked?'租期包含不可用日期：'+blocked:'';start.setCustomValidity(error);end.setCustomValidity(error);message.textContent=error||'日期可用。';message.className='alert '+(error?'page-notification--error':'');if(!error)quote.innerHTML='<strong>租赁报价</strong><p>'+days+' 天租金：AUD$ '+(days*rate).toFixed(2)+'；押金：AUD$ '+deposit.toFixed(2)+'；合计：AUD$ '+(days*rate+deposit).toFixed(2)+'</p>';};start.addEventListener('change',update);end.addEventListener('change',update);})();</script>
     </div>
   `;
 

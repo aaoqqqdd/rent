@@ -58,6 +58,13 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       levelLimit: Number(payload.referralSettings?.levelLimit ?? getSystemSettings().referralSettings.levelLimit),
       settlementPeriod: Number(payload.referralSettings?.settlementPeriod ?? getSystemSettings().referralSettings.settlementPeriod),
     },
+    rentalRules: {
+      unavailableDates: Array.isArray(payload.rentalRules?.unavailableDates)
+        ? payload.rentalRules.unavailableDates.map((value: unknown) => String(value).trim()).filter((value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)).slice(0, 366)
+        : getSystemSettings().rentalRules.unavailableDates,
+      minimumRentalDays: Math.max(1, Math.floor(Number(payload.rentalRules?.minimumRentalDays ?? getSystemSettings().rentalRules.minimumRentalDays) || 1)),
+      bufferDays: Math.max(0, Math.floor(Number(payload.rentalRules?.bufferDays ?? getSystemSettings().rentalRules.bufferDays) || 0)),
+    },
   }
 
   if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)

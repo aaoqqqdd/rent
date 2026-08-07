@@ -123,7 +123,10 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       c.env.RENT.prepare("UPDATE orders SET status = 'paid', paymentMethod = 'card', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
     )
   } else if (['checkout.session.async_payment_failed', 'checkout.session.expired'].includes(event.type)) {
-    statements.push(c.env.RENT.prepare("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE stripe_checkout_session_id = ? AND status = 'pending'").bind(session.id))
+    const failedOrderId = String(session?.metadata?.order_id || '')
+    statements.push(
+      c.env.RENT.prepare("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE stripe_checkout_session_id = ? AND status = 'pending'").bind(session.id),
+    )
   }
   statements.push(c.env.RENT.prepare('INSERT INTO stripe_webhook_events (event_id, event_type) VALUES (?, ?)').bind(event.id, event.type))
   try {

@@ -31,8 +31,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
     return new Response('合同链接无效或已过期', { status: 404 });
   }
 
-  // 步骤 3 完成后合同已签署；访客没有登录态，返回/重复提交时不能再次进入付款选择页。
-  if (step === 3 && (contract.status === 'signed' || contract.signedAt)) {
+  // 步骤 5 完成后合同已签署；访客没有登录态，返回/重复提交时不能再次进入付款选择页。
+  if (step === 5 && (contract.status === 'signed' || contract.signedAt)) {
     const orderId = contract.rentalId || contract.rental_id
     return new Response(null, {
       status: 303,
@@ -112,7 +112,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const submittedPhone = phone
 
         // 验证必填字段
-        if (!cleanFirstName || !cleanLastName || !email || !submittedPhone || esignSignature?.trim() !== name) {
+        if (!cleanFirstName || !cleanLastName || !email || !submittedPhone) {
           await logError(c, 'INFO', `Missing required fields in step 2`, undefined, {
             token,
             hasName: !!name,
@@ -226,15 +226,31 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         break;
 
       case 3:
-        // Step 3: 选择支付方式并完成签约
-        await logError(c, 'DEBUG', `Processing step 3: Payment method selection and contract finalization`, undefined, { token });
+        if (!signSession.userInfo) throw new Error('请先填写您的个人信息。');
+        redirectUrl = `/contract/sign?token=${token}&step=4`;
+        break;
+
+      case 4: {
+        if (!signSession.userInfo) throw new Error('请先填写您的个人信息。');
+        const typedSignature = String(body.esignSignature || '').trim();
+        const handSignature = String(body.handSignature || '').trim();
+        const signature = typedSignature || handSignature;
+        if (!signature || (typedSignature && typedSignature !== String(signSession.userInfo.name || '').trim()) || (handSignature && !handSignature.startsWith('data:image/png;base64,'))) throw new Error('请输入与姓名一致的签名，或完成手写签名。');
+        await updateSignSession(c, token, { userInfo: { ...signSession.userInfo, esignSignature: signature } });
+        redirectUrl = `/contract/sign?token=${token}&step=5`;
+        break;
+      }
+
+      case 5:
+        // Step 5: 选择支付方式并完成签约
+        await logError(c, 'DEBUG', `Processing step 5: Payment method selection and contract finalization`, undefined, { token });
         await loadSystemSettingsFromDB(c)
         const signingOrder = await getOrderById(c, contract.rentalId)
         if (!signingOrder) throw new Error('合同关联的订单不存在。')
         const order = signingOrder
 
-        if (!signSession.userInfo) {
-          await logError(c, 'WARNING', `User attempted to access step 3 without providing user info`, undefined, { token });
+        if (!signSession.userInfo || !signSession.userInfo.esignSignature) {
+          await logError(c, 'WARNING', `User attempted to access step 5 without completing signature`, undefined, { token });
           throw new Error('请先填写您的个人信息。');
         }
 
@@ -557,7 +573,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
     });
 
     // 如果出错，重定向回当前步骤并显示错误消息
-    const stepToRedirect = (step > 1 && step <= 3) ? step : 1;
+        const stepToRedirect = (step > 1 && step <= 5) ? step : 1;
     redirectUrl = `/contract/sign?token=${token}&step=${stepToRedirect}&error=${encodeURIComponent(errorMessage || '')}`;
   }
 

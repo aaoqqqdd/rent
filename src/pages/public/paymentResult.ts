@@ -54,14 +54,14 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   } else if (status === 'fail') {
     title = '支付失败';
-    message = `合同付款未能成功。请重试或选择其他支付方式。`;
+    message = `合同付款未能成功，订单目前仍为待付款状态。请查看订单状态，系统不会自动重复扣款；超过 24 小时仍未付款时订单才会自动取消并释放设备。`;
     icon = `
       <div class="icon-wrapper danger">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-x"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
       </div>
     `;
     cardClass = 'danger';
-    buttonText = '返回订单支付';
+    buttonText = '查看待付款订单';
     buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   } else {
     title = '正在确认 Stripe 支付';
@@ -106,11 +106,23 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
         width: 32px;
         height: 32px;
       }
+      @keyframes payment-icon-pop {
+        0% { opacity: 0; transform: scale(.7) rotate(-8deg); }
+        70% { opacity: 1; transform: scale(1.08) rotate(2deg); }
+        100% { opacity: 1; transform: scale(1) rotate(0); }
+      }
+      @keyframes payment-icon-draw {
+        from { stroke-dashoffset: 48; }
+        to { stroke-dashoffset: 0; }
+      }
+      .icon-wrapper svg {
+        animation: payment-icon-pop .5s cubic-bezier(.2,.8,.2,1) both;
+      }
       .icon-wrapper.success svg polyline,
       .icon-wrapper.danger svg line {
         stroke-dasharray: 48;
         stroke-dashoffset: 48;
-        animation: site-draw 0.45s 0.25s ease-out forwards;
+        animation: payment-icon-draw 0.45s 0.25s ease-out forwards;
       }
       .payment-result-card h2 {
         font-family: var(--font-display);

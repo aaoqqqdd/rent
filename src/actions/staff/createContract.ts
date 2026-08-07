@@ -18,6 +18,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const returnMethod = deliveryMethod === 'Delivery' && body.returnMethod === 'CourierPickup' ? 'CourierPickup' : 'StoreReturn'
   await loadSystemSettingsFromDB(c)
   const allowedLocations = getSystemSettings().companyDetails.pickupLocations
+  const rentalRules = getSystemSettings().rentalRules
   let returnLocationValue = String(returnLocation || '').trim()
   let pickupLocationValue = String(body.pickupLocation || '').trim()
   let deliveryAddressData: Record<string, string> = {}
@@ -63,9 +64,14 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   if (start >= end) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
   }
-  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备在所选日期已有订单')}`)
-
   const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  if (rentalPeriod < rentalRules.minimumRentalDays) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent(`最短租赁时间为 ${rentalRules.minimumRentalDays} 天`)}`)
+  const unavailable = new Set(rentalRules.unavailableDates)
+  for (let day = new Date(start); day < end; day.setDate(day.getDate() + 1)) {
+    if (unavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('所选租期包含不可取货或归还的日期')}`)
+  }
+  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备在所选日期或缓冲时间内已有订单')}`)
+
   const dailyRate = device.pricePerDay;
   const depositAmount = device.depositAmount;
   const totalAmount = rentalPeriod * dailyRate + depositAmount + deliveryFee;

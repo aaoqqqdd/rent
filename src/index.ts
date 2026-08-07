@@ -413,7 +413,18 @@ app.get('/customer/orders/:id', async (c) => {
   if (user.role !== 'CUSTOMER') {
     return c.html(renderForbidden(), 403)
   }
-  return c.html(await pages.renderCustomerOrderDetail(c, user, c.req.param('id')))
+  const message = c.req.query('success') || c.req.query('error')
+  return c.html(await pages.renderCustomerOrderDetail(c, user, c.req.param('id'), message, c.req.query('success') ? 'success' : 'error'))
+})
+
+app.post('/customer/orders/:id/early-return', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || order.userId !== user.id) return c.html(renderForbidden(), 403)
+  if (order.status !== 'active') return c.redirect(`/customer/orders/${order.id}?error=${encodeURIComponent('当前订单不能申请提前归还')}`)
+  await updateOrderStatus(c, order.id, 'pending_return')
+  return c.redirect(`/customer/orders/${order.id}?success=${encodeURIComponent('已提交提前归还申请，请等待工作人员验机')}`)
 })
 
 app.get('/customer/devices', async (c) => {
@@ -432,15 +443,20 @@ app.post('/customer/rent/:id', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
   const device = await getDeviceById(c, c.req.param('id'))
+  await loadSystemSettingsFromDB(c)
+  const rentalRules = getSystemSettings().rentalRules
   const form = await c.req.parseBody()
   const startDate = String(form.startDate || '')
   const endDate = String(form.endDate || '')
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
-  if (!device || device.status !== 'available' || !startDate || !endDate || !Number.isFinite(start.getTime()) || start >= end || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate)) {
+  const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
+  const unavailable = new Set(rentalRules.unavailableDates)
+  let blockedDate = ''
+  for (let day = new Date(start); day < end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
+  if (!device || device.status !== 'available' || !startDate || !endDate || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
-  const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
   const orderId = `o-${nanoid(8)}`
   await insertOrder(c, {
     id: orderId, orderNo: `OD${Date.now()}${nanoid(4).toUpperCase()}`, userId: user.id,
@@ -578,7 +594,8 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
-  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id)) return c.text('订单状态无效或设备档期冲突', 409)
+  await loadSystemSettingsFromDB(c)
+  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, getSystemSettings().rentalRules.bufferDays)) return c.text('订单状态无效或设备档期冲突', 409)
   await updateOrderStatus(c, order.id, 'approved')
   return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
 })
@@ -1829,14 +1846,16 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, logError } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, logError } = await import('./site')
     ctx.waitUntil(
       (async () => {
         try {
           const deletedCount = await cleanupExpiredAndCancelledContracts(c)
           const expiredGuestCount = await cleanupExpiredGuestAccounts(c)
+          const expiredPaymentCount = await cancelExpiredPendingPaymentOrders(c)
           console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
           console.log(`Scheduled guest cleanup completed: disabled ${expiredGuestCount} expired guest accounts`)
+          console.log(`Scheduled payment cleanup completed: cancelled ${expiredPaymentCount} unpaid orders`)
         } catch (error) {
           await logError(c, 'ERROR', 'Failed to run scheduled contract cleanup', error as Error)
           console.error('Scheduled contract cleanup failed:', error)

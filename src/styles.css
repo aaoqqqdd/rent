@@ -954,7 +954,7 @@ header {
 }
 
 .markdown-editor {
-  display: none;
+  display: block;
   width: 100%;
   min-height: 320px;
   padding: 14px;
@@ -2264,13 +2264,15 @@ tr:hover td {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     box-shadow: none;
+    min-height: 0;
   }
 
   .sidebar-section {
     display: flex;
     width: max-content;
+    flex: 0 0 auto;
     gap: 8px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
   }
 
@@ -4118,4 +4120,30 @@ tr:hover td {
   .phone-field {
     grid-template-columns: 1fr;
   }
+}
+ .contract-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.contract-toolbar .section-note { margin-right: auto; }
+.a4-document {
+  width: min(100%, 794px);
+  min-height: 1123px;
+  margin: 0 auto 20px;
+  padding: 72px 64px;
+  background: #fff;
+  color: #111827;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, .12);
+  border: 1px solid #d7dde5;
+  transition: transform .25s ease;
+}
+.a4-document.document-zoomed { transform: scale(1.08); transform-origin: top center; }
+.signature-pad { display: block; width: 100%; max-width: 700px; height: 180px; background: #fff; border: 2px dashed #94a3b8; border-radius: 10px; touch-action: none; }
+@media print {
+  .contract-toolbar, .contract-actions, nav, header, footer, .page-header { display: none !important; }
+  .contract-viewer, .a4-document { box-shadow: none; border: 0; margin: 0; width: 210mm; min-height: 297mm; padding: 18mm; }
+  .a4-document { page-break-after: always; }
 }

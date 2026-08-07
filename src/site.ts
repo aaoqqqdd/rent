@@ -734,19 +734,47 @@ export async function releaseDeviceIfUnbooked(c: Context, deviceId: string): Pro
   if (!activeOrder) await updateDeviceStatus(c, deviceId, 'available')
 }
 
+export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<number> {
+  const orders = await c.env.RENT.prepare(`
+    SELECT id, deviceId FROM orders
+    WHERE status = 'pending_payment'
+      AND datetime(createdAt) <= datetime('now', '-24 hours')
+  `).all() as any
+  let cancelled = 0
+  for (const order of (orders.results || []) as any[]) {
+    const result = await c.env.RENT.prepare(`
+      UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'pending_payment'
+    `).bind(order.id).run() as any
+    const changes = Number(result.meta?.changes ?? result.changes ?? 0)
+    if (changes > 0) {
+      cancelled += changes
+      await c.env.RENT.prepare(`UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND status = 'pending'`).bind(order.id).run()
+      await releaseDeviceIfUnbooked(c, order.deviceId)
+    }
+  }
+  return cancelled
+}
+
 export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
   const db = getDB(c);
   await db.prepare('UPDATE orders SET status = ? WHERE id = ?').bind(status, orderId).run();
 }
 
-export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string): Promise<boolean> {
+export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string, bufferDays = 0): Promise<boolean> {
+  const requestedStart = new Date(`${startDate}T00:00:00Z`)
+  const requestedEnd = new Date(`${endDate}T00:00:00Z`)
+  requestedStart.setUTCDate(requestedStart.getUTCDate() - Math.max(0, bufferDays))
+  requestedEnd.setUTCDate(requestedEnd.getUTCDate() + Math.max(0, bufferDays))
+  const conflictStart = requestedStart.toISOString().slice(0, 10)
+  const conflictEnd = requestedEnd.toISOString().slice(0, 10)
   const row = await c.env.RENT.prepare(`
     SELECT id FROM orders
     WHERE deviceId = ? AND id != ?
       AND status NOT IN ('completed', 'cancelled')
       AND startDate < ? AND endDate > ?
     LIMIT 1
-  `).bind(deviceId, excludeOrderId || '', endDate, startDate).first()
+  `).bind(deviceId, excludeOrderId || '', conflictEnd, conflictStart).first()
   return Boolean(row)
 }
 
@@ -1103,7 +1131,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails'
+type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails' | 'rentalRules'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -1133,6 +1161,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const emailTemplateValue = values.get('emailTemplate')
   const referralSettingsValue = values.get('referralSettings')
   const companyDetailsValue = values.get('companyDetails')
+  const rentalRulesValue = values.get('rentalRules')
 
   systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? systemSettings.userTerms)
   systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
@@ -1146,6 +1175,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
   const parsedReferralSettings = safeJsonParse<typeof systemSettings.referralSettings>(referralSettingsValue)
   const parsedCompanyDetails = safeJsonParse<typeof systemSettings.companyDetails>(companyDetailsValue)
+  const parsedRentalRules = safeJsonParse<typeof systemSettings.rentalRules>(rentalRulesValue)
 
   if (parsedPaymentMethods) {
     systemSettings.paymentMethods = {
@@ -1159,6 +1189,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (parsedBankDetails) systemSettings.bankDetails = parsedBankDetails
   if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
   if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
+  if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
 
   return systemSettings
 }
@@ -1188,6 +1219,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   await write('emailTemplate', systemSettings.emailTemplate)
   await write('referralSettings', systemSettings.referralSettings)
   await write('companyDetails', systemSettings.companyDetails)
+  await write('rentalRules', systemSettings.rentalRules)
 
   return systemSettings
 }
@@ -1828,6 +1860,11 @@ export const systemSettings = {
     website: '',
     logo: '',
     pickupLocations: [] as string[],
+  },
+  rentalRules: {
+    unavailableDates: [] as string[],
+    minimumRentalDays: 1,
+    bufferDays: 0,
   },
   bankDetails: {
     bankName: '',

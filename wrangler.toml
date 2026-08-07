@@ -8,6 +8,6 @@ binding = "RENT"
 database_name = "rent"
 database_id = "65a5ded3-ffd8-4627-8ea4-9d8ced480b93"
 
-# Cron job to clean up expired and cancelled contracts - runs daily at midnight
+# Cleanup expired contracts, guest accounts, and unpaid orders hourly
 [triggers]
-crons = ["0 0 * * *"]
+crons = ["0 * * * *"]

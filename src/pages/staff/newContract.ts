@@ -9,6 +9,7 @@ import type { Context } from 'hono'
 export async function renderNewContractPage(c: Context, user: any) {
   await loadSystemSettingsFromDB(c)
   const pickupLocations = getSystemSettings().companyDetails.pickupLocations
+  const rentalRules = getSystemSettings().rentalRules
   const escape = (value: unknown) => sanitizePlainText(value, 300).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const locationOptions = pickupLocations.map(location => `<option value="${escape(location)}">${escape(location)}</option>`).join('')
   const allDevices = await getDevices(c);
@@ -40,6 +41,7 @@ export async function renderNewContractPage(c: Context, user: any) {
     </section>`
   }).join('')
   const bookingData = JSON.stringify(bookingRanges).replace(/</g, '\\u003c')
+  const rentalRulesData = JSON.stringify(rentalRules).replace(/</g, '\\u003c')
 
   const formHtml = `
     <div class="page-header"><div><p class="section-code">CONTRACT WORKFLOW</p><h2>新增租赁合同</h2><p>选择设备、租期与交付方式，生成客户签署链接。</p></div><a class="button button-secondary" href="/staff/contracts">返回合同管理</a></div>
@@ -135,6 +137,7 @@ export async function renderNewContractPage(c: Context, user: any) {
       const deviceResultCount = document.getElementById('device-result-count');
       const deviceEmptyState = document.getElementById('device-empty-state');
       const bookings = ${bookingData};
+      const rentalRules = ${rentalRulesData};
       const bookingCalendar = document.getElementById('booking-calendar');
       const bookingStatus = document.getElementById('booking-status');
       const bookingConflict = document.getElementById('booking-conflict');
@@ -184,14 +187,14 @@ export async function renderNewContractPage(c: Context, user: any) {
           const date = new Date(gridStart); date.setUTCDate(gridStart.getUTCDate() + index);
           const value = isoDate(date);
           const isPast = value < todayValue;
-          const blocked = ranges.some(item => item.startDate <= value && item.endDate > value);
+          const blocked = rentalRules.unavailableDates.includes(value) || ranges.some(item => item.startDate <= value && item.endDate > value);
           const inRange = startDateInput.value && endDateInput.value && startDateInput.value <= value && value < endDateInput.value;
           const cell = document.createElement('button');
           cell.type = 'button';
           cell.dataset.date = value;
           cell.className = 'booking-day' + (date.getUTCMonth() !== first.getUTCMonth() ? ' is-outside' : '') + (blocked ? ' is-booked' : '') + (isPast ? ' is-past' : '') + (inRange ? ' is-selected-range' : '') + (startDateInput.value === value ? ' is-range-start' : '') + (endDateInput.value === value ? ' is-range-end' : '');
           cell.textContent = String(date.getUTCDate());
-          cell.title = blocked ? '该设备此日已有租赁' : isPast ? '无法选择过去日期' : deviceSelect.value ? '选择 ' + value : '请先选择设备';
+          cell.title = rentalRules.unavailableDates.includes(value) ? '管理员设置为不可取货/归还日期' : blocked ? '该设备此日已有租赁' : isPast ? '无法选择过去日期' : deviceSelect.value ? '选择 ' + value : '请先选择设备';
           cell.disabled = blocked || !deviceSelect.value || isPast;
           cell.addEventListener('click', () => selectBookingDate(value));
           bookingCalendar.appendChild(cell);
@@ -208,7 +211,9 @@ export async function renderNewContractPage(c: Context, user: any) {
       function validateBookingDates() {
         const invalidRange = startDateInput.value && endDateInput.value && endDateInput.value <= startDateInput.value;
         const conflict = !invalidRange && deviceSelect.value && startDateInput.value && endDateInput.value && selectedBookings().find(item => startDateInput.value < item.endDate && endDateInput.value > item.startDate);
-        const message = invalidRange ? '归还日期必须晚于租赁开始日期。' : conflict ? '所选日期与已有租赁重叠：' + conflict.startDate + ' 至 ' + conflict.endDate : '';
+        const rentalDays = !invalidRange && startDateInput.value && endDateInput.value ? Math.ceil((new Date(endDateInput.value + 'T00:00:00Z').getTime() - new Date(startDateInput.value + 'T00:00:00Z').getTime()) / 86400000) : 0;
+        const unavailable = !invalidRange && startDateInput.value && endDateInput.value && rentalRules.unavailableDates.find(date => date >= startDateInput.value && date < endDateInput.value);
+        const message = invalidRange ? '归还日期必须晚于租赁开始日期。' : rentalDays < rentalRules.minimumRentalDays ? '最短租赁时间为 ' + rentalRules.minimumRentalDays + ' 天。' : unavailable ? '租期包含不可取货或归还日期：' + unavailable : conflict ? '所选日期与已有租赁重叠：' + conflict.startDate + ' 至 ' + conflict.endDate : '';
         startDateInput.setCustomValidity(message); endDateInput.setCustomValidity(message); bookingConflict.textContent = message;
         bookingStatus.className = 'badge ' + (message ? 'badge-danger' : deviceSelect.value ? 'badge-success' : 'badge-neutral');
         if (!message && deviceSelect.value) bookingStatus.textContent = '所选日期可用';

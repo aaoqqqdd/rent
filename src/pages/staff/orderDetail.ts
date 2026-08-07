@@ -50,7 +50,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           ${order.status === 'pending_payment' ? `
             <p class="alert">银行转账需由管理员审核客户提交的 Reference 后确认付款。</p>
           ` : ''}
-          ${order.status === 'active' ? `
+          ${['active', 'pending_return'].includes(String(order.status)) ? `
             <a class="button button-success" href="/staff/orders/${order.id}/inspection">归还验机</a>
           ` : ''}
           ${user.role === 'ADMIN' && (order.status === 'active' || order.status === 'paid') ? `
