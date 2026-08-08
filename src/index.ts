@@ -145,6 +145,17 @@ app.use('*', async (c, next) => {
 })
 
 app.use('*', async (c, next) => {
+  if (c.req.path.startsWith('/notifications')) {
+    try {
+      await ensureNotificationsTable(c)
+    } catch (error: any) {
+      console.error('Failed to ensure notifications table exists:', error?.message || error)
+    }
+  }
+  await next()
+})
+
+app.use('*', async (c, next) => {
   const user = c.get('user') as any
   if (user?.accountType === 'guest' && user.role === 'CUSTOMER') {
     const path = c.req.path
@@ -471,7 +482,18 @@ app.get('/notifications/unread', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [] }, 401)
   await ensureNotificationsTable(c)
-  const result = await c.env.RENT.prepare('SELECT id, type, title, message, order_id, created_at FROM notifications WHERE recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10').bind(user.id).all()
+  const query = 'SELECT id, type, title, message, order_id, created_at FROM notifications WHERE recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10'
+  let result: any
+  try {
+    result = await c.env.RENT.prepare(query).bind(user.id).all()
+  } catch (error: any) {
+    if (String(error.message).includes('no such table: notifications')) {
+      await ensureNotificationsTable(c)
+      result = await c.env.RENT.prepare(query).bind(user.id).all()
+    } else {
+      throw error
+    }
+  }
   return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message_html: renderNotificationMarkdown(item.message) })) })
 })
 
