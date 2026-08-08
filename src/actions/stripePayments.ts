@@ -135,11 +135,18 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     if (String(error.message).includes('UNIQUE')) return c.json({ received: true, duplicate: true })
     throw error
   }
+
+  const response = c.json({ received: true })
   if (paidOrderId) {
-    await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
-    await issueInvoice(c, paidOrderId)
+    try {
+      await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
+      await issueInvoice(c, paidOrderId)
+    } catch (error: any) {
+      console.error('Stripe webhook post-processing failed:', error?.message || error)
+    }
   }
-  return c.json({ received: true })
+
+  return response
 }
 
 async function paidPayment(c: Context, order: any): Promise<any> {

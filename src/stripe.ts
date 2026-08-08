@@ -134,6 +134,9 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 export async function verifyStripeWebhook(c: Context, body: string, signatureHeader: string | undefined): Promise<any> {
+  if (!signatureHeader) {
+    signatureHeader = c.req.header('Stripe-Signature') || c.req.header('stripe-signature')
+  }
   if (!signatureHeader) throw new Error('缺少 Stripe-Signature')
   const parts = signatureHeader.split(',').map(part => part.split('='))
   const timestamp = parts.find(([key]) => key === 't')?.[1]
