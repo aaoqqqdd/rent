@@ -2550,6 +2550,13 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
     .first()
 
   if (!user) return null
+  const guestExpiry = user.account_type === 'guest' ? String(user.guest_expires_at || '').slice(0, 10) : ''
+  const todayMelbourne = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  if (guestExpiry && guestExpiry < todayMelbourne) {
+    await db.prepare("UPDATE users SET account_type = 'deleted_guest', status = 'inactive', email = 'deleted-guest-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, password_hash = 'disabled', password_salt = 'disabled', guest_order_id = NULL, guest_expires_at = NULL, deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND account_type = 'guest'").bind(id).run()
+    await db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').bind(id).run()
+    return null
+  }
   const normalized = normalizeUserRow(user as any)
   return normalized
 }
@@ -2616,6 +2623,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const userBlockHtml = currentUser
     ? `
+        <button class="notification-bell" type="button" aria-label="打开通知中心" aria-expanded="false"><span aria-hidden="true">🔔</span><b class="notification-bell__count" hidden>0</b></button>
         <a class="user-profile-link" href="${currentUser.role === 'ADMIN' ? `/admin/users/${encodeURIComponent(currentUser.id)}/edit` : currentUser.role === 'STAFF' ? '/staff/profile' : '/customer/profile'}" aria-label="编辑个人信息"><span class="user-label">${currentUser.name}${currentUser.accountType === 'guest' ? ` · 访客（${currentUser.guestExpiresAt || '租期结束'}删除）` : ''}</span><div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div></a>
         <form method="post" action="/logout" style="display:inline"><button type="submit" class="logout-button">登出</button></form>
       `

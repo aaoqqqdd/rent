@@ -19,11 +19,11 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const stripeTotal = Number(order.totalAmount) + stripeFee
 
   const body = `
-    <div class="panel">
-      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '合同付款资料'}</h2><span class="section-note">${order.orderNo ? '查看订单状态、设备信息、租金明细及合同。' : '订单编号将在付款确认后生成。'}</span></div>
+    <div class="panel order-detail-shell customer-order-detail">
+      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '订单详情'}</h2><span class="section-note">${order.orderNo ? '查看订单状态、设备信息、租金明细及合同。' : '订单编号将在付款确认后生成。'}</span></div>
       ${alertMessage}
-      <div class="grid grid-2">
-        <div>
+      <div class="order-detail-grid">
+        <div class="order-info-card">
           <h3>订单信息</h3>
           <p><strong>订单状态:</strong> ${order.status}</p>
           <p><strong>下单时间:</strong> ${order.orderDate}</p>
@@ -34,7 +34,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           <p><strong>押金:</strong> ${formatCurrency(order.depositAmount)}</p>
           <p><strong>租金:</strong> ${formatCurrency(order.totalAmount - order.depositAmount)}</p>
         </div>
-        <div>
+        <div class="order-info-card">
           <h3>设备信息</h3>
           <p><strong>设备名称:</strong> ${device?.name ?? '未知设备'}</p>
           <p><strong>设备型号:</strong> ${device?.model ?? 'N/A'}</p>
@@ -45,7 +45,8 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
 
       ${['paid', 'active', 'completed'].includes(order.status) || String(order.status) === 'pending_return' ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>${order.status === 'active' ? `<form method="post" action="/customer/orders/${order.id}/early-return" style="display:inline-block;margin-left:10px" data-site-confirm="确定申请提前归还此设备吗？将通知绑定员工。"><button class="button button-warning" type="submit">提前归还</button></form><form method="post" action="/customer/orders/${order.id}/returned" style="display:inline-block;margin-left:10px" data-site-confirm="确认设备已经归还吗？将通知管理员审核。"><button class="button button-info" type="submit">已归还</button></form>` : String(order.status) === 'pending_return' ? ' <span class="badge badge-warning">等待归还审核/验机</span>' : ''}</p>` : ''}
       ${contract ? `
-        <div class="section-title" style="margin-top: 24px;"><h3>租赁合同</h3></div>
+        <div class="section-title order-section-heading" style="margin-top: 24px;"><h3>合同详情 #${contract.contractNumber || '待生成'}</h3><span class="section-note">查看合同状态、签署记录和正式合同文件。</span></div>
+        <div class="contract-detail-meta"><span><small>合同状态</small><strong>${contract.status === 'signed' || contract.status === 'completed' ? '已签署' : contract.status === 'pending_sign' ? '待签署' : contract.status}</strong></span><span><small>签署时间</small><strong>${contract.signedAt || '尚未签署'}</strong></span><span><small>有效期</small><strong>${contract.validFrom || order.startDate} 至 ${contract.validUntil || order.endDate}</strong></span></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">
           ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}?from=order" target="_blank">查看/下载合同</a>` : `<span class="section-note">正式合同将在签署完成后开放下载。</span>`}
           ${contract.status === 'pending_sign' ? `<a class="button button-primary" href="/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1">签署租赁协议</a>` : ''}

@@ -21,11 +21,11 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
 
   const body = `
-    <div class="panel">
-      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '合同付款资料'}</h2><span class="section-note">${order.orderNo ? '查看订单、设备、合同签署及支付信息。订单状态由管理员管理。' : '订单编号将在付款确认后生成。'}</span></div>
+    <div class="panel order-detail-shell staff-order-detail">
+      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '订单详情'}</h2><span class="section-note">${order.orderNo ? '查看订单、设备、合同签署及支付信息。订单状态由管理员管理。' : '订单编号将在付款确认后生成。'}</span></div>
       ${alertMessage}
-      <div class="grid grid-2">
-        <div>
+      <div class="order-detail-grid">
+        <div class="order-info-card">
           <h3>订单信息</h3>
           <p><strong>订单状态:</strong> ${order.status}</p>
           <p><strong>下单时间:</strong> ${order.orderDate}</p>
@@ -36,7 +36,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           <p><strong>客户:</strong> ${customer?.name ?? '未知'} (${customer?.email ?? ''})</p>
           <p><strong>设备:</strong> ${device?.name ?? '未知'} (${device?.serialNumber ?? ''})</p>
         </div>
-        <div>
+        <div class="order-info-card order-actions-card">
           <h3>操作</h3>
           ${user.role === 'ADMIN' && order.status === 'pending_approval' ? `
             <form method="POST" action="/staff/orders/${order.id}/approve" style="margin-bottom: 10px;">
@@ -68,7 +68,8 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
       </div>
 
       ${contract ? `
-        <div class="section-title" style="margin-top: 24px;"><h3>租赁合同</h3></div>
+        <div class="section-title order-section-heading" style="margin-top: 24px;"><h3>合同详情 #${contract.contractNumber || '待生成'}</h3><span class="section-note">查看合同状态、签署记录和正式合同文件。</span></div>
+        <div class="contract-detail-meta"><span><small>合同状态</small><strong>${contract.status === 'signed' || contract.status === 'completed' ? '已签署' : contract.status === 'pending_sign' ? '待签署' : contract.status}</strong></span><span><small>签署时间</small><strong>${contract.signedAt || '尚未签署'}</strong></span><span><small>有效期</small><strong>${contract.validFrom || order.startDate} 至 ${contract.validUntil || order.endDate}</strong></span></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">
           ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}?from=order" target="_blank">查看/下载合同</a>` : '<span class="section-note">正式合同将在客户完成签署后开放。</span>'}
           ${contractExpired ? '<span class="badge danger">已过期</span>' : contract.status === 'signed' ? `<span class="badge success">已签署</span>` : `<span class="badge warning-badge">${contract.status === 'pending_sign' ? '待签署' : '草稿'}</span>`}

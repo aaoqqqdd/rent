@@ -33,7 +33,7 @@ export async function renderContractView(c: Context, contractId: string, user: a
       ${user?.accountType === 'guest' ? '<div class="page-notification page-notification--info"><strong>访客账户</strong> · 仅可查看和下载本次租赁合同，账户将在租期结束后自动失效。</div>' : ''}
       <div class="contract-actions">
         ${isContractFinalized(contract) ? '<button class="button" onclick="window.print()">打印/下载 PDF</button>' : ''}
-        ${user ? `<a class="button button-primary" href="${user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'}">${user.accountType === 'guest' ? '返回访客合同中心' : '查看我的账户'}</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}
+        ${user ? `<a class="button button-primary" href="${order ? `/customer/orders/${order.id}` : user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'}">查看订单详情</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}
       </div>
     </div>
   `

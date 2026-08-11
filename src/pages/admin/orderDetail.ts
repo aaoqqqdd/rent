@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, validateHostedImageUrls } from '../../site';
+import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, formatCurrency, validateHostedImageUrls, isContractFinalized } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 
@@ -20,6 +20,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
   const customer = await getUserById(c, order.userId);
   const device = await getDeviceById(c, order.deviceId);
+  const contract = await getContractByOrderId(c, order.id);
   const completedRefund = await c.env.RENT.prepare("SELECT type, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any;
   const transferProof = await c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any;
   let proofImage = ''
@@ -36,7 +37,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const currentStatus = statusLabels[order.status] || { label: order.status, color: '#6b7280', bg: '#f3f4f6', icon: '❓' };
 
   const body = `
-    <div class="panel hero" style="padding: 32px; margin-bottom: 24px;">
+    <div class="panel hero order-detail-shell admin-order-detail" style="padding: 32px; margin-bottom: 24px;">
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px;">
         <div style="display: flex; align-items: center; gap: 16px;">
           <div style="width: 64px; height: 64px; background: rgba(255,255,255,0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 32px;">📋</div>
@@ -49,7 +50,10 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       </div>
     </div>
 
-    ${['paid', 'active', 'completed'].includes(order.status) ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a></p>` : ''}
+    <div class="order-detail-actions">
+      ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
+      ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order" target="_blank">查看合同</a>` : ''}
+    </div>
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">

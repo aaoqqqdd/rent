@@ -47,6 +47,9 @@
 			"remote": true
 		},
 	],
+	"triggers": {
+		"crons": ["0 0 * * *"]
+	},
 	// "ai": {
 	//   "binding": "AI"
 	// },
