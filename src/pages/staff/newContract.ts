@@ -71,8 +71,8 @@ export async function renderNewContractPage(c: Context, user: any) {
           </div>
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
-          <div class="form-group"><label for="start-period" class="form-label">取货时段</label><select id="start-period" name="startPeriod" class="form-control"><option value="AM">上半天（00:00–12:59）</option><option value="PM">下半天（13:00–23:59）</option></select></div>
-          <div class="form-group"><label for="end-period" class="form-label">归还时段</label><select id="end-period" name="endPeriod" class="form-control"><option value="AM">上半天（00:00–12:59）</option><option value="PM">下半天（13:00–23:59）</option></select></div>
+          <div class="form-group"><label for="start-period" class="form-label">取货时段</label><select id="start-period" name="startPeriod" class="form-control"><option value="AM">00:00–12:59</option><option value="PM">13:00–23:59</option></select></div>
+          <div class="form-group"><label for="end-period" class="form-label">归还时段</label><select id="end-period" name="endPeriod" class="form-control"><option value="AM">00:00–12:59</option><option value="PM">13:00–23:59</option></select></div>
           <div class="form-group"><label for="pickup-time-slot" class="form-label">取货时间</label><select id="pickup-time-slot" name="pickupTimeSlot" class="form-control"><option value="morning_service">7:00–8:00（早间服务费 10%）</option><option value="morning">9:00–12:00（无服务费）</option><option value="afternoon">13:00–20:00（无服务费）</option><option value="evening_service">21:00–23:00（晚间服务费 10%）</option></select></div>
           <div class="form-group"><label for="return-time-slot" class="form-label">归还时间</label><select id="return-time-slot" name="returnTimeSlot" class="form-control"><option value="morning_service">7:00–8:00（早间服务费 10%）</option><option value="morning">9:00–12:00（无服务费）</option><option value="afternoon">13:00–20:00（无服务费）</option><option value="evening_service">21:00–23:00（晚间服务费 10%）</option></select></div>
         </div>
@@ -333,8 +333,8 @@ export async function renderNewContractPage(c: Context, user: any) {
             if (!response.ok) throw new Error(data.error || '地址联想暂时不可用');
             suggestions.replaceChildren();
             const items = Array.isArray(data.suggestions) ? data.suggestions : [];
-            items.forEach(function(item) { const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'option'); button.setAttribute('aria-selected', 'false'); button.dataset.placeId = item.placeId; const marker = document.createElement('span'); marker.className = 'address-suggestion-marker mono'; marker.textContent = 'AU'; const label = document.createElement('span'); label.textContent = item.text; button.append(marker, label); suggestions.appendChild(button); });
-            if (items.length) { const attribution = document.createElement('small'); attribution.textContent = 'Powered by Google'; suggestions.appendChild(attribution); }
+            items.forEach(function(item) { const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'option'); button.setAttribute('aria-selected', 'false'); button.dataset.placeId = item.placeId; button.dataset.address = JSON.stringify(item); const marker = document.createElement('span'); marker.className = 'address-suggestion-marker mono'; marker.textContent = 'AU'; const label = document.createElement('span'); label.textContent = item.text; button.append(marker, label); suggestions.appendChild(button); });
+            if (items.length) { const attribution = document.createElement('small'); attribution.textContent = '© OpenStreetMap contributors'; suggestions.appendChild(attribution); }
             suggestions.hidden = !items.length;
             searchInput.setAttribute('aria-expanded', String(Boolean(items.length)));
             setAddressStatus(items.length ? '请选择一个地址以自动填写。' : '没有找到匹配地址，请继续输入或手工填写。', items.length ? 'ready' : 'empty');
@@ -358,9 +358,7 @@ export async function renderNewContractPage(c: Context, user: any) {
         if (!button) return;
         setAddressStatus('正在填写地址…', 'loading');
         try {
-          const response = await fetch('/api/address/details?placeId=' + encodeURIComponent(button.dataset.placeId) + '&session=' + encodeURIComponent(sessionToken));
-          const address = await response.json();
-          if (!response.ok) throw new Error(address.error || '无法读取地址详情');
+          const address = JSON.parse(button.dataset.address || '{}');
           searchInput.value = address.formattedAddress || button.textContent.trim();
           document.getElementById('delivery-address').value = address.formattedAddress || '';
           document.getElementById('delivery-place-id').value = button.dataset.placeId;

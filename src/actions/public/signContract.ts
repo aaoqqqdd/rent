@@ -255,6 +255,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         const { paymentMethod } = body;
+        const pickupTimeSlot = ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
+        const returnTimeSlot = ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
+        if (!pickupTimeSlot || !returnTimeSlot) throw new Error('请选择取货和归还时间')
         const canUseBalance = canUseAccountBalance(currentUser)
         const refundMethod = canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original'
         const refundBsb = String(body.refundBsb || '').trim()
@@ -406,6 +409,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           // 兼容旧数据库中 contractId 外键定义不一致的订单表。
           contractId: null as any,
         });
+        await c.env.RENT.prepare('UPDATE orders SET pickupTimeSlot = ?, returnTimeSlot = ? WHERE id = ?')
+          .bind(pickupTimeSlot, returnTimeSlot, contract.rentalId).run()
         await c.env.RENT.prepare(`UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?`)
           .bind(refundMethod, refundMethod === 'original' ? refundBsb || null : null, refundMethod === 'original' ? refundAccountNumber || null : null, refundMethod === 'original' ? refundAccountName || null : null, contract.rentalId).run()
 

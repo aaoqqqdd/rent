@@ -2614,8 +2614,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const userBlockHtml = currentUser
     ? `
-        <span class="user-label">${currentUser.name}${currentUser.accountType === 'guest' ? ` · 访客（${currentUser.guestExpiresAt || '租期结束'}删除）` : ''}</span>
-        <div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div>
+        <a class="user-profile-link" href="${currentUser.role === 'ADMIN' ? `/admin/users/${encodeURIComponent(currentUser.id)}/edit` : currentUser.role === 'STAFF' ? '/staff/profile' : '/customer/profile'}" aria-label="编辑个人信息"><span class="user-label">${currentUser.name}${currentUser.accountType === 'guest' ? ` · 访客（${currentUser.guestExpiresAt || '租期结束'}删除）` : ''}</span><div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div></a>
         <form method="post" action="/logout" style="display:inline"><button type="submit" class="logout-button">登出</button></form>
       `
     : ''
@@ -2634,6 +2633,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     const icon = navIcons[href] || '•'
     return `<a href="${href}"><span class="nav-icon">${icon}</span>${text}</a>`
   }
+  const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group" open><summary>${label}<span aria-hidden="true">⌄</span></summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
   const mobileLinks = currentUser?.role === 'ADMIN'
     ? [['/admin/dashboard', '控制台', '◉'], ['/notifications', '通知', 'N'], ['/admin/orders', '订单', '▦'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
@@ -2674,16 +2674,11 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
             ${renderNavLink('/notifications', '通知中心')}
-            ${renderNavLink('/admin/users', '用户管理')}
-            ${renderNavLink('/admin/orders', '订单管理')}
-            ${renderNavLink('/admin/refunds', '退款管理')}
-            ${renderNavLink('/admin/contracts', '合同管理')}
-            ${renderNavLink('/admin/templates', '协议与模板')}
-            ${renderNavLink('/admin/finance', '财务管理')}
-            ${renderNavLink('/admin/withdrawals', '佣金提现')}
-            ${renderNavLink('/admin/devices', '设备管理')}
-            ${renderNavLink('/admin/calendar', '租赁日历')}
-            ${renderNavLink('/admin/settings', '系统设置')}
+            ${renderNavGroup('客户与用户', [['/admin/users', '用户管理']])}
+            ${renderNavGroup('订单与合同', [['/admin/orders', '订单管理'], ['/admin/contracts', '合同管理']])}
+            ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/calendar', '租赁日历']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('协议与设置', [['/admin/templates', '协议与模板'], ['/admin/settings', '系统设置']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">

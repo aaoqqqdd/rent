@@ -266,6 +266,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           </div>
 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=5">
+          <div class="grid grid-2" style="margin: 20px 0;">
+            <div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required><option value="morning_service">7:00–8:00（早间服务费 10%）</option><option value="morning">9:00–12:00（无服务费）</option><option value="afternoon">13:00–20:00（无服务费）</option><option value="evening_service">21:00–23:00（晚间服务费 10%）</option></select></div>
+            <div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required><option value="morning_service">7:00–8:00（早间服务费 10%）</option><option value="morning">9:00–12:00（无服务费）</option><option value="afternoon">13:00–20:00（无服务费）</option><option value="evening_service">21:00–23:00（晚间服务费 10%）</option></select></div>
+          </div>
+
             <div class="payment-options" style="display: flex; flex-direction: column; gap: 15px;">
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">

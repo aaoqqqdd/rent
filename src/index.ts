@@ -63,7 +63,6 @@ import {
   generateUniqueUserId,
   isContractExpired,
   getUsers
-  , getUsersAsync
   , createNotification
   , getNotifications
   , createDueDateNotifications
@@ -469,7 +468,7 @@ app.get('/notifications', async (c) => {
   const notifications = await getNotifications(c, user.id)
   const sentAnnouncements = user.role === 'ADMIN' ? ((await c.env.RENT.prepare("SELECT MAX(id) AS id, title, message, created_at FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC LIMIT 100").bind(user.id).all()).results || []) : []
   const recipients = user.role === 'ADMIN' || user.role === 'STAFF' ? (await getUsers(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive') : []
-  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人</label><select class="form-control" id="notificationRecipient" name="recipientId" required><option value="">请选择收件人</option>${recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<article class="notification-item ${item.read_at ? '' : 'is-unread'}"><div><strong>${item.title}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div>${item.order_id ? `<a class="button button-sm button-secondary" href="${user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`}" >查看订单</a>` : ''}</article>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
+  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><select class="form-control" id="notificationRecipient" name="recipientId" multiple size="6" required>${recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')}</select><small class="form-text">按住 Command（Mac）或 Ctrl（Windows）可选择多人。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<article class="notification-item ${item.read_at ? '' : 'is-unread'}"><div><strong>${item.title}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div>${item.order_id ? `<a class="button button-sm button-secondary" href="${user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`}" >查看订单</a>` : ''}</article>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
   return c.html(buildLayout('通知中心', body, user))
 })
 
@@ -531,7 +530,7 @@ app.post('/notifications/announcement', async (c) => {
   const title = String(form.title || '').trim().slice(0, 120)
   const message = String(form.message || '').trim().slice(0, 2000)
   if (!title || !message) return c.text('通告标题和内容不能为空', 400)
-  const recipients = (await getUsersAsync(c)).filter((account: any) => ['CUSTOMER', 'STAFF'].includes(account.role) && account.status !== 'inactive')
+  const recipients = (await getUsers(c)).filter((account: any) => ['CUSTOMER', 'STAFF'].includes(account.role) && account.status !== 'inactive')
   await Promise.all(recipients.map((recipient: any) => createNotification(c, { recipientId: recipient.id, senderId: user.id, type: 'announcement', title, message })))
   return c.redirect('/notifications')
 })
@@ -540,12 +539,19 @@ app.post('/notifications/send', async (c) => {
   const user = c.get('user')
   if (!user || !['ADMIN', 'STAFF'].includes(user.role)) return c.html(renderForbidden(), 403)
   const form = await c.req.parseBody()
-  const recipientId = String(form.recipientId || '').trim()
+  const recipientIds = (Array.isArray(form.recipientId) ? form.recipientId : [form.recipientId])
+    .map((value: unknown) => String(value || '').trim())
+    .filter(Boolean)
   const title = String(form.title || '').trim().slice(0, 120)
   const message = String(form.message || '').trim().slice(0, 1000)
-  const recipient = await getUserById(c, recipientId)
-  if (!recipient || !['CUSTOMER', 'STAFF'].includes(recipient.role) || recipient.status === 'inactive' || (user.role === 'STAFF' && (recipient.role !== 'CUSTOMER' || recipient.staffId !== user.id)) || !title || !message) return c.text('收件人或通知内容无效', 400)
-  await createNotification(c, { recipientId, type: 'manual', title, message })
+  const allowedRecipients = (await getUsers(c)).filter((recipient: any) =>
+    recipientIds.includes(recipient.id) &&
+    ['CUSTOMER', 'STAFF'].includes(recipient.role) &&
+    recipient.status !== 'inactive' &&
+    (user.role !== 'STAFF' || (recipient.role === 'CUSTOMER' && recipient.staffId === user.id))
+  )
+  if (!recipientIds.length || allowedRecipients.length !== new Set(recipientIds).size || !title || !message) return c.text('收件人或通知内容无效', 400)
+  await Promise.all(allowedRecipients.map((recipient: any) => createNotification(c, { recipientId: recipient.id, senderId: user.id, type: 'manual', title, message })))
   return c.redirect('/notifications')
 })
 
@@ -600,6 +606,20 @@ app.get('/staff/dashboard', async (c) => {
   }
   const dashboardData = await getStaffDashboardData(c, user.role === 'ADMIN' ? undefined : user.id)
   return c.html(pages.renderStaffDashboard(user, dashboardData))
+})
+
+app.get('/staff/profile', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'STAFF') return c.redirect('/login')
+  return c.html(buildLayout('编辑个人信息', `<div class="panel"><h2>编辑个人信息</h2><form method="post" action="/staff/profile"><label class="form-label" for="profile-name">姓名</label><input class="form-control" id="profile-name" name="name" value="${sanitizePlainText(user.name, 120)}" required><label class="form-label" for="profile-phone">电话</label><input class="form-control" id="profile-phone" name="phone" value="${sanitizePlainText(user.phone || '', 40)}"><button class="button button-primary" type="submit" style="margin-top:16px">保存</button></form></div>`, user))
+})
+
+app.post('/staff/profile', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'STAFF') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  await updateUser(c, user.id, { name: String(form.name || user.name).trim().slice(0, 120), phone: String(form.phone || '').trim().slice(0, 40) })
+  return c.redirect('/staff/profile')
 })
 
 app.get('/staff/customers', async (c) => {
@@ -1202,9 +1222,9 @@ app.get('/admin/dashboard', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  const { getOrdersAsync, getUsersAsync, getDevicesAsync } = await import('./site')
+  const { getOrdersAsync, getDevicesAsync } = await import('./site')
   const orders = await getOrdersAsync(c)
-  const users = await getUsersAsync(c)
+  const users = await getUsers(c)
   const devices = await getDevicesAsync(c)
   return c.html(pages.renderAdminDashboard(user, orders, users, devices))
 })
@@ -1912,23 +1932,38 @@ app.post('/admin/settings/save', async (c) => {
 app.get('/api/address/autocomplete', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.json({ error: '无权限查询地址' }, 403)
-  const apiKey = String(c.env.GOOGLE_MAPS_API_KEY || '')
-  if (!apiKey) return c.json({ error: '地址联想尚未配置，可手工填写地址' }, 503)
   const input = String(c.req.query('q') || '').trim().slice(0, 120)
-  const sessionToken = String(c.req.query('session') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)
   if (input.length < 3) return c.json({ suggestions: [] })
-  const response = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'suggestions.placePrediction.placeId,suggestions.placePrediction.text.text' },
-    body: JSON.stringify({ input, includedRegionCodes: ['au'], languageCode: 'en', regionCode: 'au', ...(sessionToken ? { sessionToken } : {}) })
-  })
-  if (!response.ok) {
-    console.error('Google address autocomplete failed:', response.status)
-    return c.json({ error: '地址联想暂时不可用，可手工填写地址' }, 502)
+  const headers = { Accept: 'application/json', 'User-Agent': 'PC-Rental/1.0 address search' }
+  const providers = [
+    async () => {
+      const response = await fetch('https://photon.komoot.io/api/?' + new URLSearchParams({ q: `${input}, Australia`, limit: '6', lang: 'en' }), { headers })
+      if (!response.ok) throw new Error(`Photon ${response.status}`)
+      const data = await response.json() as any
+      return (data.features || []).map((feature: any) => feature.properties || {})
+    },
+    async () => {
+      const response = await fetch('https://nominatim.openstreetmap.org/search?' + new URLSearchParams({ q: `${input}, Australia`, format: 'jsonv2', addressdetails: '1', limit: '6', countrycodes: 'au' }), { headers })
+      if (!response.ok) throw new Error(`Nominatim ${response.status}`)
+      const data = await response.json() as any[]
+      return data.map((item: any) => ({ ...item.address, osm_type: item.osm_type, osm_id: item.osm_id, display_name: item.display_name }))
+    },
+  ]
+  for (const provider of providers) {
+    try {
+      const items = await provider()
+      const suggestions = items.slice(0, 6).map((p: any) => {
+        const street = [p.housenumber, p.house_number, p.street, p.road].filter(Boolean).join(' ')
+        const text = [street, p.city || p.town || p.suburb || p.locality, p.state, p.postcode].filter(Boolean).join(', ') || String(p.display_name || '')
+        const placeId = `${p.osm_type || 'osm'}_${p.osm_id || text}`.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 300)
+        return { placeId, text, street, suburb: p.city || p.town || p.suburb || p.locality || '', state: p.state || '', postcode: p.postcode || '', formattedAddress: text }
+      }).filter((item: any) => item.placeId && item.text)
+      if (suggestions.length) return c.json({ suggestions })
+    } catch (error: any) {
+      console.error('Address provider failed:', error?.message || error)
+    }
   }
-  const data = await response.json() as any
-  const suggestions = (data.suggestions || []).map((item: any) => item.placePrediction).filter(Boolean).slice(0, 6).map((prediction: any) => ({ placeId: String(prediction.placeId || '').slice(0, 300), text: String(prediction.text?.text || '').slice(0, 300) })).filter((item: any) => item.placeId && item.text)
-  return c.json({ suggestions })
+  return c.json({ error: '地址联想暂时不可用，可手工填写地址' }, 502)
 })
 
 app.get('/api/address/details', async (c) => {
