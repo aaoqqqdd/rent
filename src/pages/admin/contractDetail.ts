@@ -31,7 +31,8 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
 
   const body = `
     <div class="panel contract-viewer">
-      <div class="contract-toolbar"><strong>租赁合同 #${contract.contractNumber}</strong><span class="section-note">正式 A4 合同快照</span><button class="button button-secondary" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="/admin/contracts">返回</a></div>
+      <div class="contract-archive-bar"><div><span class="contract-kicker">RENTAL AGREEMENT / ARCHIVE</span><h1>租赁合同</h1><p class="contract-number">${contract.contractNumber}</p></div><span class="contract-status">${contract.status}</span></div>
+      <div class="contract-toolbar"><div class="contract-toolbar__meta"><span>签署日期</span><strong>${contract.signedAt ?? '未签署'}</strong></div><div class="contract-toolbar__actions"><button class="button button-secondary" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="/admin/contracts">返回</a></div></div>
 
       <div class="contract-header">
         <h3>合同编号: ${contract.contractNumber}</h3>

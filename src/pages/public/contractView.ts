@@ -24,17 +24,14 @@ export async function renderContractView(c: Context, contractId: string, user: a
   const returnUrl = user.role === 'ADMIN' ? '/admin/contracts' : user.role === 'STAFF' ? '/staff/contracts' : order ? `/customer/orders/${order.id}` : '/customer/dashboard'
 
   const body = `
-    <div class="panel contract-viewer">
-      <div class="contract-toolbar"><strong>租赁合同 #${contract.contractNumber}</strong><span class="section-note">正式 A4 合同快照</span><button class="button button-secondary" type="button" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" type="button" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="${returnUrl}">返回</a></div>
-      <div class="contract-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <p><strong>状态:</strong> ${contract.status}</p>
-        <p><strong>签署日期:</strong> ${contract.signedAt ?? '未签署'}</p>
-      </div>
+    <div class="contract-viewer">
+      <div class="contract-archive-bar"><div><span class="contract-kicker">RENTAL AGREEMENT / ARCHIVE</span><h1>租赁合同</h1><p class="contract-number">${contract.contractNumber}</p></div><span class="contract-status">${contract.status}</span></div>
+      <div class="contract-toolbar"><div class="contract-toolbar__meta"><span>签署日期</span><strong>${contract.signedAt ?? '未签署'}</strong></div><div class="contract-toolbar__actions"><button class="button button-secondary" type="button" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" type="button" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="${returnUrl}">返回</a></div></div>
       <div class="a4-document contract-content">
         ${renderedContract}
       </div>
       ${user?.accountType === 'guest' ? '<div class="page-notification page-notification--info"><strong>访客账户</strong> · 仅可查看和下载本次租赁合同，账户将在租期结束后自动失效。</div>' : ''}
-      <div class="contract-actions" style="display: flex; gap: 12px;">
+      <div class="contract-actions">
         ${isContractFinalized(contract) ? '<button class="button" onclick="window.print()">打印/下载 PDF</button>' : ''}
         ${user ? `<a class="button button-primary" href="${user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'}">${user.accountType === 'guest' ? '返回访客合同中心' : '查看我的账户'}</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}
       </div>
