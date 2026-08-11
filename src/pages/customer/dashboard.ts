@@ -27,11 +27,11 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
         <div class="value">${pendingPayment}</div>
         <div class="trend" style="color: var(--warning)">笔订单待处理</div>
       </div>
-      <div class="stat-card success">
+      <a class="stat-card success balance-stat-link" href="/customer/balance">
         <h3>账户余额</h3>
         <div class="value mono">${formatCurrency(user.balance)}</div>
-        <div class="trend">可用余额</div>
-      </div>
+        <div class="trend">查看余额明细 →</div>
+      </a>
       <div class="stat-card accent">
         <h3>已完成订单</h3>
         <div class="value">${completedOrders}</div>

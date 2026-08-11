@@ -371,6 +371,28 @@
       window.addEventListener('popstate', function () { navigate(new URL(window.location.href), false); });
     })();
   </script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      if (!location.pathname.startsWith('/notifications')) return;
+      document.querySelectorAll('.notification-item .notification-message').forEach(function (message) {
+        if (message.dataset.previewReady) return;
+        message.dataset.previewReady = '1';
+        const full = message.innerHTML;
+        const text = (message.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text.length <= 120) return;
+        message.textContent = text.slice(0, 120) + '…';
+        const details = document.createElement('details');
+        details.className = 'notification-detail';
+        const summary = document.createElement('summary');
+        summary.textContent = '查看详情';
+        const content = document.createElement('div');
+        content.className = 'notification-message';
+        content.innerHTML = full;
+        details.append(summary, content);
+        message.after(details);
+      });
+    });
+  </script>
 </body>
 
 </html>

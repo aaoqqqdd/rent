@@ -2623,7 +2623,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const userBlockHtml = currentUser
     ? `
-        <button class="notification-bell" type="button" aria-label="打开通知中心" aria-expanded="false"><span aria-hidden="true">🔔</span><b class="notification-bell__count" hidden>0</b></button>
+        <button class="notification-bell" type="button" aria-label="打开通知中心" aria-expanded="false"><span class="notification-bell__icon" aria-hidden="true"></span><b class="notification-bell__count" hidden>0</b></button>
         <a class="user-profile-link" href="${currentUser.role === 'ADMIN' ? `/admin/users/${encodeURIComponent(currentUser.id)}/edit` : currentUser.role === 'STAFF' ? '/staff/profile' : '/customer/profile'}" aria-label="编辑个人信息"><span class="user-label">${currentUser.name}${currentUser.accountType === 'guest' ? ` · 访客（${currentUser.guestExpiresAt || '租期结束'}删除）` : ''}</span><div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div></a>
         <form method="post" action="/logout" style="display:inline"><button type="submit" class="logout-button">登出</button></form>
       `
@@ -2651,7 +2651,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       ? [['/staff/dashboard', '工作台', '◉'], ['/notifications', '通知', 'N'], ['/staff/orders', '订单', '▦'], ['/staff/contracts', '合同', '▤'], ['/staff/customers', '客户', '◎']]
       : currentUser?.accountType === 'guest'
         ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
-        : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/profile', '我的', '◎']]
+        : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
   const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span>${icon}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span>↗</span><small>登录</small></a><a href="/register"><span>+</span><small>注册</small></a>`
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
   const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${sanitizePlainText(currentUser.name.charAt(0).toUpperCase(), 1)}</span>` : ''
@@ -2663,9 +2663,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'CUSTOMER' ? `
             ${currentUser.accountType === 'guest' ? renderNavGroup('合同中心', [['/customer/guest', '访客合同中心'], ['/customer/guest/upgrade', '升级账户']]) : `
               ${renderNavLink('/customer/dashboard', '控制台')}
-              ${renderNavLink('/notifications', '通知中心')}
               ${renderNavGroup('租赁工作区', [['/customer/rentals', '我的租赁'], ['/customer/orders', '订单管理']])}
-              ${renderNavGroup('账户设置', [['/customer/profile', '个人资料'], ['/customer/security', '安全设置'], ['/customer/referral', '推荐计划']])}
+              ${renderNavGroup('账户与钱包', [['/customer/balance', '我的钱包'], ['/customer/profile', '个人资料'], ['/customer/security', '安全设置'], ['/customer/referral', '推荐计划']])}
             `}
           ` : ''}
           ${currentUser.role === 'STAFF' ? `

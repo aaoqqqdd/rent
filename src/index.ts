@@ -403,6 +403,32 @@ app.get('/customer/dashboard', async (c) => {
   return c.html(pages.renderCustomerDashboard(user, orders, devices))
 })
 
+app.get('/customer/balance', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.redirect('/login')
+  return c.html(await pages.renderCustomerBalance(c, user))
+})
+
+app.post('/admin/users/:id/balance-adjust', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const target = await getUserById(c, c.req.param('id'))
+  if (!target) return c.text('用户不存在', 404)
+  const form = await c.req.parseBody()
+  const amount = Number(String(form.amount || '').trim())
+  const reason = String(form.reason || '').trim()
+  if (!Number.isFinite(amount) || amount === 0) return c.text('余额变动金额必须不为 0', 400)
+  if (!reason) return c.text('管理员调整余额必须填写原因', 400)
+  const current = Number(target.balance || 0)
+  const next = Number((current + amount).toFixed(2))
+  if (next < 0) return c.text('扣减后余额不能小于 0', 400)
+  await c.env.RENT.batch([
+    c.env.RENT.prepare('UPDATE users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, target.id),
+    c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`bt-${crypto.randomUUID()}`, target.id, amount, next, amount > 0 ? 'admin_credit' : 'admin_debit', reason, admin.id),
+  ])
+  return c.redirect(`/admin/users/${target.id}`)
+})
+
 app.get('/customer/guest', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER' || user.accountType !== 'guest') return c.redirect('/login')
@@ -469,10 +495,18 @@ app.post('/customer/orders/:id/returned', async (c) => {
   return c.redirect(`/customer/orders/${order.id}?success=${encodeURIComponent('已通知管理员，等待审核验机')}`)
 })
 
+function notificationPreview(message: unknown, limit = 120): string {
+  const plain = String(message || '').replace(/[#*_`>\[\]()!-]/g, ' ').replace(/\s+/g, ' ').trim()
+  return sanitizePlainText(plain.length > limit ? `${plain.slice(0, limit)}…` : plain, limit + 1)
+}
+
 app.get('/notifications', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
   await ensureNotificationsTable(c)
+  // Opening the notification center counts as reading the inbox, so the
+  // header badge disappears immediately while the full history remains visible.
+  await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE recipient_id = ? AND deleted_at IS NULL').bind(user.id).run()
   const notifications = await getNotifications(c, user.id)
   const sentAnnouncements = user.role === 'ADMIN' ? ((await c.env.RENT.prepare("SELECT MAX(id) AS id, title, message, created_at FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC LIMIT 100").bind(user.id).all()).results || []) : []
   const recipients = user.role === 'ADMIN' || user.role === 'STAFF' ? (await getUsers(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive') : []
@@ -548,7 +582,8 @@ app.post('/notifications/send', async (c) => {
   const user = c.get('user')
   if (!user || !['ADMIN', 'STAFF'].includes(user.role)) return c.html(renderForbidden(), 403)
   const form = await c.req.parseBody()
-  const recipientIds = (Array.isArray(form.recipientId) ? form.recipientId : [form.recipientId])
+  const rawRecipientIds = form.recipientId ?? form['recipientId[]']
+  const recipientIds = (Array.isArray(rawRecipientIds) ? rawRecipientIds : [rawRecipientIds])
     .map((value: unknown) => String(value || '').trim())
     .filter(Boolean)
   const title = String(form.title || '').trim().slice(0, 120)

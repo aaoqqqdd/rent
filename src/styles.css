@@ -124,6 +124,10 @@
 .official-document__refund > div:last-child { text-align: right; }
 .official-document__refund p { margin: 4px 0 0; font-size: 11px; }
 .order-detail-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
+.balance-stat-link { display: block; color: inherit; text-decoration: none; cursor: pointer; }
+.balance-stat-link:hover { color: inherit; text-decoration: none; }
+.balance-adjust-form { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.balance-adjust-form h4 { margin: 0 0 12px; }
 .contract-detail-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 16px; }
 .contract-detail-meta span { display: grid; gap: 5px; padding: 13px 15px; background: #fff; border: 1px solid #dbe4ea; border-radius: 9px; }
 .contract-detail-meta small { color: #7b8b97; font-size: .72rem; }
@@ -141,9 +145,18 @@
   background: #fff !important;
   color: #172033 !important;
 }
+.official-document__header > div { min-width: 0; }
+.official-document__header { overflow: hidden; }
+.official-document__title { flex: 0 1 52%; max-width: 52%; overflow-wrap: anywhere; word-break: break-word; }
+.official-document__title h2,
+.official-document__title p,
+.official-document__title strong { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
 .official-document__header *,
 .official-document__title * { color: #172033 !important; }
 .official-document__header .official-document__eyebrow { color: #2457d6 !important; }
+@media (max-width: 700px) {
+  .official-document__title { max-width: none; }
+}
 .official-document h1,
 .official-document h2,
 .official-document h3,
@@ -749,6 +762,9 @@ header {
 
 .user-profile-link .user-label { white-space: nowrap; }
 .notification-bell { position: relative; display: grid; place-items: center; width: 38px; height: 38px; padding: 0; color: #c7d0d8; background: transparent; border: 1px solid #435363; border-radius: 8px; cursor: pointer; font-size: 1.15rem; transition: .2s ease; }
+.notification-bell__icon { position: relative; display: block; width: 15px; height: 14px; margin-top: -2px; border: 1.8px solid currentColor; border-bottom: 0; border-radius: 9px 9px 3px 3px; }
+.notification-bell__icon::before { content: ''; position: absolute; left: -3px; right: -3px; bottom: -3px; height: 2px; border-radius: 2px; background: currentColor; }
+.notification-bell__icon::after { content: ''; position: absolute; left: 5px; bottom: -6px; width: 4px; height: 4px; border: 1.6px solid currentColor; border-top: 0; border-radius: 0 0 5px 5px; }
 .notification-bell:hover { color: #f0a35b; border-color: #f0a35b; transform: translateY(-1px); }
 .notification-bell__count { position: absolute; top: -7px; right: -7px; min-width: 18px; height: 18px; padding: 0 4px; display: grid; place-items: center; color: #172331; background: #f0a35b; border: 2px solid #172331; border-radius: 99px; font: 700 .62rem var(--font-mono); }
 .notification-drawer { position: fixed; z-index: 80; top: 68px; right: 0; width: min(390px, 86vw); height: calc(100vh - 68px); display: flex; flex-direction: column; padding: 24px; background: #f5f8fa; border-left: 1px solid #cbd7df; box-shadow: -18px 0 45px rgba(16, 32, 51, .16); transform: translateX(105%); transition: transform .32s cubic-bezier(.22,.8,.25,1); }
@@ -758,6 +774,9 @@ header {
 .notification-drawer__close { border: 0; background: transparent; color: #6d7d89; font-size: 1.8rem; cursor: pointer; }
 .notification-drawer__body { flex: 1; overflow-y: auto; padding: 16px 0; }
 .notification-drawer__item { padding: 14px 0; border-bottom: 1px solid #dce5ea; }
+.notification-detail { margin-top: 8px; }
+.notification-detail summary { width: fit-content; color: var(--primary); cursor: pointer; font-size: .82rem; }
+.notification-detail[open] summary { margin-bottom: 8px; }
 .notification-drawer__item strong { color: #172331; }
 .notification-drawer__item p { margin: 6px 0; color: #526574; font-size: .88rem; line-height: 1.5; }
 .notification-drawer__item small { color: #84929d; font: .68rem var(--font-mono); }
