@@ -98,7 +98,11 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
   try {
     event = await verifyStripeWebhook(c, rawBody, c.req.header('stripe-signature'))
   } catch (error: any) {
-    return c.text(error.message || 'Webhook 签名无效', 400)
+    // Always acknowledge Stripe delivery at the HTTP layer. Invalid payloads
+    // are rejected from business processing and logged for investigation;
+    // returning 4xx here only causes Stripe to retry the same bad delivery.
+    console.error('Stripe webhook verification failed:', error?.message || error)
+    return c.json({ received: true, accepted: false, reason: 'verification_failed' }, 200)
   }
 
   const processed = await c.env.RENT.prepare('SELECT event_id FROM stripe_webhook_events WHERE event_id = ?').bind(event.id).first()

@@ -5,7 +5,7 @@
 
 import { buildLayout } from '../../site';
 
-export function renderRegister(errorMessage?: string) {
+export function renderRegister(errorMessage?: string, turnstileSiteKey = '') {
   const countryCodes = [
     { code: '+61', name: 'AU' },
     { code: '+86', name: 'CN' },
@@ -40,6 +40,7 @@ export function renderRegister(errorMessage?: string) {
             <input class="form-control" type="password" name="password" minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s])\\S{8,}" title="至少 8 位，并同时包含字母、数字和符号" placeholder="至少 8 位，包含字母、数字和符号" autocomplete="new-password" required />
             <label class="form-label">确认密码</label>
             <input class="form-control" type="password" name="passwordConfirm" minlength="8" placeholder="请再次输入密码" autocomplete="new-password" required />
+            <div class="form-group turnstile-box"><div class="cf-turnstile" data-sitekey="${turnstileSiteKey}"></div><small class="form-text">请完成安全验证后注册。</small></div>
             <label class="form-label">推荐码 (选填)</label>
             <input class="form-control" name="referrer" placeholder="来自朋友的推荐码" />
             <div class="form-row">
@@ -54,5 +55,5 @@ export function renderRegister(errorMessage?: string) {
       </div>
     </div>
   `
-  return buildLayout('注册 - PC Rental', body)
+  return buildLayout('注册 - PC Rental', body).replace('</head>', '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script></head>')
 }

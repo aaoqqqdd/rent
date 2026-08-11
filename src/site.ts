@@ -2636,7 +2636,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
     '/notifications': 'N', '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
     '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/calendar': '▦', '/admin/templates': '▤', '/admin/settings': '⚙'
+    '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/calendar': '▦', '/admin/templates': '▤', '/admin/email-templates': '▤', '/admin/settings': '⚙'
   }
 
   const navIconSvg = (kind: string) => {
@@ -2701,7 +2701,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('订单与合同', [['/admin/orders', '订单管理'], ['/admin/contracts', '合同管理']])}
             ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
-            ${renderNavGroup('协议与设置', [['/admin/templates', '协议与模板'], ['/admin/settings', '系统设置']])}
+            ${renderNavGroup('协议与设置', [['/admin/templates', '协议与模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">

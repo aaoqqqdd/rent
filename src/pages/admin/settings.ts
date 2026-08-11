@@ -5,7 +5,7 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
   const emailTemplateJson = JSON.stringify(settings.emailTemplate).replace(/</g, '\\u003c')
   const emailVariables = ['user_name', 'user_email', 'order_no', 'contract_number', 'device_name', 'sign_link', 'expire_time']
@@ -18,6 +18,20 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
       <div class="template-settings-notice">
         <div><strong>协议与合同模板已集中管理</strong><p>用户协议、租赁协议和正式合同模板现在分别在独立页面编辑。</p></div>
         <a href="/admin/templates" class="button button-secondary">前往协议与模板</a>
+      </div>
+
+      <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">
+        <h4 style="margin-top:0;">邮件 SMTP 配置</h4>
+        <p class="section-note">用于邮箱验证、收据、合同、退款和其他通知。SMTP 密码加密保存，留空表示保留原密码。</p>
+        <div class="grid grid-2">
+          <div><label class="form-label" for="smtpHost">SMTP 主机</label><input class="form-control" id="smtpHost" value="${email.host || ''}" placeholder="smtp-relay.brevo.com"></div>
+          <div><label class="form-label" for="smtpPort">端口</label><input class="form-control" id="smtpPort" type="number" value="${email.port || 587}"></div>
+          <div><label class="form-label" for="smtpUser">SMTP 用户名</label><input class="form-control" id="smtpUser" value="${email.user || ''}"></div>
+          <div><label class="form-label" for="smtpPassword">SMTP 密码 / Key</label><input class="form-control" id="smtpPassword" type="password" placeholder="${email.passwordMasked || '请输入 SMTP Key'}" autocomplete="new-password"></div>
+          <div><label class="form-label" for="smtpFrom">发件邮箱</label><input class="form-control" id="smtpFrom" type="email" value="${email.from || ''}" placeholder="noreply@example.com"></div>
+          <div><label class="form-label" for="smtpEncryption">加密方式</label><select class="form-control" id="smtpEncryption"><option value="starttls" ${email.encryption === 'starttls' ? 'selected' : ''}>STARTTLS（587）</option><option value="ssl" ${email.encryption === 'ssl' ? 'selected' : ''}>SSL/TLS（465）</option><option value="none" ${email.encryption === 'none' ? 'selected' : ''}>无加密</option></select></div>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:14px;"><input type="checkbox" id="clearEmailTransport"> 清除已保存的 SMTP 配置</label>
       </div>
 
       <form id="systemSettingsForm">
@@ -194,6 +208,15 @@ export function renderAdminSettings(user: any, stripe: any = {}) {
             secretKey: formData.get('stripeSecretKey'),
             webhookSecret: formData.get('stripeWebhookSecret'),
             clear: formData.has('clearStripeConfig'),
+          },
+          emailTransport: {
+            host: document.getElementById('smtpHost').value,
+            port: document.getElementById('smtpPort').value,
+            user: document.getElementById('smtpUser').value,
+            password: document.getElementById('smtpPassword').value,
+            from: document.getElementById('smtpFrom').value,
+            encryption: document.getElementById('smtpEncryption').value,
+            clear: document.getElementById('clearEmailTransport').checked,
           },
           bankDetails: {
             bankName: formData.get('bankName'),

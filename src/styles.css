@@ -45,6 +45,15 @@
   .official-document { display: block !important; background: #fff !important; color: #172033 !important; }
 }
 
+.account-consent-note {
+  margin: 10px 0 16px;
+  color: var(--text-secondary);
+  font-size: .78rem;
+  line-height: 1.6;
+}
+
+.account-consent-note a { color: var(--primary); }
+
 @media print {
   .contract-viewer > .a4-document.contract-content > h1:first-child,
   .contract-viewer > .a4-document.contract-content > h2:first-child,

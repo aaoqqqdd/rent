@@ -6,6 +6,7 @@
 import { Context } from 'hono'
 import { getSystemSettings, updateSystemSettings, sanitizeRichHtml } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
+import { saveEmailConfig } from '../../emailConfig'
 
 export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   // index.ts 已经完成 admin 权限校验，这里不再依赖 c.get('user')。
@@ -68,6 +69,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   }
 
   if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)
+  if (payload.emailTransport) await saveEmailConfig(c, payload.emailTransport)
   await updateSystemSettings(c, next as any)
 
   return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c) })

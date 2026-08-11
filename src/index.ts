@@ -72,6 +72,7 @@ import {
 } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
+import { getEmailConfigSummary } from './emailConfig'
 import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund } from './actions/stripePayments'
 import siteStyles from './styles.css'
 
@@ -204,7 +205,7 @@ app.use('*', async (c, next) => {
   c.header('Cross-Origin-Opener-Policy', 'same-origin')
   c.header('Cross-Origin-Resource-Policy', 'same-origin')
   if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-  c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.quilljs.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.quilljs.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'")
+  c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.quilljs.com https://cdn.jsdelivr.net https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.quilljs.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'")
 });
 
 app.use('*', async (c, next) => {
@@ -290,8 +291,27 @@ app.get('/register', async (c) => {
   if (user) {
     return c.redirect('/')
   }
-  return c.html(pages.renderRegister())
+  return c.html(pages.renderRegister(undefined, String((c.env as any).TURNSTILE_SITE_KEY || '')))
 })
+
+async function ensureEmailVerificationSchema(c: any) {
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS email_verifications (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL, email TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL, verified_at TEXT)`).run()
+}
+
+async function sendEmailVerification(c: any, user: any) {
+  await ensureEmailVerificationSchema(c)
+  const token = nanoid(48)
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+  const tokenHash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  const now = new Date()
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+  await c.env.RENT.prepare('INSERT INTO email_verifications (id, user_id, email, token_hash, sent_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)').bind(nanoid(), user.id, user.email, tokenHash, now.toISOString(), expiresAt).run()
+  const apiKey = String((c.env as any).RESEND_API_KEY || '')
+  const from = String((c.env as any).EMAIL_FROM || '')
+  if (!apiKey || !from) return
+  const verifyUrl = `${new URL(c.req.url).origin}/verify-email?token=${encodeURIComponent(token)}`
+  await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [user.email], subject: '验证您的邮箱 - PC Rental', text: `您好 ${user.name}，请在 24 小时内打开以下链接验证邮箱：\n${verifyUrl}` }) })
+}
 
 app.get('/terms', async (c) => {
   const settings = await loadSystemSettingsFromDB(c)
@@ -317,20 +337,26 @@ for (const [path, title, key, code] of [
 app.post('/register', async (c) => {
   const form = await c.req.parseBody()
   const { firstName, lastName, email, password, passwordConfirm, referrer, countryCode, phone } = form
+  const renderRegistrationError = (message: string) => pages.renderRegister(message, String((c.env as any).TURNSTILE_SITE_KEY || ''))
+  const turnstileToken = String(form['cf-turnstile-response'] || '')
+  const turnstileSecret = String((c.env as any).TURNSTILE_SECRET_KEY || '')
+  if (!turnstileSecret || !turnstileToken) return c.html(renderRegistrationError('请先完成人机验证。'), 400)
+  const turnstileResult = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: turnstileSecret, response: turnstileToken, remoteip: c.req.header('CF-Connecting-IP') }) }).then(r => r.json()).catch(() => ({ success: false })) as any
+  if (!turnstileResult.success) return c.html(renderRegistrationError('人机验证失败，请重试。'), 400)
   const name = combinePersonName(firstName, lastName)
 
   if (!String(firstName || '').trim() || !String(lastName || '').trim() || !email?.trim() || !password?.trim() || !passwordConfirm?.trim() || !phone?.trim()) {
-    return c.html(pages.renderRegister('请输入完整注册信息'))
+    return c.html(renderRegistrationError('请输入完整注册信息'))
   }
   if (password !== passwordConfirm) {
-    return c.html(pages.renderRegister('两次输入密码不一致'))
+    return c.html(renderRegistrationError('两次输入密码不一致'))
   }
-  if (!isStrongPassword(password)) return c.html(pages.renderRegister('密码至少需要 8 位，并同时包含字母、数字和符号'))
+  if (!isStrongPassword(password)) return c.html(renderRegistrationError('密码至少需要 8 位，并同时包含字母、数字和符号'))
 
   // 检查邮箱是否已存在
   const existingUser = await findUserByEmail(c, email)
   if (existingUser) {
-    return c.html(pages.renderRegister('该电子邮箱已被注册'))
+    return c.html(renderRegistrationError('该电子邮箱已被注册'))
   }
 
   // 处理推荐人
@@ -340,7 +366,7 @@ app.post('/register', async (c) => {
     if (referrerUser) {
       referrerId = referrerUser.id;
     } else {
-      return c.html(pages.renderRegister('无效的推荐码'))
+      return c.html(renderRegistrationError('无效的推荐码'))
     }
   }
 
@@ -362,12 +388,46 @@ app.post('/register', async (c) => {
 
   await insertUser(c, newUser)
 
+  // 注册验证邮件的发送由独立接口处理，服务端统一限制 60 秒内只能发送一次。
+  await sendEmailVerification(c, newUser)
+
   // 自动登录
-  const response = c.redirect('/customer/dashboard')
+  const response = c.redirect(`/verify-email/pending?email=${encodeURIComponent(newUser.email)}`)
   const session = await createAuthSession(c, newUserId)
   response.headers.set('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
 
   return response
+})
+
+app.get('/verify-email/pending', async (c) => {
+  const email = String(c.req.query('email') || '')
+  const body = `<div class="panel" style="max-width:560px;margin:40px auto"><h2>请验证您的邮箱</h2><p>验证邮件已发送至 <strong>${email.replace(/[<>]/g, '')}</strong>，请打开邮件中的链接完成验证。</p><form method="post" action="/register/resend-verification"><input type="hidden" name="email" value="${email.replace(/"/g, '&quot;')}"><button class="button" id="resendVerification" type="submit" disabled>60 秒后可重新发送</button></form><p class="form-text">如果没有收到邮件，请检查垃圾邮件文件夹。</p><script>let s=60,b=document.getElementById('resendVerification');const t=setInterval(()=>{s--;b.textContent=s>0?s+' 秒后可重新发送':'重新发送验证邮件';if(s<=0){b.disabled=false;clearInterval(t)}},1000)</script></div>`
+  return c.html(buildLayout('验证邮箱', body))
+})
+
+app.post('/register/resend-verification', async (c) => {
+  const form = await c.req.parseBody()
+  const email = String(form.email || '').trim().toLowerCase()
+  if (!email) return c.text('请输入邮箱地址', 400)
+  await ensureEmailVerificationSchema(c)
+  const user = await findUserByEmail(c, email)
+  if (!user) return c.text('如果该邮箱已注册，验证邮件将发送到您的邮箱。', 200)
+  const latest = await c.env.RENT.prepare("SELECT sent_at FROM email_verifications WHERE user_id = ? ORDER BY sent_at DESC LIMIT 1").bind(user.id).first() as any
+  if (latest?.sent_at && Date.now() - new Date(String(latest.sent_at).replace(' ', 'T') + 'Z').getTime() < 60000) return c.text('验证邮件已发送，请 60 秒后再试。', 429)
+  await sendEmailVerification(c, user)
+  return c.text('验证邮件已重新发送，请查收。', 200)
+})
+
+app.get('/verify-email', async (c) => {
+  const token = String(c.req.query('token') || '')
+  if (!token) return c.html(buildLayout('邮箱验证', '<div class="panel"><h2>验证链接无效</h2><p>请使用邮件中的完整链接。</p></div>'), 400)
+  await ensureEmailVerificationSchema(c)
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+  const tokenHash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  const row = await c.env.RENT.prepare("SELECT * FROM email_verifications WHERE token_hash = ? AND verified_at IS NULL AND expires_at > CURRENT_TIMESTAMP ORDER BY sent_at DESC LIMIT 1").bind(tokenHash).first() as any
+  if (!row) return c.html(buildLayout('邮箱验证', '<div class="panel"><h2>验证链接已失效</h2><p>请重新发送验证邮件。</p></div>'), 400)
+  await c.env.RENT.prepare('UPDATE email_verifications SET verified_at = CURRENT_TIMESTAMP WHERE id = ?').bind(row.id).run()
+  return c.html(buildLayout('邮箱验证', '<div class="panel"><h2>邮箱验证成功</h2><p>您的邮箱已验证，可以登录账户。</p><p><a class="button" href="/login">前往登录</a></p></div>'))
 })
 
 app.get('/forgot-password', async (c) => {
@@ -514,6 +574,46 @@ app.get('/notifications', async (c) => {
   const recipientOptions = recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')
   const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};search.addEventListener('input',update);select.addEventListener('change',update);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<article class="notification-item ${item.read_at ? '' : 'is-unread'}"><div><strong>${item.title}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div>${item.order_id ? `<a class="button button-sm button-secondary" href="${user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`}" >查看订单</a>` : ''}</article>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
   return c.html(buildLayout('通知中心', body, user))
+})
+
+app.get('/admin/email-templates', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminEmailTemplates(c, user))
+})
+
+app.post('/admin/email-templates/send', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const template = await c.env.RENT.prepare('SELECT subject, body FROM email_templates WHERE id = ? AND enabled = 1').bind(String(form.templateId || '')).first() as any
+  const to = String(form.to || '').trim().toLowerCase()
+  const channel = ['site', 'email', 'both'].includes(String(form.channel)) ? String(form.channel) : 'email'
+  const recipientId = String(form.recipientId || '').trim()
+  if (!template || (['email', 'both'].includes(channel) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) || (['site', 'both'].includes(channel) && !recipientId)) return c.text('模板、通知收件人或邮件地址无效', 400)
+  const vars: Record<string, string> = { customer_name: String(form.customer_name || ''), order_number: String(form.order_number || ''), contract_number: String(form.contract_number || ''), refund_amount: String(form.refund_amount || ''), sign_url: String(form.sign_url || '') }
+  const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
+  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: fill(template.subject), message: fill(template.body) })
+  if (['email', 'both'].includes(channel)) {
+    const apiKey = (c.env as any).RESEND_API_KEY
+    const from = (c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email
+    if (!apiKey || !from) return c.text('尚未配置邮件服务：请设置 RESEND_API_KEY 和 EMAIL_FROM', 503)
+    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [to], subject: fill(template.subject), text: fill(template.body) }) })
+    if (!response.ok) return c.text(`邮件发送失败：${await response.text()}`, 502)
+  }
+  return c.redirect('/admin/email-templates')
+})
+
+app.post('/admin/email-templates/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const subject = String(form.subject || '').trim().slice(0, 200)
+  const body = String(form.body || '').trim().slice(0, 10000)
+  if (!subject || !body) return c.text('邮件主题和正文不能为空', 400)
+  await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
+  await c.env.RENT.prepare('UPDATE email_templates SET subject = ?, body = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subject, body, c.req.param('id')).run()
+  return c.redirect('/admin/email-templates')
 })
 
 app.get('/notifications/announcements', async (c) => {
@@ -1794,7 +1894,7 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c)))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c)))
 })
 
 app.get('/admin/templates', async (c) => {
