@@ -184,6 +184,12 @@ export interface Order {
   deviceName?: string
   startDate: string
   endDate: string
+  startPeriod?: 'AM' | 'PM'
+  endPeriod?: 'AM' | 'PM'
+  pickupTimeSlot?: string
+  returnTimeSlot?: string
+  pickupLocation?: string
+  returnLocation?: string
   rentalPeriod?: number
   orderDate?: string
   status: 'pending_approval' | 'pending_payment' | 'approved' | 'paid' | 'active' | 'completed' | 'cancelled'
@@ -741,7 +747,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
   const db = getDB(c)
   await db
     .prepare(
-      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, rentalPeriod, status, paymentMethod, totalAmount, depositAmount, contractId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, startPeriod, endPeriod, rentalPeriod, status, paymentMethod, totalAmount, depositAmount, contractId, pickupTimeSlot, returnTimeSlot, pickupLocation, returnLocation, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .bind(
       order.id,
@@ -750,12 +756,13 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
       order.deviceId,
       order.startDate,
       order.endDate,
+      order.startPeriod || 'AM', order.endPeriod || 'AM',
       order.rentalPeriod, // Add rentalPeriod here
       order.status,
       order.paymentMethod,
       order.totalAmount,
       order.depositAmount,
-      order.contractId,
+      order.contractId, order.pickupTimeSlot || null, order.returnTimeSlot || null, order.pickupLocation || null, order.returnLocation || null,
       order.createdAt
     )
     .run()

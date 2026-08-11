@@ -27,7 +27,9 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           <h3>订单信息</h3>
           <p><strong>订单状态:</strong> ${order.status}</p>
           <p><strong>下单时间:</strong> ${order.orderDate}</p>
-          <p><strong>租期:</strong> ${order.startDate} 至 ${order.endDate}</p>
+          <p><strong>租期:</strong> ${order.startDate} ${order.startPeriod === 'PM' ? '下午' : '上午'} 至 ${order.endDate} ${order.endPeriod === 'PM' ? '下午' : '上午'}（${order.rentalPeriod || 0} 天）</p>
+          <p><strong>领取/归还地点:</strong> ${order.pickupLocation || '待确认'} / ${order.returnLocation || '待确认'}</p>
+          <p><strong>预约时间:</strong> ${order.pickupTimeSlot || '待确认'} / ${order.returnTimeSlot || '待确认'}</p>
           <p><strong>总金额:</strong> ${formatCurrency(order.totalAmount)}</p>
           <p><strong>押金:</strong> ${formatCurrency(order.depositAmount)}</p>
           <p><strong>租金:</strong> ${formatCurrency(order.totalAmount - order.depositAmount)}</p>
@@ -53,6 +55,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
       ${order.status === 'pending_payment' ? `
         ${transferProof ? `<div class="alert">转账审核状态：${transferProof.status === 'submitted' ? '待审核' : transferProof.status === 'rejected' ? `已驳回（${String(transferProof.rejection_reason || '').replace(/[&<>"']/g, '')}）` : transferProof.status}</div>` : ''}
         <div class="section-title" style="margin-top: 24px;"><h3>支付信息</h3></div>
+        <div class="alert"><strong>收款明细：</strong>租金 ${formatCurrency(Number(order.totalAmount) - Number(order.depositAmount))} ＋ 押金 ${formatCurrency(order.depositAmount)} ＝ 订单本金 ${formatCurrency(order.totalAmount)}。Stripe 付款另收手续费 ${formatCurrency(stripeFee)}，合计 ${formatCurrency(stripeTotal)}。</div>
         <div class="payment-options" style="display: flex; gap: 20px; margin-top: 16px;">
           <div class="payment-card">
             <h4>银行转账</h4>

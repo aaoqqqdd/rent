@@ -144,8 +144,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           ${completedRefund ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${order.status === 'completed' && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/deposit-refund" onsubmit="return confirm('确定提交本次押金处理吗？每笔订单只能处理一次。');">
             ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先按上方账户信息完成银行转账，再确认本操作。</div>' : ''}
-            <label class="form-label" for="refundAmount">退还押金金额（最多 ${formatCurrency(order.depositAmount)}）</label>
-            <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${order.depositAmount}" step="0.01" value="${order.depositAmount}" required>
+            <label class="form-label" for="refundAmount">退款金额（最多 ${formatCurrency(order.totalAmount)}）</label>
+            <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${order.totalAmount}" step="0.01" value="${order.depositAmount}" required>
             <label class="form-label" for="deductionReason">扣款原因（未全额退还时必填）</label>
             <textarea class="form-control" id="deductionReason" name="deductionReason"></textarea>
             <button type="submit" class="button button-warning" style="margin-top:12px;">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '确认已转账并处理押金' : '处理押金'}</button>

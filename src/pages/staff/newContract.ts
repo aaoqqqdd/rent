@@ -71,6 +71,12 @@ export async function renderNewContractPage(c: Context, user: any) {
           </div>
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
+          <div class="form-group"><label for="start-period" class="form-label">取货时段</label><select id="start-period" name="startPeriod" class="form-control"><option value="AM">上半天（00:00–12:59）</option><option value="PM">下半天（13:00–23:59）</option></select></div>
+          <div class="form-group"><label for="end-period" class="form-label">归还时段</label><select id="end-period" name="endPeriod" class="form-control"><option value="AM">上半天（00:00–12:59）</option><option value="PM">下半天（13:00–23:59）</option></select></div>
+          <div class="form-group"><label for="pickup-time-slot" class="form-label">取货时间</label><select id="pickup-time-slot" name="pickupTimeSlot" class="form-control"><option value="morning_service">7:00–8:00（早间服务费 10%）</option><option value="morning">9:00–12:00（无服务费）</option><option value="afternoon">13:00–20:00（无服务费）</option><option value="evening_service">21:00–23:00（晚间服务费 10%）</option></select></div>
+          <div class="form-group"><label for="return-time-slot" class="form-label">归还时间</label><select id="return-time-slot" name="returnTimeSlot" class="form-control"><option value="morning_service">7:00–8:00（早间服务费 10%）</option><option value="morning">9:00–12:00（无服务费）</option><option value="afternoon">13:00–20:00（无服务费）</option><option value="evening_service">21:00–23:00（晚间服务费 10%）</option></select></div>
+        </div>
+        <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="device-condition" class="form-label">出租时设备状况</label>
             <textarea id="device-condition" name="deviceCondition" class="form-control" required placeholder="例如：外观良好，屏幕无划痕"></textarea>

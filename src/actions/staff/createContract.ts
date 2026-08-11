@@ -12,6 +12,8 @@ const uppercaseAlphanumericNanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQR
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
   const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, returnLocation } = body;
+  const startPeriod = body.startPeriod === 'PM' ? 'PM' : 'AM'
+  const endPeriod = body.endPeriod === 'PM' ? 'PM' : 'AM'
   const deliveryMethod = body.deliveryMethod === 'Delivery' ? 'Delivery' : 'Pickup'
   const deliveryFeeText = String(body.deliveryFee || '').trim()
   const deliveryFee = deliveryMethod === 'Delivery' ? Number(deliveryFeeText) : 0
@@ -64,7 +66,9 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   if (start >= end) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
   }
-  const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  const halfDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
+  if (halfDays <= 0) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('归还时段必须晚于取货时段')}`)
+  const rentalPeriod = Math.ceil(halfDays / 2);
   if (rentalPeriod < rentalRules.minimumRentalDays) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent(`最短租赁时间为 ${rentalRules.minimumRentalDays} 天`)}`)
   const unavailable = new Set(rentalRules.unavailableDates)
   for (let day = new Date(start); day < end; day.setDate(day.getDate() + 1)) {
@@ -87,6 +91,11 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     deviceId: deviceId,
     startDate: startDate,
     endDate: endDate,
+    startPeriod, endPeriod,
+    pickupTimeSlot: body.pickupTimeSlot || null,
+    returnTimeSlot: body.returnTimeSlot || null,
+    pickupLocation: pickupLocationValue,
+    returnLocation: returnLocationValue,
     rentalPeriod: rentalPeriod, // 添加 rentalPeriod
     status: 'draft',
     paymentMethod: 'bank_transfer',

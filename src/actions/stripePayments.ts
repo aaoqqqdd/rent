@@ -179,8 +179,10 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   const refundText = String(form.refundAmount ?? '').trim()
   const refundAmount = Number(refundText)
   const depositAmount = Number(order.depositAmount)
-  if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > depositAmount) return c.text('押金退款金额无效', 400)
-  const deductionAmount = Number((depositAmount - refundAmount).toFixed(2))
+  if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > Number(order.totalAmount)) return c.text('退款金额无效：不能高于订单总额', 400)
+  // The administrator may refund damage/settlement amounts above the deposit,
+  // but never more than the order principal.
+  const deductionAmount = Number(Math.max(0, depositAmount - refundAmount).toFixed(2))
   const refundedProcessingFee = refundableDepositFee(refundAmount, payment)
   const totalRefundAmount = Number((refundAmount + refundedProcessingFee).toFixed(2))
   const reason = String(form.deductionReason || '').trim()

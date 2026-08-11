@@ -131,11 +131,14 @@
     }, true);
 
     document.addEventListener('DOMContentLoaded', function () {
-      fetch('/notifications/unread', { headers: { Accept: 'application/json' } }).then(function (response) { return response.ok ? response.json() : null; }).then(function (payload) {
-        if (!payload || !payload.notifications || !payload.notifications.length) return;
-        const notification = payload.notifications[0];
+      const pageTitle = document.title;
+      let lastNotificationIds = [];
+      const notifiedStorageKey = 'rent-notified-notification-ids';
+      const updateBrowserTitle = function (count) {
+        document.title = count > 0 ? pageTitle + ' (' + count + ')' : pageTitle;
+      };
+      const showNotification = function (notification, unreadCount) {
         const isAnnouncement = notification.type === 'announcement';
-        const unreadCount = payload.notifications.length;
         const overlay = document.createElement('div');
         overlay.className = isAnnouncement ? 'announcement-overlay' : 'notification-toast';
         overlay.innerHTML = isAnnouncement
@@ -146,7 +149,33 @@
         const dismiss = function () { fetch('/notifications/' + encodeURIComponent(notification.id) + '/dismiss', { method: 'POST' }).finally(function () { overlay.remove(); }); };
         overlay.querySelector('.announcement-card button, .notification-toast__header button').addEventListener('click', dismiss);
         document.body.appendChild(overlay);
-      }).catch(function () {});
+      };
+      const pollNotifications = function () {
+        fetch('/notifications/unread', { headers: { Accept: 'application/json' }, credentials: 'same-origin' }).then(function (response) { return response.ok ? response.json() : null; }).then(function (payload) {
+          const notifications = payload && Array.isArray(payload.notifications) ? payload.notifications : [];
+          updateBrowserTitle(notifications.length);
+          if (!notifications.length) return;
+          const currentIds = notifications.map(function (item) { return String(item.id); });
+          const storedIds = JSON.parse(localStorage.getItem(notifiedStorageKey) || '[]');
+          const newNotifications = notifications.filter(function (item) { return storedIds.indexOf(String(item.id)) === -1; });
+          if (newNotifications.length) {
+            const notification = newNotifications[0];
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification(notification.title || '新通知', { body: notification.message || '你收到了一条新通知' });
+            }
+            showNotification(notification, notifications.length);
+          }
+          localStorage.setItem(notifiedStorageKey, JSON.stringify(currentIds.slice(0, 50)));
+          lastNotificationIds = currentIds;
+        }).catch(function () {});
+      };
+      // Notification permission is requested only after a user interaction.
+      document.addEventListener('click', function requestNotificationPermission() {
+        if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+        document.removeEventListener('click', requestNotificationPermission);
+      }, { once: true });
+      pollNotifications();
+      window.setInterval(pollNotifications, 30000);
     });
 
     document.addEventListener('DOMContentLoaded', function () {
