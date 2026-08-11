@@ -1594,11 +1594,13 @@ app.post('/admin/orders/bulk-update', async (c) => {
   }
 
   const selectedOrders = await Promise.all(selectedIds.map(orderId => getOrderById(c, orderId)))
-  if (selectedOrders.some(order => !order || !canTransitionOrder(order.status, targetStatus))) return c.text('批量操作包含不允许的状态转换', 409)
+  const validOrders = selectedOrders.filter((order): order is NonNullable<typeof order> => Boolean(order && canTransitionOrder(order.status, targetStatus)))
+  if (!validOrders.length) return c.text('所选订单没有可以执行该状态转换的订单', 409)
   if (targetStatus === 'completed') return c.text('完成订单必须逐笔执行归还验机', 409)
-  await Promise.all(selectedOrders.map(order => updateOrderStatus(c, order!.id, targetStatus)))
+  await Promise.all(validOrders.map(order => updateOrderStatus(c, order.id, targetStatus)))
 
-  return c.redirect('/admin/orders')
+  const skipped = selectedOrders.length - validOrders.length
+  return c.redirect(`/admin/orders?success=${encodeURIComponent(`已更新 ${validOrders.length} 条订单${skipped ? `，跳过 ${skipped} 条不适用订单` : ''}`)}`)
 })
 
 app.post('/admin/orders/:id/refund', async (c) => {
@@ -1973,7 +1975,10 @@ app.get('/api/address/autocomplete', async (c) => {
         const street = [p.housenumber, p.house_number, p.street, p.road].filter(Boolean).join(' ')
         const text = [street, p.city || p.town || p.suburb || p.locality, p.state, p.postcode].filter(Boolean).join(', ') || String(p.display_name || '')
         const placeId = `${p.osm_type || 'osm'}_${p.osm_id || text}`.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 300)
-        return { placeId, text, street, suburb: p.city || p.town || p.suburb || p.locality || '', state: p.state || '', postcode: p.postcode || '', formattedAddress: text }
+        const stateNames: Record<string, string> = { victoria: 'VIC', vic: 'VIC', 'new south wales': 'NSW', nsw: 'NSW', queensland: 'QLD', qld: 'QLD', 'south australia': 'SA', sa: 'SA', 'western australia': 'WA', wa: 'WA', tasmania: 'TAS', tas: 'TAS', 'northern territory': 'NT', nt: 'NT', 'australian capital territory': 'ACT', act: 'ACT' }
+        const rawState = String(p.state || '').trim()
+        const state = stateNames[rawState.toLowerCase()] || rawState.toUpperCase()
+        return { placeId, text, street, suburb: p.city || p.town || p.suburb || p.locality || '', state, postcode: p.postcode || '', formattedAddress: text }
       }).filter((item: any) => item.placeId && item.text)
       if (suggestions.length) return c.json({ suggestions })
     } catch (error: any) {

@@ -963,17 +963,19 @@ export async function cleanupExpiredAndCancelledContracts(c: Context): Promise<n
   const sevenDaysAgoISO = sevenDaysAgo.toISOString()
 
   try {
-    const result = await db.prepare(`
-      DELETE FROM contracts 
-      WHERE (status = 'pending_sign' AND (signExpiresAt < ? OR sign_expires_at < ?))
-         OR (status = 'cancelled' AND updatedAt < ?)
-    `).bind(now, now, sevenDaysAgoISO).run()
+    const expiredResult = await db.prepare(`
+      UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP
+      WHERE status = 'pending_sign' AND (signExpiresAt < ? OR sign_expires_at < ?)
+    `).bind(now, now).run()
+    const deletedResult = await db.prepare(`
+      DELETE FROM contracts WHERE status = 'cancelled' AND updatedAt < ?
+    `).bind(sevenDaysAgoISO).run()
 
-    const deletedCount = result.meta?.changes || 0
-    if (deletedCount > 0) {
-      await logError(c, 'INFO', `Cleaned up ${deletedCount} expired/cancelled contracts`)
+    const changedCount = Number(expiredResult.meta?.changes || 0) + Number(deletedResult.meta?.changes || 0)
+    if (changedCount > 0) {
+      await logError(c, 'INFO', `Updated or cleaned up ${changedCount} expired/cancelled contracts`)
     }
-    return deletedCount
+    return changedCount
   } catch (error) {
     await logError(c, 'ERROR', 'Failed to cleanup expired/cancelled contracts', error as Error)
     return 0
