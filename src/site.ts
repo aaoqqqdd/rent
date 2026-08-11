@@ -2623,7 +2623,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const userBlockHtml = currentUser
     ? `
-        <button class="notification-bell" type="button" aria-label="打开通知中心" aria-expanded="false"><span class="notification-bell__icon" aria-hidden="true"></span><b class="notification-bell__count" hidden>0</b></button>
+        <button class="notification-bell" type="button" aria-label="打开通知中心" aria-expanded="false"><svg class="notification-bell__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg><b class="notification-bell__count" hidden>0</b></button>
         <a class="user-profile-link" href="${currentUser.role === 'ADMIN' ? `/admin/users/${encodeURIComponent(currentUser.id)}/edit` : currentUser.role === 'STAFF' ? '/staff/profile' : '/customer/profile'}" aria-label="编辑个人信息"><span class="user-label">${currentUser.name}${currentUser.accountType === 'guest' ? ` · 访客（${currentUser.guestExpiresAt || '租期结束'}删除）` : ''}</span><div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div></a>
         <form method="post" action="/logout" style="display:inline"><button type="submit" class="logout-button">登出</button></form>
       `
@@ -2639,9 +2639,20 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/calendar': '▦', '/admin/templates': '▤', '/admin/settings': '⚙'
   }
 
+  const navIconSvg = (kind: string) => {
+    const paths: Record<string, string> = {
+      '◉': '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle>',
+      '▤': '<rect x="5" y="4" width="14" height="16" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path>',
+      '▦': '<rect x="5" y="5" width="14" height="14" rx="2"></rect><path d="M9 5v14M15 5v14M5 9h14M5 15h14"></path>',
+      '◎': '<circle cx="12" cy="8" r="3"></circle><path d="M6 20c.7-3.3 2.7-5 6-5s5.3 1.7 6 5"></path>',
+      '▣': '<rect x="5" y="5" width="14" height="14" rx="2"></rect><path d="M8 8h8v8H8z"></path>',
+      '⚙': '<circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"></path>'
+    }
+    return `<svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || paths['▣']}</svg>`
+  }
   const renderNavLink = (href: string, text: string) => {
-    const icon = navIcons[href] || '•'
-    return `<a href="${href}"><span class="nav-icon">${icon}</span>${text}</a>`
+    const icon = navIcons[href] || '▣'
+    return `<a href="${href}"><span class="nav-icon">${navIconSvg(icon)}</span>${text}</a>`
   }
   const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group" open><summary>${label}<span aria-hidden="true">⌄</span></summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 

@@ -764,9 +764,7 @@ header {
 
 .user-profile-link .user-label { white-space: nowrap; }
 .notification-bell { position: relative; display: grid; place-items: center; width: 38px; height: 38px; padding: 0; color: #c7d0d8; background: transparent; border: 1px solid #435363; border-radius: 8px; cursor: pointer; font-size: 1.15rem; transition: .2s ease; }
-.notification-bell__icon { position: relative; display: block; width: 15px; height: 14px; margin-top: -2px; border: 1.8px solid currentColor; border-bottom: 0; border-radius: 9px 9px 3px 3px; }
-.notification-bell__icon::before { content: ''; position: absolute; left: -3px; right: -3px; bottom: -3px; height: 2px; border-radius: 2px; background: currentColor; }
-.notification-bell__icon::after { content: ''; position: absolute; left: 5px; bottom: -6px; width: 4px; height: 4px; border: 1.6px solid currentColor; border-top: 0; border-radius: 0 0 5px 5px; }
+.notification-bell__icon { display: block; width: 20px; height: 20px; color: currentColor; }
 .notification-bell:hover { color: #f0a35b; border-color: #f0a35b; transform: translateY(-1px); }
 .notification-bell__count { position: absolute; top: -7px; right: -7px; min-width: 18px; height: 18px; padding: 0 4px; display: grid; place-items: center; color: #172331; background: #f0a35b; border: 2px solid #172331; border-radius: 99px; font: 700 .62rem var(--font-mono); }
 .notification-drawer { position: fixed; z-index: 80; top: 68px; right: 0; width: min(390px, 86vw); height: calc(100vh - 68px); display: flex; flex-direction: column; padding: 24px; background: #f5f8fa; border-left: 1px solid #cbd7df; box-shadow: -18px 0 45px rgba(16, 32, 51, .16); transform: translateX(105%); transition: transform .32s cubic-bezier(.22,.8,.25,1); }
@@ -2091,6 +2089,7 @@ header {
   opacity: 1;
   font-family: var(--font-mono);
 }
+.nav-icon-svg { display: block; width: 15px; height: 15px; }
 
 .sidebar-section a:hover {
   background: #263543;
