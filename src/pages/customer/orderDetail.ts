@@ -43,11 +43,11 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
         </div>
       </div>
 
-      ${['paid', 'active', 'completed'].includes(order.status) || String(order.status) === 'pending_return' ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票</a>${order.status === 'active' ? `<form method="post" action="/customer/orders/${order.id}/early-return" style="display:inline-block;margin-left:10px" data-site-confirm="确定申请提前归还此设备吗？将通知绑定员工。"><button class="button button-warning" type="submit">提前归还</button></form><form method="post" action="/customer/orders/${order.id}/returned" style="display:inline-block;margin-left:10px" data-site-confirm="确认设备已经归还吗？将通知管理员审核。"><button class="button button-info" type="submit">已归还</button></form>` : String(order.status) === 'pending_return' ? ' <span class="badge badge-warning">等待归还审核/验机</span>' : ''}</p>` : ''}
+      ${['paid', 'active', 'completed'].includes(order.status) || String(order.status) === 'pending_return' ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>${order.status === 'active' ? `<form method="post" action="/customer/orders/${order.id}/early-return" style="display:inline-block;margin-left:10px" data-site-confirm="确定申请提前归还此设备吗？将通知绑定员工。"><button class="button button-warning" type="submit">提前归还</button></form><form method="post" action="/customer/orders/${order.id}/returned" style="display:inline-block;margin-left:10px" data-site-confirm="确认设备已经归还吗？将通知管理员审核。"><button class="button button-info" type="submit">已归还</button></form>` : String(order.status) === 'pending_return' ? ' <span class="badge badge-warning">等待归还审核/验机</span>' : ''}</p>` : ''}
       ${contract ? `
         <div class="section-title" style="margin-top: 24px;"><h3>租赁合同</h3></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">
-          ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}" target="_blank">查看/下载合同</a>` : `<span class="section-note">正式合同将在签署完成后开放下载。</span>`}
+          ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}?from=order" target="_blank">查看/下载合同</a>` : `<span class="section-note">正式合同将在签署完成后开放下载。</span>`}
           ${contract.status === 'pending_sign' ? `<a class="button button-primary" href="/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1">签署租赁协议</a>` : ''}
         </div>
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}

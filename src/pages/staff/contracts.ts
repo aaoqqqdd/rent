@@ -136,7 +136,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
                   <td><span class="badge ${statusClass}">${statusLabel}</span>${showSigningProgress ? '<div class="inline-signing-progress"><span aria-hidden="true"></span><strong>等待客户签署</strong></div>' : ''}</td>
                   <td>${signedAtText}</td>
                   <td><div class="table-actions">
-                    ${canViewContract ? `<a class="button button-sm button-secondary" href="/contract/view/${contract.id}">查看合同</a>` : ''}
+                    ${canViewContract ? `<a class="button button-sm button-secondary" href="/staff/orders/${contract.rentalId}">查看订单详情</a>` : ''}
                     ${canEditData ? `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/contracts/${contract.id}/data` : `/staff/contracts/${contract.id}/data`}">编辑资料</a>` : contract.status === 'signed' ? '<span class="section-note">电子签约记录已锁定</span>' : ''}
                     ${contract.status === 'pending_sign' && !expired
               ? `

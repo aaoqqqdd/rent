@@ -152,7 +152,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
         ${contract ? `<p style="font-size: 0.85rem; color: var(--text-tertiary);">合同编号: <span class="mono">${contract.contractNumber}</span></p>` : ''}
         <div class="button-group">
           <a class="button" href="${buttonLink}">${buttonText}</a>
-          ${contract ? `<a class="button button-secondary" href="/contract/view/${contract.id}">查看合同</a>` : ''}
+          ${contract ? `<a class="button button-secondary" href="/customer/orders/${order.id}">查看订单详情</a>` : ''}
         </div>
       </div>
     </div>

@@ -49,7 +49,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       </div>
     </div>
 
-    ${['paid', 'active', 'completed'].includes(order.status) ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / Credit Note</a></p>` : ''}
+    ${['paid', 'active', 'completed'].includes(order.status) ? `<p><a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a></p>` : ''}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">

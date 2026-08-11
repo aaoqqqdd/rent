@@ -159,6 +159,14 @@ app.use('*', async (c, next) => {
 app.use('*', async (c, next) => {
   const user = c.get('user') as any
   if (user?.accountType === 'guest' && user.role === 'CUSTOMER') {
+    const expiresAt = user.guestExpiresAt || user.guest_expires_at
+    const melbourneToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const expiresDate = expiresAt ? String(expiresAt).slice(0, 10) : ''
+    if (expiresDate && expiresDate < melbourneToday) {
+      await c.env.RENT.prepare("UPDATE users SET account_type = 'deleted_guest', status = 'inactive', email = 'deleted-guest-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, password_hash = 'disabled', password_salt = 'disabled', guest_order_id = NULL, guest_expires_at = NULL, deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND account_type = 'guest'").bind(user.id).run()
+      await deleteAuthSession(c, c.req.header('cookie') ?? null)
+      return c.redirect('/login?error=guest_expired')
+    }
     const path = c.req.path
     const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result'])
     const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/checkout|bank-transfer-proof))?$/)
@@ -999,6 +1007,15 @@ app.post('/admin/contracts/template', async (c) => {
 });
 
 app.get('/contract/view/:id', async (c) => {
+  const user = c.get('user') as any
+  if (user && c.req.query('from') !== 'order') {
+    const contract = await getContractById(c, c.req.param('id'))
+    const order = contract ? await getOrderById(c, contract.rentalId) : null
+    if (order && (user.role === 'ADMIN' || user.role === 'STAFF' || order.userId === user.id)) {
+      const orderPath = user.role === 'ADMIN' ? `/admin/orders/${order.id}` : user.role === 'STAFF' ? `/staff/orders/${order.id}` : `/customer/orders/${order.id}`
+      return c.redirect(orderPath)
+    }
+  }
   return c.html(await pages.renderContractView(c, c.req.param('id'), c.get('user')))
 })
 

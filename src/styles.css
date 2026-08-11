@@ -1250,7 +1250,7 @@ button:disabled {
 }
 
 .sidebar {
-  width: 220px;
+  width: 238px;
   background: var(--surface);
   padding: 16px 12px;
   border-right: 1px solid var(--border);
@@ -1321,6 +1321,7 @@ button:disabled {
   margin: 5px 0 8px;
   border-top: 1px solid var(--border);
   padding-top: 5px;
+  background: linear-gradient(90deg, rgba(236, 242, 246, .65), transparent);
 }
 
 .sidebar-nav-group summary {
@@ -1333,12 +1334,14 @@ button:disabled {
   letter-spacing: .06em;
   cursor: pointer;
   list-style: none;
+  text-transform: uppercase;
 }
 
 .sidebar-nav-group summary::-webkit-details-marker { display: none; }
 .sidebar-nav-group summary span { font-size: .85rem; transition: transform .2s ease; }
 .sidebar-nav-group:not([open]) summary span { transform: rotate(-90deg); }
 .sidebar-nav-group a { margin-bottom: 1px; }
+.sidebar-nav-group a .nav-icon { color: var(--primary); opacity: .7; }
 
 .sidebar-footer {
   padding: 12px 10px 0;
@@ -4389,7 +4392,18 @@ tr:hover td {
 .contract-toolbar__meta { display: grid; gap: 3px; color: #6b7c8a; font-size: .72rem; }
 .contract-toolbar__meta strong { color: #172331; font: .78rem var(--font-mono); }
 .contract-toolbar__actions, .contract-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.contract-viewer > .a4-document { margin: 34px auto; }
+.contract-viewer > .a4-document {
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 42px 40px;
+  background: #f8fafb;
+  color: var(--text);
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+.contract-viewer > .a4-document.document-zoomed { transform: none; }
 .contract-viewer > .page-notification, .contract-viewer > .contract-actions { margin-left: 40px; margin-right: 40px; }
 .a4-document {
   width: min(100%, 794px);
@@ -4405,8 +4419,12 @@ tr:hover td {
 .a4-document.document-zoomed { transform: scale(1.08); transform-origin: top center; }
 .signature-pad { display: block; width: 100%; max-width: 700px; height: 180px; background: #fff; border: 2px dashed #94a3b8; border-radius: 10px; touch-action: none; }
 @media print {
-  .contract-archive-bar, .contract-toolbar, .contract-actions, nav, header, footer, .page-header { display: none !important; }
-  .contract-viewer, .a4-document { box-shadow: none; border: 0; margin: 0; width: 210mm; min-height: 297mm; padding: 0; }
+  @page { margin: 14mm; }
+  body * { visibility: hidden !important; }
+  .contract-viewer, .contract-viewer > .a4-document, .contract-viewer > .a4-document * { visibility: visible !important; }
+  .contract-viewer { position: absolute; inset: 0; width: 100%; padding: 0; margin: 0; background: white; border: 0; box-shadow: none; }
+  .contract-viewer > * { display: none !important; }
+  .contract-viewer > .a4-document { display: block !important; width: 100%; min-height: 0; margin: 0; padding: 0; background: white; color: #111; border: 0; box-shadow: none; }
   .a4-document { page-break-after: always; }
 }
 
@@ -4608,7 +4626,7 @@ tr:hover td {
   .signing-steps { gap: 6px; overflow-x: auto; display: flex; padding-bottom: 6px; }
   .signing-step { min-width: 145px; border-radius: 10px; border: 1px solid #d8e3eb; }
   .payment-option { min-height: 62px; border-radius: 11px; padding: 13px; }
-  .a4-document { width: 100%; min-height: auto; padding: 28px 20px; border-radius: 5px; box-shadow: 0 8px 20px rgba(15, 23, 42, .12); }
+  .contract-viewer > .a4-document { width: 100%; min-height: 0; padding: 28px 20px; border-radius: 0; box-shadow: none; }
   .a4-document.document-zoomed { transform: none; }
   .contract-toolbar { align-items: stretch; }
   .contract-toolbar .button { flex: 1 1 auto; }

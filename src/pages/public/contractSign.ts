@@ -132,7 +132,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           <p>${paymentStatusLabel}</p>
           <div class="grid grid-2" style="gap: 16px; margin-top: 24px;">
             <a class="button" href="${orderLink}">查看订单详情</a>
-            <a class="button button-secondary" href="/contract/view/${contract.id}">查看合同</a>
+            <a class="button button-secondary" href="${orderLink}">查看订单详情</a>
           </div>
         </div>
       </div>

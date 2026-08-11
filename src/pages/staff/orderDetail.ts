@@ -58,6 +58,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           ${['active', 'pending_return'].includes(String(order.status)) ? `
             <a class="button button-success" href="/staff/orders/${order.id}/inspection">设备归还 / 归还验机</a>
           ` : ''}
+          ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
           ${user.role === 'ADMIN' && (order.status === 'active' || order.status === 'paid') ? `
             <form method="POST" action="/staff/orders/${order.id}/cancel">
               <button class="button button-danger" type="submit">取消订单</button>
@@ -69,7 +70,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
       ${contract ? `
         <div class="section-title" style="margin-top: 24px;"><h3>租赁合同</h3></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">
-          ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}" target="_blank">查看/下载合同</a>` : '<span class="section-note">正式合同将在客户完成签署后开放。</span>'}
+          ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}?from=order" target="_blank">查看/下载合同</a>` : '<span class="section-note">正式合同将在客户完成签署后开放。</span>'}
           ${contractExpired ? '<span class="badge danger">已过期</span>' : contract.status === 'signed' ? `<span class="badge success">已签署</span>` : `<span class="badge warning-badge">${contract.status === 'pending_sign' ? '待签署' : '草稿'}</span>`}
         </div>
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}

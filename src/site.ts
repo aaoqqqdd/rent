@@ -2651,25 +2651,19 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
         <div class="sidebar-section">
           <h3>导航</h3>
           ${currentUser.role === 'CUSTOMER' ? `
-            ${currentUser.accountType === 'guest' ? renderNavLink('/customer/guest', '访客合同中心') : `
+            ${currentUser.accountType === 'guest' ? renderNavGroup('合同中心', [['/customer/guest', '访客合同中心'], ['/customer/guest/upgrade', '升级账户']]) : `
               ${renderNavLink('/customer/dashboard', '控制台')}
               ${renderNavLink('/notifications', '通知中心')}
-              ${renderNavLink('/customer/rentals', '我的租赁')}
-              ${renderNavLink('/customer/orders', '订单管理')}
-              ${renderNavLink('/customer/profile', '个人资料')}
-              ${renderNavLink('/customer/security', '安全设置')}
-              ${renderNavLink('/customer/referral', '推荐计划')}
+              ${renderNavGroup('租赁工作区', [['/customer/rentals', '我的租赁'], ['/customer/orders', '订单管理']])}
+              ${renderNavGroup('账户设置', [['/customer/profile', '个人资料'], ['/customer/security', '安全设置'], ['/customer/referral', '推荐计划']])}
             `}
           ` : ''}
           ${currentUser.role === 'STAFF' ? `
             ${renderNavLink('/staff/dashboard', '工作台')}
             ${renderNavLink('/notifications', '通知中心')}
-            ${renderNavLink('/staff/customers', '客户管理')}
-            ${renderNavLink('/staff/orders', '订单状态')}
-            ${renderNavLink('/staff/orders/ongoing', '进行中的订单')}
-            ${renderNavLink('/staff/contracts', '合同管理')}
-            ${renderNavLink('/staff/contracts/new', '新建合同')}
-            ${renderNavLink('/staff/devices', '设备管理')}
+            ${renderNavGroup('客户与订单', [['/staff/customers', '客户管理'], ['/staff/orders', '订单状态'], ['/staff/orders/ongoing', '进行中的订单']])}
+            ${renderNavGroup('合同工作区', [['/staff/contracts', '合同管理'], ['/staff/contracts/new', '新建合同']])}
+            ${renderNavGroup('设备运营', [['/staff/devices', '设备管理'], ['/staff/rentals/tracking', '租赁追踪']])}
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
