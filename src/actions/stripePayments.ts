@@ -185,7 +185,12 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   const deductionAmount = Number(Math.max(0, depositAmount - refundAmount).toFixed(2))
   const refundedProcessingFee = refundableDepositFee(refundAmount, payment)
   const totalRefundAmount = Number((refundAmount + refundedProcessingFee).toFixed(2))
+  const refundItem = String(form.refundItem || 'deposit').trim()
+  const customRefundItem = String(form.customRefundItem || '').trim()
+  if (refundItem === 'other' && !customRefundItem) return c.text('请输入其他退款项目名称', 400)
+  const refundItemLabel = refundItem === 'other' ? customRefundItem : '押金退款'
   const reason = String(form.deductionReason || '').trim()
+  const recordedReason = reason ? `${refundItemLabel}；${reason}` : refundItemLabel
   if (deductionAmount > 0 && !reason) return c.text('扣除押金时必须填写原因', 400)
 
   let stripeRefundId: string | null = null
@@ -207,7 +212,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
 
   await c.env.RENT.batch([
     c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, order.id, payment.id, depositAmount, refundAmount, refundedProcessingFee, deductionAmount, reason || null, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
+      .bind(`rf-${nanoid(12)}`, order.id, payment.id, depositAmount, refundAmount, refundedProcessingFee, deductionAmount, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
