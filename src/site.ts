@@ -2646,7 +2646,16 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       '▦': '<rect x="5" y="5" width="14" height="14" rx="2"></rect><path d="M9 5v14M15 5v14M5 9h14M5 15h14"></path>',
       '◎': '<circle cx="12" cy="8" r="3"></circle><path d="M6 20c.7-3.3 2.7-5 6-5s5.3 1.7 6 5"></path>',
       '▣': '<rect x="5" y="5" width="14" height="14" rx="2"></rect><path d="M8 8h8v8H8z"></path>',
-      '⚙': '<circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"></path>'
+      '⚙': '<circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"></path>',
+      'N': '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path>',
+      '◷': '<circle cx="12" cy="12" r="8"></circle><path d="M12 7v5l3 2"></path>',
+      '↺': '<path d="M5 9a8 8 0 1 1 1 8"></path><path d="M5 5v4h4"></path>',
+      '↗': '<path d="M7 17 17 7M9 7h8v8"></path>',
+      '$': '<path d="M12 3v18M16 7.5c-.8-1-2-1.5-4-1.5-2.4 0-4 1.2-4 3s1.6 3 4 3 4 1.2 4 3-1.6 3-4 3c-2 0-3.2-.5-4-1.5"></path>',
+      '⚿': '<rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>',
+      '✦': '<path d="m12 3 1.7 6.3L20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3Z"></path>',
+      '◈': '<path d="m12 3 8 9-8 9-8-9 8-9Z"></path><path d="m12 8 3 4-3 4-3-4 3-4Z"></path>',
+      '+': '<path d="M12 5v14M5 12h14"></path>'
     }
     return `<svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || paths['▣']}</svg>`
   }
@@ -2663,7 +2672,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       : currentUser?.accountType === 'guest'
         ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
         : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
-  const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span>${icon}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span>↗</span><small>登录</small></a><a href="/register"><span>+</span><small>注册</small></a>`
+  const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span class="nav-icon">${navIconSvg(navIcons[href] || icon)}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span class="nav-icon">${navIconSvg('↗')}</span><small>登录</small></a><a href="/register"><span class="nav-icon">${navIconSvg('+')}</span><small>注册</small></a>`
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
   const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${sanitizePlainText(currentUser.name.charAt(0).toUpperCase(), 1)}</span>` : ''
 

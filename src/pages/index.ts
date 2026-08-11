@@ -51,6 +51,7 @@ export * from './admin/deviceNew';
 export * from './admin/deviceEdit';
 export * from './admin/settings';
 export * from './admin/templates';
+export * from './admin/emailTemplates';
 export * from './admin/contractDetail';
 export * from './admin/contractData';
 export * from './admin/contracts';

@@ -126,8 +126,11 @@
 .order-detail-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
 .balance-stat-link { display: block; color: inherit; text-decoration: none; cursor: pointer; }
 .balance-stat-link:hover { color: inherit; text-decoration: none; }
-.dashboard-stat-link { display: block; color: inherit; text-decoration: none; cursor: pointer; }
-.dashboard-stat-link:hover { color: inherit; text-decoration: none; transform: translateY(-2px); box-shadow: 0 10px 24px rgba(16, 32, 51, .12); }
+.dashboard-stat-link,
+.dashboard-stat-link:hover,
+.dashboard-stat-link:focus,
+.dashboard-stat-link * { display: block; color: inherit; text-decoration: none !important; cursor: pointer; }
+.dashboard-stat-link:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(16, 32, 51, .12); }
 .balance-adjust-form { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .balance-adjust-form h4 { margin: 0 0 12px; }
 .contract-detail-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 16px; }
