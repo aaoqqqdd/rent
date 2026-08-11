@@ -6,6 +6,13 @@
 import { buildLayout, getContractById, getOrderById, getDeviceById, getUserById, isContractFinalized, renderContractVariables, getContractVariableData } from '../../site'
 import type { Context } from 'hono'
 
+function trimContractLeadingWhitespace(html: string): string {
+  return html
+    .replace(/^(?:\s|<!--.*?-->)+/s, '')
+    .replace(/^(?:(?:<p(?:\s[^>]*)?>\s*(?:<br\s*\/?>)?\s*<\/p>)|<br\s*\/?>|<div(?:\s[^>]*)?>\s*<\/div>\s*)+/i, '')
+    .trim()
+}
+
 export async function renderContractView(c: Context, contractId: string, user: any) {
   const contract = await getContractById(c, contractId)
   if (!contract) {
@@ -20,7 +27,7 @@ export async function renderContractView(c: Context, contractId: string, user: a
   }
   const device = order ? await getDeviceById(c, order.deviceId) : null;
   const customer = order ? await getUserById(c, order.userId) : null;
-  const renderedContract = renderContractVariables(contract.signed_content || contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order))
+  const renderedContract = trimContractLeadingWhitespace(renderContractVariables(contract.signed_content || contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order)))
   const returnUrl = user.role === 'ADMIN' ? '/admin/contracts' : user.role === 'STAFF' ? '/staff/contracts' : order ? `/customer/orders/${order.id}` : '/customer/dashboard'
 
   const body = `

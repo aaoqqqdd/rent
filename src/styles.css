@@ -45,6 +45,38 @@
   .official-document { display: block !important; background: #fff !important; color: #172033 !important; }
 }
 
+@media print {
+  .contract-viewer > .a4-document.contract-content > h1:first-child,
+  .contract-viewer > .a4-document.contract-content > h2:first-child,
+  .contract-viewer > .a4-document.contract-content > h3:first-child,
+  .contract-viewer > .a4-document.contract-content > p:first-child {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+}
+
+/* Long navigation stays inside the sidebar for every desktop role. */
+@media (min-width: 761px) {
+  .app-page .sidebar {
+    position: sticky;
+    top: 68px;
+    height: calc(100vh - 68px);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .app-page .sidebar-section {
+    min-height: 0;
+    max-height: calc(100vh - 132px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: #6b8092 transparent;
+  }
+  .app-page .sidebar-section::-webkit-scrollbar { width: 6px; }
+  .app-page .sidebar-section::-webkit-scrollbar-track { background: transparent; }
+  .app-page .sidebar-section::-webkit-scrollbar-thumb { background: #6b8092; border-radius: 99px; }
+}
+
 .official-document__refund-total dt,
 .official-document__refund-total dd { color: #b45309 !important; }
 .official-document__refunds { margin-top: 28px; padding-top: 18px; border-top: 1px solid #dbe2ea; }
