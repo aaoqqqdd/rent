@@ -66,6 +66,9 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       minimumRentalDays: Math.max(1, Math.floor(Number(payload.rentalRules?.minimumRentalDays ?? getSystemSettings().rentalRules.minimumRentalDays) || 1)),
       bufferDays: Math.max(0, Math.floor(Number(payload.rentalRules?.bufferDays ?? getSystemSettings().rentalRules.bufferDays) || 0)),
     },
+    registrationSettings: {
+      requireEmailVerification: Boolean(payload.registrationSettings?.requireEmailVerification),
+    },
   }
 
   if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)

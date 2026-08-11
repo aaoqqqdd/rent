@@ -392,7 +392,10 @@ app.post('/register', async (c) => {
   await sendEmailVerification(c, newUser)
 
   // 自动登录
-  const response = c.redirect(`/verify-email/pending?email=${encodeURIComponent(newUser.email)}`)
+  await loadSystemSettingsFromDB(c)
+  const response = c.redirect(getSystemSettings().registrationSettings?.requireEmailVerification
+    ? `/verify-email/pending?email=${encodeURIComponent(newUser.email)}`
+    : '/customer/dashboard')
   const session = await createAuthSession(c, newUserId)
   response.headers.set('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
 

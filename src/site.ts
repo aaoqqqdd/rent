@@ -1212,7 +1212,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails' | 'rentalRules'
+type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -1243,6 +1243,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const referralSettingsValue = values.get('referralSettings')
   const companyDetailsValue = values.get('companyDetails')
   const rentalRulesValue = values.get('rentalRules')
+  const registrationSettingsValue = values.get('registrationSettings')
 
   systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? systemSettings.userTerms)
   systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
@@ -1257,6 +1258,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const parsedReferralSettings = safeJsonParse<typeof systemSettings.referralSettings>(referralSettingsValue)
   const parsedCompanyDetails = safeJsonParse<typeof systemSettings.companyDetails>(companyDetailsValue)
   const parsedRentalRules = safeJsonParse<typeof systemSettings.rentalRules>(rentalRulesValue)
+  const parsedRegistrationSettings = safeJsonParse<typeof systemSettings.registrationSettings>(registrationSettingsValue)
 
   if (parsedPaymentMethods) {
     systemSettings.paymentMethods = {
@@ -1271,6 +1273,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
   if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
+  if (parsedRegistrationSettings) systemSettings.registrationSettings = { ...systemSettings.registrationSettings, ...parsedRegistrationSettings }
 
   return systemSettings
 }
@@ -1301,6 +1304,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   await write('referralSettings', systemSettings.referralSettings)
   await write('companyDetails', systemSettings.companyDetails)
   await write('rentalRules', systemSettings.rentalRules)
+  await write('registrationSettings', systemSettings.registrationSettings)
 
   return systemSettings
 }
@@ -1985,6 +1989,9 @@ export const systemSettings = {
     stripe: true,
     bankTransfer: true,
     balancePayment: true,
+  },
+  registrationSettings: {
+    requireEmailVerification: false,
   },
   emailTemplate: `主题：您的电脑租赁合同已签署确认 - {contract_number}
 

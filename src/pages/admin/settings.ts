@@ -34,6 +34,12 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         <label style="display:flex;gap:8px;align-items:center;margin-top:14px;"><input type="checkbox" id="clearEmailTransport"> 清除已保存的 SMTP 配置</label>
       </div>
 
+      <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">
+        <h4 style="margin-top:0;">注册安全设置</h4>
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="requireEmailVerification" ${settings.registrationSettings?.requireEmailVerification ? 'checked' : ''}> 强制新注册用户验证邮箱</label>
+        <p class="form-text">关闭时仍可发送验证邮件，但注册后不会阻止用户直接进入系统。</p>
+      </div>
+
       <form id="systemSettingsForm">
         <div class="form-group">
           <label>公司税务信息</label>
@@ -217,6 +223,9 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             from: document.getElementById('smtpFrom').value,
             encryption: document.getElementById('smtpEncryption').value,
             clear: document.getElementById('clearEmailTransport').checked,
+          },
+          registrationSettings: {
+            requireEmailVerification: document.getElementById('requireEmailVerification').checked,
           },
           bankDetails: {
             bankName: formData.get('bankName'),
