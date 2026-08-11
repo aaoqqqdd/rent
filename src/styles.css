@@ -55,6 +55,44 @@
   }
 }
 
+/* Final layout fixes for the notification drawer and long role navigation. */
+.notification-drawer {
+  position: fixed !important;
+  top: 68px !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: auto !important;
+  z-index: 1000 !important;
+  width: min(390px, 86vw) !important;
+  height: auto !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  transform: translateX(105%) !important;
+  background: #f5f8fa !important;
+  box-sizing: border-box !important;
+}
+.notification-drawer.is-open { transform: translateX(0) !important; }
+.notification-drawer__body { min-height: 0 !important; flex: 1 1 auto !important; overflow-y: auto !important; }
+
+@media (min-width: 761px) {
+  .app-page .sidebar {
+    display: flex !important;
+    flex-direction: column !important;
+    height: calc(100vh - 68px) !important;
+    overflow: hidden !important;
+  }
+  .app-page .sidebar-section {
+    flex: 1 1 auto !important;
+    height: 0 !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow-y: scroll !important;
+    overflow-x: hidden !important;
+  }
+  .app-page .sidebar-footer { flex: 0 0 auto !important; }
+}
+
 /* Long navigation stays inside the sidebar for every desktop role. */
 @media (min-width: 761px) {
   .app-page .sidebar {
@@ -97,6 +135,15 @@
   background: #fff !important;
   color: #172033 !important;
 }
+.official-document__header,
+.official-document__header > div,
+.official-document__title {
+  background: #fff !important;
+  color: #172033 !important;
+}
+.official-document__header *,
+.official-document__title * { color: #172033 !important; }
+.official-document__header .official-document__eyebrow { color: #2457d6 !important; }
 .official-document h1,
 .official-document h2,
 .official-document h3,
