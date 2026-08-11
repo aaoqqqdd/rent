@@ -419,6 +419,7 @@ app.post('/admin/users/:id/balance-adjust', async (c) => {
   const reason = String(form.reason || '').trim()
   if (!Number.isFinite(amount) || amount === 0) return c.text('余额变动金额必须不为 0', 400)
   if (!reason) return c.text('管理员调整余额必须填写原因', 400)
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount REAL NOT NULL, balance_after REAL NOT NULL, type TEXT NOT NULL, reason TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
   const current = Number(target.balance || 0)
   const next = Number((current + amount).toFixed(2))
   if (next < 0) return c.text('扣减后余额不能小于 0', 400)
