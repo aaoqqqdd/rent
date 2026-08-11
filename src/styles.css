@@ -541,12 +541,16 @@ header {
 .user-profile-link {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 12px;
   color: inherit;
   text-decoration: none;
   border-radius: var(--radius);
   padding: 3px 5px;
+  white-space: nowrap;
 }
+
+.user-profile-link .user-label { white-space: nowrap; }
 
 .user-profile-link:hover .user-label { color: var(--primary); }
 .user-profile-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
@@ -1793,6 +1797,20 @@ header {
   content: ' / MENU';
   color: #596a79;
 }
+
+.sidebar-nav-group {
+  background: linear-gradient(90deg, rgba(38, 53, 67, .72), transparent);
+  border-top-color: #394958;
+}
+
+.sidebar-nav-group summary {
+  color: #9eacb8;
+  font: 600 .68rem/1.2 var(--font-mono);
+  letter-spacing: .08em;
+}
+
+.sidebar-nav-group summary:hover { color: #f0a35b; }
+.sidebar-nav-group summary span { color: #6f8190; }
 
 .sidebar-section a {
   min-height: 42px;
