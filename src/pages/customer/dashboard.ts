@@ -17,26 +17,26 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
       <p>管理您的设备租赁、查看订单状态、完成支付。</p>
     </div>
     <div class="stats-grid">
-      <div class="stat-card primary">
+      <a class="stat-card primary dashboard-stat-link" href="/customer/rentals">
         <h3>当前租赁</h3>
         <div class="value">${currentRentals.length}</div>
         <div class="trend">台设备使用中</div>
-      </div>
-      <div class="stat-card warning">
+      </a>
+      <a class="stat-card warning dashboard-stat-link" href="/customer/orders?status=pending_payment">
         <h3>待付款</h3>
         <div class="value">${pendingPayment}</div>
         <div class="trend" style="color: var(--warning)">笔订单待处理</div>
-      </div>
-      <a class="stat-card success balance-stat-link" href="/customer/balance">
+      </a>
+      <a class="stat-card success dashboard-stat-link balance-stat-link" href="/customer/balance">
         <h3>账户余额</h3>
         <div class="value mono">${formatCurrency(user.balance)}</div>
         <div class="trend">查看余额明细 →</div>
       </a>
-      <div class="stat-card accent">
+      <a class="stat-card accent dashboard-stat-link" href="/customer/orders?status=completed">
         <h3>已完成订单</h3>
         <div class="value">${completedOrders}</div>
         <div class="trend">历史租赁</div>
-      </div>
+      </a>
     </div>
     <div class="grid grid-2">
       ${currentRentals.length > 0 ? `
