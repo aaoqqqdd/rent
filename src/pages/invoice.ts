@@ -25,7 +25,8 @@ export async function renderInvoice(c: Context, user: any, orderId: string) {
     // refund again, even if an older record was stored with the wrong type.
     const isCreditNote = invoice.type === 'credit_note' || Number(invoice.total_amount || 0) < 0
     const documentRefund = refunds.find(refund => Number(refund.refund_amount || 0) > 0)
-    const refundLabel = documentRefund?.type === 'deposit' ? '押金退款' : documentRefund?.type === 'cancellation' || documentRefund?.type === 'full_cancel' ? '取消订单退款' : '退款项目'
+    const customRefundLabel = String(documentRefund?.deduction_reason || '').split('；')[0].trim()
+    const refundLabel = customRefundLabel && customRefundLabel !== '押金退款' ? customRefundLabel : documentRefund?.type === 'deposit' ? '押金退款' : documentRefund?.type === 'cancellation' || documentRefund?.type === 'full_cancel' ? '取消订单退款' : '退款项目'
     const shownRefundTotal = isCreditNote || Number(invoice.total_amount || 0) <= 0 ? 0 : refundTotal
     const formalTaxInvoice = Boolean(company.abn)
     const documentTitle = isCreditNote ? 'Credit Note / 退款凭证' : formalTaxInvoice ? 'Tax Invoice / 税务发票' : 'Payment Receipt / 付款收据'
