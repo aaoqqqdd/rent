@@ -53,7 +53,6 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       bsb: payload.bankDetails?.bsb ?? getSystemSettings().bankDetails.bsb,
       account: payload.bankDetails?.account ?? getSystemSettings().bankDetails.account,
     },
-    emailTemplate: payload.emailTemplate ?? getSystemSettings().emailTemplate,
     referralSettings: {
       defaultRate: Number(payload.referralSettings?.defaultRate ?? getSystemSettings().referralSettings.defaultRate),
       levelLimit: Number(payload.referralSettings?.levelLimit ?? getSystemSettings().referralSettings.levelLimit),

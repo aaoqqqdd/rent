@@ -1212,7 +1212,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'emailTemplate' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings'
+type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -1239,7 +1239,6 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const priceStrategyValue = values.get('priceStrategy')
   const paymentMethodsValue = values.get('paymentMethods')
   const bankDetailsValue = values.get('bankDetails')
-  const emailTemplateValue = values.get('emailTemplate')
   const referralSettingsValue = values.get('referralSettings')
   const companyDetailsValue = values.get('companyDetails')
   const rentalRulesValue = values.get('rentalRules')
@@ -1251,7 +1250,6 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue ?? systemSettings.privacyPolicy)
   systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue ?? systemSettings.copyrightNotice)
   systemSettings.priceStrategy = priceStrategyValue ?? systemSettings.priceStrategy
-  systemSettings.emailTemplate = emailTemplateValue ?? systemSettings.emailTemplate
 
   const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
@@ -1300,7 +1298,6 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   await write('priceStrategy', systemSettings.priceStrategy)
   await write('paymentMethods', systemSettings.paymentMethods)
   await write('bankDetails', systemSettings.bankDetails)
-  await write('emailTemplate', systemSettings.emailTemplate)
   await write('referralSettings', systemSettings.referralSettings)
   await write('companyDetails', systemSettings.companyDetails)
   await write('rentalRules', systemSettings.rentalRules)
@@ -1993,7 +1990,8 @@ export const systemSettings = {
   registrationSettings: {
     requireEmailVerification: false,
   },
-  emailTemplate: `主题：您的电脑租赁合同已签署确认 - {contract_number}
+  /* legacy email templates are managed in email_templates */
+  /*
 
 尊敬的 {customer_name}：
 
@@ -2031,6 +2029,7 @@ export const systemSettings = {
 
 PC Rental电脑租赁团队
 {company_phone} | {company_email}`,
+  */
   referralSettings: {
     defaultRate: 10,
     levelLimit: 3,

@@ -7,9 +7,6 @@ import { buildLayout, getSystemSettings } from '../../site';
 
 export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
-  const emailTemplateJson = JSON.stringify(settings.emailTemplate).replace(/</g, '\\u003c')
-  const emailVariables = ['user_name', 'user_email', 'order_no', 'contract_number', 'device_name', 'sign_link', 'expire_time']
-  const emailVariableIndex = `<section class="contract-variable-group"><h5>邮件通知</h5><div class="variable-chip-list">${emailVariables.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`
 
   const body = `
     <div class="panel">
@@ -121,19 +118,6 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </div>
 
         <div class="form-group">
-          <label for="emailTemplate">邮件通知模板</label>
-          <details class="variable-index"><summary>完整邮件变量索引（${emailVariables.length} 项）</summary>${emailVariableIndex}</details>
-          <input type="hidden" id="emailTemplateKind" name="kind" value="email">
-          <textarea id="emailTemplateMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
-          <textarea id="emailTemplate" name="emailTemplate" style="display:none;"></textarea>
-          <div class="template-controls">
-            <button type="button" id="emailTemplatePreviewButton" class="button button-secondary">预览变量替换</button>
-            <span class="section-note">预览当前邮件模板并替换示例变量。</span>
-          </div>
-          <div id="emailTemplatePreview" class="template-preview"></div>
-        </div>
-
-        <div class="form-group">
           <label for="defaultReferralRate">默认推荐分成比例 (%)</label>
           <input type="number" id="defaultReferralRate" name="defaultReferralRate" class="form-control" value="${settings.referralSettings.defaultRate}" min="0" max="100">
         </div>
@@ -156,50 +140,8 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
 
     <script>
       document.addEventListener('DOMContentLoaded', function() {
-        const emailTemplateMarkdown = document.getElementById('emailTemplateMarkdown');
-        const emailTemplateKindInput = document.getElementById('emailTemplateKind');
-        const emailTemplatePreviewButton = document.getElementById('emailTemplatePreviewButton');
-        const emailTemplatePreview = document.getElementById('emailTemplatePreview');
-
-        async function updateEmailTemplatePreview(event) {
-          if (event && typeof event.preventDefault === 'function') event.preventDefault();
-          if (!emailTemplatePreview) return;
-          emailTemplatePreview.textContent = '正在生成预览...';
-          try {
-            const kind = String(emailTemplateKindInput ? emailTemplateKindInput.value : 'email').trim();
-            const content = window.markdownToHtml(emailTemplateMarkdown.value);
-            const response = await fetch('/admin/template-preview', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ kind, content })
-            });
-            const result = await response.json();
-            if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
-            emailTemplatePreview.innerHTML = result.html || '<p>无预览内容</p>';
-          } catch (error) {
-            emailTemplatePreview.textContent = error instanceof Error ? error.message : '预览失败';
-          }
-        }
-
-        emailTemplatePreviewButton?.addEventListener('click', function(event) { updateEmailTemplatePreview(event); });
-
-        // 将数据库中的内容加载到编辑器
-        const emailTemplateContent = ${emailTemplateJson};
-        if (emailTemplateContent) {
-          emailTemplateMarkdown.value = window.htmlToMarkdown(emailTemplateContent);
-        }
-        
-        // 隐藏的 textarea 用于表单提交
-        const emailTemplateTextarea = document.getElementById('emailTemplate');
-        emailTemplateTextarea.value = emailTemplateContent;
-
-
         document.getElementById('systemSettingsForm').addEventListener('submit', function(event) {
         event.preventDefault();
-        
-        // 提交前，将编辑器内容同步到隐藏的 textarea
-        const emailContent = window.markdownToHtml(emailTemplateMarkdown.value);
-        emailTemplateTextarea.value = emailContent;
 
         const formData = new FormData(this);
         const newSettings = {
@@ -250,7 +192,6 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             minimumRentalDays: Number(formData.get('minimumRentalDays') || 1),
             bufferDays: Number(formData.get('bufferDays') || 0),
           },
-          emailTemplate: formData.get('emailTemplate'),
           referralSettings: {
             defaultRate: parseInt(formData.get('defaultReferralRate')),
             levelLimit: parseInt(formData.get('referralLevelLimit')),

@@ -564,6 +564,16 @@ function notificationPreview(message: unknown, limit = 120): string {
   return sanitizePlainText(plain.length > limit ? `${plain.slice(0, limit)}…` : plain, limit + 1)
 }
 
+function notificationPlainText(value: unknown): string {
+  return sanitizePlainText(String(value || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/(^|\s)[#>*`_~-]+/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim(), 10000)
+}
+
 app.get('/notifications', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
@@ -585,6 +595,21 @@ app.get('/admin/email-templates', async (c) => {
   return c.html(await pages.renderAdminEmailTemplates(c, user))
 })
 
+app.post('/admin/email-templates', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const name = String(form.name || '').trim().slice(0, 80)
+  const subject = String(form.subject || '').trim().slice(0, 200)
+  const body = String(form.body || '').trim().slice(0, 10000)
+  if (!name || !subject || !body) return c.text('模板名称、主题和正文不能为空', 400)
+  await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
+  try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'").run() } catch (_) {}
+  const format = form.format === 'html' ? 'html' : 'markdown'
+  await c.env.RENT.prepare('INSERT INTO email_templates (id, name, subject, body, format) VALUES (?, ?, ?, ?, ?)').bind(`custom_${nanoid(12)}`, name, subject, body, format).run()
+  return c.redirect('/admin/email-templates')
+})
+
 app.post('/admin/email-templates/send', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -594,14 +619,22 @@ app.post('/admin/email-templates/send', async (c) => {
   const channel = ['site', 'email', 'both'].includes(String(form.channel)) ? String(form.channel) : 'email'
   const recipientId = String(form.recipientId || '').trim()
   if (!template || (['email', 'both'].includes(channel) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) || (['site', 'both'].includes(channel) && !recipientId)) return c.text('模板、通知收件人或邮件地址无效', 400)
-  const vars: Record<string, string> = { customer_name: String(form.customer_name || ''), order_number: String(form.order_number || ''), contract_number: String(form.contract_number || ''), refund_amount: String(form.refund_amount || ''), sign_url: String(form.sign_url || '') }
+  const vars: Record<string, string> = {}
+  for (const [key, value] of Object.entries(form)) {
+    if (/^[a-z_]+$/.test(key)) vars[key] = String(value || '')
+  }
+  const companyDetails = getSystemSettings().companyDetails || {}
+  vars.company_name = vars.company_name || String(companyDetails.name || 'PC Rental')
+  vars.company_email = vars.company_email || String(companyDetails.email || '')
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
-  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: fill(template.subject), message: fill(template.body) })
+  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: notificationPlainText(fill(template.body)) })
   if (['email', 'both'].includes(channel)) {
     const apiKey = (c.env as any).RESEND_API_KEY
     const from = (c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email
     if (!apiKey || !from) return c.text('尚未配置邮件服务：请设置 RESEND_API_KEY 和 EMAIL_FROM', 503)
-    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [to], subject: fill(template.subject), text: fill(template.body) }) })
+    const filledBody = fill(template.body)
+    const html = template.format === 'html' ? sanitizeRichHtml(filledBody) : renderNotificationMarkdown(filledBody)
+    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [to], subject: fill(template.subject), text: filledBody, html }) })
     if (!response.ok) return c.text(`邮件发送失败：${await response.text()}`, 502)
   }
   return c.redirect('/admin/email-templates')
@@ -615,7 +648,18 @@ app.post('/admin/email-templates/:id', async (c) => {
   const body = String(form.body || '').trim().slice(0, 10000)
   if (!subject || !body) return c.text('邮件主题和正文不能为空', 400)
   await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
-  await c.env.RENT.prepare('UPDATE email_templates SET subject = ?, body = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subject, body, c.req.param('id')).run()
+  try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'").run() } catch (_) {}
+  const format = form.format === 'html' ? 'html' : 'markdown'
+  await c.env.RENT.prepare('UPDATE email_templates SET subject = ?, body = ?, format = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subject, body, format, c.req.param('id')).run()
+  return c.redirect('/admin/email-templates')
+})
+
+app.post('/admin/email-templates/:id/delete', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const id = c.req.param('id')
+  if (!id.startsWith('custom_')) return c.text('内置模板不能删除', 400)
+  await c.env.RENT.prepare('DELETE FROM email_templates WHERE id = ?').bind(id).run()
   return c.redirect('/admin/email-templates')
 })
 
