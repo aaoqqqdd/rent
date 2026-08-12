@@ -1682,6 +1682,20 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
 
 export async function deleteDevice(c: Context, deviceId: string): Promise<boolean> {
   const db = getDB(c)
+  const references = [
+    ['orders', 'deviceId'], ['orders', 'device_id'],
+    ['rentals', 'device_id'], ['rentals', 'deviceId'],
+    ['contracts', 'device_id'], ['contracts', 'deviceId'],
+  ]
+  for (const [table, column] of references) {
+    try {
+      const row = await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).bind(deviceId).first() as any
+      if (Number(row?.count || 0) > 0) {
+        await updateDevice(c, deviceId, { status: 'retired' })
+        return false
+      }
+    } catch (_) { /* schema variant or table not present */ }
+  }
   const result = await db.prepare('DELETE FROM devices WHERE id = ?').bind(deviceId).run()
   return result.success
 }

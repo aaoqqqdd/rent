@@ -1950,7 +1950,8 @@ app.post('/admin/devices/:id/delete', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  await deleteDevice(c, c.req.param('id'))
+  const deleted = await deleteDevice(c, c.req.param('id'))
+  if (!deleted) return c.text('该设备已有订单、租赁或合同记录，已改为退役，历史数据保持不变。', 409)
   return c.redirect('/admin/devices')
 })
 
