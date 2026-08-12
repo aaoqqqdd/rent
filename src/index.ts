@@ -68,6 +68,7 @@ import {
   , createDueDateNotifications
   , sanitizePlainText
   , renderNotificationMarkdown
+  , renderEmailNotificationHtml
   , ensureNotificationsTable
 } from './site'
 import { nanoid } from 'nanoid'
@@ -604,9 +605,11 @@ app.post('/admin/email-templates', async (c) => {
   const body = String(form.body || '').trim().slice(0, 10000)
   if (!name || !subject || !body) return c.text('模板名称、主题和正文不能为空', 400)
   await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
+  try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#f0a35b'").run() } catch (_) {}
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'").run() } catch (_) {}
   const format = form.format === 'html' ? 'html' : 'markdown'
-  await c.env.RENT.prepare('INSERT INTO email_templates (id, name, subject, body, format) VALUES (?, ?, ?, ?, ?)').bind(`custom_${nanoid(12)}`, name, subject, body, format).run()
+  const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#71818d'
+  await c.env.RENT.prepare('INSERT INTO email_templates (id, name, subject, body, format, theme_color) VALUES (?, ?, ?, ?, ?, ?)').bind(`custom_${nanoid(12)}`, name, subject, body, format, themeColor).run()
   return c.redirect('/admin/email-templates')
 })
 
@@ -614,7 +617,7 @@ app.post('/admin/email-templates/send', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const form = await c.req.parseBody()
-  const template = await c.env.RENT.prepare('SELECT subject, body FROM email_templates WHERE id = ? AND enabled = 1').bind(String(form.templateId || '')).first() as any
+  const template = await c.env.RENT.prepare('SELECT subject, body, theme_color FROM email_templates WHERE id = ? AND enabled = 1').bind(String(form.templateId || '')).first() as any
   const to = String(form.to || '').trim().toLowerCase()
   const channel = ['site', 'email', 'both'].includes(String(form.channel)) ? String(form.channel) : 'email'
   const recipientId = String(form.recipientId || '').trim()
@@ -633,7 +636,7 @@ app.post('/admin/email-templates/send', async (c) => {
     const from = (c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email
     if (!apiKey || !from) return c.text('尚未配置邮件服务：请设置 RESEND_API_KEY 和 EMAIL_FROM', 503)
     const filledBody = fill(template.body)
-    const html = renderNotificationMarkdown(filledBody)
+    const html = renderEmailNotificationHtml(fill(template.subject), filledBody, vars.company_name, template.theme_color || '#71818d')
     const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [to], subject: fill(template.subject), text: filledBody, html }) })
     if (!response.ok) return c.text(`邮件发送失败：${await response.text()}`, 502)
   }
@@ -649,8 +652,10 @@ app.post('/admin/email-templates/:id', async (c) => {
   if (!subject || !body) return c.text('邮件主题和正文不能为空', 400)
   await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'").run() } catch (_) {}
+  try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#f0a35b'").run() } catch (_) {}
   const format = form.format === 'html' ? 'html' : 'markdown'
-  await c.env.RENT.prepare('UPDATE email_templates SET subject = ?, body = ?, format = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subject, body, format, c.req.param('id')).run()
+  const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#71818d'
+  await c.env.RENT.prepare('UPDATE email_templates SET subject = ?, body = ?, format = ?, theme_color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subject, body, format, themeColor, c.req.param('id')).run()
   return c.redirect('/admin/email-templates')
 })
 
@@ -1857,6 +1862,22 @@ app.get('/admin/devices/new', async (c) => {
   return c.html(pages.renderAdminDeviceNew(user))
 })
 
+async function generateAssetTag(c: any, brand: string): Promise<string> {
+  const letters = String(brand || '').normalize('NFKD').replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+  const fallback = Array.from(String(brand || '').trim()).slice(0, 2).join('').toUpperCase()
+  const code = (letters.slice(0, 2) || fallback || 'DV').padEnd(2, 'X').slice(0, 2)
+  const prefix = `RT-${code}-`
+  const rows = (await c.env.RENT.prepare("SELECT asset_tag FROM devices WHERE asset_tag LIKE ? ORDER BY asset_tag DESC").bind(`${prefix}%`).all()).results || []
+  const used = new Set(rows.map((row: any) => String(row.asset_tag || '')))
+  let sequence = rows.reduce((max: number, row: any) => {
+    const match = String(row.asset_tag || '').match(new RegExp(`^${prefix}(\\d{6})$`))
+    return Math.max(max, match ? Number(match[1]) : 0)
+  }, 0) + 1
+  let candidate = `${prefix}${String(sequence).padStart(6, '0')}`
+  while (used.has(candidate)) candidate = `${prefix}${String(++sequence).padStart(6, '0')}`
+  return candidate
+}
+
 app.post('/admin/devices/new', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -1864,14 +1885,14 @@ app.post('/admin/devices/new', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
-  if (![form.name, form.brand, form.model, form.assetTag, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号、资产编号和序列号', 400)
+  if (![form.name, form.brand, form.model, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号和序列号', 400)
   if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
   if (!['available', 'rented', 'maintenance'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   await insertDevice(c, {
     name: form.name || '',
     brand: form.brand || '',
     model: form.model || '',
-    assetTag: form.assetTag || '',
+    assetTag: await generateAssetTag(c, form.brand || ''),
     serialNumber: form.serialNumber || '',
     cpu: form.cpu || '',
     ram: form.ram || '',
@@ -1910,7 +1931,6 @@ app.post('/admin/devices/:id/edit', async (c) => {
     name: form.name,
     brand: form.brand,
     model: form.model,
-    assetTag: form.assetTag,
     serialNumber: form.serialNumber,
     cpu: form.cpu,
     ram: form.ram,

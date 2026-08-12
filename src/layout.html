@@ -393,6 +393,18 @@
       });
     });
   </script>
+<script>
+(() => {
+  const banks = { '01':'Commonwealth Bank', '02':'ANZ', '03':'Westpac', '04':'ANZ', '05':'People’s Choice Credit Union', '06':'Commonwealth Bank', '07':'Westpac', '08':'National Australia Bank', '09':'Reserve Bank of Australia', '10':'BankSA', '11':'St.George Bank', '12':'Bendigo Bank', '13':'P&N Bank', '14':'Rabobank', '15':'Townsville Credit Union', '17':'QT Mutual Bank', '18':'Macquarie Bank', '19':'Bank of Queensland', '20':'Bank of Melbourne', '21':'Westpac', '22':'Hume Bank', '23':'Bankwest', '24':'RACQ Bank', '25':'Beyond Bank', '26':'Credit Union Australia', '27':'Australian Unity Bank', '28':'Bank of Sydney', '29':'Greater Bank', '30':'Bank of Melbourne', '31':'Aussie Home Loans', '32':'St.George Bank', '33':'St.George Bank', '34':'Commonwealth Bank', '35':'Heritage Bank', '36':'ING Australia', '37':'AMP Bank', '38':'Citibank Australia', '39':'Virgin Money Australia', '40':'Rabobank', '41':'Police Bank', '42':'Defence Bank', '43':'Australian Military Bank', '44':'Judo Bank', '45':'Tyro Bank', '46':'Australian Mutual Bank', '47':'Auswide Bank', '48':'Westpac', '49':'Cuscal', '50':'NAB', '51':'International Bank of Australia', '52':'Teachers Mutual Bank', '53':'Summerland Bank', '54':'Great Southern Bank', '55':'Bank of China Australia', '56':'ME Bank', '57':'MyState Bank', '58':'UniBank', '59':'Horizon Bank', '60':'NAB', '61':'NAB', '62':'NAB', '63':'Bendigo Bank', '64':'People’s Choice Credit Union', '65':'Australian Military Bank', '66':'Summerland Bank', '67':'Heritage Bank', '68':'Gateway Bank', '69':'Unity Bank', '70':'NAB', '71':'NAB', '72':'NAB', '73':'Commonwealth Bank', '74':'Suncorp Bank', '75':'AMP Bank', '76':'Suncorp Bank', '77':'Defence Bank', '78':'Commonwealth Bank', '79':'NAB', '80':'Bank of Queensland', '81':'Australian Unity Bank', '82':'Cuscal', '83':'NAB', '84':'Westpac', '85':'NAB', '86':'NAB', '87':'NAB', '88':'NAB', '89':'NAB', '90':'NAB', '91':'NAB', '92':'NAB', '93':'Commonwealth Bank', '94':'NAB', '95':'NAB', '96':'NAB', '97':'NAB', '98':'NAB', '99':'NAB' };
+  const domains = { 'Commonwealth Bank':'commbank.com.au', 'Westpac':'westpac.com.au', 'National Australia Bank':'nab.com.au', 'BankSA':'banksa.com.au', 'St.George Bank':'stgeorge.com.au', 'Bendigo Bank':'bendigobank.com.au', 'Macquarie Bank':'macquarie.com.au', 'Bank of Queensland':'boq.com.au', 'Bankwest':'bankwest.com.au', 'Bank of Melbourne':'bankofmelbourne.com.au', 'Suncorp Bank':'suncorp.com.au', 'CBA':'commbank.com.au' };
+  document.querySelectorAll('input[name="bsb"], #bsbInput, #refundBsb, #bankBSB').forEach(input => {
+    const wrap = document.createElement('div'); wrap.className = 'bsb-entry'; input.parentNode.insertBefore(wrap, input); wrap.appendChild(input);
+    const logo = document.createElement('span'); logo.className = 'bsb-logo'; logo.setAttribute('aria-hidden', 'true'); wrap.appendChild(logo);
+    const update = () => { const digits = input.value.replace(/\D/g, '').slice(0, 6); const bank = banks[digits.slice(0, 2)] || ''; logo.textContent = bank ? bank.slice(0, 2).toUpperCase() : 'BSB'; const domain = domains[bank]; logo.style.backgroundImage = domain ? 'url(https://www.google.com/s2/favicons?domain=' + domain.trim() + '&sz=64)' : ''; logo.classList.toggle('has-image', Boolean(domain)); };
+    input.addEventListener('input', update); update();
+  });
+})();
+</script>
 </body>
 
 </html>

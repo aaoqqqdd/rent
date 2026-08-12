@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS email_templates (
   body TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  format TEXT NOT NULL DEFAULT 'markdown'
+  format TEXT NOT NULL DEFAULT 'markdown',
+  theme_color TEXT NOT NULL DEFAULT '#f0a35b'
 );
 INSERT OR IGNORE INTO email_templates (id, name, subject, body) VALUES
 ('order_pending_payment', '订单待付款', '您的订单待付款 - {order_number}', '您好 {customer_name}，您的订单 {order_number} 正等待付款。'),
