@@ -17,6 +17,7 @@ export async function renderStaffDevices(c: Context, user: any) {
             <tr>
               <th>设备名称</th>
               <th>型号</th>
+              <th>备注</th>
               <th>序列号</th>
               <th>日租金</th>
               <th>状态</th>
@@ -28,6 +29,7 @@ export async function renderStaffDevices(c: Context, user: any) {
               <tr>
                 <td>${device.name}</td>
                 <td>${device.model}</td>
+                <td>${device.description || '—'}</td>
                 <td>${device.serialNumber}</td>
                 <td>${formatCurrency(device.pricePerDay ?? device.price_per_day ?? 0)}</td>
                 <td>${device.status}</td>

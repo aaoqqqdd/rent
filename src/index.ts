@@ -1398,7 +1398,7 @@ app.post('/customer/security', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
-  if (![form.name, form.brand, form.model, form.assetTag, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号、资产编号和序列号', 400)
+  if (![form.name, form.brand, form.model, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号和序列号', 400)
   if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
   const currentPassword = form.currentPassword?.trim()
   const newPassword = form.newPassword?.trim()
@@ -1902,7 +1902,7 @@ app.post('/admin/devices/new', async (c) => {
     pricePerDay: Number(form.pricePerDay) || 0,
     depositAmount: Number(form.depositAmount) || 0,
     status: (form.status as any) || 'available',
-    description: form.description || ''
+    description: form.description || form.remark || ''
   })
   return c.redirect('/admin/devices')
 })
@@ -1940,7 +1940,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
     pricePerDay: Number(form.pricePerDay),
     depositAmount: Number(form.depositAmount),
     status: form.status as any,
-    description: form.description
+    description: form.description || form.remark
   })
   return c.redirect('/admin/devices')
 })
