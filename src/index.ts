@@ -633,7 +633,7 @@ app.post('/admin/email-templates/send', async (c) => {
     const from = (c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email
     if (!apiKey || !from) return c.text('尚未配置邮件服务：请设置 RESEND_API_KEY 和 EMAIL_FROM', 503)
     const filledBody = fill(template.body)
-    const html = template.format === 'html' ? sanitizeRichHtml(filledBody) : renderNotificationMarkdown(filledBody)
+    const html = renderNotificationMarkdown(filledBody)
     const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [to], subject: fill(template.subject), text: filledBody, html }) })
     if (!response.ok) return c.text(`邮件发送失败：${await response.text()}`, 502)
   }
