@@ -44,7 +44,7 @@ export function renderNotFound() {
         <p class="error-desc">抱歉，您访问的页面不存在或已被移除。</p>
         <div class="error-actions">
           <a href="/" class="button">返回首页</a>
-          <a href="javascript:history.back()" class="button button-secondary">返回上一页</a>
+          <button type="button" class="button button-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }">返回上一页</button>
         </div>
         <div class="error-details"><span class="mono">Error: ENOENT — 资源不存在</span></div>
       </div>
@@ -71,7 +71,7 @@ export function renderForbidden() {
         <p class="error-desc">您没有权限访问此页面，请联系管理员获取相应权限。</p>
         <div class="error-actions">
           <a href="/" class="button">返回首页</a>
-          <a href="javascript:history.back()" class="button button-secondary">返回上一页</a>
+          <button type="button" class="button button-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }">返回上一页</button>
         </div>
         <div class="error-details"><span class="mono">Error: EACCES — 权限不足</span></div>
       </div>
@@ -97,7 +97,7 @@ export function renderServerError() {
         <p class="error-desc">服务器遇到了一些问题，请稍后重试。如持续出现此问题，请联系技术支持。</p>
         <div class="error-actions">
           <a href="javascript:location.reload()" class="button">刷新页面</a>
-          <a href="/" class="button button-secondary">返回首页</a>
+          <button type="button" class="button button-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }">返回上一页</button>
         </div>
         <div class="error-details"><span class="mono">Error: EINTERNAL — 服务器内部错误</span></div>
       </div>
@@ -124,7 +124,7 @@ export function renderUnauthorized() {
         <p class="error-desc">您需要登录或提供有效凭证才能访问此页面。</p>
         <div class="error-actions">
           <a href="/login" class="button">前往登录</a>
-          <a href="/" class="button button-secondary">返回首页</a>
+          <button type="button" class="button button-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }">返回上一页</button>
         </div>
         <div class="error-details"><span class="mono">Error: EAUTH — 需要认证</span></div>
       </div>
@@ -150,7 +150,7 @@ export function renderBadGateway() {
         <p class="error-desc">服务器作为网关或代理，从上游服务器收到了无效的响应。请稍后重试。</p>
         <div class="error-actions">
           <a href="javascript:location.reload()" class="button">刷新页面</a>
-          <a href="/" class="button button-secondary">返回首页</a>
+          <button type="button" class="button button-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }">返回上一页</button>
         </div>
         <div class="error-details"><span class="mono">Error: EBADGATEWAY — 网关错误</span></div>
       </div>
@@ -176,7 +176,7 @@ export function renderServiceUnavailable() {
         <p class="error-desc">服务器当前无法处理请求，这通常是由于临时过载或正在进行维护。请稍后重试。</p>
         <div class="error-actions">
           <a href="javascript:location.reload()" class="button">刷新页面</a>
-          <a href="/" class="button button-secondary">返回首页</a>
+          <button type="button" class="button button-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }">返回上一页</button>
         </div>
         <div class="error-details"><span class="mono">Error: EUNAVAIL — 服务不可用</span></div>
       </div>

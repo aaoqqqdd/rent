@@ -17,7 +17,7 @@ export function renderAdminDeviceNew(user: any) {
             <div class="form-group"><label class="form-label" for="model">型号</label><input class="form-control" id="model" name="model" required maxlength="120" placeholder="例如 A2918 / Mac15,6"></div>
             <div class="form-group"><label class="form-label" for="remark">备注</label><input class="form-control" id="remark" name="remark" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="serialNumber">序列号</label><input class="form-control mono" id="serialNumber" name="serialNumber" required maxlength="120" placeholder="设备唯一序列号"></div>
-            <div class="form-group"><label class="form-label" for="status">初始状态</label><select class="form-control" id="status" name="status"><option value="available">可用</option><option value="maintenance">维修中</option><option value="rented">已出租</option></select></div>
+            <div class="form-group"><label class="form-label" for="status">初始状态</label><select class="form-control" id="status" name="status"><option value="available">可用</option><option value="maintenance">维修中</option><option value="rented">已出租</option><option value="retired">已退役</option></select></div>
           </div>
         </section>
         <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3><p>配置字段会直接进入员工端设备搜索。</p></div></div>

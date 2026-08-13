@@ -30,7 +30,8 @@ export async function getFilteredAdminOrders(
 ) {
   const [allOrders, allUsers, allDevices] = await Promise.all([getOrders(c), getUsers(c), getDevices(c)]);
   const userIdFilter = (filters?.userId || '').trim();
-  const statusFilter = filters?.status || 'all';
+  const rawStatusFilter = String(filters?.status || 'all').trim().toLowerCase().replace(/[-\s]+/g, '_');
+  const statusFilter = ({ pending: 'pending_payment', in_progress: 'active', complete: 'completed', canceled: 'cancelled' } as Record<string, string>)[rawStatusFilter] || rawStatusFilter;
   const searchTerm = (filters?.search || '').trim();
   const dateFrom = (filters?.dateFrom || '').trim();
   const dateTo = (filters?.dateTo || '').trim();
@@ -45,7 +46,9 @@ export async function getFilteredAdminOrders(
 
   return ordersWithDetail.filter((order: any) => {
     const matchesUser = !userIdFilter || String(order.userId) === String(userIdFilter);
-    const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
+    const rawOrderStatus = String(order.status || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    const orderStatus = ({ pending: 'pending_payment', in_progress: 'active', complete: 'completed', canceled: 'cancelled' } as Record<string, string>)[rawOrderStatus] || rawOrderStatus;
+    const matchesStatus = statusFilter === 'all' || orderStatus === statusFilter;
 
     const searchableText = [
       order.id,

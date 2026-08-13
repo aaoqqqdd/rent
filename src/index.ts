@@ -1058,7 +1058,7 @@ app.post('/staff/devices/new', async (c) => {
   const serialNumber = String(form.serialNumber || '').trim()
   const pricePerDay = Number(form.dailyRate)
   const status = String(form.status || 'available') as any
-  if (!name || !model || !serialNumber || !Number.isFinite(pricePerDay) || pricePerDay < 0 || !['available', 'rented', 'maintenance'].includes(status)) return c.html(pages.renderStaffDeviceNew(user, '请填写完整有效的设备资料'), 400)
+  if (!name || !model || !serialNumber || !Number.isFinite(pricePerDay) || pricePerDay < 0 || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(pages.renderStaffDeviceNew(user, '请填写完整有效的设备资料'), 400)
   const device = await insertDevice(c, { name, model, serialNumber, pricePerDay, depositAmount: 0, status, description: '' })
   return c.redirect(`/staff/devices/${device.id}`)
 })
@@ -1075,7 +1075,7 @@ app.post('/staff/devices/:id/edit', async (c) => {
   const form = await c.req.parseBody()
   const pricePerDay = Number(form.dailyRate)
   const status = String(form.status || 'available')
-  if (!String(form.name || '').trim() || !String(form.model || '').trim() || !String(form.serialNumber || '').trim() || !Number.isFinite(pricePerDay) || pricePerDay < 0 || !['available', 'rented', 'maintenance'].includes(status)) return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id'), '请填写完整有效的设备资料'), 400)
+  if (!String(form.name || '').trim() || !String(form.model || '').trim() || !String(form.serialNumber || '').trim() || !Number.isFinite(pricePerDay) || pricePerDay < 0 || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id'), '请填写完整有效的设备资料'), 400)
   await updateDevice(c, c.req.param('id'), { name: String(form.name), model: String(form.model), serialNumber: String(form.serialNumber), pricePerDay, status: status as any })
   return c.redirect(`/staff/devices/${c.req.param('id')}`)
 })
@@ -1887,7 +1887,7 @@ app.post('/admin/devices/new', async (c) => {
   const form = parseFormBody(body)
   if (![form.name, form.brand, form.model, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号和序列号', 400)
   if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
-  if (!['available', 'rented', 'maintenance'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
+  if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   await insertDevice(c, {
     name: form.name || '',
     brand: form.brand || '',
@@ -1926,7 +1926,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
-  if (!['available', 'rented', 'maintenance'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
+  if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   await updateDevice(c, c.req.param('id'), {
     name: form.name,
     brand: form.brand,

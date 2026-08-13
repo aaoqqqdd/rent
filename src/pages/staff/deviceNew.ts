@@ -24,6 +24,7 @@ export function renderStaffDeviceNew(user: any, errorMessage?: string) {
           <option value="available">可用</option>
           <option value="rented">已租借</option>
           <option value="maintenance">维护中</option>
+          <option value="retired">已退役</option>
         </select>
         <button class="button button-primary" type="submit" style="margin-top: 20px;">添加设备</button>
       </form>

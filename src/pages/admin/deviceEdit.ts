@@ -21,7 +21,7 @@ export function renderAdminDeviceEdit(user: any, device: any) {
             <div class="form-group"><label class="form-label" for="model">型号</label><input class="form-control" id="model" name="model" value="${value('model')}" required maxlength="120"></div>
             <div class="form-group"><label class="form-label" for="remark">备注</label><input class="form-control" id="remark" name="remark" value="${value('description')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="serialNumber">序列号</label><input class="form-control mono" id="serialNumber" name="serialNumber" value="${value('serialNumber', 'serial_number')}" required maxlength="120"></div>
-            <div class="form-group"><label class="form-label" for="status">状态</label><select class="form-control" id="status" name="status"><option value="available" ${status === 'available' ? 'selected' : ''}>可用</option><option value="rented" ${status === 'rented' ? 'selected' : ''}>已出租</option><option value="maintenance" ${status === 'maintenance' ? 'selected' : ''}>维修中</option></select></div>
+            <div class="form-group"><label class="form-label" for="status">状态</label><select class="form-control" id="status" name="status"><option value="available" ${status === 'available' ? 'selected' : ''}>可用</option><option value="rented" ${status === 'rented' ? 'selected' : ''}>已出租</option><option value="maintenance" ${status === 'maintenance' ? 'selected' : ''}>维修中</option><option value="retired" ${status === 'retired' ? 'selected' : ''}>已退役</option></select></div>
           </div>
         </section>
         <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3><p>各字段均可被员工端设备搜索匹配。</p></div></div>
