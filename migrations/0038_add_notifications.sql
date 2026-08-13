@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS notifications (
   title TEXT NOT NULL,
   message TEXT NOT NULL,
   order_id TEXT,
+  sender_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TEXT,
   read_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
