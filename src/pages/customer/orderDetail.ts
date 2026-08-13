@@ -11,9 +11,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   if (!order || order.userId !== user.id) {
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在或无权访问。</p></div>', user)
   }
-  const device = await getDeviceById(c, order.deviceId)
-  const contract = await getContractByOrderId(c, order.id)
-  const transferProof = order.paymentMethod === 'bank_transfer' ? await c.env.RENT.prepare("SELECT pp.status, pp.reference_number, pp.rejection_reason FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any : null
+  const [device, contract, transferProof] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), order.paymentMethod === 'bank_transfer' ? c.env.RENT.prepare("SELECT pp.status, pp.reference_number, pp.rejection_reason FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() : Promise.resolve(null)]) as any[]
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const stripeFee = Math.round(Number(order.totalAmount) * 100 * 0.025) / 100
   const stripeTotal = Number(order.totalAmount) + stripeFee

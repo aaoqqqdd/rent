@@ -4984,3 +4984,6 @@ tr:hover td {
 .bsb-entry .form-control { width: 100%; padding-right: 58px; }
 .bsb-logo { position: absolute; z-index: 1; top: 50%; right: 10px; width: 32px; height: 32px; display: block; transform: translateY(-50%); border: 0; border-radius: 6px; background-color: transparent; background-position: center; background-repeat: no-repeat; background-size: contain; color: transparent; font-size: 0; pointer-events: none; }
 .bsb-logo.has-image { background-color: #fff; border: 1px solid #d7e0e6; }
+.navigation-loading { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; gap: 10px; background: rgba(15, 23, 42, 0.28); color: #fff; font-weight: 600; pointer-events: all; }
+.navigation-loading__spinner { width: 20px; height: 20px; border: 3px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%; animation: navigation-loading-spin .75s linear infinite; }
+@keyframes navigation-loading-spin { to { transform: rotate(360deg); } }

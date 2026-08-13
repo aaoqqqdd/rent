@@ -89,6 +89,18 @@ function parseFormBody(body: string | null | undefined): Record<string, string> 
   return form
 }
 
+function requestHost(c: any): string {
+  return String(c.req.header('Host') || '').split(':')[0].trim().toLowerCase()
+}
+
+function isCustomerLoginHost(c: any): boolean {
+  return /^[a-z0-9-]+-rent\.ydnw6zt6vj\.workers\.dev$/.test(requestHost(c))
+}
+
+function shouldShowTestAccounts(c: any): boolean {
+  return String(c.env.SHOW_TEST_ACCOUNTS || '').toLowerCase() === 'true' && isCustomerLoginHost(c)
+}
+
 async function getTableColumns(c: any, tableName: string): Promise<string[]> {
   const allowedTables = new Set(['users', 'commission_withdrawals'])
   if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
@@ -258,7 +270,7 @@ app.get('/login', async (c) => {
   if (user) {
     return c.redirect('/')
   }
-  return c.html(pages.renderLogin())
+  return c.html(pages.renderLogin(undefined, shouldShowTestAccounts(c)))
 })
 
 app.post('/login', async (c) => {
@@ -266,18 +278,21 @@ app.post('/login', async (c) => {
   const account = form.account?.trim()
   const password = form.password?.trim()
   if (!account || !password) {
-    return c.html(pages.renderLogin('请输入账号和密码'))
+    return c.html(pages.renderLogin('请输入账号和密码', shouldShowTestAccounts(c)))
   }
   const loginIp = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim().slice(0, 64)
   const normalizedAccount = String(account).toLowerCase().slice(0, 254)
   await ensureLoginAttemptsSchema(c)
   const recentFailures = await c.env.RENT.prepare("SELECT COUNT(*) count FROM login_attempts WHERE ip_address = ? AND account = ? AND attempted_at > datetime('now', '-15 minutes')").bind(loginIp, normalizedAccount).first() as any
-  if (Number(recentFailures?.count || 0) >= 5) return c.html(pages.renderLogin('登录失败次数过多，请 15 分钟后再试'), 429)
+  if (Number(recentFailures?.count || 0) >= 5) return c.html(pages.renderLogin('登录失败次数过多，请 15 分钟后再试', shouldShowTestAccounts(c)), 429)
   const user = await verifyUserCredentials(c, account, password)
   if (!user) {
+    await c.env.RENT.prepare('INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (NULL, ?, ?, ?, \'failure\')').bind(normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
     await c.env.RENT.prepare('INSERT INTO login_attempts (ip_address, account) VALUES (?, ?)').bind(loginIp, normalizedAccount).run()
-    return c.html(pages.renderLogin('账号或密码错误'))
+    return c.html(pages.renderLogin('账号或密码错误', shouldShowTestAccounts(c)))
   }
+  if (user.role === 'CUSTOMER' && !isCustomerLoginHost(c)) return c.html(pages.renderLogin('客户账户只能从测试租赁域名登录。', shouldShowTestAccounts(c)), 403)
+  await c.env.RENT.prepare("INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (?, ?, ?, ?, 'success')").bind(user.id, normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
   await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()
   const response = c.redirect(user.role === 'CUSTOMER' ? (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard') : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
   const session = await createAuthSession(c, user.id, form.remember === 'on')
@@ -447,12 +462,14 @@ app.post('/forgot-password', async (c) => {
   return c.html(pages.renderForgotPassword('重置链接已发送至您的邮箱，请查收'))
 })
 
-app.post('/logout', async (c) => {
+const logout = async (c: any) => {
   await deleteAuthSession(c, c.req.header('cookie') ?? null)
   const response = c.redirect('/')
   response.headers.set('Set-Cookie', 'session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT')
   return response
-})
+}
+app.post('/logout', logout)
+app.get('/logout', logout)
 
 app.get('/customer/dashboard', async (c) => {
   const user = c.get('user')
@@ -471,6 +488,47 @@ app.get('/customer/balance', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.redirect('/login')
   return c.html(await pages.renderCustomerBalance(c, user))
+})
+
+app.get('/customer/balance/top-up', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.redirect('/login')
+  await loadSystemSettingsFromDB(c)
+  const pending = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE user_id = ? AND status = 'awaiting_transfer' ORDER BY created_at DESC LIMIT 1").bind(user.id).first()
+  return c.html(pages.renderCustomerBalanceTopUp(c, user, '', pending))
+})
+
+app.post('/customer/balance/top-up', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.html(renderForbidden(), 403)
+  await loadSystemSettingsFromDB(c)
+  const form = await c.req.parseBody()
+  const amount = Number(form.amount)
+  const method = String(form.method || '')
+  if (!Number.isFinite(amount) || amount < 1 || amount > 10000 || !['card', 'bank_transfer'].includes(method)) return c.html(pages.renderCustomerBalanceTopUp(c, user, '请输入 1 至 10,000 AUD 的有效充值金额。'), 400)
+  const id = `topup-${nanoid(12)}`
+  await c.env.RENT.prepare("INSERT INTO balance_topups (id, user_id, amount, payment_method, status) VALUES (?, ?, ?, ?, 'pending')").bind(id, user.id, Number(amount.toFixed(2)), method).run()
+  if (method === 'bank_transfer') {
+    await c.env.RENT.prepare("UPDATE balance_topups SET status = 'awaiting_transfer' WHERE id = ?").bind(id).run()
+    return c.redirect('/customer/balance/top-up')
+  }
+  try {
+    const { createBalanceTopUpCheckout } = await import('./actions/stripePayments')
+    return await createBalanceTopUpCheckout(c, user, id)
+  } catch (error: any) {
+    await c.env.RENT.prepare("UPDATE balance_topups SET status = 'failed' WHERE id = ?").bind(id).run()
+    return c.html(pages.renderCustomerBalanceTopUp(c, user, error.message || '无法创建信用卡支付'), 502)
+  }
+})
+
+app.post('/customer/balance/top-up/transfer', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody(); const id = String(form.id || ''); const reference = String(form.reference || '').trim()
+  const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND status = 'awaiting_transfer'").bind(id, user.id).first() as any
+  if (!topup || !reference) return c.text('充值记录或 Reference 无效', 400)
+  await c.env.RENT.prepare("UPDATE balance_topups SET reference = ?, note = ?, status = 'submitted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(reference, String(form.note || '').trim(), id).run()
+  return c.redirect('/customer/balance')
 })
 
 app.post('/admin/users/:id/balance-adjust', async (c) => {
@@ -492,6 +550,16 @@ app.post('/admin/users/:id/balance-adjust', async (c) => {
     c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`bt-${crypto.randomUUID()}`, target.id, amount, next, amount > 0 ? 'admin_credit' : 'admin_debit', reason, admin.id),
   ])
   return c.redirect(`/admin/users/${target.id}`)
+})
+
+app.post('/admin/balance-topups/:id/approve', async (c) => {
+  const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).first() as any
+  if (!topup) return c.text('充值记录不存在或已处理', 409)
+  const current = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first() as any
+  const next = Number((Number(current?.balance || 0) + Number(topup.amount)).toFixed(2))
+  await c.env.RENT.batch([c.env.RENT.prepare("UPDATE balance_topups SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(topup.id), c.env.RENT.prepare('UPDATE users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, topup.user_id), c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, 'top_up_transfer', ?, ?)").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, next, `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id)])
+  return c.redirect(`/admin/users/${topup.user_id}`)
 })
 
 app.get('/customer/guest', async (c) => {
@@ -773,13 +841,16 @@ app.post('/customer/rent/:id', async (c) => {
   const form = await c.req.parseBody()
   const startDate = String(form.startDate || '')
   const endDate = String(form.endDate || '')
+  const deliveryMethod = String(form.deliveryMethod || 'Pickup') === 'Delivery' ? 'Delivery' : 'Pickup'
+  const deliveryAddress = String(form.deliveryAddress || '').trim().slice(0, 1000)
+  const rentalNote = String(form.rentalNote || '').trim().slice(0, 500)
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
   const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
   const unavailable = new Set(rentalRules.unavailableDates)
   let blockedDate = ''
   for (let day = new Date(start); day < end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
-  if (!device || device.status !== 'available' || !startDate || !endDate || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
+  if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
   const orderId = `o-${nanoid(8)}`
@@ -787,9 +858,13 @@ app.post('/customer/rent/:id', async (c) => {
     id: orderId, orderNo: `OD${Date.now()}${nanoid(4).toUpperCase()}`, userId: user.id,
     deviceId: device.id, startDate, endDate, rentalPeriod, status: 'pending_approval',
     paymentMethod: 'bank_transfer', totalAmount: rentalPeriod * device.pricePerDay + device.depositAmount,
-    depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null,
+    depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
+    deliveryMethod, deliveryFee: 0, rentalNote,
     createdAt: new Date().toISOString()
   } as any)
+  const customer = await getUserById(c, user.id)
+  const recipients = customer?.staffId ? [customer.staffId] : (await getUsers(c)).filter((account: any) => account.role === 'ADMIN' && account.status !== 'inactive').map((account: any) => account.id)
+  await Promise.all(recipients.map((recipientId: string) => createNotification(c, { recipientId, type: 'rental_application', title: deliveryMethod === 'Delivery' ? '新租赁申请及配送确认' : '新租赁申请待审核', message: `${customer?.name || '客户'} 申请租赁 ${device.name}（${startDate} 至 ${endDate}）${deliveryMethod === 'Delivery' ? `，需要配送至：${deliveryAddress}，运费请确认` : '，客户选择到店自取'}。${rentalNote ? `备注：${rentalNote}` : ''}`, orderId: orderId })))
   return c.redirect(`/customer/orders/${orderId}`)
 })
 
@@ -931,21 +1006,27 @@ app.post('/staff/orders/:orderId/return', async (c) => {
 
 app.post('/staff/orders/:orderId/approve', async (c) => {
   const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
+  const customer = order ? await getUserById(c, order.userId) : null
+  if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   await loadSystemSettingsFromDB(c)
   if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, getSystemSettings().rentalRules.bufferDays)) return c.text('订单状态无效或设备档期冲突', 409)
   await updateOrderStatus(c, order.id, 'approved')
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。`, orderId: order.id })
   return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
 })
 
 app.post('/staff/orders/:orderId/reject', async (c) => {
   const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
+  const customer = order ? await getUserById(c, order.userId) : null
+  if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   if (order) {
     await updateOrderStatus(c, order.id, 'cancelled')
     await updateDeviceStatus(c, order.deviceId, 'available')
+    await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_rejected', title: '租赁申请未通过', message: `您的设备租赁申请已由${user.name || '工作人员'}拒绝，请联系工作人员了解详情。`, orderId: order.id })
   }
   return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
 })
@@ -1388,7 +1469,9 @@ app.get('/customer/security', async (c) => {
   if (!user || user.role !== 'CUSTOMER') {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderCustomerSecurity(c, user))
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS login_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, account TEXT NOT NULL, ip_address TEXT NOT NULL, user_agent TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
+  const records = (await c.env.RENT.prepare('SELECT * FROM login_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 30').bind(user.id).all()).results as any[]
+  return c.html(await pages.renderCustomerSecurity(c, user, undefined, undefined, records))
 })
 
 app.post('/customer/security', async (c) => {

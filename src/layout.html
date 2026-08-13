@@ -132,13 +132,29 @@
     }, true);
 
     document.addEventListener('DOMContentLoaded', function () {
+      const showNavigationLoading = function () {
+        if (document.getElementById('navigation-loading')) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'navigation-loading';
+        overlay.className = 'navigation-loading';
+        overlay.innerHTML = '<span class="navigation-loading__spinner" aria-hidden="true"></span><span>正在加载，请稍候…</span>';
+        document.body.appendChild(overlay);
+      };
+      document.addEventListener('submit', function (event) {
+        const form = event.target;
+        if (event.defaultPrevented || !(form instanceof HTMLFormElement) || form.dataset.loadingHandled === 'true') return;
+        form.dataset.loadingHandled = 'true';
+        const button = form.querySelector('button[type="submit"]');
+        if (button) { button.disabled = true; button.dataset.loadingText = button.textContent || ''; button.textContent = '处理中…'; }
+        showNavigationLoading();
+      });
       const bell = document.querySelector('.notification-bell');
       const drawer = document.getElementById('notification-drawer');
       const body = document.getElementById('notification-drawer-body');
       const badge = document.querySelector('.notification-bell__count');
       let notifications = [];
       const refresh = function () { fetch('/notifications/unread', { headers: { Accept: 'application/json' }, credentials: 'same-origin' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (p) { notifications = p && Array.isArray(p.notifications) ? p.notifications : []; if (badge) { badge.textContent = String(notifications.length); badge.hidden = !notifications.length; } if (drawer?.classList.contains('is-open')) render(); }).catch(function () {}); };
-      const render = function () { if (!body) return; body.innerHTML = notifications.length ? notifications.map(function (item) { return '<article class="notification-drawer__item"><strong></strong><p></p><small></small></article>'; }).join('') : '<p class="empty-state">暂无未读通知</p>'; notifications.forEach(function (item, i) { const row = body.children[i]; if (row) { row.querySelector('strong').textContent = item.title || '新通知'; row.querySelector('p').textContent = item.message || ''; row.querySelector('small').textContent = item.created_at || ''; } }); };
+      const render = function () { if (!body) return; body.innerHTML = notifications.length ? notifications.map(function () { return '<a class="notification-drawer__item" href="/notifications"><strong></strong><p></p><small></small></a>'; }).join('') : '<p class="empty-state">暂无未读通知</p>'; notifications.forEach(function (item, i) { const row = body.children[i]; if (row) { row.querySelector('strong').textContent = item.title || '新通知'; row.querySelector('p').textContent = item.message || ''; row.querySelector('small').textContent = item.created_at || ''; } }); };
       bell?.addEventListener('click', function () { const open = !drawer.classList.contains('is-open'); drawer.classList.toggle('is-open', open); drawer.setAttribute('aria-hidden', String(!open)); bell.setAttribute('aria-expanded', String(open)); if (open) render(); });
       drawer?.querySelector('.notification-drawer__close')?.addEventListener('click', function () { drawer.classList.remove('is-open'); drawer.setAttribute('aria-hidden', 'true'); bell?.setAttribute('aria-expanded', 'false'); });
       refresh(); window.setInterval(refresh, 30000);
@@ -364,7 +380,7 @@
         } catch (_) {
           window.location.href = url.href;
         } finally {
-          window.setTimeout(function () { document.body.classList.remove('is-navigating'); }, 260);
+          window.setTimeout(function () { document.body.classList.remove('is-navigating'); document.getElementById('navigation-loading')?.remove(); }, 260);
         }
       };
       document.addEventListener('click', function (event) { const link = event.target.closest('a'); if (!shouldHandle(link, event)) return; event.preventDefault(); navigate(new URL(link.href), true); }, true);

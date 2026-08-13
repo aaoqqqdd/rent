@@ -15,8 +15,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   if (user.role !== 'ADMIN' && customer?.staffId !== user.id) {
     return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2><p>员工只能查看自己名下客户的订单。</p></div>', user)
   }
-  const device = await getDeviceById(c, order.deviceId)
-  const contract = await getContractByOrderId(c, order.id)
+  const [device, contract] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id)])
   const contractExpired = contract ? isContractExpired(contract) : false
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
 
@@ -38,7 +37,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         </div>
         <div class="order-info-card order-actions-card">
           <h3>操作</h3>
-          ${user.role === 'ADMIN' && order.status === 'pending_approval' ? `
+          ${['STAFF', 'ADMIN'].includes(user.role) && order.status === 'pending_approval' ? `
             <form method="POST" action="/staff/orders/${order.id}/approve" style="margin-bottom: 10px;">
               <button class="button button-primary" type="submit">批准订单</button>
             </form>

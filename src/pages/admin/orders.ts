@@ -102,7 +102,8 @@ export async function renderAdminOrders(c: Context, user: any) {
     ...(dateTo ? { dateTo } : {}),
   }).toString();
 
-  const totalRevenue = filteredOrders.reduce((sum: number, order: any) => sum + Number(order.total_amount || order.totalAmount || 0), 0);
+  const revenueOrders = filteredOrders.filter((order: any) => ['paid', 'active', 'completed'].includes(String(order.status).toLowerCase()));
+  const totalRevenue = revenueOrders.reduce((sum: number, order: any) => sum + Number(order.total_amount || order.totalAmount || 0), 0);
   const pendingCount = filteredOrders.filter((order: any) => ['pending_approval', 'pending_payment', 'approved'].includes(order.status)).length;
   const activeCount = filteredOrders.filter((order: any) => ['paid', 'active'].includes(order.status)).length;
   const completedCount = filteredOrders.filter((order: any) => order.status === 'completed').length;
@@ -136,7 +137,7 @@ export async function renderAdminOrders(c: Context, user: any) {
           <div style="font-size: 1.8rem; font-weight: 700;">${completedCount}</div>
         </div>
         <div class="panel" style="padding: 18px; background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); border: 1px solid #ddd6fe;">
-          <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 8px;">营收</div>
+          <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 8px;">营收（已支付/租赁中/已完成）</div>
           <div style="font-size: 1.6rem; font-weight: 700;">${formatCurrency(totalRevenue)}</div>
         </div>
       </div>

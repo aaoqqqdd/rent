@@ -19,7 +19,7 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
   
   const pendingOrders = orders.filter(o => o.status === 'pending_approval' || o.status === 'pending_payment').length
   const availableDevices = devices.filter(d => d.status === 'available').length
-  const totalUsers = users.length;
+  const totalUsers = users.filter((account: any) => account.status === 'active' && account.accountType !== 'deleted_guest' && account.account_type !== 'deleted_guest').length;
 
   const statusMap: Record<string, { text: string; class: string }> = {
     'pending_approval': { text: '待审核', class: 'badge-warning' },
@@ -47,7 +47,7 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
       <div class="stat-card primary">
         <h3>总收入</h3>
         <div class="value">${formatCurrency(totalRevenue)}</div>
-        <div class="trend">↑ 系统累计收入</div>
+        <div class="trend">↑ 已支付/租赁中/已完成订单，不含已取消</div>
       </div>
       <div class="stat-card success">
         <h3>活跃租赁</h3>
@@ -67,7 +67,7 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
       <div class="stat-card" style="margin-top: 0;">
         <h3>注册用户</h3>
         <div class="value">${totalUsers} 人</div>
-        <div class="trend">系统总用户数</div>
+        <div class="trend">有效用户数（不含已删除访客账户）</div>
       </div>
     </div>
     <div class="panel">

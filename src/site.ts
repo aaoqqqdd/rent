@@ -755,7 +755,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
   const db = getDB(c)
   await db
     .prepare(
-      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, startPeriod, endPeriod, rentalPeriod, status, paymentMethod, totalAmount, depositAmount, contractId, pickupTimeSlot, returnTimeSlot, pickupLocation, returnLocation, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, startPeriod, endPeriod, rentalPeriod, status, paymentMethod, totalAmount, depositAmount, contractId, pickupTimeSlot, returnTimeSlot, pickupLocation, returnLocation, deliveryMethod, deliveryFee, rentalNote, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .bind(
       order.id,
@@ -770,7 +770,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
       order.paymentMethod,
       order.totalAmount,
       order.depositAmount,
-      order.contractId, order.pickupTimeSlot || null, order.returnTimeSlot || null, order.pickupLocation || null, order.returnLocation || null,
+      order.contractId, order.pickupTimeSlot || null, order.returnTimeSlot || null, order.pickupLocation || null, order.returnLocation || null, (order as any).deliveryMethod || 'Pickup', Number((order as any).deliveryFee || 0), (order as any).rentalNote || null,
       order.createdAt
     )
     .run()
@@ -1870,7 +1870,7 @@ export async function getStaffDashboardData(c: Context, staffId?: string): Promi
 
   const statsQuery = `
     SELECT
-      (SELECT SUM(totalAmount) FROM orders WHERE status = 'completed' OR status = 'paid') as totalRevenue,
+      (SELECT SUM(totalAmount) FROM orders WHERE status IN ('paid', 'active', 'completed')) as totalRevenue,
       (SELECT COUNT(*) FROM orders WHERE status = 'active' OR status = 'paid') as activeRentals,
       (SELECT COUNT(*) FROM orders WHERE status = 'pending_approval' OR status = 'pending_payment') as pendingOrders,
       (SELECT COUNT(*) FROM devices WHERE status = 'available') as availableDevices,
@@ -2435,6 +2435,10 @@ function toNumber(value: any): number {
 export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   const db = getDB(c)
 
+  const host = String(c.req.header('Host') || '').split(':')[0].toLowerCase()
+  const demoEnvironment = String((c.env as any).SHOW_TEST_ACCOUNTS || '').toLowerCase() === 'true' && /^[a-z0-9-]+-rent\.ydnw6zt6vj\.workers\.dev$/.test(host)
+  if (!demoEnvironment) return
+
   const countResult = await db.prepare('SELECT COUNT(*) AS count FROM users').all()
   const count = Number(countResult.results?.[0]?.count ?? 0)
 
@@ -2659,7 +2663,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const navIcons: Record<string, string> = {
     '/customer/dashboard': '◉', '/customer/rentals': '▤', '/customer/orders': '▦',
-    '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦',
+    '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣',
     '/staff/dashboard': '◉', '/staff/orders': '▦', '/staff/orders/ongoing': '◷', '/staff/customers': '◎', '/staff/contracts': '▤',
     '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
     '/notifications': 'N', '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
@@ -2699,7 +2703,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       ? [['/staff/dashboard', '工作台', '◉'], ['/notifications', '通知', 'N'], ['/staff/orders', '订单', '▦'], ['/staff/contracts', '合同', '▤'], ['/staff/customers', '客户', '◎']]
       : currentUser?.accountType === 'guest'
         ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
-        : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
+        : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/devices', '可租设备', '▣'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
   const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span class="nav-icon">${navIconSvg(navIcons[href] || icon)}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span class="nav-icon">${navIconSvg('↗')}</span><small>登录</small></a><a href="/register"><span class="nav-icon">${navIconSvg('+')}</span><small>注册</small></a>`
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
   const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${sanitizePlainText(currentUser.name.charAt(0).toUpperCase(), 1)}</span>` : ''
@@ -2711,7 +2715,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'CUSTOMER' ? `
             ${currentUser.accountType === 'guest' ? renderNavGroup('合同中心', [['/customer/guest', '访客合同中心'], ['/customer/guest/upgrade', '升级账户']]) : `
               ${renderNavLink('/customer/dashboard', '控制台')}
-              ${renderNavGroup('租赁工作区', [['/customer/rentals', '我的租赁'], ['/customer/orders', '订单管理']])}
+              ${renderNavGroup('租赁工作区', [['/customer/devices', '预览可租设备'], ['/customer/rentals', '我的租赁'], ['/customer/orders', '订单管理']])}
               ${renderNavGroup('账户与钱包', [['/customer/balance', '我的钱包'], ['/customer/profile', '个人资料'], ['/customer/security', '安全设置'], ['/customer/referral', '推荐计划']])}
             `}
           ` : ''}

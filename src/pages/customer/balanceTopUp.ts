@@ -1,0 +1,12 @@
+import { buildLayout, formatCurrency, getSystemSettings } from '../../site'
+import type { Context } from 'hono'
+
+export function renderCustomerBalanceTopUp(c: Context, user: any, error = '', pending?: any) {
+  const settings = getSystemSettings()
+  const bank = settings.bankDetails || {} as any
+  const body = `<div class="entity-header"><div class="identity-strip mono"><span>ACCOUNT / TOP UP</span><span>WALLET FUNDING</span></div><div class="entity-heading"><div><p class="section-code">WALLET</p><h2>余额充值</h2><p>选择充值金额和支付方式，充值到账后可用于租赁订单付款。</p></div><strong class="balance-hero-value">${formatCurrency(user.balance)}</strong></div></div>
+    ${error ? `<div class="page-notification page-notification--error">${error}</div>` : ''}
+    ${pending ? `<div class="panel"><h3>转账充值待审核</h3><p>金额：<strong>${formatCurrency(pending.amount)}</strong>。请完成转账并提交银行 Reference，管理员审核后余额会自动到账。</p><dl class="data-list"><div><dt>银行</dt><dd>${bank.bankName || '—'}</dd></div><div><dt>账户名</dt><dd>${bank.accountName || '—'}</dd></div><div><dt>BSB</dt><dd class="mono">${bank.bsb || '—'}</dd></div><div><dt>账号</dt><dd class="mono">${bank.account || '—'}</dd></div></dl><form method="post" action="/customer/balance/top-up/transfer" class="record-form"><input type="hidden" name="id" value="${pending.id}"><label class="form-label">银行 Reference</label><input class="form-control" name="reference" required maxlength="100"><label class="form-label">备注（选填）</label><textarea class="form-control" name="note" maxlength="500"></textarea><button class="button button-primary" type="submit">提交转账凭证</button></form></div>` : `<div class="panel"><form method="post" action="/customer/balance/top-up" class="record-form"><label class="form-label" for="amount">充值金额（AUD）</label><input class="form-control" id="amount" name="amount" type="number" min="1" max="10000" step="0.01" required placeholder="例如 100.00"><p class="form-text">信用卡支付会额外收取 2.5% 手续费；银行转账不收手续费。</p><div class="record-actions"><button class="button button-primary" name="method" value="card" type="submit" ${settings.paymentMethods.stripe ? '' : 'disabled'}>信用卡充值（收手续费）</button><button class="button button-secondary" name="method" value="bank_transfer" type="submit" ${settings.paymentMethods.bankTransfer ? '' : 'disabled'}>银行转账充值</button></div></form></div>`}
+    <div class="record-actions"><a href="/customer/balance" class="button button-secondary">返回余额</a></div>`
+  return buildLayout('余额充值 - 电脑租赁管理系统', body, user)
+}

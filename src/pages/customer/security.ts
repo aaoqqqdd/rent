@@ -6,7 +6,7 @@
 import { buildLayout, getUserById } from '../../site';
 import { Context } from 'hono';
 
-export async function renderCustomerSecurity(c: Context, user: any, errorMessage?: string, successMessage?: string) {
+export async function renderCustomerSecurity(c: Context, user: any, errorMessage?: string, successMessage?: string, loginRecords: any[] = []) {
   // 从数据库获取最新的用户信息
   const currentUser = await getUserById(c, user.id);
   const userToUse = currentUser || user;
@@ -86,19 +86,7 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>2023-10-26 10:30:00</td>
-            <td>Chrome (Mac OS)</td>
-            <td>192.168.1.100</td>
-            <td>成功</td>
-          </tr>
-          <tr>
-            <td>2023-10-25 15:00:00</td>
-            <td>Safari (iPhone)</td>
-            <td>10.0.0.5</td>
-            <td>成功</td>
-          </tr>
-          <!-- 更多登录记录 -->
+          ${loginRecords.length ? loginRecords.map((record: any) => `<tr><td>${record.created_at}</td><td title="${String(record.user_agent || '').replace(/"/g, '&quot;')}">${String(record.user_agent || '未知设备').slice(0, 80)}</td><td>${record.ip_address}</td><td><span class="badge ${record.status === 'success' ? 'badge-success' : 'badge-danger'}">${record.status === 'success' ? '成功' : '失败'}</span></td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无登录记录</td></tr>'}
         </tbody>
       </table>
     </div>

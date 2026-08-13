@@ -15,9 +15,9 @@ export function renderStaffDashboard(user: any, dashboardData: any) {
     </div>
     <div class="stats-grid">
       <div class="stat-card primary">
-        <h3>总收入</h3>
+        <h3>总收入（已支付/租赁中/已完成）</h3>
         <div class="value">${formatCurrency(stats.totalRevenue || 0)}</div>
-        <div class="trend">↑ 系统累计收入</div>
+        <div class="trend">↑ 不含已取消、待审核和待支付订单</div>
       </div>
       <div class="stat-card success">
         <h3>活跃租赁</h3>

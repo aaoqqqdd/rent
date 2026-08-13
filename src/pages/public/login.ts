@@ -5,7 +5,7 @@
 
 import { buildLayout } from '../../site';
 
-export function renderLogin(errorMessage?: string) {
+export function renderLogin(errorMessage?: string, showTestAccounts = false) {
   const body = `
     <div class="page-centered">
       <div class="login-container">
@@ -22,7 +22,7 @@ export function renderLogin(errorMessage?: string) {
               <a class="link-button" href="/forgot-password">忘记密码？</a>
             </div>
             ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
-            <div class="alert alert-info">
+            ${showTestAccounts ? `<div class="alert alert-info">
               <div>
                 <strong style="display:block; margin-bottom:6px;">📋 测试账号</strong>
                 <div class="mono" style="font-size:0.8rem; line-height:1.8;">
@@ -31,7 +31,7 @@ export function renderLogin(errorMessage?: string) {
                   客户: customer@example.com / Customer123
                 </div>
               </div>
-            </div>
+            </div>` : ''}
             <button class="button" type="submit" style="width: 100%;">登录</button>
           </form>
           <p class="text-muted-center">还没有账号？ <a class="link-button" href="/register">立即注册</a></p>

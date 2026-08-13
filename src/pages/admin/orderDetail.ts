@@ -18,11 +18,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user);
   }
 
-  const customer = await getUserById(c, order.userId);
-  const device = await getDeviceById(c, order.deviceId);
-  const contract = await getContractByOrderId(c, order.id);
-  const completedRefund = await c.env.RENT.prepare("SELECT type, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any;
-  const transferProof = await c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any;
+  const [customer, device, contract, completedRefund, transferProof] = await Promise.all([
+    getUserById(c, order.userId), getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id),
+    c.env.RENT.prepare("SELECT type, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
+    c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first()
+  ]) as any[];
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });

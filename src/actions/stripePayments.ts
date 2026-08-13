@@ -14,6 +14,22 @@ function cents(value: number): number {
 
 export const STRIPE_PROCESSING_FEE_RATE = 0.025
 
+export async function createBalanceTopUpCheckout(c: Context, user: any, topUpId: string): Promise<Response> {
+  await loadSystemSettingsFromDB(c)
+  if (!getSystemSettings().paymentMethods.stripe) throw new Error('信用卡支付当前未启用')
+  const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND status = 'pending'").bind(topUpId, user.id).first() as any
+  if (!topup) throw new Error('充值记录不存在或已处理')
+  const baseCents = cents(Number(topup.amount)); const feeCents = Math.round(baseCents * STRIPE_PROCESSING_FEE_RATE)
+  const origin = new URL(c.req.url).origin
+  const params = new URLSearchParams({ mode: 'payment', customer_email: user.email, success_url: `${origin}/customer/balance/top-up?success=1`, cancel_url: `${origin}/customer/balance/top-up?cancelled=1`, 'metadata[topup_id]': topUpId, 'metadata[customer_id]': user.id })
+  params.set('line_items[0][price_data][currency]', 'aud'); params.set('line_items[0][price_data][unit_amount]', String(baseCents)); params.set('line_items[0][price_data][product_data][name]', '账户余额充值'); params.set('line_items[0][quantity]', '1')
+  params.set('line_items[1][price_data][currency]', 'aud'); params.set('line_items[1][price_data][unit_amount]', String(feeCents)); params.set('line_items[1][price_data][product_data][name]', '信用卡支付手续费（2.5%）'); params.set('line_items[1][quantity]', '1')
+  const session = await stripeRequest(c, 'checkout/sessions', params, `balance-topup-${topUpId}`)
+  if (!session.id || !session.url) throw new Error('Stripe 未返回有效支付链接')
+  await c.env.RENT.prepare('UPDATE balance_topups SET stripe_checkout_session_id = ?, processing_fee = ?, status = \'pending\', updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(session.id, feeCents / 100, topUpId).run()
+  return c.redirect(session.url, 303)
+}
+
 export function stripePaymentAmounts(orderTotal: number): { baseCents: number; feeCents: number; chargedCents: number } {
   const baseCents = cents(orderTotal)
   const feeCents = Math.round(baseCents * STRIPE_PROCESSING_FEE_RATE)
@@ -112,6 +128,17 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
   const statements: any[] = []
   let paidOrderId = ''
   if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
+    const topupId = String(session?.metadata?.topup_id || '')
+    if (topupId) {
+      const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND status = 'pending'").bind(topupId).first() as any
+      const customerId = String(session?.metadata?.customer_id || '')
+      const expected = topup ? cents(topup.amount) + Math.round(cents(topup.amount) * STRIPE_PROCESSING_FEE_RATE) : 0
+      if (!topup || topup.user_id !== customerId || Number(session.amount_total) !== expected || session.payment_status !== 'paid') return c.text('Stripe 充值数据不匹配', 400)
+      const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(customerId).first() as any
+      const next = Number((Number(user?.balance || 0) + Number(topup.amount)).toFixed(2))
+      statements.push(c.env.RENT.prepare("UPDATE balance_topups SET status = 'paid', transaction_id = ?, paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(String(session.payment_intent || session.id), topupId), c.env.RENT.prepare('UPDATE users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, customerId), c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, 'top_up_card', ?, NULL)").bind(`bt-${nanoid(12)}`, customerId, topup.amount, next, `信用卡充值（含手续费 ${Number(topup.processing_fee || 0).toFixed(2)} AUD）`))
+      paidOrderId = ''
+    } else {
     const orderId = String(session?.metadata?.order_id || '')
     const customerId = String(session?.metadata?.customer_id || '')
     const order = await getOrderById(c, orderId)
@@ -126,6 +153,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
         .bind(String(session.payment_intent || ''), String(session.payment_intent || ''), session.id),
       c.env.RENT.prepare("UPDATE orders SET status = 'paid', paymentMethod = 'card', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
     )
+    }
   } else if (['checkout.session.async_payment_failed', 'checkout.session.expired'].includes(event.type)) {
     const failedOrderId = String(session?.metadata?.order_id || '')
     statements.push(

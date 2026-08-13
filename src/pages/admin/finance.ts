@@ -66,12 +66,12 @@ export function renderAdminFinance(user: any, orders: any[] = []) {
     <div class="panel">
       <div class="section-title">
         <h2>财务管理</h2>
-        <span class="section-note">管理系统收入、支出、对账和佣金发放。</span>
+        <span class="section-note">统计范围：仅计入已支付、租赁中、已完成订单；已取消、待审核和待支付订单不计入营收。</span>
       </div>
 
       <div class="finance-overview">
         <div class="finance-card">
-          <h3>总收入</h3>
+          <h3>总收入（已支付/租赁中/已完成）</h3>
           <p class="amount">${formatCurrency(totalRevenue)}</p>
         </div>
         <div class="finance-card">
