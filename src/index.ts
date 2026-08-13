@@ -139,6 +139,19 @@ async function ensureLoginAttemptsSchema(c: any): Promise<void> {
   }
 }
 
+async function ensureLoginHistorySchema(c: any): Promise<void> {
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS login_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    account TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    user_agent TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run()
+  await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id, created_at DESC)').run()
+}
+
 function errorDetails(error: unknown) {
   if (!(error instanceof Error)) return error
   return {
@@ -283,6 +296,7 @@ app.post('/login', async (c) => {
   const loginIp = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim().slice(0, 64)
   const normalizedAccount = String(account).toLowerCase().slice(0, 254)
   await ensureLoginAttemptsSchema(c)
+  await ensureLoginHistorySchema(c)
   const recentFailures = await c.env.RENT.prepare("SELECT COUNT(*) count FROM login_attempts WHERE ip_address = ? AND account = ? AND attempted_at > datetime('now', '-15 minutes')").bind(loginIp, normalizedAccount).first() as any
   if (Number(recentFailures?.count || 0) >= 5) return c.html(pages.renderLogin('登录失败次数过多，请 15 分钟后再试', shouldShowTestAccounts(c)), 429)
   const user = await verifyUserCredentials(c, account, password)
