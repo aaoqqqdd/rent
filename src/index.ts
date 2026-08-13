@@ -297,8 +297,17 @@ app.post('/login', async (c) => {
   const normalizedAccount = String(account).toLowerCase().slice(0, 254)
   await ensureLoginAttemptsSchema(c)
   await ensureLoginHistorySchema(c)
-  const recentFailures = await c.env.RENT.prepare("SELECT COUNT(*) count FROM login_attempts WHERE ip_address = ? AND account = ? AND attempted_at > datetime('now', '-15 minutes')").bind(loginIp, normalizedAccount).first() as any
-  if (Number(recentFailures?.count || 0) >= 5) return c.html(pages.renderLogin('登录失败次数过多，请 15 分钟后再试', shouldShowTestAccounts(c)), 429)
+  const recentFailures = await c.env.RENT.prepare("SELECT COUNT(*) count, MAX(attempted_at) latest FROM login_attempts WHERE ip_address = ? AND account = ? AND attempted_at > datetime('now', '-30 minutes')").bind(loginIp, normalizedAccount).first() as any
+  const failureCount = Number(recentFailures?.count || 0)
+  if (failureCount > 0 && recentFailures?.latest) {
+    const lockMinutes = Math.min(60, failureCount === 1 ? 1 : failureCount === 2 ? 3 : failureCount === 3 ? 5 : failureCount + 2)
+    const elapsedSeconds = Math.floor((Date.now() - new Date(`${recentFailures.latest}Z`).getTime()) / 1000)
+    const remainingSeconds = lockMinutes * 60 - elapsedSeconds
+    if (remainingSeconds > 0) {
+      const remainingMinutes = Math.ceil(remainingSeconds / 60)
+      return c.html(pages.renderLogin(`登录失败次数过多，请 ${remainingMinutes} 分钟后再试`, shouldShowTestAccounts(c)), 429)
+    }
+  }
   const user = await verifyUserCredentials(c, account, password)
   if (!user) {
     await c.env.RENT.prepare('INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (NULL, ?, ?, ?, \'failure\')').bind(normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
@@ -1588,6 +1597,16 @@ app.get('/admin/users/:id/edit', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderAdminUserEdit(c, user, c.req.param('id')))
+})
+
+app.post('/admin/users/:id/clear-login-lock', async (c) => {
+  const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const target = await c.env.RENT.prepare('SELECT email, role FROM users WHERE id = ?').bind(c.req.param('id')).first() as any
+  if (target?.email && target.role !== 'ADMIN') {
+    await c.env.RENT.prepare('DELETE FROM login_attempts WHERE account = ?').bind(String(target.email).toLowerCase()).run()
+  }
+  return c.redirect(`/admin/users/${encodeURIComponent(c.req.param('id'))}`)
 })
 
 app.post('/admin/users/:id/edit', async (c) => {

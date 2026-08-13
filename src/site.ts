@@ -101,6 +101,17 @@ export function combinePersonName(firstName: unknown, lastName: unknown): string
   return `${sanitizePlainText(firstName, 100).trim()} ${sanitizePlainText(lastName, 100).trim()}`.trim()
 }
 
+export function getAvatarInitials(name: unknown): string {
+  const value = sanitizePlainText(name, 200).trim()
+  if (!value) return '?'
+  if (/^[\p{Script=Han}]+$/u.test(value)) {
+    return value.slice(0, 1)
+  }
+  const parts = value.split(/\s+/).filter(Boolean)
+  if (parts.length === 1) return Array.from(parts[0]).slice(0, 2).join('').toUpperCase()
+  return `${Array.from(parts[0])[0] || ''}${Array.from(parts.at(-1) || '')[0] || ''}`.toUpperCase()
+}
+
 export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
 
 export function canUseAccountBalance(user: any): boolean {
@@ -2656,7 +2667,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const userBlockHtml = currentUser
     ? `
         <button class="notification-bell" type="button" aria-label="打开通知中心" aria-expanded="false"><svg class="notification-bell__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg><b class="notification-bell__count" hidden>0</b></button>
-        <a class="user-profile-link" href="${currentUser.role === 'ADMIN' ? `/admin/users/${encodeURIComponent(currentUser.id)}/edit` : currentUser.role === 'STAFF' ? '/staff/profile' : '/customer/profile'}" aria-label="编辑个人信息"><span class="user-label">${currentUser.name}${currentUser.accountType === 'guest' ? ` · 访客（${currentUser.guestExpiresAt || '租期结束'}删除）` : ''}</span><div class="user-avatar">${currentUser.name.charAt(0).toUpperCase()}</div></a>
+        <a class="user-profile-link" href="${currentUser.role === 'ADMIN' ? `/admin/users/${encodeURIComponent(currentUser.id)}/edit` : currentUser.role === 'STAFF' ? '/staff/profile' : '/customer/profile'}" aria-label="编辑个人信息"><span class="user-label">${currentUser.name}${currentUser.accountType === 'guest' ? ` · 访客（${currentUser.guestExpiresAt || '租期结束'}删除）` : ''}</span><div class="user-avatar">${getAvatarInitials(currentUser.name)}</div></a>
         <form method="post" action="/logout" style="display:inline"><button type="submit" class="logout-button">登出</button></form>
       `
     : ''
@@ -2706,7 +2717,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
         : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/devices', '可租设备', '▣'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
   const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span class="nav-icon">${navIconSvg(navIcons[href] || icon)}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span class="nav-icon">${navIconSvg('↗')}</span><small>登录</small></a><a href="/register"><span class="nav-icon">${navIconSvg('+')}</span><small>注册</small></a>`
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
-  const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${sanitizePlainText(currentUser.name.charAt(0).toUpperCase(), 1)}</span>` : ''
+  const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${getAvatarInitials(currentUser.name)}</span>` : ''
 
   const sidebar = currentUser
     ? `<aside class="sidebar">
