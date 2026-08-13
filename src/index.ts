@@ -94,7 +94,7 @@ function requestHost(c: any): string {
 }
 
 function isCustomerLoginHost(c: any): boolean {
-  return /^[a-z0-9-]+-rent\.ydnw6zt6vj\.workers\.dev$/.test(requestHost(c))
+  return requestHost(c) === 'test-rent.ydnw6zt6vj.workers.dev'
 }
 
 function shouldShowTestAccounts(c: any): boolean {
@@ -291,6 +291,8 @@ app.post('/login', async (c) => {
     await c.env.RENT.prepare('INSERT INTO login_attempts (ip_address, account) VALUES (?, ?)').bind(loginIp, normalizedAccount).run()
     return c.html(pages.renderLogin('账号或密码错误', shouldShowTestAccounts(c)))
   }
+  const isDemoAccount = ['u-admin', 'u-staff', 'u-customer'].includes(String(user.id))
+  if (isDemoAccount && !isCustomerLoginHost(c)) return c.html(pages.renderLogin('展示账户只能从 test-rent.ydnw6zt6vj.workers.dev 访问。', shouldShowTestAccounts(c)), 403)
   if (user.role === 'CUSTOMER' && !isCustomerLoginHost(c)) return c.html(pages.renderLogin('客户账户只能从测试租赁域名登录。', shouldShowTestAccounts(c)), 403)
   await c.env.RENT.prepare("INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (?, ?, ?, ?, 'success')").bind(user.id, normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
   await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()

@@ -2436,7 +2436,7 @@ export async function seedDatabaseIfEmpty(c: Context): Promise<void> {
   const db = getDB(c)
 
   const host = String(c.req.header('Host') || '').split(':')[0].toLowerCase()
-  const demoEnvironment = String((c.env as any).SHOW_TEST_ACCOUNTS || '').toLowerCase() === 'true' && /^[a-z0-9-]+-rent\.ydnw6zt6vj\.workers\.dev$/.test(host)
+  const demoEnvironment = String((c.env as any).SHOW_TEST_ACCOUNTS || '').toLowerCase() === 'true' && host === 'test-rent.ydnw6zt6vj.workers.dev'
   if (!demoEnvironment) return
 
   const countResult = await db.prepare('SELECT COUNT(*) AS count FROM users').all()
