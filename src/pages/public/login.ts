@@ -15,8 +15,11 @@ export function renderLogin(errorMessage?: string, showTestAccounts = false) {
           <form method="POST" action="/login">
             <label class="form-label">邮箱地址</label>
             <input class="form-control" name="account" placeholder="name@example.com" />
-            <label class="form-label">登录密码</label>
-            <input class="form-control" type="password" name="password" placeholder="••••••••" />
+            <label class="form-label" for="login-password">登录密码</label>
+            <div style="position:relative;">
+              <input class="form-control" id="login-password" type="password" name="password" placeholder="••••••••" autocomplete="current-password" style="padding-right:84px;" />
+              <button type="button" id="toggle-login-password" class="link-button" aria-controls="login-password" aria-label="显示密码" style="position:absolute; right:12px; top:50%; transform:translateY(-50%);">显示</button>
+            </div>
             <div class="form-row">
               <label class="form-check"><input type="checkbox" name="remember" /> 记住我</label>
               <a class="link-button" href="/forgot-password">忘记密码？</a>
@@ -34,6 +37,19 @@ export function renderLogin(errorMessage?: string, showTestAccounts = false) {
             </div>` : ''}
             <button class="button" type="submit" style="width: 100%;">登录</button>
           </form>
+          <script>
+            (() => {
+              const input = document.getElementById('login-password');
+              const toggle = document.getElementById('toggle-login-password');
+              if (!input || !toggle) return;
+              toggle.addEventListener('click', () => {
+                const visible = input.type === 'text';
+                input.type = visible ? 'password' : 'text';
+                toggle.textContent = visible ? '显示' : '隐藏';
+                toggle.setAttribute('aria-label', visible ? '显示密码' : '隐藏密码');
+              });
+            })();
+          </script>
           <p class="text-muted-center">还没有账号？ <a class="link-button" href="/register">立即注册</a></p>
         </div>
       </div>
