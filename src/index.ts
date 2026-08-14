@@ -2138,12 +2138,15 @@ app.post('/admin/devices/new', async (c) => {
   if (![form.name, form.brand, form.model, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号和序列号', 400)
   if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
   if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
-  await insertDevice(c, {
+  const serialNumber = String(form.serialNumber || '').trim().slice(0, 120)
+  const duplicate = await c.env.RENT.prepare('SELECT id FROM devices WHERE serialNumber = ?').bind(serialNumber).first()
+  if (duplicate) return c.html(pages.renderAdminDeviceNew(user, '序列号已存在，请检查后重新填写。'), 409)
+  try { await insertDevice(c, {
     name: form.name || '',
     brand: form.brand || '',
     model: form.model || '',
     assetTag: String(form.assetTag || '').trim().slice(0, 80) || await generateAssetTag(c, form.brand || ''),
-    serialNumber: form.serialNumber || '',
+    serialNumber,
     cpu: form.cpu || '',
     ram: form.ram || '',
     storage: form.storage || '',
@@ -2153,7 +2156,10 @@ app.post('/admin/devices/new', async (c) => {
     depositAmount: Number(form.depositAmount) || 0,
     status: (form.status as any) || 'available',
     description: form.description || form.remark || ''
-  })
+  }) } catch (error: any) {
+    if (/UNIQUE constraint failed: devices\.serial(Number|_number)/i.test(String(error?.message || error))) return c.html(pages.renderAdminDeviceNew(user, '序列号已存在，请检查后重新填写。'), 409)
+    throw error
+  }
   return c.redirect('/admin/devices')
 })
 
