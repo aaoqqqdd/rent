@@ -16,7 +16,7 @@
 
 <body class="{{BODY_CLASS}}">
   <div class="page">
-    <div class="page-transition-curtain" aria-hidden="true"></div>
+    <div class="page-transition-curtain initial-load-curtain" aria-hidden="true"><div class="initial-load-screen"><div class="initial-load-mark">PR</div><div class="initial-load-brand">PC RENTAL<span>ASSET OPS / MEL</span></div><div class="initial-load-progress"><i></i></div><div class="initial-load-status">正在载入工作台 <b>01</b></div></div></div>
     <header class="desktop-header">
       <a href="/" class="logo"><span class="logo-mark">PR</span><span class="logo-copy">PC
           Rental<small>设备租赁控制台</small></span></a>
@@ -384,9 +384,17 @@
           document.getElementById('navigation-loading')?.remove();
         }
       };
-      document.addEventListener('click', function (event) { const link = event.target.closest('a'); if (!shouldHandle(link, event)) return; event.preventDefault(); navigate(new URL(link.href), true); }, true);
+      document.addEventListener('click', function (event) { const target = event.target instanceof Element ? event.target : null; const link = target?.closest('a'); if (!shouldHandle(link, event)) return; event.preventDefault(); event.stopPropagation(); navigate(new URL(link.href), true); }, true);
       window.addEventListener('popstate', function () { navigate(new URL(window.location.href), false); });
     })();
+  </script>
+  <script>
+    window.addEventListener('load', function () {
+      const curtain = document.querySelector('.initial-load-curtain');
+      if (!curtain) return;
+      curtain.classList.add('initial-load-complete');
+      window.setTimeout(function () { curtain.remove(); }, 420);
+    }, { once: true });
   </script>
   <script>
     document.addEventListener('DOMContentLoaded', function () {

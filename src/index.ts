@@ -734,11 +734,13 @@ app.post('/admin/email-templates/send', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const form = await c.req.parseBody()
-  const template = await c.env.RENT.prepare('SELECT subject, body, theme_color FROM email_templates WHERE id = ? AND enabled = 1').bind(String(form.templateId || '')).first() as any
+  const template = form.templateId
+    ? await c.env.RENT.prepare('SELECT subject, body, theme_color FROM email_templates WHERE id = ? AND enabled = 1').bind(String(form.templateId)).first() as any
+    : { subject: String(form.subject || '').trim().slice(0, 200), body: String(form.body || '').trim().slice(0, 20000), theme_color: '#71818d' }
   const to = String(form.to || '').trim().toLowerCase()
   const channel = ['site', 'email', 'both'].includes(String(form.channel)) ? String(form.channel) : 'email'
   const recipientId = String(form.recipientId || '').trim()
-  if (!template || (['site', 'both'].includes(channel) && !recipientId)) return c.text('模板、通知收件人或邮件地址无效', 400)
+  if (!template || !template.subject || !template.body || (['site', 'both'].includes(channel) && !recipientId)) return c.text('请输入通知标题、正文并选择收件人', 400)
   const vars: Record<string, string> = {}
   for (const [key, value] of Object.entries(form)) {
     if (/^[a-z_]+$/.test(key)) vars[key] = String(value || '')

@@ -295,6 +295,7 @@ main, .page-centered, .content > * {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .initial-load-progress i { animation: none; width: 100%; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
@@ -1502,6 +1503,18 @@ button:disabled {
 }
 .motion-status-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.35em; height: 1.35em; margin-right: 8px; border-radius: 50%; font-weight: 800; line-height: 1; vertical-align: -0.15em; }
 .page-transition-curtain { position: fixed; z-index: 9999; inset: 0; background: var(--text, #172331); transform: scaleY(0); transform-origin: top; pointer-events: none; }
+.initial-load-curtain { transform: scaleY(1); transform-origin: bottom; transition: transform .38s cubic-bezier(.22,.8,.25,1); }
+.auth-page .initial-load-curtain { display: none; }
+.initial-load-curtain.initial-load-complete { transform: scaleY(0); }
+.initial-load-screen { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 18px; color: #f5f8fa; background: radial-gradient(circle at 50% 42%, #263b50 0, #172331 42%, #0d151e 100%); font-family: var(--font-body, Arial, sans-serif); }
+.initial-load-mark { display: grid; place-items: center; width: 72px; height: 72px; border: 1px solid #f0a35b; border-radius: 12px; color: #fff; background: #2161df; box-shadow: 0 0 0 8px rgb(240 163 91 / .08), 0 18px 45px rgb(0 0 0 / .28); font: 700 25px/1 var(--font-display, Arial, sans-serif); letter-spacing: .04em; }
+.initial-load-brand { color: #fff; font: 700 21px/1 var(--font-display, Arial, sans-serif); letter-spacing: .13em; text-align: center; }
+.initial-load-brand span { display: block; margin-top: 9px; color: #9fb0bf; font: 11px/1 var(--font-mono, monospace); letter-spacing: .18em; }
+.initial-load-progress { width: 230px; height: 3px; overflow: hidden; background: #344858; border-radius: 99px; }
+.initial-load-progress i { display: block; width: 42%; height: 100%; background: #f0a35b; border-radius: inherit; animation: initial-load-progress 1.15s ease-in-out infinite; }
+.initial-load-status { color: #aebdca; font: 11px/1 var(--font-mono, monospace); letter-spacing: .08em; }
+.initial-load-status b { margin-left: 10px; color: #f0a35b; font-weight: 500; }
+@keyframes initial-load-progress { 0% { transform: translateX(-115%); } 100% { transform: translateX(350%); } }
 
 /* Animated cards stay on the compositor and avoid repeated layout work. */
 .content > .panel, .content > .card, .content > .page-header, .content tbody tr { will-change: transform, opacity; }
