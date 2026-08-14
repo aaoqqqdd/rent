@@ -78,6 +78,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       stripe: Boolean(payload.paymentMethods?.stripe),
       bankTransfer: Boolean(payload.paymentMethods?.bankTransfer),
       balancePayment: Boolean(payload.paymentMethods?.balancePayment),
+      processingFeeRate: Math.min(1, Math.max(0, Number(payload.paymentMethods?.processingFeeRate ?? getSystemSettings().paymentMethods.processingFeeRate ?? 0.025))),
     },
     bankDetails: {
       bankName: payload.bankDetails?.bankName ?? getSystemSettings().bankDetails.bankName,

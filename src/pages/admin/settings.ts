@@ -57,6 +57,9 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
 
         <div class="form-group">
           <label>支付方式配置</label>
+          <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
+          <input class="form-control" id="processingFeeRate" name="processingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.processingFeeRate ?? 0.025) * 100).toFixed(2)}">
+          <p class="form-text">Stripe 信用卡支付和押金退款手续费按此比例计算。</p>
           <div class="checkbox-group">
             <input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}>
             <label for="enableStripe">启用 Stripe 信用卡支付</label>
@@ -145,6 +148,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             stripe: formData.has('enableStripe'),
             bankTransfer: formData.has('enableBankTransfer'),
             balancePayment: formData.has('enableBalancePayment'),
+            processingFeeRate: Number(formData.get('processingFeeRate') || 0) / 100,
           },
           stripeConfig: {
             publishableKey: formData.get('stripePublishableKey'),

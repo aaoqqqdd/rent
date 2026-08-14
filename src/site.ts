@@ -1297,6 +1297,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
       balancePayment: (parsedPaymentMethods as any).balancePayment === undefined
         ? systemSettings.paymentMethods.balancePayment
         : Boolean((parsedPaymentMethods as any).balancePayment),
+      processingFeeRate: Math.min(1, Math.max(0, Number((parsedPaymentMethods as any).processingFeeRate ?? systemSettings.paymentMethods.processingFeeRate ?? 0.025))),
     }
   }
   if (parsedBankDetails) systemSettings.bankDetails = parsedBankDetails
@@ -2034,6 +2035,7 @@ export const systemSettings = {
     stripe: true,
     bankTransfer: true,
     balancePayment: true,
+    processingFeeRate: 0.025,
   },
   registrationSettings: {
     requireEmailVerification: false,
@@ -2782,7 +2784,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
-    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/copyright">退款政策</a></nav></footer>`
+    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/refund-policy">退款政策</a></nav></footer>`
   })
 }
 

@@ -13,17 +13,20 @@ function cents(value: number): number {
 }
 
 export const STRIPE_PROCESSING_FEE_RATE = 0.025
+export function getStripeProcessingFeeRate(): number {
+  return Math.min(1, Math.max(0, Number(getSystemSettings().paymentMethods.processingFeeRate ?? STRIPE_PROCESSING_FEE_RATE)))
+}
 
 export async function createBalanceTopUpCheckout(c: Context, user: any, topUpId: string): Promise<Response> {
   await loadSystemSettingsFromDB(c)
   if (!getSystemSettings().paymentMethods.stripe) throw new Error('信用卡支付当前未启用')
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND status = 'pending'").bind(topUpId, user.id).first() as any
   if (!topup) throw new Error('充值记录不存在或已处理')
-  const baseCents = cents(Number(topup.amount)); const feeCents = Math.round(baseCents * STRIPE_PROCESSING_FEE_RATE)
+  const baseCents = cents(Number(topup.amount)); const feeCents = Math.round(baseCents * getStripeProcessingFeeRate())
   const origin = new URL(c.req.url).origin
   const params = new URLSearchParams({ mode: 'payment', customer_email: user.email, success_url: `${origin}/customer/balance/top-up?success=1`, cancel_url: `${origin}/customer/balance/top-up?cancelled=1`, 'metadata[topup_id]': topUpId, 'metadata[customer_id]': user.id })
   params.set('line_items[0][price_data][currency]', 'aud'); params.set('line_items[0][price_data][unit_amount]', String(baseCents)); params.set('line_items[0][price_data][product_data][name]', '账户余额充值'); params.set('line_items[0][quantity]', '1')
-  params.set('line_items[1][price_data][currency]', 'aud'); params.set('line_items[1][price_data][unit_amount]', String(feeCents)); params.set('line_items[1][price_data][product_data][name]', '信用卡支付手续费（2.5%）'); params.set('line_items[1][quantity]', '1')
+  params.set('line_items[1][price_data][currency]', 'aud'); params.set('line_items[1][price_data][unit_amount]', String(feeCents)); params.set('line_items[1][price_data][product_data][name]', `信用卡支付手续费（${(getStripeProcessingFeeRate() * 100).toFixed(2)}%）`); params.set('line_items[1][quantity]', '1')
   const session = await stripeRequest(c, 'checkout/sessions', params, `balance-topup-${topUpId}`)
   if (!session.id || !session.url) throw new Error('Stripe 未返回有效支付链接')
   await c.env.RENT.prepare('UPDATE balance_topups SET stripe_checkout_session_id = ?, processing_fee = ?, status = \'pending\', updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(session.id, feeCents / 100, topUpId).run()
@@ -32,7 +35,7 @@ export async function createBalanceTopUpCheckout(c: Context, user: any, topUpId:
 
 export function stripePaymentAmounts(orderTotal: number): { baseCents: number; feeCents: number; chargedCents: number } {
   const baseCents = cents(orderTotal)
-  const feeCents = Math.round(baseCents * STRIPE_PROCESSING_FEE_RATE)
+  const feeCents = Math.round(baseCents * getStripeProcessingFeeRate())
   return { baseCents, feeCents, chargedCents: baseCents + feeCents }
 }
 
@@ -49,13 +52,13 @@ export function stripeCheckoutItems(order: any): Array<{ name: string; amountCen
   return [
     { name: rentalLabel, amountCents: rentalCents },
     { name: '设备押金', amountCents: depositCents },
-    { name: 'Stripe 支付手续费（2.5%）', amountCents: feeCents },
+    { name: `Stripe 支付手续费（${(getStripeProcessingFeeRate() * 100).toFixed(2)}%）`, amountCents: feeCents },
   ].filter(item => item.amountCents > 0)
 }
 
 export function refundableDepositFee(refundAmount: number, payment: any): number {
   if (payment?.payment_method !== 'card' || Number(payment?.processing_fee || 0) <= 0) return 0
-  return Math.round(cents(refundAmount) * STRIPE_PROCESSING_FEE_RATE) / 100
+  return Math.round(cents(refundAmount) * getStripeProcessingFeeRate()) / 100
 }
 
 function melbourneDate(): string {
@@ -132,7 +135,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     if (topupId) {
       const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND status = 'pending'").bind(topupId).first() as any
       const customerId = String(session?.metadata?.customer_id || '')
-      const expected = topup ? cents(topup.amount) + Math.round(cents(topup.amount) * STRIPE_PROCESSING_FEE_RATE) : 0
+      const expected = topup ? cents(topup.amount) + Math.round(cents(topup.amount) * getStripeProcessingFeeRate()) : 0
       if (!topup || topup.user_id !== customerId || Number(session.amount_total) !== expected || session.payment_status !== 'paid') return c.text('Stripe 充值数据不匹配', 400)
       const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(customerId).first() as any
       const next = Number((Number(user?.balance || 0) + Number(topup.amount)).toFixed(2))
