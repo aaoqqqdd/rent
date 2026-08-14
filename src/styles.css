@@ -840,7 +840,9 @@ body.is-navigating .content { opacity: .55; transition: opacity .18s ease; }
   align-items: center;
   min-height: calc(100vh - 60px);
   padding: 40px 20px;
-  width: 100%;
+  width: 100% !important;
+  min-width: 100%;
+  max-width: 100%;
 }
 
 .hero {
