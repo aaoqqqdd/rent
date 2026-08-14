@@ -1974,6 +1974,13 @@ app.get('/admin/finance', async (c) => {
   return c.html(pages.renderAdminFinance(user, orders))
 })
 
+app.get('/admin/coupons', async (c) => {
+  const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const coupons = (await c.env.RENT.prepare('SELECT * FROM coupons ORDER BY created_at DESC').all()).results || []
+  return c.html(pages.renderAdminCoupons(admin, coupons as any[]))
+})
+
 app.get('/admin/devices', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -2092,8 +2099,7 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  const coupons = (await c.env.RENT.prepare('SELECT * FROM coupons ORDER BY created_at DESC').all()).results || []
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), coupons as any[]))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c)))
 })
 
 app.post('/admin/coupons', async (c) => {
@@ -2114,6 +2120,13 @@ app.post('/admin/coupons/:id/delete', async (c) => {
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
   await c.env.RENT.prepare('DELETE FROM coupons WHERE id = ?').bind(c.req.param('id')).run()
   return c.redirect('/admin/settings')
+})
+
+app.post('/admin/coupons/:id/toggle', async (c) => {
+  const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  await c.env.RENT.prepare('UPDATE coupons SET active = CASE active WHEN 1 THEN 0 ELSE 1 END, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(c.req.param('id')).run()
+  return c.redirect('/admin/coupons')
 })
 
 app.get('/admin/templates', async (c) => {
