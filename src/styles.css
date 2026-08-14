@@ -286,6 +286,15 @@ body:not(.has-navigated) .panel, body:not(.has-navigated) .card, body:not(.has-n
   animation: site-enter 0.4s ease-out both;
 }
 
+body.has-navigated .content, body.has-navigated .content > *, body.has-navigated .content * {
+  animation: none !important;
+  transition: none !important;
+}
+body.has-navigated .content > * { opacity: 1 !important; transform: none !important; }
+html.spa-navigation-ready .sidebar a,
+html.spa-navigation-ready .main-nav a,
+html.spa-navigation-ready .mobile-bottom-nav a { cursor: pointer; }
+
 .button, button, .link-button {
   transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
 }

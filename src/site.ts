@@ -106,8 +106,9 @@ export function combinePersonName(firstName: unknown, lastName: unknown): string
 export function getAvatarInitials(name: unknown): string {
   const value = sanitizePlainText(name, 200).trim()
   if (!value) return '?'
-  if (/^[\p{Script=Han}]+$/u.test(value)) {
-    return value.slice(0, 1)
+  const compactValue = value.replace(/\s+/g, '')
+  if (/^[\p{Script=Han}]+$/u.test(compactValue)) {
+    return compactValue.slice(0, 1)
   }
   const parts = value.split(/\s+/).filter(Boolean)
   if (parts.length === 1) return Array.from(parts[0]).slice(0, 2).join('').toUpperCase()

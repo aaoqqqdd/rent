@@ -83,7 +83,11 @@ export async function renderAdminContracts(c: Context, user: any) {
             lastUpdatedDate: document.getElementById('contractLastUpdatedDate').value,
           };
 
-          updateContractTemplate(newTemplate).then(() => {
+          fetch('/admin/contracts/template', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newTemplate), credentials: 'same-origin' }).then(async response => {
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || '合同模板保存失败');
+            return result;
+          }).then(() => {
             alert('合同模板已保存成功！');
           }).catch(error => {
             alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台')); 

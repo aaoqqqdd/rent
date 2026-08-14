@@ -343,6 +343,7 @@
     (function () {
       const content = document.querySelector('.content');
       if (!content || !window.fetch) return;
+      document.documentElement.classList.add('spa-navigation-ready');
       const shouldHandle = function (link, event) {
         if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
         if (link.target === '_blank' || link.hasAttribute('download')) return false;
@@ -356,8 +357,6 @@
           script.textContent = oldScript.textContent;
           oldScript.replaceWith(script);
         });
-        // 局部导航不会再次触发浏览器原生 DOMContentLoaded，通知新页面脚本完成初始化。
-        document.dispatchEvent(new Event('DOMContentLoaded'));
       };
       const setActiveLink = function () {
         const path = window.location.pathname.replace(/\/$/, '') || '/';
@@ -374,7 +373,7 @@
           const parsed = new DOMParser().parseFromString(html, 'text/html');
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
-          const swap = function () { document.body.classList.add('has-navigated'); content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); window.scrollTo({ top: 0, behavior: 'instant' }); };
+          const swap = function () { document.body.classList.add('has-navigated'); content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); };
           // 不使用浏览器默认的整页 View Transition，避免标签切换产生刷新感。
           swap();
           if (addHistory) window.history.pushState({}, '', url.href);
@@ -385,7 +384,14 @@
           document.getElementById('navigation-loading')?.remove();
         }
       };
-      document.addEventListener('click', function (event) { const target = event.target instanceof Element ? event.target : null; const link = target?.closest('a'); if (!shouldHandle(link, event)) return; event.preventDefault(); event.stopPropagation(); navigate(new URL(link.href), true); }, true);
+      document.addEventListener('click', function (event) {
+        const target = event.target instanceof Element ? event.target : null;
+        const link = target?.closest('a');
+        if (!shouldHandle(link, event)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        navigate(new URL(link.href), true);
+      }, true);
       window.addEventListener('popstate', function () { navigate(new URL(window.location.href), false); });
     })();
   </script>
