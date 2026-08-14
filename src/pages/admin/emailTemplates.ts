@@ -12,6 +12,7 @@ export async function renderAdminEmailTemplates(c: any, user: any) {
     c.env.RENT.prepare("INSERT OR IGNORE INTO email_templates (id, name, subject, body) VALUES ('pickup_reminder', '取件提醒', '取件提醒 - {order_number}', '您好 {customer_name}，请于 {pickup_date} 到 {pickup_location} 取件。设备：{device_name}。')"),
     c.env.RENT.prepare("INSERT OR IGNORE INTO email_templates (id, name, subject, body) VALUES ('return_confirmed', '归还确认', '设备归还确认 - {order_number}', '您好 {customer_name}，我们已确认收到订单 {order_number} 的设备。感谢您的使用！')"),
     c.env.RENT.prepare("INSERT OR IGNORE INTO email_templates (id, name, subject, body) VALUES ('password_reset', '密码重置', '重置您的登录密码', '您好 {customer_name}，请在 24 小时内通过以下链接重置密码：{reset_url}')")
+    , c.env.RENT.prepare("INSERT OR IGNORE INTO email_templates (id, name, subject, body) VALUES ('agreement_update', '协议更新通知', '协议内容已更新 - {company_name}', '您好 {customer_name}，我们已更新以下协议内容：{changed_agreements}。请登录后查看最新版本。')")
   ])
   const rows = (await c.env.RENT.prepare('SELECT * FROM email_templates ORDER BY name').all()).results as any[]
   const recipients = (await c.env.RENT.prepare("SELECT id, name, email FROM users WHERE role IN ('CUSTOMER','STAFF') AND status != 'inactive' ORDER BY name").all()).results as any[]

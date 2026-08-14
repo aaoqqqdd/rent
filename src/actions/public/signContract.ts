@@ -86,8 +86,13 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('您必须同意租赁协议才能继续。');
         }
 
+        const privacyPolicyAcceptedAt = new Date().toISOString()
+        const privacyPolicyAcceptedIp = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || '').trim().slice(0, 64)
+        await c.env.RENT.prepare(`UPDATE contracts SET privacy_policy_accepted = 1, privacy_policy_version = ?, privacy_policy_accepted_at = ?, privacy_policy_accepted_ip = ? WHERE id = ?`)
+          .bind('1.0', privacyPolicyAcceptedAt, privacyPolicyAcceptedIp || null, contract.id).run()
+
         // 更新会话数据
-        await updateSignSession(c, token, { agreedToTerms: true });
+        await updateSignSession(c, token, { agreedToTerms: true, privacyPolicyAccepted: true, privacyPolicyVersion: '1.0', privacyPolicyAcceptedAt, privacyPolicyAcceptedIp });
         await logError(c, 'INFO', `User agreed to terms, proceeding to step 2`, undefined, { token });
 
         redirectUrl = `/contract/sign?token=${token}&step=2`;
@@ -488,7 +493,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           esign_signature: userInfo.esignSignature,
           esign_browser: browser,
           esign_os: os,
-          agreement_version: existingData.agreement_version || '1.0'
+          agreement_version: existingData.agreement_version || '1.0',
+          privacy_policy_accepted: true,
+          privacy_policy_version: contract.privacy_policy_version || '1.0',
+          privacy_policy_accepted_at: contract.privacy_policy_accepted_at || new Date().toISOString(),
+          privacy_policy_accepted_ip: contract.privacy_policy_accepted_ip || esignIp || ''
         }
         await c.env.RENT.prepare(`UPDATE contracts SET esign_ip = ?, esign_device = ?, contract_data = ? WHERE id = ?`)
           .bind(esignIp || null, esignDevice || null, JSON.stringify(signedData), contract.id).run()
@@ -496,7 +505,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const signedOrder = await getOrderById(c, contract.rentalId)
         const signedDevice = signedOrder ? await getDeviceById(c, signedOrder.deviceId) : null
         const signedCustomer = await getUserById(c, userId)
-        const signedContract = { ...contract, contract_data: signedData, esign_ip: esignIp, esign_device: esignDevice, signedAt }
+        const signedContract = { ...contract, contract_data: signedData, esign_ip: esignIp, esign_device: esignDevice, signedAt,
+          privacy_policy_accepted: true,
+          privacy_policy_version: signedData.privacy_policy_version,
+          privacy_policy_accepted_at: signedData.privacy_policy_accepted_at,
+          privacy_policy_accepted_ip: signedData.privacy_policy_accepted_ip,
+        }
         const signedContent = renderContractVariables(contract.content, signedContract, signedOrder, signedDevice, signedCustomer, signedOrder ? await getContractVariableData(c, signedContract, signedOrder) : {})
         const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signedContent))), byte => byte.toString(16).padStart(2, '0')).join('')
         await c.env.RENT.prepare('UPDATE contracts SET signed_content = ?, content_hash = ? WHERE id = ?').bind(signedContent, contentHash, contract.id).run()

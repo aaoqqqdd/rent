@@ -331,6 +331,10 @@ export interface Contract {
   contract_data?: string | Record<string, unknown> | null
   signed_content?: string | null
   content_hash?: string | null
+  privacy_policy_accepted?: boolean | number | null
+  privacy_policy_version?: string | null
+  privacy_policy_accepted_at?: string | null
+  privacy_policy_accepted_ip?: string | null
 }
 
 export interface ContractTemplate {

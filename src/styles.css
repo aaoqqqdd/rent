@@ -278,11 +278,11 @@
   to { stroke-dashoffset: 0; }
 }
 
-main, .page-centered, .content > * {
+body:not(.has-navigated) main, body:not(.has-navigated) .page-centered, body:not(.has-navigated) .content > * {
   animation: site-enter 0.35s ease-out both;
 }
 
-.panel, .card, .entity-header, .hero, .page-notification {
+body:not(.has-navigated) .panel, body:not(.has-navigated) .card, body:not(.has-navigated) .entity-header, body:not(.has-navigated) .hero, body:not(.has-navigated) .page-notification {
   animation: site-enter 0.4s ease-out both;
 }
 
@@ -1502,19 +1502,28 @@ button:disabled {
   color: #1d4ed8;
 }
 .motion-status-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.35em; height: 1.35em; margin-right: 8px; border-radius: 50%; font-weight: 800; line-height: 1; vertical-align: -0.15em; }
-.page-transition-curtain { position: fixed; z-index: 9999; inset: 0; background: var(--text, #172331); transform: scaleY(0); transform-origin: top; pointer-events: none; }
+.page-transition-curtain { position: fixed; z-index: 9999; inset: 0; overflow: hidden; background: #0b1420; transform: scaleY(0); transform-origin: top; pointer-events: none; }
 .initial-load-curtain { transform: scaleY(1); transform-origin: bottom; transition: transform .38s cubic-bezier(.22,.8,.25,1); }
 .auth-page .initial-load-curtain { display: none; }
 .initial-load-curtain.initial-load-complete { transform: scaleY(0); }
-.initial-load-screen { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 18px; color: #f5f8fa; background: radial-gradient(circle at 50% 42%, #263b50 0, #172331 42%, #0d151e 100%); font-family: var(--font-body, Arial, sans-serif); }
-.initial-load-mark { display: grid; place-items: center; width: 72px; height: 72px; border: 1px solid #f0a35b; border-radius: 12px; color: #fff; background: #2161df; box-shadow: 0 0 0 8px rgb(240 163 91 / .08), 0 18px 45px rgb(0 0 0 / .28); font: 700 25px/1 var(--font-display, Arial, sans-serif); letter-spacing: .04em; }
-.initial-load-brand { color: #fff; font: 700 21px/1 var(--font-display, Arial, sans-serif); letter-spacing: .13em; text-align: center; }
-.initial-load-brand span { display: block; margin-top: 9px; color: #9fb0bf; font: 11px/1 var(--font-mono, monospace); letter-spacing: .18em; }
-.initial-load-progress { width: 230px; height: 3px; overflow: hidden; background: #344858; border-radius: 99px; }
-.initial-load-progress i { display: block; width: 42%; height: 100%; background: #f0a35b; border-radius: inherit; animation: initial-load-progress 1.15s ease-in-out infinite; }
-.initial-load-status { color: #aebdca; font: 11px/1 var(--font-mono, monospace); letter-spacing: .08em; }
+.initial-load-screen { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 20px; color: #f5f8fa; background: radial-gradient(circle at 50% 43%, rgb(42 76 104 / .8) 0, rgb(23 35 49 / .96) 38%, #0b1420 78%); font-family: var(--font-body, Arial, sans-serif); isolation: isolate; }
+.initial-load-screen::before { content: ''; position: absolute; inset: 0; z-index: -1; opacity: .22; background-image: linear-gradient(rgb(157 187 210 / .18) 1px, transparent 1px), linear-gradient(90deg, rgb(157 187 210 / .18) 1px, transparent 1px); background-size: 56px 56px; mask-image: linear-gradient(to bottom, transparent, #000 25%, #000 75%, transparent); }
+.initial-load-screen::after { content: ''; position: absolute; z-index: -1; width: 360px; height: 360px; border: 1px solid rgb(240 163 91 / .14); border-radius: 50%; box-shadow: 0 0 0 34px rgb(240 163 91 / .035), 0 0 0 68px rgb(240 163 91 / .025); animation: initial-load-orbit 5s linear infinite; }
+.initial-load-mark { display: grid; place-items: center; width: 84px; height: 84px; border: 1px solid rgb(240 163 91 / .8); border-radius: 22px; color: #fff; background: linear-gradient(145deg, #3478ee, #1646ad); box-shadow: 0 0 0 8px rgb(240 163 91 / .07), 0 18px 45px rgb(0 0 0 / .32), inset 0 1px rgb(255 255 255 / .28); font: 700 27px/1 var(--font-display, Arial, sans-serif); letter-spacing: .04em; transform: rotate(-4deg); }
+.initial-load-brand { color: #fff; font: 700 23px/1 var(--font-display, Arial, sans-serif); letter-spacing: .16em; text-align: center; text-shadow: 0 4px 24px rgb(0 0 0 / .3); }
+.initial-load-brand span { display: block; margin-top: 11px; color: #9fb8ca; font: 10px/1 var(--font-mono, monospace); letter-spacing: .22em; }
+.initial-load-progress { width: min(260px, 62vw); height: 4px; overflow: hidden; background: rgb(159 184 202 / .2); border: 1px solid rgb(255 255 255 / .08); border-radius: 99px; box-shadow: 0 0 22px rgb(240 163 91 / .12); }
+.initial-load-progress i { display: block; width: 42%; height: 100%; background: linear-gradient(90deg, #f0a35b, #ffd08a); border-radius: inherit; box-shadow: 0 0 14px rgb(240 163 91 / .7); animation: initial-load-progress 1.15s ease-in-out infinite; }
+.initial-load-status { color: #aebdca; font: 10px/1 var(--font-mono, monospace); letter-spacing: .12em; text-transform: uppercase; }
 .initial-load-status b { margin-left: 10px; color: #f0a35b; font-weight: 500; }
 @keyframes initial-load-progress { 0% { transform: translateX(-115%); } 100% { transform: translateX(350%); } }
+@keyframes initial-load-orbit { to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+  .initial-load-mark { width: 74px; height: 74px; border-radius: 19px; font-size: 24px; }
+  .initial-load-brand { font-size: 19px; letter-spacing: .12em; }
+  .initial-load-screen::after { width: 270px; height: 270px; }
+}
 
 /* Animated cards stay on the compositor and avoid repeated layout work. */
 .content > .panel, .content > .card, .content > .page-header, .content tbody tr { will-change: transform, opacity; }
@@ -3692,9 +3701,16 @@ tr:hover td {
 
 @media (max-width: 720px) {
   .legal-footer {
-    align-items: flex-end;
-    flex-direction: column;
-    gap: 6px;
+    justify-content: flex-start;
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    padding: 8px 16px;
+  }
+  .legal-footer nav {
+    justify-content: flex-start;
+    gap: 8px 12px;
   }
 }
 

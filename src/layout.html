@@ -16,7 +16,7 @@
 
 <body class="{{BODY_CLASS}}">
   <div class="page">
-    <div class="page-transition-curtain initial-load-curtain" aria-hidden="true"><div class="initial-load-screen"><div class="initial-load-mark">PR</div><div class="initial-load-brand">PC RENTAL<span>ASSET OPS / MEL</span></div><div class="initial-load-progress"><i></i></div><div class="initial-load-status">正在载入工作台 <b>01</b></div></div></div>
+    <div class="page-transition-curtain initial-load-curtain" aria-hidden="false" role="status" aria-label="正在加载工作台"><div class="initial-load-screen"><div class="initial-load-mark">PR</div><div class="initial-load-brand">PC RENTAL<span>ASSET OPS / MEL</span></div><div class="initial-load-progress"><i></i></div><div class="initial-load-status">正在载入工作台 <b>01</b></div></div></div>
     <header class="desktop-header">
       <a href="/" class="logo"><span class="logo-mark">PR</span><span class="logo-copy">PC
           Rental<small>设备租赁控制台</small></span></a>
@@ -374,8 +374,9 @@
           const parsed = new DOMParser().parseFromString(html, 'text/html');
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
-          const swap = function () { content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); window.runSiteAnimations?.(); window.scrollTo({ top: 0, behavior: 'instant' }); };
-          if (document.startViewTransition) document.startViewTransition(swap); else swap();
+          const swap = function () { document.body.classList.add('has-navigated'); content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); window.scrollTo({ top: 0, behavior: 'instant' }); };
+          // 不使用浏览器默认的整页 View Transition，避免标签切换产生刷新感。
+          swap();
           if (addHistory) window.history.pushState({}, '', url.href);
         } catch (error) {
           // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。
@@ -393,6 +394,7 @@
       const curtain = document.querySelector('.initial-load-curtain');
       if (!curtain) return;
       curtain.classList.add('initial-load-complete');
+      curtain.setAttribute('aria-hidden', 'true');
       window.setTimeout(function () { curtain.remove(); }, 420);
     }, { once: true });
   </script>
@@ -442,6 +444,8 @@
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const content = document.querySelector('.content');
     if (!content) return;
+    // 局部导航后的页面不重复播放整页入场动画。
+    if (document.body.classList.contains('has-navigated')) return;
     if (window.ScrollTrigger) window.ScrollTrigger.getAll().forEach(function (trigger) { trigger.kill(); });
     if (reduceMotion) { window.gsap.set(content.querySelectorAll('.page-header, .panel, .card'), { clearProps: 'all' }); return; }
     const items = content.querySelectorAll('.page-header, .panel, .card');

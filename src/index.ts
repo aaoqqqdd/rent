@@ -75,6 +75,7 @@ import {
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
+import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund } from './actions/stripePayments'
 import siteStyles from './styles.css'
 
@@ -445,13 +446,22 @@ app.post('/register', async (c) => {
     ['user_agreement_accepted_ip', 'TEXT'],
     ['privacy_policy_version', 'TEXT'],
     ['privacy_policy_accepted_at', 'TEXT'],
+    ['privacy_policy_accepted', 'INTEGER NOT NULL DEFAULT 0'],
+    ['service_terms_accepted', 'INTEGER NOT NULL DEFAULT 0'],
+    ['service_terms_version', 'TEXT'],
+    ['service_terms_accepted_at', 'TEXT'],
+    ['service_terms_accepted_ip', 'TEXT'],
+    ['refund_policy_accepted', 'INTEGER NOT NULL DEFAULT 0'],
+    ['refund_policy_version', 'TEXT'],
+    ['refund_policy_accepted_at', 'TEXT'],
+    ['refund_policy_accepted_ip', 'TEXT'],
   ] as const) {
     try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} ${definition}`).run() } catch (_) {}
   }
   const acceptedAt = new Date().toISOString()
   const acceptedIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0].trim() || null
-  await c.env.RENT.prepare(`UPDATE users SET user_agreement_accepted = 1, user_agreement_version = ?, user_agreement_accepted_at = ?, user_agreement_accepted_ip = ?, privacy_policy_version = ?, privacy_policy_accepted_at = ? WHERE id = ?`)
-    .bind('1.0', acceptedAt, acceptedIp, '1.0', acceptedAt, newUserId).run()
+  await c.env.RENT.prepare(`UPDATE users SET user_agreement_accepted = 1, user_agreement_version = ?, user_agreement_accepted_at = ?, user_agreement_accepted_ip = ?, service_terms_accepted = 1, service_terms_version = ?, service_terms_accepted_at = ?, service_terms_accepted_ip = ?, privacy_policy_accepted = 1, privacy_policy_version = ?, privacy_policy_accepted_at = ?, privacy_policy_accepted_ip = ?, refund_policy_accepted = 1, refund_policy_version = ?, refund_policy_accepted_at = ?, refund_policy_accepted_ip = ? WHERE id = ?`)
+    .bind('1.0', acceptedAt, acceptedIp, '1.0', acceptedAt, acceptedIp, '1.0', acceptedAt, acceptedIp, '1.0', acceptedAt, acceptedIp, newUserId).run()
 
   // 注册验证邮件的发送由独立接口处理，服务端统一限制 60 秒内只能发送一次。
   await sendEmailVerification(c, newUser)
@@ -2212,7 +2222,9 @@ app.post('/admin/templates/:kind', async (c) => {
     const content = sanitizeRichHtml(payload?.content || '')
     await loadSystemSettingsFromDB(c)
     const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'copyright']
+    const before = String((getSystemSettings() as any)[settingKey] || '')
     await updateSystemSettings(c, { [settingKey]: content })
+    if (before !== content) await notifyAgreementUpdate(c, [[settingKey, ({ user: '用户协议', rental: '租赁协议', service: '网站服务条款', privacy: '隐私政策', copyright: '退款政策' } as any)[kind]]], getSystemSettings().companyDetails)
     return c.json({ success: true })
   } catch (error: any) {
     return c.json({ success: false, error: error?.message || '协议保存失败' }, 400)
