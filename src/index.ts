@@ -380,7 +380,14 @@ for (const [path, title, key, code] of [
   app.get(path, async (c) => {
     const settings = await loadSystemSettingsFromDB(c)
     const currentUser = c.get('user')
-    const content = renderSiteVariables(settings[key], currentUser)
+    const metadataKey = key === 'copyrightNotice' ? 'copyright' : path === '/terms' ? 'user' : path === '/service-terms' ? 'service' : 'privacy'
+    const metadata = settings.legalMetadata[metadataKey]
+    const content = renderSiteVariables(settings[key], currentUser, {
+      ...(metadataKey === 'user' ? { user_agreement_version: metadata.version, user_agreement_last_updated_date: metadata.lastUpdatedDate } : {}),
+      ...(metadataKey === 'service' ? { service_terms_version: metadata.version, service_terms_last_updated_date: metadata.lastUpdatedDate } : {}),
+      ...(metadataKey === 'privacy' ? { privacy_policy_version: metadata.version, privacy_policy_last_updated_date: metadata.lastUpdatedDate } : {}),
+      ...(metadataKey === 'copyright' ? { refund_policy_version: metadata.version, refund_policy_last_updated_date: metadata.lastUpdatedDate, last_updated_date: metadata.lastUpdatedDate } : {}),
+    })
     return c.html(buildLayout(title, `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">${code}</p><h2>${title}</h2></div></div><div class="legal-document__content">${content}</div></article>`, currentUser))
   })
 }
@@ -1354,6 +1361,9 @@ app.post('/admin/contracts/template', async (c) => {
       name: payload.name || '标准租赁合同模板',
       content: payload.content || '',
     })
+    const metadata = getSystemSettings().legalMetadata || {}
+    const lastUpdatedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.lastUpdatedDate || '')) ? String(payload.lastUpdatedDate) : new Date().toISOString().slice(0, 10)
+    await updateSystemSettings(c, { legalMetadata: { ...metadata, contract: { version: String(payload.version || '1.0').trim().slice(0, 30) || '1.0', lastUpdatedDate } } } as any)
     return c.json({ success: true, template: updatedTemplate })
   } catch (error: any) {
     console.error('Failed to save contract template:', error?.stack || error)
@@ -2222,8 +2232,10 @@ app.post('/admin/templates/:kind', async (c) => {
     const content = sanitizeRichHtml(payload?.content || '')
     await loadSystemSettingsFromDB(c)
     const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'copyright']
+    const metadata = getSystemSettings().legalMetadata || {}
+    const lastUpdatedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.lastUpdatedDate || '')) ? String(payload.lastUpdatedDate) : new Date().toISOString().slice(0, 10)
     const before = String((getSystemSettings() as any)[settingKey] || '')
-    await updateSystemSettings(c, { [settingKey]: content })
+    await updateSystemSettings(c, { [settingKey]: content, legalMetadata: { ...metadata, [kind]: { version: String(payload?.version || '1.0').trim().slice(0, 30) || '1.0', lastUpdatedDate } } } as any)
     if (before !== content) await notifyAgreementUpdate(c, [[settingKey, ({ user: '用户协议', rental: '租赁协议', service: '网站服务条款', privacy: '隐私政策', copyright: '退款政策' } as any)[kind]]], getSystemSettings().companyDetails)
     return c.json({ success: true })
   } catch (error: any) {

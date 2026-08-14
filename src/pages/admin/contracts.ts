@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractTemplate, CONTRACT_VARIABLE_GROUPS } from '../../site';
+import { buildLayout, getContractTemplate, CONTRACT_VARIABLE_GROUPS, getSystemSettings } from '../../site';
 import { Context } from 'hono';
 
 export function renderAdminContractManagement(user: any) {
@@ -23,11 +23,12 @@ export async function renderAdminContracts(c: Context, user: any) {
   const safeTemplateName = String(currentTemplate?.name ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const initialTemplateContent = JSON.stringify(String(currentTemplate?.content ?? '')).replace(/</g, '\\u003c');
   const textareaContent = String(currentTemplate?.content ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const contractMetadata = getSystemSettings().legalMetadata.contract;
   const completeVariableIndex = CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')
 
   const body = `
     <div class="panel">
-      <div class="section-title"><div><a class="breadcrumb-link" href="/admin/templates">← 返回协议与模板</a><h2>编辑正式合同模板</h2><span class="section-note">维护签署完成后生成正式合同所使用的正文。</span></div></div>
+      <div class="section-title"><div><a class="breadcrumb-link" href="/admin/templates">← 返回协议与模板</a><h2>编辑正式合同</h2><span class="section-note">维护签署完成后生成正式合同所使用的正文。</span></div></div>
 
       <div class="admin-contract-sections">
         <div class="section">
@@ -35,6 +36,7 @@ export async function renderAdminContracts(c: Context, user: any) {
           <p>变量会在客户完成签署时替换，并冻结为正式合同快照。</p>
           <form id="contractTemplateForm" class="editor-layout-form">
             <div class="form-group">
+              <div class="grid grid-2"><div><label class="form-label">合同版本</label><input class="form-control" id="contractVersion" value="${contractMetadata.version || '1.0'}" required></div><div><label class="form-label">最后更新日期</label><input class="form-control" id="contractLastUpdatedDate" type="date" value="${contractMetadata.lastUpdatedDate || ''}"></div></div>
               <label for="templateName">模板名称</label>
               <input type="text" id="templateName" name="templateName" class="form-control" value="${safeTemplateName}">
             </div>
@@ -77,6 +79,8 @@ export async function renderAdminContracts(c: Context, user: any) {
             id: '${currentTemplate?.id ?? 'default'}',
             name: formData.get('templateName'),
             content: formData.get('templateContent'),
+            version: document.getElementById('contractVersion').value,
+            lastUpdatedDate: document.getElementById('contractLastUpdatedDate').value,
           };
 
           updateContractTemplate(newTemplate).then(() => {

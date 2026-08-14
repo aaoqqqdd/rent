@@ -24,7 +24,7 @@ export function renderAdminTemplateHub(user: any) {
         <p>签署步骤 1</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a>
       </article>
       <article class="template-register__row">
-        <div class="template-register__document"><span class="document-mark">CT</span><div><h3>正式合同模板</h3><p>签署完成后冻结并生成可下载合同。</p></div></div>
+        <div class="template-register__document"><span class="document-mark">CT</span><div><h3>正式合同</h3><p>签署完成后冻结并生成可下载合同。</p></div></div>
         <p>正式合同</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/contract">编辑模板</a>
       </article>
     </div>`
@@ -42,11 +42,18 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
     copyright: ['编辑退款政策', '显示在全站右下角的退款政策页面。', settings.copyrightNotice],
   }[kind]
   const [title, description, content] = documentMeta
+  const metadata = getSystemSettings().legalMetadata?.[kind] || { version: '1.0', lastUpdatedDate: '' }
   const initialContent = JSON.stringify(content).replace(/</g, '\\u003c')
   const textareaContent = String(content ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const variableIndex = isRental
-    ? `<details class="variable-index"><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')}</details>`
-    : ''
+  const agreementVariables: Record<AgreementKind, string[]> = {
+    user: ['user_agreement_version', 'user_agreement_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
+    service: ['service_terms_version', 'service_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
+    privacy: ['privacy_policy_version', 'privacy_policy_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
+    copyright: ['refund_policy_version', 'refund_policy_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
+    rental: ['rental_agreement_version', 'rental_agreement_last_updated_date', 'contract_version', 'contract_last_updated_date', 'customer_name', 'customer_email', 'device_name', 'start_date', 'end_date', 'total_rent', 'deposit_amount', 'company_name'],
+  }
+  const variableNames = agreementVariables[kind]
+  const variableIndex = `<details class="variable-index"><summary>本协议支持的变量（${variableNames.length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${variableNames.map(name => `<code>\${${name}}</code>`).join('')}</div></section></details>`
   const body = `
     <div class="panel template-editor-page">
       <div class="section-title template-editor-heading">
@@ -60,6 +67,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         <input type="hidden" id="agreementKind" name="kind" value="${kind}">
         ${variableIndex}
         <div class="form-group">
+          <div class="grid grid-2"><div><label class="form-label" for="agreementVersion">协议版本</label><input class="form-control" id="agreementVersion" name="version" value="${metadata.version || '1.0'}" required></div><div><label class="form-label" for="agreementLastUpdatedDate">最后更新日期</label><input class="form-control" id="agreementLastUpdatedDate" name="lastUpdatedDate" type="date" value="${metadata.lastUpdatedDate || ''}"><small class="form-text">留空时保存当天日期。</small></div></div>
           <label for="agreementContentMarkdown">协议内容（支持 HTML 编辑）</label>
           <textarea id="agreementContentMarkdown" name="content" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
         </div>
@@ -95,7 +103,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
             const response = await fetch('/admin/templates/' + form.dataset.kind, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ content: getAgreementContent() })
+              body: JSON.stringify({ content: getAgreementContent(), version: document.getElementById('agreementVersion').value, lastUpdatedDate: document.getElementById('agreementLastUpdatedDate').value })
             });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || '保存失败');

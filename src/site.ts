@@ -45,6 +45,14 @@ export function renderSiteVariables(content: string, currentUser: any = {}, extr
     company_email: systemSettings.companyDetails.email,
     company_website: systemSettings.companyDetails.website,
     company_logo: systemSettings.companyDetails.logo,
+    user_agreement_version: systemSettings.legalMetadata.user.version,
+    user_agreement_last_updated_date: systemSettings.legalMetadata.user.lastUpdatedDate,
+    service_terms_version: systemSettings.legalMetadata.service.version,
+    service_terms_last_updated_date: systemSettings.legalMetadata.service.lastUpdatedDate,
+    privacy_policy_version: systemSettings.legalMetadata.privacy.version,
+    privacy_policy_last_updated_date: systemSettings.legalMetadata.privacy.lastUpdatedDate,
+    refund_policy_version: systemSettings.legalMetadata.copyright.version,
+    refund_policy_last_updated_date: systemSettings.legalMetadata.copyright.lastUpdatedDate,
     user_name: currentUser?.name || '',
     user_email: currentUser?.email || '',
     ...extraValues,
@@ -1244,7 +1252,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings'
+type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -1275,11 +1283,14 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const companyDetailsValue = values.get('companyDetails')
   const rentalRulesValue = values.get('rentalRules')
   const registrationSettingsValue = values.get('registrationSettings')
+  const legalMetadataValue = values.get('legalMetadata')
 
   systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? systemSettings.userTerms)
   systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
   systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue ?? systemSettings.serviceTerms)
   systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue ?? systemSettings.privacyPolicy)
+  const parsedLegalMetadata = safeJsonParse<any>(legalMetadataValue)
+  if (parsedLegalMetadata) systemSettings.legalMetadata = { ...systemSettings.legalMetadata, ...parsedLegalMetadata }
   systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue ?? systemSettings.copyrightNotice)
   systemSettings.priceStrategy = priceStrategyValue ?? systemSettings.priceStrategy
 
@@ -1334,6 +1345,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   await write('referralSettings', systemSettings.referralSettings)
   await write('companyDetails', systemSettings.companyDetails)
   await write('rentalRules', systemSettings.rentalRules)
+  await write('legalMetadata', systemSettings.legalMetadata)
   await write('registrationSettings', systemSettings.registrationSettings)
 
   return systemSettings
@@ -2040,6 +2052,14 @@ export const systemSettings = {
   registrationSettings: {
     requireEmailVerification: false,
   },
+  legalMetadata: {
+    user: { version: '1.0', lastUpdatedDate: '' },
+    rental: { version: '1.0', lastUpdatedDate: '' },
+    service: { version: '1.0', lastUpdatedDate: '' },
+    privacy: { version: '1.0', lastUpdatedDate: '' },
+    copyright: { version: '1.0', lastUpdatedDate: '' },
+    contract: { version: '1.0', lastUpdatedDate: '' },
+  },
   /* legacy email templates are managed in email_templates */
   /*
 
@@ -2196,6 +2216,12 @@ export function renderContractVariables(content: string, contract: Contract, ord
     created_time: contract.createdAt ?? (contract as any).created_at,
     updated_time: (contract as any).updatedAt ?? (contract as any).updated_at,
     contract_status: contract.status,
+    refund_policy_version: stored.refund_policy_version || systemSettings.legalMetadata.copyright.version,
+    last_updated_date: stored.last_updated_date || systemSettings.legalMetadata.copyright.lastUpdatedDate,
+    rental_agreement_version: stored.rental_agreement_version || systemSettings.legalMetadata.rental.version,
+    rental_agreement_last_updated_date: stored.rental_agreement_last_updated_date || systemSettings.legalMetadata.rental.lastUpdatedDate,
+    contract_version: systemSettings.legalMetadata.contract.version,
+    contract_last_updated_date: systemSettings.legalMetadata.contract.lastUpdatedDate,
     company_representative: stored.company_representative || systemSettings.companyDetails.contact,
     contract_url: stored.contract_url || `/contract/view/${contract.id}`,
     invoice_url: stored.invoice_url || (order?.id ? `/orders/${order.id}/invoice` : ''),
@@ -2210,6 +2236,9 @@ export function renderContractVariables(content: string, contract: Contract, ord
 }
 
 export const CONTRACT_OPERATIONAL_FIELDS = [
+  ['refund_policy_version', '退款政策版本'], ['last_updated_date', '协议最后更新日期'],
+  ['rental_agreement_version', '租赁协议版本'], ['rental_agreement_last_updated_date', '租赁协议最后更新日期'],
+  ['contract_version', '正式合同版本'], ['contract_last_updated_date', '正式合同最后更新日期'],
   ['agreement_version', '合同版本'], ['jurisdiction', '司法管辖区'],
   ['customer_address', '客户地址'], ['customer_dob', '客户出生日期'], ['customer_country', '客户国家'], ['customer_id_type', '证件类型'], ['customer_id_number', '证件号码'], ['customer_driver_expiry', '驾照到期日'], ['emergency_contact', '紧急联系人'], ['emergency_phone', '紧急联系电话'],
   ['invoice_number', '发票编号'], ['delivery_method', '配送方式（Pickup / Delivery）'], ['delivery_fee', '配送费'], ['return_method', '归还方式（CourierPickup / StoreReturn）'], ['pickup_location', '取货地点'], ['return_location', '归还地点'], ['pickup_time', '取货时间'], ['return_time', '归还时间'],

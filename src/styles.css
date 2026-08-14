@@ -3683,21 +3683,32 @@ tr:hover td {
   margin-inline: auto;
 }
 
-.legal-document__content {
+.legal-document__content, .signing-agreement {
   max-width: 72ch;
   color: var(--text-secondary);
+  font-size: 1rem;
   line-height: 1.8;
 }
+
+.legal-document__content p, .signing-agreement p { margin: 0 0 1em; }
+.legal-document__content ul, .legal-document__content ol, .signing-agreement ul, .signing-agreement ol { margin: .7em 0 1.2em; padding-left: 1.35em; }
+.legal-document__content li, .signing-agreement li { margin: .35em 0; padding-left: .15em; }
+.legal-document__content strong, .signing-agreement strong { color: var(--text-primary); font-weight: 700; }
 
 .legal-document__content h1 {
   display: none;
 }
 
-.legal-document__content h2 {
-  margin: 28px 0 8px;
+.legal-document__content h2, .signing-agreement h2 {
+  margin: 32px 0 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
   color: var(--text-primary);
-  font-size: 1.15rem;
+  font-size: 1.2rem;
+  line-height: 1.35;
 }
+
+.legal-document__content h2:first-child, .signing-agreement h2:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 
 @media (max-width: 720px) {
   .legal-footer {
