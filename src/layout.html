@@ -364,8 +364,7 @@
         if (active) { active.classList.add('active'); active.setAttribute('aria-current', 'page'); }
       };
       const navigate = async function (url, addHistory) {
-        document.body.classList.add('is-navigating');
-        if (window.gsap) window.gsap.to('.page-transition-curtain', { scaleY: 1, transformOrigin: 'bottom', duration: 0.32, ease: 'power3.inOut' });
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
         try {
           const response = await fetch(url.href, { headers: { 'X-Site-Navigation': 'partial', Accept: 'text/html' }, credentials: 'same-origin' });
           if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('navigation failed');
@@ -375,12 +374,11 @@
           if (!nextContent) throw new Error('content missing');
           const swap = function () { content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); window.runSiteAnimations?.(); window.scrollTo({ top: 0, behavior: 'instant' }); };
           if (document.startViewTransition) document.startViewTransition(swap); else swap();
-          if (window.gsap) window.gsap.to('.page-transition-curtain', { scaleY: 0, transformOrigin: 'top', duration: 0.55, delay: 0.08, ease: 'power4.inOut' });
           if (addHistory) window.history.pushState({}, '', url.href);
         } catch (_) {
           window.location.href = url.href;
         } finally {
-          window.setTimeout(function () { document.body.classList.remove('is-navigating'); document.getElementById('navigation-loading')?.remove(); }, 260);
+          document.getElementById('navigation-loading')?.remove();
         }
       };
       document.addEventListener('click', function (event) { const link = event.target.closest('a'); if (!shouldHandle(link, event)) return; event.preventDefault(); navigate(new URL(link.href), true); }, true);
