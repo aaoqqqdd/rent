@@ -1471,6 +1471,14 @@ button:disabled {
   border-color: #bfdbfe;
   color: #1d4ed8;
 }
+.motion-status-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.35em; height: 1.35em; margin-right: 8px; border-radius: 50%; font-weight: 800; line-height: 1; vertical-align: -0.15em; }
+.page-transition-curtain { position: fixed; z-index: 9999; inset: 0; background: var(--text, #172331); transform: scaleY(0); transform-origin: top; pointer-events: none; }
+
+/* Animated cards stay on the compositor and avoid repeated layout work. */
+.content > .panel, .content > .card, .content > .page-header, .content tbody tr { will-change: transform, opacity; }
+.card, .stat-card, .device-catalog-card, .payment-option { transform-style: preserve-3d; will-change: transform; }
+.page-notification--success .motion-status-icon, .alert-success .motion-status-icon { color: var(--success); background: var(--success-light); }
+.page-notification--error .motion-status-icon, .alert-error .motion-status-icon { color: var(--danger); background: var(--danger-light, #fee2e2); }
 
 .card {
   background: var(--surface);
@@ -4983,6 +4991,7 @@ tr:hover td {
 .bsb-entry { position: relative; display: block; }
 .bsb-entry .form-control { width: 100%; padding-right: 58px; }
 .bsb-logo { position: absolute; z-index: 1; top: 50%; right: 10px; width: 32px; height: 32px; display: block !important; transform: translateY(-50%); border: 1px solid #d7e0e6; border-radius: 6px; background-color: #fff; background-position: center; background-repeat: no-repeat; background-size: 26px 26px; pointer-events: none; }
+.bsb-logo[hidden] { display: none !important; }
 .bsb-logo.has-image { background-color: #fff; border: 1px solid #d7e0e6; }
 .navigation-loading { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; gap: 10px; background: rgba(15, 23, 42, 0.28); color: #fff; font-weight: 600; pointer-events: all; }
 .navigation-loading__spinner { width: 20px; height: 20px; border: 3px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%; animation: navigation-loading-spin .75s linear infinite; }

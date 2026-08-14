@@ -68,6 +68,7 @@ import {
   , createDueDateNotifications
   , sanitizePlainText
   , renderNotificationMarkdown
+  , renderFlexibleContent
   , renderEmailNotificationHtml
   , ensureNotificationsTable
 } from './site'
@@ -165,6 +166,8 @@ function errorDetails(error: unknown) {
 }
 
 app.use('*', async (c, next) => {
+  // 静态资源不需要鉴权，避免每次加载 CSS 都额外查询 D1 会话表。
+  if (c.req.path === '/styles.css') return next()
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     c.set('user', user)
@@ -428,6 +431,21 @@ app.post('/register', async (c) => {
   }
 
   await insertUser(c, newUser)
+  // 协议确认记录独立保存，不写入协议正文或合同内容。
+  for (const [column, definition] of [
+    ['user_agreement_accepted', 'INTEGER NOT NULL DEFAULT 0'],
+    ['user_agreement_version', 'TEXT'],
+    ['user_agreement_accepted_at', 'TEXT'],
+    ['user_agreement_accepted_ip', 'TEXT'],
+    ['privacy_policy_version', 'TEXT'],
+    ['privacy_policy_accepted_at', 'TEXT'],
+  ] as const) {
+    try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} ${definition}`).run() } catch (_) {}
+  }
+  const acceptedAt = new Date().toISOString()
+  const acceptedIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0].trim() || null
+  await c.env.RENT.prepare(`UPDATE users SET user_agreement_accepted = 1, user_agreement_version = ?, user_agreement_accepted_at = ?, user_agreement_accepted_ip = ?, privacy_policy_version = ?, privacy_policy_accepted_at = ? WHERE id = ?`)
+    .bind('1.0', acceptedAt, acceptedIp, '1.0', acceptedAt, newUserId).run()
 
   // 注册验证邮件的发送由独立接口处理，服务端统一限制 60 秒内只能发送一次。
   await sendEmailVerification(c, newUser)
@@ -700,7 +718,7 @@ app.post('/admin/email-templates', async (c) => {
   await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#f0a35b'").run() } catch (_) {}
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'").run() } catch (_) {}
-  const format = form.format === 'html' ? 'html' : 'markdown'
+  const format = 'html'
   const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#71818d'
   await c.env.RENT.prepare('INSERT INTO email_templates (id, name, subject, body, format, theme_color) VALUES (?, ?, ?, ?, ?, ?)').bind(`custom_${nanoid(12)}`, name, subject, body, format, themeColor).run()
   return c.redirect('/admin/email-templates')
@@ -746,7 +764,7 @@ app.post('/admin/email-templates/:id', async (c) => {
   await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'").run() } catch (_) {}
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#f0a35b'").run() } catch (_) {}
-  const format = form.format === 'html' ? 'html' : 'markdown'
+  const format = 'html'
   const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#71818d'
   await c.env.RENT.prepare('UPDATE email_templates SET subject = ?, body = ?, format = ?, theme_color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subject, body, format, themeColor, c.req.param('id')).run()
   return c.redirect('/admin/email-templates')
@@ -766,7 +784,7 @@ app.get('/notifications/announcements', async (c) => {
   if (!user) return c.json({ announcements: [] }, 401)
   await ensureNotificationsTable(c)
   const result = await c.env.RENT.prepare("SELECT id, title, message, created_at FROM notifications WHERE recipient_id = ? AND type = 'announcement' AND read_at IS NULL ORDER BY created_at DESC LIMIT 5").bind(user.id).all()
-  return c.json({ announcements: (result.results || []).map((item: any) => ({ ...item, message_html: renderNotificationMarkdown(item.message) })) })
+  return c.json({ announcements: (result.results || []).map((item: any) => ({ ...item, message_html: renderFlexibleContent(item.message) })) })
 })
 
 app.get('/notifications/unread', async (c) => {
@@ -785,7 +803,7 @@ app.get('/notifications/unread', async (c) => {
       throw error
     }
   }
-  return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message_html: renderNotificationMarkdown(item.message) })) })
+  return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message_html: renderFlexibleContent(item.message) })) })
 })
 
 app.post('/notifications/announcements/:id/dismiss', async (c) => {
@@ -863,6 +881,7 @@ app.post('/customer/rent/:id', async (c) => {
   const device = await getDeviceById(c, c.req.param('id'))
   await loadSystemSettingsFromDB(c)
   const rentalRules = getSystemSettings().rentalRules
+  const deviceUnavailable = new Set(((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).all()).results || []).map((row: any) => row.unavailable_date))
   const form = await c.req.parseBody()
   const startDate = String(form.startDate || '')
   const endDate = String(form.endDate || '')
@@ -876,6 +895,7 @@ app.post('/customer/rent/:id', async (c) => {
   const unavailable = new Set(rentalRules.unavailableDates)
   let blockedDate = ''
   for (let day = new Date(start); day < end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
+  if (!blockedDate) for (let day = new Date(start); day < end; day.setUTCDate(day.getUTCDate() + 1)) { if (deviceUnavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
   if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
@@ -2053,7 +2073,8 @@ app.get('/admin/devices/:id/edit', async (c) => {
   if (!device) {
     return c.redirect('/admin/devices')
   }
-  return c.html(pages.renderAdminDeviceEdit(user, device))
+  const unavailableDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(device.id).all()).results || []).map((row: any) => row.unavailable_date)
+  return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates }))
 })
 
 app.post('/admin/devices/:id/edit', async (c) => {
@@ -2079,6 +2100,9 @@ app.post('/admin/devices/:id/edit', async (c) => {
     status: form.status as any,
     description: form.description || form.remark
   })
+  const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]
+  await c.env.RENT.prepare('DELETE FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).run()
+  if (dates.length) await c.env.RENT.batch(dates.map(date => c.env.RENT.prepare('INSERT INTO device_unavailable_dates (device_id, unavailable_date) VALUES (?, ?)').bind(c.req.param('id'), date)))
   return c.redirect('/admin/devices')
 })
 

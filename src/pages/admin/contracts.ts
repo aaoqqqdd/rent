@@ -22,6 +22,7 @@ export async function renderAdminContracts(c: Context, user: any) {
   const currentTemplate = await getContractTemplate(c);
   const safeTemplateName = String(currentTemplate?.name ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const initialTemplateContent = JSON.stringify(String(currentTemplate?.content ?? '')).replace(/</g, '\\u003c');
+  const textareaContent = String(currentTemplate?.content ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const completeVariableIndex = CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')
 
   const body = `
@@ -39,16 +40,11 @@ export async function renderAdminContracts(c: Context, user: any) {
             </div>
             <div class="form-group">
               <details class="variable-index" open><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${completeVariableIndex}</details>
-              <label for="templateContentMarkdown">模板内容（Markdown）</label>
-              <textarea id="templateContentMarkdown" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
+              <label for="templateContentMarkdown">模板内容（HTML）</label>
+              <textarea id="templateContentMarkdown" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
               <input type="hidden" id="templateContent" name="templateContent">
-              <small class="form-text text-muted">请使用 Markdown 编写合同正文。您可以在模板中使用上面列出的变量，系统会在生成合同时自动替换它们。</small>
+              <small class="form-text text-muted">请输入 HTML，系统会在生成合同时替换变量。</small>
             </div>
-            <div class="template-controls">
-              <button type="button" id="contractTemplatePreviewButton" class="button button-secondary">预览变量效果</button>
-              <span class="section-note">点击预览当前模板在示例订单中的变量替换效果。</span>
-            </div>
-            <div id="contractTemplatePreview" class="template-preview"></div>
             <div class="form-actions form-actions-right">
               <button type="submit" class="button button-primary">保存模板</button>
             </div>
@@ -62,36 +58,13 @@ export async function renderAdminContracts(c: Context, user: any) {
       document.addEventListener('DOMContentLoaded', function() {
         const templateContentMarkdown = document.getElementById('templateContentMarkdown');
         const hiddenTemplateContent = document.getElementById('templateContent');
-        const contractTemplatePreviewButton = document.getElementById('contractTemplatePreviewButton');
-        const contractTemplatePreview = document.getElementById('contractTemplatePreview');
         const templateForm = document.getElementById('contractTemplateForm');
 
-        function getContractTemplateContent() {
-          return window.markdownToHtml(templateContentMarkdown.value);
-        }
-
-        async function updateContractTemplatePreview() {
-          if (!contractTemplatePreview) return;
-          contractTemplatePreview.textContent = '正在生成预览...';
-          try {
-            const response = await fetch('/admin/template-preview', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ kind: 'contract', content: getContractTemplateContent() })
-            });
-            const result = await response.json();
-            if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
-            contractTemplatePreview.innerHTML = result.html || '<p>无预览内容</p>';
-          } catch (error) {
-            contractTemplatePreview.textContent = error instanceof Error ? error.message : '预览失败';
-          }
-        }
-
-        contractTemplatePreviewButton?.addEventListener('click', updateContractTemplatePreview);
+        function getContractTemplateContent() { return templateContentMarkdown.value; }
 
         const initialContent = ${initialTemplateContent};
         if (initialContent) {
-          templateContentMarkdown.value = window.htmlToMarkdown(initialContent);
+          templateContentMarkdown.value = initialContent;
         }
 
         templateForm?.addEventListener('submit', function(event) {
@@ -108,7 +81,6 @@ export async function renderAdminContracts(c: Context, user: any) {
 
           updateContractTemplate(newTemplate).then(() => {
             alert('合同模板已保存成功！');
-            updateContractTemplatePreview?.();
           }).catch(error => {
             alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台')); 
           });

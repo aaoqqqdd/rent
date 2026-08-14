@@ -17,6 +17,7 @@
 
 <body class="{{BODY_CLASS}}">
   <div class="page">
+    <div class="page-transition-curtain" aria-hidden="true"></div>
     <header class="desktop-header">
       <a href="/" class="logo"><span class="logo-mark">PR</span><span class="logo-copy">PC
           Rental<small>设备租赁控制台</small></span></a>
@@ -38,8 +39,6 @@
     {{FOOTER}}
   </div>
   <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
   <script>
@@ -131,7 +130,8 @@
       window.siteConfirm(message, function () { form.requestSubmit(); });
     }, true);
 
-    document.addEventListener('DOMContentLoaded', function () {
+    // 页面动画统一由 runSiteAnimations 管理，避免重复创建 GSAP timeline。
+    if (false) document.addEventListener('DOMContentLoaded', function () {
       const showNavigationLoading = function () {
         if (document.getElementById('navigation-loading')) return;
         const overlay = document.createElement('div');
@@ -367,6 +367,7 @@
       };
       const navigate = async function (url, addHistory) {
         document.body.classList.add('is-navigating');
+        if (window.gsap) window.gsap.to('.page-transition-curtain', { scaleY: 1, transformOrigin: 'bottom', duration: 0.32, ease: 'power3.inOut' });
         try {
           const response = await fetch(url.href, { headers: { 'X-Site-Navigation': 'partial', Accept: 'text/html' }, credentials: 'same-origin' });
           if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('navigation failed');
@@ -374,8 +375,9 @@
           const parsed = new DOMParser().parseFromString(html, 'text/html');
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
-          const swap = function () { content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); window.scrollTo({ top: 0, behavior: 'instant' }); };
+          const swap = function () { content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); window.runSiteAnimations?.(); window.scrollTo({ top: 0, behavior: 'instant' }); };
           if (document.startViewTransition) document.startViewTransition(swap); else swap();
+          if (window.gsap) window.gsap.to('.page-transition-curtain', { scaleY: 0, transformOrigin: 'top', duration: 0.55, delay: 0.08, ease: 'power4.inOut' });
           if (addHistory) window.history.pushState({}, '', url.href);
         } catch (_) {
           window.location.href = url.href;
@@ -413,13 +415,66 @@
 (() => {
   const anzLogo = 'https://www.google.com/s2/favicons?domain=anz.com.au&sz=128';
   document.querySelectorAll('input[name="bsb"], #bsbInput, #refundBsb, #bankBSB').forEach(input => {
-    const digits = input.value.replace(/\D/g, '').slice(0, 6);
-    // Only show a logo for an explicitly verified full BSB; do not guess from a prefix.
-    if (digits !== '014111') return;
     const wrap = document.createElement('div'); wrap.className = 'bsb-entry'; input.parentNode.insertBefore(wrap, input); wrap.appendChild(input);
     const logo = document.createElement('span'); logo.className = 'bsb-logo'; logo.setAttribute('aria-label', 'ANZ'); logo.style.backgroundImage = `url(${anzLogo})`; wrap.appendChild(logo);
+    const update = () => {
+      const digits = input.value.replace(/\D/g, '').slice(0, 6);
+      // Only show a logo for an explicitly verified full BSB; do not guess from a prefix.
+      const known = digits === '014111';
+      logo.hidden = !known;
+      input.setAttribute('aria-describedby', known ? logo.id || 'bsb-bank-name' : '');
+    };
+    input.addEventListener('input', update);
+    update();
   });
 })();
+</script>
+<script>
+  window.runSiteAnimations = function () {
+    if (!window.gsap) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const content = document.querySelector('.content');
+    if (!content) return;
+    if (window.ScrollTrigger) window.ScrollTrigger.getAll().forEach(function (trigger) { trigger.kill(); });
+    if (reduceMotion) { window.gsap.set(content.querySelectorAll('.page-header, .panel, .card'), { clearProps: 'all' }); return; }
+    const items = content.querySelectorAll('.page-header, .panel, .card');
+    window.gsap.fromTo(items, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.42, ease: 'power2.out', stagger: 0.055, overwrite: 'auto' });
+    window.gsap.fromTo(content.querySelectorAll('tbody tr'), { autoAlpha: 0, y: 6 }, { autoAlpha: 1, y: 0, duration: 0.28, ease: 'power1.out', stagger: 0.035, delay: 0.12, overwrite: 'auto' });
+    const notices = content.querySelectorAll('.page-notification--success, .alert-success, .page-notification--error, .alert-error');
+    notices.forEach(function (notice) {
+      if (!notice.querySelector('.motion-status-icon')) {
+        const icon = document.createElement('span');
+        icon.className = 'motion-status-icon';
+        icon.textContent = notice.classList.contains('page-notification--success') || notice.classList.contains('alert-success') ? '✓' : '×';
+        icon.setAttribute('aria-hidden', 'true');
+        notice.prepend(icon);
+      }
+    });
+    window.gsap.fromTo(content.querySelectorAll('.motion-status-icon'), { autoAlpha: 0, scale: 0.45, rotation: -18 }, { autoAlpha: 1, scale: 1, rotation: 0, duration: 0.38, ease: 'back.out(1.7)', stagger: 0.06, overwrite: 'auto' });
+    window.gsap.fromTo('.sidebar', { autoAlpha: 0, x: -18 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: 'power3.out', overwrite: 'auto' });
+    window.gsap.fromTo(content.querySelectorAll('.page-header h2, .page-header .section-code'), { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.55, ease: 'power3.out', stagger: 0.07, overwrite: 'auto' });
+    if (window.ScrollTrigger) {
+      window.gsap.utils.toArray(content.querySelectorAll('.stat-card, .device-catalog-card, .payment-option, .record-section, .finance-card')).forEach(function (item) {
+        window.gsap.fromTo(item, { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.65, ease: 'power3.out', scrollTrigger: { trigger: item, start: 'top 88%', once: true } });
+      });
+    }
+    content.querySelectorAll('.card, .stat-card, .device-catalog-card, .payment-option').forEach(function (card) {
+      if (card.dataset.motionHover) return;
+      card.dataset.motionHover = '1';
+      card.addEventListener('mouseenter', function () { window.gsap.to(card, { y: -3, duration: 0.2, ease: 'power2.out', overwrite: 'auto' }); });
+      card.addEventListener('mouseleave', function () { window.gsap.to(card, { y: 0, duration: 0.22, ease: 'power3.out', overwrite: 'auto' }); });
+    });
+  };
+  window.addEventListener('load', window.runSiteAnimations);
+  document.addEventListener('mouseover', function (event) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !window.gsap) return;
+    const button = event.target.closest('.button');
+    if (button && !button.dataset.motionReady) {
+      button.dataset.motionReady = '1';
+      button.addEventListener('mouseenter', () => window.gsap.to(button, { y: -2, duration: 0.18, ease: 'power2.out', overwrite: 'auto' }));
+      button.addEventListener('mouseleave', () => window.gsap.to(button, { y: 0, duration: 0.2, ease: 'power2.out', overwrite: 'auto' }));
+    }
+  });
 </script>
 </body>
 

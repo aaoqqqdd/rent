@@ -43,6 +43,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
   }[kind]
   const [title, description, content] = documentMeta
   const initialContent = JSON.stringify(content).replace(/</g, '\\u003c')
+  const textareaContent = String(content ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const variableIndex = isRental
     ? `<details class="variable-index"><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${CONTRACT_VARIABLE_GROUPS.map(([group, names]) => `<section class="contract-variable-group"><h5>${group}</h5><div class="variable-chip-list">${names.map(name => `<code>\${${name}}</code>`).join('')}</div></section>`).join('')}</details>`
     : ''
@@ -59,14 +60,9 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         <input type="hidden" id="agreementKind" name="kind" value="${kind}">
         ${variableIndex}
         <div class="form-group">
-          <label for="agreementContentMarkdown">协议内容（Markdown）</label>
-          <textarea id="agreementContentMarkdown" name="content" class="markdown-editor" placeholder="请输入 Markdown 内容"></textarea>
+          <label for="agreementContentMarkdown">协议内容（HTML）</label>
+          <textarea id="agreementContentMarkdown" name="content" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
         </div>
-        <div class="template-controls">
-          <button type="button" id="agreementPreviewButton" class="button button-secondary">预览变量效果</button>
-          <span class="section-note">点击后将通过示例数据渲染当前内容。</span>
-        </div>
-        <div id="agreementPreview" class="template-preview"></div>
         <div id="templateSaveStatus" class="template-save-status" role="status" aria-live="polite"></div>
         <div class="form-actions form-actions-right">
           <a href="/admin/templates" class="button button-secondary">取消</a>
@@ -80,40 +76,15 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         const status = document.getElementById('templateSaveStatus');
         const submitButton = form.querySelector('button[type="submit"]');
         const agreementContentMarkdown = document.getElementById('agreementContentMarkdown');
-        const previewButton = document.getElementById('agreementPreviewButton');
-        const previewContainer = document.getElementById('agreementPreview');
 
         const initialContent = ${initialContent};
         if (initialContent) {
-          agreementContentMarkdown.value = window.htmlToMarkdown(initialContent);
+          agreementContentMarkdown.value = initialContent;
         }
 
-        function getAgreementContent() {
-          return window.markdownToHtml(agreementContentMarkdown.value);
-        }
+        function getAgreementContent() { return agreementContentMarkdown.value; }
 
         const agreementKindInput = document.getElementById('agreementKind');
-
-        async function updateAgreementPreview(event) {
-          if (event && typeof event.preventDefault === 'function') event.preventDefault();
-          if (!previewContainer) return;
-          previewContainer.textContent = '正在生成预览...';
-          try {
-            const kind = String(form.dataset.kind || (agreementKindInput ? agreementKindInput.value : '')).trim();
-            const response = await fetch('/admin/template-preview', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ kind, content: getAgreementContent() })
-            });
-            const result = await response.json();
-            if (!response.ok || !result.success) throw new Error(result.error || '预览失败');
-            previewContainer.innerHTML = result.html || '<p>无预览内容</p>';
-          } catch (error) {
-            previewContainer.textContent = error instanceof Error ? error.message : '预览失败';
-          }
-        }
-
-        previewButton?.addEventListener('click', function(event) { updateAgreementPreview(event); });
 
         form.addEventListener('submit', async function(event) {
           event.preventDefault();

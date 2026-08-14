@@ -17,7 +17,7 @@ export function renderAdminDeviceEdit(user: any, device: any) {
         <section class="form-section"><div class="form-section-title"><span class="mono">ID</span><div><h3>设备身份</h3><p>更新后，员工端设备目录和搜索结果会使用这里的资料。</p></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label class="form-label" for="name">设备名称</label><input class="form-control" id="name" name="name" value="${value('name')}" required maxlength="120"></div>
-            <div class="form-group"><label class="form-label" for="brand">品牌</label><div class="brand-entry"><input class="form-control" id="brand" name="brand" list="brandSuggestions" value="${value('brand')}" required maxlength="120"><span class="brand-logo" id="brandLogo" aria-hidden="true"></span></div><datalist id="brandSuggestions"><option value="Apple"><option value="Dell"><option value="HP"><option value="Lenovo"><option value="ASUS"><option value="Acer"><option value="Microsoft"><option value="Razer"><option value="Samsung"><option value="LG"></datalist></div>
+            <div class="form-group"><label class="form-label" for="brand">品牌</label><div class="brand-entry"><input class="form-control" id="brand" name="brand" value="${value('brand')}" required maxlength="120" placeholder="例如 Apple"><span class="brand-logo" id="brandLogo" aria-hidden="true"></span></div></div>
             <div class="form-group"><label class="form-label" for="model">型号</label><input class="form-control" id="model" name="model" value="${value('model')}" required maxlength="120"></div>
             <div class="form-group"><label class="form-label" for="remark">备注</label><input class="form-control" id="remark" name="remark" value="${value('description')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="serialNumber">序列号</label><input class="form-control mono" id="serialNumber" name="serialNumber" value="${value('serialNumber', 'serial_number')}" required maxlength="120"></div>
@@ -31,6 +31,7 @@ export function renderAdminDeviceEdit(user: any, device: any) {
             <div class="form-group"><label class="form-label" for="storage">存储</label><input class="form-control" id="storage" name="storage" value="${value('storage')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="gpu">显卡</label><input class="form-control" id="gpu" name="gpu" value="${value('gpu')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="os">操作系统</label><input class="form-control" id="os" name="os" value="${value('os')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><input class="form-control" id="unavailableDates" name="unavailableDates" value="${esc((device.unavailableDates || []).join(', '))}" placeholder="2026-12-25, 2026-12-26"><small class="form-text">多个日期用逗号分隔；这些日期不能被客户或员工安排租赁。</small></div>
           </div>
           <div class="form-group"><label class="form-label" for="description">补充描述</label><textarea class="form-control" id="description" name="description" rows="4" maxlength="2000">${value('description')}</textarea></div>
         </section>

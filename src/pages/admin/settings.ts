@@ -98,7 +98,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
                 <input type="text" id="bankAccountName" name="bankAccountName" class="form-control" value="${settings.bankDetails.accountName}" placeholder="请输入账户名称">
               </div>
               <div>
-                <label for="bankBSB" class="form-label">BSB 码</label>
+                <label for="bankBSB" class="form-label">BSB</label>
                 <input type="text" id="bankBSB" name="bankBSB" class="form-control" value="${settings.bankDetails.bsb}" placeholder="例如: 062-001">
               </div>
               <div>
