@@ -161,7 +161,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
           
           <p class="section-note">本步骤仅用于确认租赁协议。正式合同将在完成电子签署后生成。</p>
-          <div class="contract-content signing-agreement">
+          <div class="contract-content signing-agreement" id="signing-agreement-scroll" tabindex="0" aria-label="租赁协议正文">
             ${agreementHtml}
           </div>
           
@@ -169,11 +169,12 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=1">
             <label class="form-check agreement-confirmation">
-              <input type="checkbox" name="agreeTerms" required />
-              <span>我已仔细阅读并完全同意上述所有租赁条款。</span>
+              <input type="checkbox" id="agreeTerms" name="agreeTerms" required disabled />
+              <span>我已仔细阅读并完全同意上述所有租赁条款。<small class="agreement-scroll-hint">请先滚动阅读至协议底部</small></span>
             </label>
             <div class="record-actions"><button class="button" type="submit">同意并进入下一步</button></div>
           </form>
+          <script>(()=>{const box=document.getElementById('signing-agreement-scroll'),check=document.getElementById('agreeTerms'),hint=document.querySelector('.agreement-scroll-hint');if(!box||!check)return;const unlock=()=>{if(box.scrollTop+box.clientHeight>=box.scrollHeight-8){check.disabled=false;if(hint)hint.textContent='已阅读至协议底部，可以勾选同意。';box.classList.add('is-read')}};box.addEventListener('scroll',unlock,{passive:true});unlock()})()</script>
         </div>
       `;
       break;
