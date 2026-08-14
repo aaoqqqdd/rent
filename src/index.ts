@@ -317,6 +317,12 @@ app.post('/login', async (c) => {
     await c.env.RENT.prepare('INSERT INTO login_attempts (ip_address, account) VALUES (?, ?)').bind(loginIp, normalizedAccount).run()
     return c.html(pages.renderLogin('账号或密码错误', shouldShowTestAccounts(c)))
   }
+  // 冷静期内登录视为撤销删除申请。
+  if ((user as any).deletion_scheduled_at || (user as any).deletionScheduledAt) {
+    try {
+      await c.env.RENT.prepare('UPDATE users SET deletion_requested_at = NULL, deletion_scheduled_at = NULL WHERE id = ?').bind(user.id).run()
+    } catch (_) {}
+  }
   const isDemoAccount = ['u-admin', 'u-staff', 'u-customer'].includes(String(user.id))
   if (isDemoAccount && !isCustomerLoginHost(c)) return c.html(pages.renderLogin('展示账户只能从 test-rent.ydnw6zt6vj.workers.dev 访问。', shouldShowTestAccounts(c)), 403)
   if (user.role === 'CUSTOMER' && !isCustomerLoginHost(c)) return c.html(pages.renderLogin('客户账户只能从测试租赁域名登录。', shouldShowTestAccounts(c)), 403)
@@ -732,23 +738,33 @@ app.post('/admin/email-templates/send', async (c) => {
   const to = String(form.to || '').trim().toLowerCase()
   const channel = ['site', 'email', 'both'].includes(String(form.channel)) ? String(form.channel) : 'email'
   const recipientId = String(form.recipientId || '').trim()
-  if (!template || (['email', 'both'].includes(channel) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) || (['site', 'both'].includes(channel) && !recipientId)) return c.text('模板、通知收件人或邮件地址无效', 400)
+  if (!template || (['site', 'both'].includes(channel) && !recipientId)) return c.text('模板、通知收件人或邮件地址无效', 400)
   const vars: Record<string, string> = {}
   for (const [key, value] of Object.entries(form)) {
     if (/^[a-z_]+$/.test(key)) vars[key] = String(value || '')
   }
+  if (recipientId) {
+    const recipient = await getUserById(c, recipientId)
+    if (recipient) {
+      vars.customer_name = vars.customer_name || String(recipient.name || '')
+      vars.customer_email = vars.customer_email || String(recipient.email || '')
+      if (!to && ['email', 'both'].includes(channel)) form.to = vars.customer_email
+    }
+  }
+  const mailTo = String(form.to || to).trim().toLowerCase()
+  if (['email', 'both'].includes(channel) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mailTo)) return c.text('邮件收件邮箱无效', 400)
   const companyDetails = getSystemSettings().companyDetails || {}
   vars.company_name = vars.company_name || String(companyDetails.name || 'PC Rental')
   vars.company_email = vars.company_email || String(companyDetails.email || '')
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
-  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: notificationPlainText(fill(template.body)) })
+  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: fill(template.body) })
   if (['email', 'both'].includes(channel)) {
     const apiKey = (c.env as any).RESEND_API_KEY
     const from = (c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email
     if (!apiKey || !from) return c.text('尚未配置邮件服务：请设置 RESEND_API_KEY 和 EMAIL_FROM', 503)
     const filledBody = fill(template.body)
     const html = renderEmailNotificationHtml(fill(template.subject), filledBody, vars.company_name, template.theme_color || '#71818d')
-    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [to], subject: fill(template.subject), text: filledBody, html }) })
+    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [mailTo], subject: fill(template.subject), text: filledBody, html }) })
     if (!response.ok) return c.text(`邮件发送失败：${await response.text()}`, 502)
   }
   return c.redirect('/admin/email-templates')
@@ -1438,6 +1454,21 @@ app.post('/customer/profile', async (c) => {
   const updatedUser = await updateUser(c, user.id, dataToUpdate)
 
   return c.html(await pages.renderCustomerProfile(c, updatedUser, '个人信息已更新', 'success'))
+})
+
+app.post('/customer/profile/delete-account', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  if (form.confirmDelete !== 'on') return c.html(await pages.renderCustomerProfile(c, user, '请先确认永久删除账户及余额清零事项。', 'error'), 400)
+  for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
+    try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) {}
+  }
+  const requestedAt = new Date()
+  const scheduledAt = new Date(requestedAt.getTime() + 7 * 24 * 60 * 60 * 1000)
+  await c.env.RENT.prepare('UPDATE users SET deletion_requested_at = ?, deletion_scheduled_at = ? WHERE id = ? AND status = \'active\'')
+    .bind(requestedAt.toISOString(), scheduledAt.toISOString(), user.id).run()
+  return c.html(await pages.renderCustomerProfile(c, { ...user, deletionScheduledAt: scheduledAt.toISOString() }, '账户已进入 7 天冷静期。期间重新登录即可取消删除。', 'success'))
 })
 
 app.get('/customer/referral', async (c) => {
@@ -2433,11 +2464,16 @@ export default {
     ctx.waitUntil(
       (async () => {
         try {
+          for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
+            try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) {}
+          }
+          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET name = '删除账户', email = 'deleted-account-' || id || '@invalid.local', phone = NULL, bsb = NULL, account = NULL, account_number = NULL, balance = 0, commission_balance = 0, password_hash = 'disabled', password_salt = 'disabled', referral_code = NULL, referrer_id = NULL, staff_id = NULL, user_agreement_accepted_ip = NULL, status = 'inactive', account_status = 'inactive', deleted_at = CURRENT_TIMESTAMP, deletion_requested_at = NULL, deletion_scheduled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
           const deletedCount = await cleanupExpiredAndCancelledContracts(c)
           const expiredGuestCount = await cleanupExpiredGuestAccounts(c)
           const expiredPaymentCount = await cancelExpiredPendingPaymentOrders(c)
           const dueNotificationCount = await createDueDateNotifications(c)
           console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
+          console.log(`Scheduled account cleanup completed: disabled ${Number(deletedAccountResult.meta?.changes || 0)} accounts`)
           console.log(`Scheduled guest cleanup completed: disabled ${expiredGuestCount} expired guest accounts`)
           console.log(`Scheduled payment cleanup completed: cancelled ${expiredPaymentCount} unpaid orders`)
           console.log(`Scheduled due notifications completed: created ${dueNotificationCount} reminders`)

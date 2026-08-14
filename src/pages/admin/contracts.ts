@@ -55,7 +55,7 @@ export async function renderAdminContracts(c: Context, user: any) {
     </div>
 
     <script>
-      document.addEventListener('DOMContentLoaded', function() {
+      function initContractEditor() {
         const templateContentMarkdown = document.getElementById('templateContentMarkdown');
         const hiddenTemplateContent = document.getElementById('templateContent');
         const templateForm = document.getElementById('contractTemplateForm');
@@ -102,7 +102,9 @@ export async function renderAdminContracts(c: Context, user: any) {
             });
           });
         });
-      });
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initContractEditor, { once: true });
+      else initContractEditor();
     </script>
   `;
 

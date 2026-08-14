@@ -356,6 +356,8 @@
           script.textContent = oldScript.textContent;
           oldScript.replaceWith(script);
         });
+        // 局部导航不会再次触发浏览器原生 DOMContentLoaded，通知新页面脚本完成初始化。
+        document.dispatchEvent(new Event('DOMContentLoaded'));
       };
       const setActiveLink = function () {
         const path = window.location.pathname.replace(/\/$/, '') || '/';
@@ -375,8 +377,9 @@
           const swap = function () { content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); window.runSiteAnimations?.(); window.scrollTo({ top: 0, behavior: 'instant' }); };
           if (document.startViewTransition) document.startViewTransition(swap); else swap();
           if (addHistory) window.history.pushState({}, '', url.href);
-        } catch (_) {
-          window.location.href = url.href;
+        } catch (error) {
+          // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。
+          console.error('局部页面切换失败:', error);
         } finally {
           document.getElementById('navigation-loading')?.remove();
         }

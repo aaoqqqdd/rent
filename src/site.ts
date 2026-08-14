@@ -159,6 +159,8 @@ export interface User {
   guest_expires_at?: string | null
   deletedAt?: string | null
   deleted_at?: string | null
+  deletionRequestedAt?: string | null
+  deletionScheduledAt?: string | null
 }
 
 export interface Device {
@@ -487,6 +489,8 @@ function normalizeUserRow(row: any): User {
   const guestOrderId = row.guestOrderId ?? row.guest_order_id ?? null
   const guestExpiresAt = row.guestExpiresAt ?? row.guest_expires_at ?? null
   const deletedAt = row.deletedAt ?? row.deleted_at ?? null
+  const deletionRequestedAt = row.deletionRequestedAt ?? row.deletion_requested_at ?? null
+  const deletionScheduledAt = row.deletionScheduledAt ?? row.deletion_scheduled_at ?? null
 
   return {
     ...row,
@@ -513,6 +517,10 @@ function normalizeUserRow(row: any): User {
     guest_expires_at: guestExpiresAt,
     deletedAt,
     deleted_at: deletedAt,
+    deletionRequestedAt,
+    deletionScheduledAt,
+    deletion_requested_at: deletionRequestedAt,
+    deletion_scheduled_at: deletionScheduledAt,
   } as User
 }
 
@@ -1528,6 +1536,8 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     guestOrderId: 'guest_order_id',
     guestExpiresAt: 'guest_expires_at',
     deletedAt: 'deleted_at',
+    deletionRequestedAt: 'deletion_requested_at',
+    deletionScheduledAt: 'deletion_scheduled_at',
     accountNumber: 'account_number'
   }
 
@@ -1535,7 +1545,7 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     'name', 'email', 'role', 'status', 'balance', 'phone', 'bsb', 'account', 'accountNumber',
     'referralCode', 'referrerId', 'passwordHash', 'passwordSalt', 'commissionBalance',
     'createdAt', 'updatedAt', 'commissionRate', 'staffId', 'accountType', 'accountStatus',
-    'guestOrderId', 'guestExpiresAt', 'deletedAt',
+    'guestOrderId', 'guestExpiresAt', 'deletedAt', 'deletionRequestedAt', 'deletionScheduledAt',
   ])
   for (const key of Object.keys(fields)) {
     if (!allowedFields.has(key)) delete fields[key]

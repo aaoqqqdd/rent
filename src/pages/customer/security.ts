@@ -7,6 +7,7 @@ import { buildLayout, getUserById } from '../../site';
 import { Context } from 'hono';
 
 export async function renderCustomerSecurity(c: Context, user: any, errorMessage?: string, successMessage?: string, loginRecords: any[] = []) {
+  const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
   // 从数据库获取最新的用户信息
   const currentUser = await getUserById(c, user.id);
   const userToUse = currentUser || user;
@@ -14,8 +15,8 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
   const body = `
     <div class="panel">
       <div class="section-title"><h2>安全设置</h2><span class="section-note">管理您的账户安全。</span></div>
-      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
-      ${successMessage ? `<div class="page-notification page-notification--success">${successMessage}</div>` : ''}
+      ${errorMessage ? `<div class="page-notification page-notification--error">${esc(errorMessage)}</div>` : ''}
+      ${successMessage ? `<div class="page-notification page-notification--success">${esc(successMessage)}</div>` : ''}
 
       <h3>修改密码</h3>
       <form method="POST" action="/customer/security" id="passwordChangeForm">
@@ -86,7 +87,7 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
           </tr>
         </thead>
         <tbody>
-          ${loginRecords.length ? loginRecords.map((record: any) => `<tr><td>${record.created_at}</td><td title="${String(record.user_agent || '').replace(/"/g, '&quot;')}">${String(record.user_agent || '未知设备').slice(0, 80)}</td><td>${record.ip_address}</td><td><span class="badge ${record.status === 'success' ? 'badge-success' : 'badge-danger'}">${record.status === 'success' ? '成功' : '失败'}</span></td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无登录记录</td></tr>'}
+          ${loginRecords.length ? loginRecords.map((record: any) => `<tr><td>${esc(record.created_at)}</td><td title="${esc(record.user_agent)}">${esc(String(record.user_agent || '未知设备').slice(0, 80))}</td><td>${esc(record.ip_address)}</td><td><span class="badge ${record.status === 'success' ? 'badge-success' : 'badge-danger'}">${record.status === 'success' ? '成功' : '失败'}</span></td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无登录记录</td></tr>'}
         </tbody>
       </table>
     </div>

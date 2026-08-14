@@ -71,7 +71,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
       </form>
     </div>
     <script>
-      document.addEventListener('DOMContentLoaded', function() {
+      function initAgreementEditor() {
         const form = document.getElementById('agreementTemplateForm');
         const status = document.getElementById('templateSaveStatus');
         const submitButton = form.querySelector('button[type="submit"]');
@@ -108,7 +108,9 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
             submitButton.disabled = false;
           }
         });
-      });
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAgreementEditor, { once: true });
+      else initAgreementEditor();
     </script>`
   return buildLayout(`${title} - 电脑租赁管理系统`, body, user)
 }
