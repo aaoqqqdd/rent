@@ -105,17 +105,18 @@ export async function renderAdminContracts(c: Context, user: any) {
         document.querySelectorAll('.variable-chip-list code').forEach(item => {
           item.style.cursor = 'pointer';
           item.title = '点击复制';
-          item.addEventListener('click', function() {
+          item.addEventListener('click', async function() {
             const variableName = this.innerText;
-            navigator.clipboard.writeText(variableName).then(() => {
+            try {
+              if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(variableName);
+              else {
+                const helper = document.createElement('textarea'); helper.value = variableName; helper.style.position = 'fixed'; helper.style.opacity = '0'; document.body.appendChild(helper); helper.focus(); helper.select(); document.execCommand('copy'); helper.remove();
+              }
               this.style.backgroundColor = 'var(--primary-light)';
               setTimeout(() => {
                 this.style.backgroundColor = '';
               }, 300);
-            }).catch(err => {
-              console.error('复制失败:', err);
-              alert('复制失败，请手动复制。');
-            });
+            } catch (err) { console.error('复制失败:', err); }
           });
         });
       }

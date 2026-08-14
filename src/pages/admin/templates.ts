@@ -99,6 +99,21 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
 
         const agreementKindInput = document.getElementById('agreementKind');
 
+        const copyVariable = async (value) => {
+          try {
+            if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(value);
+            else {
+              const helper = document.createElement('textarea'); helper.value = value; helper.style.position = 'fixed'; helper.style.opacity = '0'; document.body.appendChild(helper); helper.focus(); helper.select(); document.execCommand('copy'); helper.remove();
+            }
+            status.className = 'template-save-status is-success'; status.textContent = '变量已复制';
+            window.setTimeout(() => { if (!dirty) status.textContent = '已保存'; }, 1200);
+          } catch (_) { status.className = 'template-save-status is-error'; status.textContent = '复制失败，请手动复制'; }
+        };
+        form.querySelectorAll('.variable-chip-list code').forEach((chip) => {
+          chip.style.cursor = 'copy'; chip.title = '点击复制变量';
+          chip.addEventListener('click', () => copyVariable(chip.textContent.trim()));
+        });
+
         form.addEventListener('submit', async function(event) {
           event.preventDefault();
           submitButton.disabled = true;
