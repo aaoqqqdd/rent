@@ -1300,7 +1300,7 @@ app.get('/staff/devices/:id', async (c) => {
 app.post('/staff/devices/:id/agent-setup', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
-  const code = crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()
+  const code = String(Math.floor(100000 + Math.random() * 900000))
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))
   const hash = Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, '0')).join('')
   await c.env.RENT.prepare(`UPDATE devices SET agent_setup_code_hash = ?, agent_setup_code_expires_at = datetime(CURRENT_TIMESTAMP, '+7 days'), updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(hash, c.req.param('id')).run()
@@ -2210,17 +2210,20 @@ app.get('/admin/devices/:id/edit', async (c) => {
   return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates }))
 })
 
-app.get('/admin/devices/:id/agent-install-legacy', async (c) => {
+app.get('/admin/devices/:id/agent-install', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const device = await getDeviceById(c, c.req.param('id')) as any
   if (!device) return c.redirect('/admin/devices')
-  const code = nanoid(48)
+  if (device.agentTokenHash || device.agent_token_hash || device.agentRegisteredAt || device.agent_registered_at) {
+    return c.html(buildLayout('Windows 客户端安装信息 - 电脑租赁管理系统', `<div class="panel"><h2>设备已绑定</h2><p>该设备已经完成 Windows 客户端绑定，注册码已失效，不能再次生成或修改。</p><p><a class="button button-secondary" href="/admin/devices/${device.id}/edit">返回设备详情</a></p></div>`, user), 409)
+  }
+  const code = String(Math.floor(100000 + Math.random() * 900000))
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))
   const codeHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
-  await c.env.RENT.prepare('INSERT INTO device_registration_codes (id, device_id, code_hash, expires_at) VALUES (?, ?, ?, ?)').bind(`drc-${nanoid(12)}`, device.id, codeHash, expiresAt).run()
-  const installInfo = JSON.stringify({ serverUrl: new URL(c.req.url).origin, deviceId: device.id, registrationCode: code, expiresAt }, null, 2)
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  await c.env.RENT.prepare("UPDATE devices SET agent_setup_code_hash = ?, agent_setup_code_expires_at = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(codeHash, expiresAt, device.id).run()
+  const installInfo = JSON.stringify({ apiBaseUrl: new URL(c.req.url).origin, serialNumber: device.serialNumber, setupCode: code, expiresAt }, null, 2)
   const encodedInstallInfo = encodeURIComponent(installInfo)
   const body = `<div class="page-header"><div><p class="section-code">WINDOWS AGENT</p><h2>客户端安装信息</h2><p>${sanitizePlainText(device.name, 120)} · 配置文件内的注册码 30 分钟内有效且只能使用一次。</p></div><a href="/admin/devices/${device.id}/edit" class="button button-secondary">返回设备详情</a></div><div class="panel"><h3>下载客户端配置</h3><p>请下载配置文件并放入 Windows 客户端安装程序目录。客户端会自动读取文件并完成绑定，无需手动输入注册码。</p><div class="record-actions"><a class="button button-primary" download="device-agent.json" href="data:application/json;charset=utf-8,${encodedInstallInfo}">下载 device-agent.json</a><button class="button button-secondary" type="button" id="copy-agent-config">复制配置</button></div><textarea id="agent-config" class="form-control mono" rows="10" readonly style="margin-top:16px;">${installInfo.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea><p class="page-notification page-notification--warning">注册码只显示这一次。关闭页面后无法恢复，只能重新生成。</p></div><script>(()=>{const b=document.getElementById('copy-agent-config'),t=document.getElementById('agent-config');b?.addEventListener('click',async()=>{await navigator.clipboard.writeText(t.value);b.textContent='已复制';setTimeout(()=>b.textContent='复制配置',1600);});})();</script>`
   return c.html(buildLayout('Windows 客户端安装信息 - 电脑租赁管理系统', body, user))
@@ -2597,14 +2600,17 @@ async function getAgentDevice(c: any): Promise<any | null> {
 }
 
 app.post('/api/device-agent/register', async (c) => {
+  if (new URL(c.req.url).protocol !== 'https:') return c.json({ ok: false, error: 'HTTPS is required for device registration' }, 400)
   const payload = await c.req.json().catch(() => ({})) as any
   const serialNumber = String(payload.serialNumber || '').trim()
-  const setupCodeHash = await hashAgentValue(String(payload.setupCode || ''))
-  const device = await c.env.RENT.prepare(`SELECT id, name, serialNumber FROM devices WHERE serialNumber = ? AND agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP`).bind(serialNumber, setupCodeHash).first() as any
+  const setupCode = String(payload.setupCode || '').trim()
+  if (!/^\d{6}$/.test(setupCode)) return c.json({ ok: false, error: 'setupCode must be exactly 6 digits' }, 400)
+  const setupCodeHash = await hashAgentValue(setupCode)
+  const device = await c.env.RENT.prepare(`SELECT id, name, serialNumber FROM devices WHERE agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP${serialNumber ? ' AND serialNumber = ?' : ''}`).bind(...(serialNumber ? [setupCodeHash, serialNumber] : [setupCodeHash])).first() as any
   if (!device) return c.json({ ok: false, error: 'Invalid or expired setup code' }, 401)
   const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '')
   await c.env.RENT.prepare(`UPDATE devices SET agent_token_hash = ?, agent_setup_code_hash = NULL, agent_setup_code_expires_at = NULL, agent_registered_at = CURRENT_TIMESTAMP, agent_status = 'offline', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(await hashAgentValue(token), device.id).run()
-  return c.json({ ok: true, deviceId: device.id, deviceName: device.name, token })
+  return c.json({ ok: true, apiBaseUrl: new URL(c.req.url).origin, deviceId: device.id, serialNumber: device.serialNumber, deviceName: device.name, uniqueCode: device.id, token })
 })
 
 app.post('/api/device-agent/heartbeat', async (c) => {
