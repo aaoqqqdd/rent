@@ -110,6 +110,9 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     returnTimeSlot: body.returnTimeSlot || null,
     pickupLocation: pickupLocationValue,
     returnLocation: returnLocationValue,
+    deliveryMethod: deliveryMethod as any,
+    deliveryFee: deliveryFee as any,
+    rentalNote: String(body.rentalNote || '').trim().slice(0, 500) as any,
     rentalPeriod: rentalPeriod, // 添加 rentalPeriod
     status: 'draft',
     paymentMethod: 'bank_transfer',

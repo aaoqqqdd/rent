@@ -1,5 +1,8 @@
 # prod
 dist/
+windows-agent/bin/
+windows-agent/obj/
+windows-agent/dist/
 
 # dev
 .yarn/

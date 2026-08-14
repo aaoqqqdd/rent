@@ -15,7 +15,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   if (user.role !== 'ADMIN' && customer?.staffId !== user.id) {
     return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2><p>员工只能查看自己名下客户的订单。</p></div>', user)
   }
-  const [device, contract] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id)])
+  const [device, contract, timeChanges] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all()])
   const contractExpired = contract ? isContractExpired(contract) : false
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
 
@@ -65,6 +65,8 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           ` : ''}
         </div>
       </div>
+
+      ${timeChanges?.results?.length ? `<div class="panel" style="margin-top:20px;"><h3>预约时间变更记录</h3>${timeChanges.results.map((change: any) => `<p>${change.created_at}：${change.previous_pickup_slot || '未设置'} / ${change.previous_return_slot || '未设置'} → ${change.pickup_slot} / ${change.return_slot}${Number(change.additional_service_fee) > 0 ? `，新增服务费 ${formatCurrency(change.additional_service_fee)}` : ''}</p>`).join('')}</div>` : ''}
 
       ${contract ? `
         <div class="section-title order-section-heading" style="margin-top: 24px;"><h3>合同详情 #${contract.contractNumber || '待生成'}</h3><span class="section-note">查看合同状态、签署记录和正式合同文件。</span></div>

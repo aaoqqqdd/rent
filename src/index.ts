@@ -669,6 +669,28 @@ app.get('/customer/orders/:id', async (c) => {
   return c.html(await pages.renderCustomerOrderDetail(c, user, c.req.param('id'), message, c.req.query('success') ? 'success' : 'error'))
 })
 
+app.post('/customer/orders/:id/time-slots', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const order = await getOrderById(c, c.req.param('id')) as any
+  if (!order || order.userId !== user.id || !['paid', 'pending_pickup'].includes(String(order.status))) return c.redirect(`/customer/orders/${c.req.param('id')}`)
+  const form = await c.req.parseBody()
+  const delivery = String(order.deliveryMethod || order.delivery_method || 'Pickup') === 'Delivery'
+  const allowed = delivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
+  const pickup = String(form.pickupTimeSlot || ''), returned = String(form.returnTimeSlot || '')
+  if (!allowed.includes(pickup) || !allowed.includes(returned)) return c.redirect(`/customer/orders/${order.id}?error=${encodeURIComponent('预约时段无效')}`)
+  const oldFee = Number(order.serviceFee || order.service_fee || 0)
+  const rent = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0) - oldFee)
+  const chargeable = delivery ? 0 : [pickup, returned].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length
+  const requestedFee = Number((rent * 0.1 * chargeable).toFixed(2))
+  const additionalFee = Math.max(0, requestedFee - oldFee)
+  const newFee = oldFee + additionalFee
+  await c.env.RENT.prepare('UPDATE orders SET pickupTimeSlot = ?, returnTimeSlot = ?, serviceFee = ?, totalAmount = totalAmount + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(pickup, returned, newFee, additionalFee, order.id).run()
+  await c.env.RENT.prepare('INSERT INTO order_time_change_history (id, order_id, changed_by, previous_pickup_slot, previous_return_slot, pickup_slot, return_slot, additional_service_fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(`otc-${nanoid(12)}`, order.id, user.id, order.pickupTimeSlot || null, order.returnTimeSlot || null, pickup, returned, additionalFee).run()
+  const message = additionalFee > 0 ? `预约时间已更新，新增服务费 ${additionalFee.toFixed(2)} AUD；已收取的服务费不退款。` : '预约时间已更新；已收取的服务费不退款。'
+  return c.redirect(`/customer/orders/${order.id}?success=${encodeURIComponent(message)}`)
+})
+
 app.post('/customer/orders/:id/early-return', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
@@ -2591,6 +2613,22 @@ app.post('/api/device-agent/heartbeat', async (c) => {
   const payload = await c.req.json().catch(() => ({})) as any
   await c.env.RENT.prepare(`UPDATE devices SET agent_last_seen_at = CURRENT_TIMESTAMP, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_status = 'online', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(c.req.header('CF-Connecting-IP') || null, payload.hostname || null, payload.osVersion || null, payload.cpu || null, Number.isFinite(payload.memoryMb) ? payload.memoryMb : null, Number.isFinite(payload.storageFreeBytes) ? payload.storageFreeBytes : null, device.id).run()
   return c.json({ ok: true, deviceId: device.id, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null })
+})
+
+app.post('/api/device-agent/inspection', async (c) => {
+  const device = await getAgentDevice(c)
+  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  const payload = await c.req.json().catch(() => ({})) as any
+  const type = ['before_rental', 'after_return', 'automated_health'].includes(payload.inspectionType) ? payload.inspectionType : 'automated_health'
+  const snapshot = JSON.stringify(payload.snapshot || {})
+  const previous = await c.env.RENT.prepare('SELECT snapshot_json FROM device_inspections WHERE device_id = ? ORDER BY created_at DESC LIMIT 1').bind(device.id).first() as any
+  const before = previous ? JSON.parse(previous.snapshot_json || '{}') : {}
+  const current = payload.snapshot || {}
+  const differences = Object.fromEntries(Object.keys({ ...before, ...current }).filter(key => String(before[key] ?? '') !== String(current[key] ?? '')).map(key => [key, { before: before[key] ?? null, after: current[key] ?? null }]))
+  const id = `inspection-${nanoid(12)}`
+  await c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, ?, ?)').bind(id, device.id, type, snapshot, JSON.stringify(differences)).run()
+  if (type === 'automated_health' && Number(current.storageFreeBytes) < 10 * 1024 * 1024 * 1024) await c.env.RENT.prepare("INSERT INTO device_health_alerts (id, device_id, alert_type, severity, message) VALUES (?, ?, 'low_storage', 'warning', ?)").bind(`alert-${nanoid(12)}`, device.id, '设备剩余空间低于 10GB').run()
+  return c.json({ ok: true, inspectionId: id, differences })
 })
 
 app.get('/api/device-agent/state', async (c) => {

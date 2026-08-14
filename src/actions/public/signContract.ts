@@ -272,10 +272,22 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           await c.env.RENT.prepare('UPDATE orders SET totalAmount = ?, coupon_code = ?, discount_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(discountedTotal, String(coupon.code).toUpperCase(), discountAmount, contract.rentalId).run()
           ;(order as any).totalAmount = discountedTotal
         }
-        const pickupTimeSlot = ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
-        const returnTimeSlot = ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
+        const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
+        const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
+        const pickupTimeSlot = allowedTimeSlots.includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
+        const returnTimeSlot = allowedTimeSlots.includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
         const unavailableTimeSlots = getSystemSettings().rentalRules.unavailableTimeSlots || {}
         if (!pickupTimeSlot || !returnTimeSlot || (unavailableTimeSlots[order.startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[order.endDate] || []).includes(returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
+        const deliveryMethod = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup')
+        const serviceSlots = deliveryMethod === 'Delivery' ? 0 : [pickupTimeSlot, returnTimeSlot].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length
+        const serviceFee = Number((Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0)) * 0.1 * serviceSlots).toFixed(2))
+        const previousServiceFee = Number((order as any).serviceFee || (order as any).service_fee || 0)
+        if (serviceFee !== previousServiceFee) {
+          const adjustedTotal = Number((Number(order.totalAmount) + serviceFee - previousServiceFee).toFixed(2))
+          await c.env.RENT.prepare('UPDATE orders SET totalAmount = ?, serviceFee = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(adjustedTotal, serviceFee, contract.rentalId).run()
+          ;(order as any).totalAmount = adjustedTotal
+          ;(order as any).serviceFee = serviceFee
+        }
         const canUseBalance = canUseAccountBalance(currentUser)
         const refundMethod = canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original'
         const refundBsb = String(body.refundBsb || '').trim()

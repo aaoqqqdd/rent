@@ -42,8 +42,9 @@ export function stripePaymentAmounts(orderTotal: number): { baseCents: number; f
 export function stripeCheckoutItems(order: any): Array<{ name: string; amountCents: number }> {
   const totalCents = cents(order.totalAmount)
   const depositCents = cents(order.depositAmount || 0)
+  const serviceFeeCents = cents(order.serviceFee ?? order.service_fee ?? 0)
   if (depositCents < 0 || depositCents > totalCents) throw new Error('订单押金金额无效')
-  const rentalCents = totalCents - depositCents
+  const rentalCents = totalCents - depositCents - serviceFeeCents
   const period = Number(order.rentalPeriod ?? order.rental_period ?? 0)
   const rentalLabel = period > 0
     ? `设备租金（${period} 天，${order.startDate} 至 ${order.endDate}）`
@@ -52,6 +53,7 @@ export function stripeCheckoutItems(order: any): Array<{ name: string; amountCen
   return [
     { name: rentalLabel, amountCents: rentalCents },
     { name: '设备押金', amountCents: depositCents },
+    { name: '自取/归还时段服务费', amountCents: serviceFeeCents },
     { name: `Stripe 支付手续费（${(getStripeProcessingFeeRate() * 100).toString()}%）`, amountCents: feeCents },
   ].filter(item => item.amountCents > 0)
 }
