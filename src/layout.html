@@ -373,12 +373,19 @@
           const parsed = new DOMParser().parseFromString(html, 'text/html');
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
-          const swap = function () { document.body.classList.add('has-navigated'); content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); };
-          // 不使用浏览器默认的整页 View Transition，避免标签切换产生刷新感。
-          swap();
+          const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          const swap = function () { document.body.classList.add('has-navigated'); content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); if (window.runFilterTabMotion) window.runFilterTabMotion(); if (window.runNavigationMotion) window.runNavigationMotion(); };
+          if (!reduceMotion && window.gsap) {
+            await new Promise(function (resolve) { window.gsap.to(content, { autoAlpha: 0, y: -8, duration: .18, ease: 'power2.in', onComplete: resolve }); });
+            swap();
+            window.gsap.fromTo(content, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: .48, ease: 'power3.out' });
+          } else {
+            swap();
+          }
           if (addHistory) window.history.pushState({}, '', url.href);
         } catch (error) {
           // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。
+          if (window.gsap) window.gsap.to(content, { autoAlpha: 1, y: 0, duration: .2, overwrite: 'auto' });
           console.error('局部页面切换失败:', error);
         } finally {
           document.getElementById('navigation-loading')?.remove();
@@ -453,8 +460,9 @@
     // 局部导航后的页面不重复播放整页入场动画。
     if (document.body.classList.contains('has-navigated')) return;
     if (window.ScrollTrigger) window.ScrollTrigger.getAll().forEach(function (trigger) { trigger.kill(); });
-    if (reduceMotion) { window.gsap.set(content.querySelectorAll('.page-header, .panel, .card'), { clearProps: 'all' }); return; }
-    const items = content.querySelectorAll('.page-header, .panel, .card');
+    const motionItems = '.page-header, .entity-header, .panel, .card, .error-page, .signing-shell, .payment-result-card, .contract-viewer, .legal-document';
+    if (reduceMotion) { window.gsap.set(content.querySelectorAll(motionItems), { clearProps: 'all' }); return; }
+    const items = content.querySelectorAll(motionItems);
     window.gsap.fromTo(items, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.42, ease: 'power2.out', stagger: 0.055, overwrite: 'auto' });
     window.gsap.fromTo(content.querySelectorAll('tbody tr'), { autoAlpha: 0, y: 6 }, { autoAlpha: 1, y: 0, duration: 0.28, ease: 'power1.out', stagger: 0.035, delay: 0.12, overwrite: 'auto' });
     const notices = content.querySelectorAll('.page-notification--success, .alert-success, .page-notification--error, .alert-error');
@@ -470,6 +478,7 @@
     window.gsap.fromTo(content.querySelectorAll('.motion-status-icon'), { autoAlpha: 0, scale: 0.45, rotation: -18 }, { autoAlpha: 1, scale: 1, rotation: 0, duration: 0.38, ease: 'back.out(1.7)', stagger: 0.06, overwrite: 'auto' });
     window.gsap.fromTo('.sidebar', { autoAlpha: 0, x: -18 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: 'power3.out', overwrite: 'auto' });
     window.gsap.fromTo(content.querySelectorAll('.page-header h2, .page-header .section-code'), { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.55, ease: 'power3.out', stagger: 0.07, overwrite: 'auto' });
+    window.gsap.fromTo(content.querySelectorAll('.error-card, .payment-result-card, .signing-shell .contract-toolbar, .signing-shell .record-actions, .legal-document__content'), { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: .42, ease: 'power3.out', stagger: .06, delay: .12, overwrite: 'auto' });
     if (window.ScrollTrigger) {
       window.gsap.utils.toArray(content.querySelectorAll('.stat-card, .device-catalog-card, .payment-option, .record-section, .finance-card')).forEach(function (item) {
         window.gsap.fromTo(item, { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.65, ease: 'power3.out', scrollTrigger: { trigger: item, start: 'top 88%', once: true } });
@@ -482,7 +491,43 @@
       card.addEventListener('mouseleave', function () { window.gsap.to(card, { y: 0, duration: 0.22, ease: 'power3.out', overwrite: 'auto' }); });
     });
   };
+  window.runFilterTabMotion = function () {
+    const tabs = document.querySelectorAll('.filter-tabs');
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    tabs.forEach(function (group) {
+      const active = group.querySelector('.button-primary');
+      if (!active) return;
+      group.classList.add('has-indicator');
+      const move = function () {
+        const groupRect = group.getBoundingClientRect();
+        const rect = active.getBoundingClientRect();
+        group.style.setProperty('--filter-indicator-x', (rect.left - groupRect.left) + 'px');
+        group.style.setProperty('--filter-indicator-width', rect.width + 'px');
+      };
+      move();
+      if (!reduceMotion && window.gsap) {
+        window.gsap.fromTo(active, { color: '#fff' }, { color: '#fff', duration: .35, ease: 'power2.out', overwrite: 'auto' });
+      }
+      if (group.dataset.indicatorReady !== '1') {
+        group.dataset.indicatorReady = '1';
+        window.addEventListener('resize', move, { passive: true });
+      }
+    });
+  };
+  window.runNavigationMotion = function () {
+    const content = document.querySelector('.content');
+    if (!content || !window.gsap || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const heading = content.querySelector('.page-header, .entity-header, .panel > .section-title');
+    const panels = Array.from(content.querySelectorAll('.panel, .card, .record-panel, .error-card, .payment-result-card, .signing-shell, .contract-viewer, .legal-document')).filter(function (item) { return !item.closest('.a4-document, .official-document'); }).slice(0, 8);
+    const rows = Array.from(content.querySelectorAll('tbody tr')).slice(0, 24);
+    window.gsap.set([heading, ...panels, ...rows].filter(Boolean), { autoAlpha: 0, y: 14 });
+    const timeline = window.gsap.timeline({ defaults: { ease: 'power3.out' } });
+    if (heading) timeline.to(heading, { autoAlpha: 1, y: 0, duration: .42 });
+    if (panels.length) timeline.to(panels, { autoAlpha: 1, y: 0, duration: .38, stagger: .045 }, '-=.22');
+    if (rows.length) timeline.to(rows, { autoAlpha: 1, y: 0, duration: .24, stagger: .018 }, '-=.2');
+  };
   window.addEventListener('load', window.runSiteAnimations);
+  window.addEventListener('load', window.runFilterTabMotion);
   document.addEventListener('mouseover', function (event) {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !window.gsap) return;
     const button = event.target.closest('.button');

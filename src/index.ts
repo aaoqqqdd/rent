@@ -1354,8 +1354,10 @@ app.post('/admin/contracts/template', async (c) => {
   }
 
   try {
-    const body = await c.req.text()
-    const payload = JSON.parse(body || '{}')
+    const contentType = c.req.header('content-type') || ''
+    const payload = contentType.includes('application/json')
+      ? JSON.parse(await c.req.text() || '{}')
+      : await c.req.parseBody()
     const updatedTemplate = await updateContractTemplate(c, {
       id: payload.id || 'default',
       name: payload.name || '标准租赁合同模板',
@@ -1364,7 +1366,7 @@ app.post('/admin/contracts/template', async (c) => {
     const metadata = getSystemSettings().legalMetadata || {}
     const lastUpdatedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.lastUpdatedDate || '')) ? String(payload.lastUpdatedDate) : new Date().toISOString().slice(0, 10)
     await updateSystemSettings(c, { legalMetadata: { ...metadata, contract: { version: String(payload.version || '1.0').trim().slice(0, 30) || '1.0', lastUpdatedDate } } } as any)
-    return c.json({ success: true, template: updatedTemplate })
+    return contentType.includes('application/json') ? c.json({ success: true, template: updatedTemplate }) : c.redirect('/admin/templates/contract')
   } catch (error: any) {
     console.error('Failed to save contract template:', error?.stack || error)
     return c.json({ success: false, error: error?.message || '合同模板保存失败' }, 500)
@@ -2228,7 +2230,10 @@ app.post('/admin/templates/:kind', async (c) => {
   const kind = c.req.param('kind')
   if (!['user', 'rental', 'service', 'privacy', 'copyright'].includes(kind)) return c.json({ success: false, error: '未知的协议类型' }, 404)
   try {
-    const payload = await c.req.json()
+    const contentType = c.req.header('content-type') || ''
+    const payload = contentType.includes('application/json')
+      ? await c.req.json()
+      : await c.req.parseBody()
     const content = sanitizeRichHtml(payload?.content || '')
     await loadSystemSettingsFromDB(c)
     const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'copyright']
@@ -2237,7 +2242,7 @@ app.post('/admin/templates/:kind', async (c) => {
     const before = String((getSystemSettings() as any)[settingKey] || '')
     await updateSystemSettings(c, { [settingKey]: content, legalMetadata: { ...metadata, [kind]: { version: String(payload?.version || '1.0').trim().slice(0, 30) || '1.0', lastUpdatedDate } } } as any)
     if (before !== content) await notifyAgreementUpdate(c, [[settingKey, ({ user: '用户协议', rental: '租赁协议', service: '网站服务条款', privacy: '隐私政策', copyright: '退款政策' } as any)[kind]]], getSystemSettings().companyDetails)
-    return c.json({ success: true })
+    return contentType.includes('application/json') ? c.json({ success: true }) : c.redirect(`/admin/templates/${kind}`)
   } catch (error: any) {
     return c.json({ success: false, error: error?.message || '协议保存失败' }, 400)
   }

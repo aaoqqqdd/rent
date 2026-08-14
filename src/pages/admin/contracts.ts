@@ -34,7 +34,7 @@ export async function renderAdminContracts(c: Context, user: any) {
         <div class="section">
           <h4>合同模板正文</h4>
           <p>变量会在客户完成签署时替换，并冻结为正式合同快照。</p>
-          <form id="contractTemplateForm" class="editor-layout-form">
+          <form id="contractTemplateForm" class="editor-layout-form" method="post" action="/admin/contracts/template">
             <div class="form-group">
               <div class="grid grid-2"><div><label class="form-label">合同版本</label><input class="form-control" id="contractVersion" value="${contractMetadata.version || '1.0'}" required></div><div><label class="form-label">最后更新日期</label><input class="form-control" id="contractLastUpdatedDate" type="date" value="${contractMetadata.lastUpdatedDate || ''}"></div></div>
               <label for="templateName">模板名称</label>
@@ -43,7 +43,7 @@ export async function renderAdminContracts(c: Context, user: any) {
             <div class="form-group">
               <details class="variable-index" open><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${completeVariableIndex}</details>
               <label for="templateContentMarkdown">模板内容（支持 HTML 编辑）</label>
-              <textarea id="templateContentMarkdown" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
+              <textarea id="templateContentMarkdown" name="templateContent" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
               <input type="hidden" id="templateContent" name="templateContent">
               <small class="form-text text-muted">请输入 HTML，系统会在生成合同时替换变量。</small>
             </div>

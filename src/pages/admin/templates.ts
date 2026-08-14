@@ -63,7 +63,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           <p class="section-note">${description}</p>
         </div>
       </div>
-      <form id="agreementTemplateForm" data-kind="${kind}" class="editor-layout-form">
+      <form id="agreementTemplateForm" data-kind="${kind}" class="editor-layout-form" method="post" action="/admin/templates/${kind}">
         <input type="hidden" id="agreementKind" name="kind" value="${kind}">
         ${variableIndex}
         <div class="form-group">

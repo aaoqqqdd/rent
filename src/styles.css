@@ -3340,6 +3340,7 @@ tr:hover td {
 }
 
 .filter-tabs {
+  position: relative;
   margin-bottom: 16px;
   padding: 5px;
   display: flex;
@@ -3347,6 +3348,61 @@ tr:hover td {
   flex-wrap: wrap;
   background: var(--bg-subtle);
   border: 1px solid var(--border);
+  isolation: isolate;
+}
+
+.filter-tabs::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: 5px;
+  left: 5px;
+  width: var(--filter-indicator-width, 0px);
+  height: 34px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #1e40af, #315ccf);
+  box-shadow: 0 7px 16px rgba(30, 64, 175, .2);
+  opacity: 0;
+  transform: translateX(var(--filter-indicator-x, 0px));
+  transition: opacity .2s ease;
+  pointer-events: none;
+}
+.filter-tabs.has-indicator::before { opacity: 1; }
+.filter-tabs .button { position: relative; z-index: 1; }
+.filter-tabs .button-primary { background: transparent !important; border-color: transparent !important; }
+.filter-tabs .button-secondary:hover { background: rgba(255,255,255,.72); }
+
+/* Quiet, material-like feedback for the operations console controls. */
+.button,
+.card,
+.panel,
+.record-panel {
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+.button { overflow: hidden; isolation: isolate; }
+.button::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 -70%;
+  z-index: -1;
+  width: 42%;
+  background: linear-gradient(105deg, transparent, rgba(255,255,255,.2), transparent);
+  transform: skewX(-18deg);
+  transition: left .6s cubic-bezier(.16,1,.3,1);
+  pointer-events: none;
+}
+.button:hover::after,
+.button:focus-visible::after { left: 125%; }
+.card,
+.record-panel { transition: box-shadow .35s ease, border-color .35s ease; }
+.card:hover,
+.record-panel:hover { border-color: color-mix(in srgb, var(--primary) 24%, var(--border)); box-shadow: 0 16px 34px rgba(16,32,51,.1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .filter-tabs::before { transition: none; }
+  .button::after { display: none; }
+  .card, .record-panel { transition: none; }
 }
 
 .filter-tabs .button {
