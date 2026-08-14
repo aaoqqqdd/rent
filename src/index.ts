@@ -623,7 +623,7 @@ app.post('/admin/balance-topups/:id/approve', async (c) => {
   if (!claimed.meta?.changes) return c.text('充值记录已被其他管理员处理', 409)
   await c.env.RENT.batch([
     c.env.RENT.prepare('UPDATE users SET balance = ROUND(balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(Number(topup.amount), topup.user_id),
-    c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) SELECT ?, ?, ?, balance, 'top_up_transfer', ?, ? FROM users WHERE id = ?").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id, topup.user_id),
+    c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) SELECT ?, ?, ?, ROUND(balance + ?, 2), 'top_up_transfer', ?, ? FROM users WHERE id = ?").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, Number(topup.amount), `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id, topup.user_id),
   ])
   return c.redirect(`/admin/users/${topup.user_id}`)
 })
@@ -937,13 +937,19 @@ app.post('/customer/rent/:id', async (c) => {
   const rentAmount = rentalPeriod * device.pricePerDay
   let discountAmount = 0
   let appliedCouponCode: string | null = null
+  let couponId: string | null = null
   if (couponCode) {
     const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(couponCode).first() as any
     if (!coupon) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '优惠码无效、已过期或已达到使用次数上限'), 400)
+    const deviceText = [device.name, device.brand, device.model, device.cpu, device.ram, device.storage, device.gpu, device.os, device.description].filter(Boolean).join(' ').toLowerCase()
+    const deviceMatches = !coupon.device_id || String(coupon.device_id) === String(device.id)
+    const brandMatches = !coupon.brand || String(device.brand || '').trim().toLowerCase() === String(coupon.brand).trim().toLowerCase()
+    const configMatches = !coupon.config_keyword || deviceText.includes(String(coupon.config_keyword).trim().toLowerCase())
+    if (!deviceMatches || !brandMatches || !configMatches) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '该优惠码不适用于当前设备'), 400)
     discountAmount = coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : Number(coupon.discount_value)
     discountAmount = Math.min(rentAmount, Math.max(0, Number(discountAmount.toFixed(2))))
     appliedCouponCode = String(coupon.code).toUpperCase()
-    await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(coupon.id).run()
+    couponId = String(coupon.id)
   }
   const orderId = `o-${nanoid(8)}`
   await insertOrder(c, {
@@ -954,6 +960,13 @@ app.post('/customer/rent/:id', async (c) => {
     deliveryMethod, deliveryFee: 0, rentalNote, couponCode: appliedCouponCode, discountAmount,
     createdAt: new Date().toISOString()
   } as any)
+  if (couponCode) {
+    const claimed = await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND active = 1 AND (max_uses IS NULL OR used_count < max_uses)').bind(couponId).run()
+    if (!claimed.meta?.changes) {
+      await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(orderId).run()
+      return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '优惠码刚刚达到使用上限，请重新提交订单'), 409)
+    }
+  }
   const customer = await getUserById(c, user.id)
   const recipients = customer?.staffId ? [customer.staffId] : (await getUsers(c)).filter((account: any) => account.role === 'ADMIN' && account.status !== 'inactive').map((account: any) => account.id)
   await Promise.all(recipients.map((recipientId: string) => createNotification(c, { recipientId, type: 'rental_application', title: deliveryMethod === 'Delivery' ? '新租赁申请及配送确认' : '新租赁申请待审核', message: `${customer?.name || '客户'} 申请租赁 ${device.name}（${startDate} 至 ${endDate}）${deliveryMethod === 'Delivery' ? `，需要配送至：${deliveryAddress}，运费请确认` : '，客户选择到店自取'}。${rentalNote ? `备注：${rentalNote}` : ''}`, orderId: orderId })))
@@ -2054,11 +2067,12 @@ app.post('/admin/orders/:id/delete', async (c) => {
   if (['paid', 'active', 'completed'].includes(order.status)) {
     return c.redirect('/admin/orders?error=' + encodeURIComponent('只能删除未付款或已取消的订单，请先确认订单状态'))
   }
-  await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM contracts WHERE orderId = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM payments WHERE rental_id = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM payment_proofs WHERE payment_id IN (SELECT id FROM payments WHERE rental_id = ?)').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM invoices WHERE order_id = ?').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM payment_refunds WHERE order_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM payment_proofs WHERE payment_id IN (SELECT id FROM payments WHERE rental_id = ?)').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM payments WHERE rental_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM contracts WHERE orderId = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(order.id).run()
   return c.redirect('/admin/orders?success=' + encodeURIComponent('订单已删除'))
 })
 
@@ -2076,7 +2090,8 @@ app.get('/admin/coupons', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
   const coupons = (await c.env.RENT.prepare('SELECT * FROM coupons ORDER BY created_at DESC').all()).results || []
-  return c.html(pages.renderAdminCoupons(admin, coupons as any[]))
+  const devices = (await c.env.RENT.prepare('SELECT id, name, brand, model FROM devices ORDER BY name').all()).results || []
+  return c.html(pages.renderAdminCoupons(admin, coupons as any[], devices as any[]))
 })
 
 app.get('/admin/devices', async (c) => {
@@ -2212,8 +2227,11 @@ app.post('/admin/coupons', async (c) => {
   const discountType = String(form.discountType || '')
   const discountValue = Number(form.discountValue)
   const maxUses = String(form.maxUses || '').trim() ? Number(form.maxUses) : null
+  const deviceId = String(form.deviceId || '').trim() || null
+  const brand = String(form.brand || '').trim().slice(0, 120) || null
+  const configKeyword = String(form.configKeyword || '').trim().slice(0, 120) || null
   if (!code || !['percent', 'fixed'].includes(discountType) || !Number.isFinite(discountValue) || discountValue <= 0 || (discountType === 'percent' && discountValue > 100) || (maxUses !== null && (!Number.isInteger(maxUses) || maxUses < 1))) return c.redirect('/admin/settings')
-  await c.env.RENT.prepare('INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(`cp-${nanoid(10)}`, code, discountType, discountValue, maxUses, String(form.startsAt || '').replace('T', ' ') || null, String(form.expiresAt || '').replace('T', ' ') || null, admin.id).run()
+  await c.env.RENT.prepare('INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(`cp-${nanoid(10)}`, code, discountType, discountValue, maxUses, String(form.startsAt || '').replace('T', ' ') || null, String(form.expiresAt || '').replace('T', ' ') || null, admin.id, deviceId, brand, configKeyword).run()
   return c.redirect('/admin/settings')
 })
 

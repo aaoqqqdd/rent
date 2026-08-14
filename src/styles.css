@@ -5162,6 +5162,11 @@ tr:hover td {
 .brand-logo.has-image { background-color: #fff; border: 1px solid #d7e0e6; }
 .brand-entry + datalist + .form-text { display: none; }
 .brand-logo.has-image { color: transparent; background-color: #fff; }
+.brand-suggestions { position: absolute; z-index: 30; top: calc(100% + 8px); left: 0; right: 0; display: none; max-height: 280px; overflow-y: auto; padding: 6px; background: #fff; border: 1px solid #d8e0e7; border-radius: 10px; box-shadow: 0 14px 30px rgb(23 32 51 / .16), 0 2px 5px rgb(23 32 51 / .08); }
+.brand-suggestions.is-open { display: grid; gap: 2px; }
+.brand-suggestions button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 42px; padding: 9px 11px; color: #243241; background: transparent; border: 0; border-radius: 7px; font: 600 .88rem/1.2 var(--font-body); text-align: left; cursor: pointer; }
+.brand-suggestions button:hover, .brand-suggestions button:focus-visible { color: #172033; background: #fff4d7; outline: 0; }
+.brand-suggestions small { display: grid; place-items: center; width: 24px; height: 24px; color: #956300; background: #fff1c2; border-radius: 6px; font: 700 .62rem/1 var(--font-mono); }
 .bsb-entry { position: relative; display: block; }
 .bsb-entry .form-control { width: 100%; padding-right: 58px; }
 .bsb-logo { position: absolute; z-index: 1; top: 50%; right: 10px; width: 32px; height: 32px; display: block !important; transform: translateY(-50%); border: 1px solid #d7e0e6; border-radius: 6px; background-color: #fff; background-position: center; background-repeat: no-repeat; background-size: 26px 26px; pointer-events: none; }
