@@ -13,7 +13,7 @@ function trimContractLeadingWhitespace(html: string): string {
     .trim()
 }
 
-export async function renderContractView(c: Context, contractId: string, user: any) {
+export async function renderContractView(c: Context, contractId: string, user: any, printMode = false) {
   const contract = await getContractById(c, contractId)
   if (!contract) {
     return buildLayout('查看合同 - 电脑租赁管理系统', '<div class="panel"><h2>合同未找到</h2><p>您请求的合同不存在。</p></div>', user);
@@ -31,18 +31,14 @@ export async function renderContractView(c: Context, contractId: string, user: a
   const returnUrl = user.role === 'ADMIN' ? '/admin/contracts' : user.role === 'STAFF' ? '/staff/contracts' : order ? `/customer/orders/${order.id}` : '/customer/dashboard'
 
   const body = `
-    <div class="contract-viewer">
+    <div class="contract-viewer${printMode ? ' contract-print-page' : ''}">
       <div class="contract-archive-bar"><div><span class="contract-kicker">RENTAL AGREEMENT / ARCHIVE</span><h1>租赁合同</h1><p class="contract-number">${contract.contractNumber}</p></div><span class="contract-status">${contract.status}</span></div>
-      <div class="contract-toolbar"><div class="contract-toolbar__meta"><span>签署日期</span><strong>${contract.signedAt ?? '未签署'}</strong></div><div class="contract-toolbar__actions"><button class="button button-secondary" type="button" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" type="button" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="${returnUrl}">返回</a></div></div>
+      ${printMode ? '<div class="contract-print-toolbar"><button type="button" onclick="window.print()">打印合同</button><a href="/contract/view/' + contract.id + '">返回合同查看</a></div>' : `<div class="contract-toolbar"><div class="contract-toolbar__meta"><span>签署日期</span><strong>${contract.signedAt ?? '未签署'}</strong></div><div class="contract-toolbar__actions"><a class="button button-secondary" href="/contract/print/${contract.id}" target="_blank" rel="noopener">打印 / 下载 PDF</a><button class="button button-secondary" type="button" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="${returnUrl}">返回</a></div></div>`}
       <div class="a4-document contract-content">
         ${renderedContract}
       </div>
-      ${user?.accountType === 'guest' ? '<div class="page-notification page-notification--info"><strong>访客账户</strong> · 仅可查看和下载本次租赁合同，账户将在租期结束后自动失效。</div>' : ''}
-      <div class="contract-actions">
-        ${isContractFinalized(contract) ? '<button class="button" onclick="window.print()">打印/下载 PDF</button>' : ''}
-        ${user ? `<a class="button button-primary" href="${order ? `/customer/orders/${order.id}` : user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'}">查看订单详情</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}
-      </div>
+      ${!printMode ? `${user?.accountType === 'guest' ? '<div class="page-notification page-notification--info"><strong>访客账户</strong> · 仅可查看和下载本次租赁合同，账户将在租期结束后自动失效。</div>' : ''}<div class="contract-actions">${user ? `<a class="button button-primary" href="${order ? `/customer/orders/${order.id}` : user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'}">查看订单详情</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}</div>` : ''}
     </div>
   `
-  return buildLayout('查看合同 - 电脑租赁管理系统', body, user);
+  return buildLayout(printMode ? '打印合同 - 电脑租赁管理系统' : '查看合同 - 电脑租赁管理系统', body, user);
 }

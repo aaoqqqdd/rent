@@ -37,7 +37,7 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
 
   const body = `
     <div class="panel contract-viewer">
-      <div class="contract-toolbar"><strong>租赁合同 #${contract.contractNumber}</strong><span class="section-note">正式 A4 合同快照 · 订单号 ${order.orderNo}</span><button class="button button-secondary" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="${user.role === 'ADMIN' ? '/admin/contracts' : '/staff/contracts'}">返回</a></div>
+      <div class="contract-toolbar"><strong>租赁合同 #${contract.contractNumber}</strong><span class="section-note">正式 A4 合同快照 · 订单号 ${order.orderNo}</span><a class="button button-secondary" href="/contract/print/${contract.id}" target="_blank" rel="noopener">打印 / 下载 PDF</a><button class="button button-secondary" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="${user.role === 'ADMIN' ? '/admin/contracts' : '/staff/contracts'}">返回</a></div>
 
       <div class="contract-header">
         <h3>合同编号: ${contract.contractNumber}</h3>

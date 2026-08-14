@@ -204,7 +204,7 @@ app.use('*', async (c, next) => {
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
-    const permitted = allowedExact.has(path) || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path === '/styles.css'
+    const permitted = allowedExact.has(path) || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css'
     if (!permitted && path.startsWith('/customer/')) return c.redirect('/customer/guest')
   }
   await next()
@@ -1386,6 +1386,12 @@ app.get('/contract/view/:id', async (c) => {
   return c.html(await pages.renderContractView(c, c.req.param('id'), c.get('user')))
 })
 
+app.get('/contract/print/:id', async (c) => {
+  const user = c.get('user') as any
+  if (!user) return c.redirect(`/login?redirect=${encodeURIComponent(`/contract/print/${c.req.param('id')}`)}`)
+  return c.html(await pages.renderContractView(c, c.req.param('id'), user, true))
+})
+
 app.get('/payment/result', async (c) => {
   const orderId = c.req.query('orderId') || ''
   const cancelled = c.req.query('cancelled') === '1'
@@ -1398,6 +1404,12 @@ app.get('/orders/:id/invoice', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
   return c.html(await pages.renderInvoice(c, user, c.req.param('id')))
+})
+
+app.get('/orders/:id/invoice/print', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.redirect(`/login?redirect=${encodeURIComponent(`/orders/${c.req.param('id')}/invoice/print`)}`)
+  return c.html(await pages.renderInvoice(c, user, c.req.param('id'), true))
 })
 
 app.post('/customer/orders/:id/stripe/checkout', async (c) => {

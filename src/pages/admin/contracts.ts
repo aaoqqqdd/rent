@@ -50,6 +50,7 @@ export async function renderAdminContracts(c: Context, user: any) {
             <div class="form-actions form-actions-right">
               <button type="submit" class="button button-primary">保存模板</button>
             </div>
+            <div id="templateSaveStatus" class="template-save-status is-success" role="status" aria-live="polite">已保存</div>
           </form>
         </div>
 
@@ -61,6 +62,8 @@ export async function renderAdminContracts(c: Context, user: any) {
         const templateContentMarkdown = document.getElementById('templateContentMarkdown');
         const hiddenTemplateContent = document.getElementById('templateContent');
         const templateForm = document.getElementById('contractTemplateForm');
+        const status = document.getElementById('templateSaveStatus');
+        let dirty = false;
 
         function getContractTemplateContent() { return templateContentMarkdown.value; }
 
@@ -68,9 +71,14 @@ export async function renderAdminContracts(c: Context, user: any) {
         if (initialContent) {
           templateContentMarkdown.value = initialContent;
         }
+        const markDirty = () => { dirty = true; status.className = 'template-save-status is-draft'; status.textContent = '草稿'; };
+        templateForm?.querySelectorAll('input, textarea, select').forEach((field) => field.addEventListener('input', markDirty));
+        window.hasUnsavedChanges = () => dirty;
+        window.addEventListener('beforeunload', (event) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
 
         templateForm?.addEventListener('submit', function(event) {
           event.preventDefault();
+          status.className = 'template-save-status is-saving'; status.textContent = '保存中…';
           if (hiddenTemplateContent) {
             hiddenTemplateContent.value = getContractTemplateContent();
           }
@@ -88,9 +96,9 @@ export async function renderAdminContracts(c: Context, user: any) {
             if (!response.ok || !result.success) throw new Error(result.error || '合同模板保存失败');
             return result;
           }).then(() => {
-            alert('合同模板已保存成功！');
+            dirty = false; status.className = 'template-save-status is-success'; status.textContent = '已保存';
           }).catch(error => {
-            alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台')); 
+            status.className = 'template-save-status is-error'; status.textContent = error instanceof Error ? error.message : '保存失败';
           });
         });
 

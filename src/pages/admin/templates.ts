@@ -71,7 +71,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
           <label for="agreementContentMarkdown">协议内容（支持 HTML 编辑）</label>
           <textarea id="agreementContentMarkdown" name="content" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
         </div>
-        <div id="templateSaveStatus" class="template-save-status" role="status" aria-live="polite"></div>
+        <div id="templateSaveStatus" class="template-save-status is-success" role="status" aria-live="polite">已保存</div>
         <div class="form-actions form-actions-right">
           <a href="/admin/templates" class="button button-secondary">取消</a>
           <button type="submit" class="button button-primary">保存${title.replace('编辑', '')}</button>
@@ -84,6 +84,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         const status = document.getElementById('templateSaveStatus');
         const submitButton = form.querySelector('button[type="submit"]');
         const agreementContentMarkdown = document.getElementById('agreementContentMarkdown');
+        let dirty = false;
 
         const initialContent = ${initialContent};
         if (initialContent) {
@@ -91,6 +92,10 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         }
 
         function getAgreementContent() { return agreementContentMarkdown.value; }
+        const markDirty = () => { dirty = true; status.className = 'template-save-status is-draft'; status.textContent = '草稿'; };
+        form.querySelectorAll('input, textarea, select').forEach((field) => field.addEventListener('input', markDirty));
+        window.hasUnsavedChanges = () => dirty;
+        window.addEventListener('beforeunload', (event) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
 
         const agreementKindInput = document.getElementById('agreementKind');
 
@@ -109,6 +114,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
             if (!response.ok || !result.success) throw new Error(result.error || '保存失败');
             status.className = 'template-save-status is-success';
             status.textContent = '已保存';
+            dirty = false;
           } catch (error) {
             status.className = 'template-save-status is-error';
             status.textContent = error instanceof Error ? error.message : '保存失败，请重试';

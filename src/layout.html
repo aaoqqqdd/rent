@@ -346,6 +346,8 @@
       document.documentElement.classList.add('spa-navigation-ready');
       const shouldHandle = function (link, event) {
         if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+        if (window.hasUnsavedChanges && window.hasUnsavedChanges() && !window.confirm('当前内容尚未保存，确定要离开吗？')) { event.preventDefault(); event.stopImmediatePropagation(); return false; }
+        if (window.hasUnsavedChanges && window.hasUnsavedChanges()) window.hasUnsavedChanges = null;
         if (link.target === '_blank' || link.hasAttribute('download')) return false;
         const url = new URL(link.href, window.location.href);
         return url.origin === window.location.origin && url.pathname !== '/logout' && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/webhooks/');
@@ -358,10 +360,10 @@
           oldScript.replaceWith(script);
         });
       };
-      const setActiveLink = function () {
-        const path = window.location.pathname.replace(/\/$/, '') || '/';
+      const setActiveLink = function (nextPath) {
+        const path = String(nextPath || window.location.pathname).split('?')[0].replace(/\/$/, '') || '/';
         document.querySelectorAll('.sidebar-section a').forEach(function (link) { link.classList.remove('active'); link.removeAttribute('aria-current'); });
-        const active = Array.from(document.querySelectorAll('.sidebar-section a')).filter(function (link) { const href = (link.getAttribute('href') || '').replace(/\/$/, '') || '/'; return path === href || (href !== '/' && path.startsWith(href + '/')); }).sort(function (a, b) { return b.href.length - a.href.length; })[0];
+        const active = Array.from(document.querySelectorAll('.sidebar-section a')).filter(function (link) { const href = (link.getAttribute('href') || '').split('?')[0].replace(/\/$/, '') || '/'; return path === href || (href !== '/' && path.startsWith(href + '/')); }).sort(function (a, b) { return (b.getAttribute('href') || '').length - (a.getAttribute('href') || '').length; })[0];
         if (active) { active.classList.add('active'); active.setAttribute('aria-current', 'page'); }
       };
       const navigate = async function (url, addHistory) {
@@ -374,7 +376,7 @@
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
           const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-          const swap = function () { document.body.classList.add('has-navigated'); content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(); if (window.runFilterTabMotion) window.runFilterTabMotion(); if (window.runNavigationMotion) window.runNavigationMotion(); };
+          const swap = function () { document.body.classList.add('has-navigated'); content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(url.pathname); if (window.runFilterTabMotion) window.runFilterTabMotion(); if (window.runNavigationMotion) window.runNavigationMotion(); };
           if (!reduceMotion && window.gsap) {
             await new Promise(function (resolve) { window.gsap.to(content, { autoAlpha: 0, y: -8, duration: .18, ease: 'power2.in', onComplete: resolve }); });
             swap();
@@ -399,7 +401,13 @@
         event.stopImmediatePropagation();
         navigate(new URL(link.href), true);
       }, true);
-      window.addEventListener('popstate', function () { navigate(new URL(window.location.href), false); });
+      window.addEventListener('popstate', function () {
+        if (window.hasUnsavedChanges && window.hasUnsavedChanges()) {
+          if (!window.confirm('当前内容尚未保存，确定要离开吗？')) { window.history.pushState({}, '', window.location.href); return; }
+          window.hasUnsavedChanges = null;
+        }
+        navigate(new URL(window.location.href), false);
+      });
     })();
   </script>
   <script>
