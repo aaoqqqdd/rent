@@ -5,7 +5,7 @@
 
 import { buildLayout, CONTRACT_VARIABLE_GROUPS, getSystemSettings } from '../../site'
 
-type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'copyright'
+type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright'
 
 export function renderAdminTemplateHub(user: any) {
   const body = `
@@ -18,6 +18,7 @@ export function renderAdminTemplateHub(user: any) {
       </article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">ST</span><div><h3>网站服务条款</h3><p>说明网站功能、合理使用和服务规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/service">编辑条款</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">PP</span><div><h3>隐私政策</h3><p>说明个人资料、付款信息和保存方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/privacy">编辑政策</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">SW</span><div><h3>软件使用协议</h3><p>说明 Windows 客户端的授权、更新和设备数据使用规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">软件法务</span><a class="button button-sm button-secondary" href="/admin/templates/software">编辑协议</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">RF</span><div><h3>退款政策</h3><p>说明订单取消、押金退还和退款方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">退款规则</span><a class="button button-sm button-secondary" href="/admin/templates/copyright">编辑政策</a></article>
       <article class="template-register__row">
         <div class="template-register__document"><span class="document-mark">RA</span><div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意。</p></div></div>
@@ -39,6 +40,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
     rental: ['编辑租赁协议', '用于合同签署流程第一步。变量会在展示时替换为对应合同数据。', settings.rentalTerms],
     service: ['编辑网站服务条款', '显示在全站右下角的服务条款页面。', settings.serviceTerms],
     privacy: ['编辑隐私政策', '显示在全站右下角的隐私政策页面。', settings.privacyPolicy],
+    software: ['编辑软件使用协议', '显示在全站右下角的软件协议页面。', settings.softwareTerms],
     copyright: ['编辑退款政策', '显示在全站右下角的退款政策页面。', settings.copyrightNotice],
   }[kind]
   const [title, description, content] = documentMeta
@@ -49,6 +51,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
     user: ['user_agreement_version', 'user_agreement_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     service: ['service_terms_version', 'service_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     privacy: ['privacy_policy_version', 'privacy_policy_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
+    software: ['software_terms_version', 'software_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     copyright: ['refund_policy_version', 'refund_policy_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     rental: ['rental_agreement_version', 'rental_agreement_last_updated_date', 'contract_version', 'contract_last_updated_date', 'customer_name', 'customer_email', 'device_name', 'start_date', 'end_date', 'total_rent', 'deposit_amount', 'company_name'],
   }

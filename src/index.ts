@@ -387,18 +387,20 @@ app.get('/terms', async (c) => {
 for (const [path, title, key, code] of [
   ['/service-terms', '网站服务条款', 'serviceTerms', 'LEGAL / SERVICE TERMS'],
   ['/privacy', '隐私政策', 'privacyPolicy', 'LEGAL / PRIVACY'],
+  ['/software-terms', '软件使用协议', 'softwareTerms', 'LEGAL / SOFTWARE'],
   ['/refund-policy', '退款政策', 'copyrightNotice', 'LEGAL / REFUND POLICY'],
   ['/copyright', '退款政策', 'copyrightNotice', 'LEGAL / REFUND POLICY'],
 ] as const) {
   app.get(path, async (c) => {
     const settings = await loadSystemSettingsFromDB(c)
     const currentUser = c.get('user')
-    const metadataKey = key === 'copyrightNotice' ? 'copyright' : path === '/terms' ? 'user' : path === '/service-terms' ? 'service' : 'privacy'
+    const metadataKey = key === 'copyrightNotice' ? 'copyright' : key === 'softwareTerms' ? 'software' : path === '/terms' ? 'user' : path === '/service-terms' ? 'service' : 'privacy'
     const metadata = settings.legalMetadata[metadataKey]
     const content = renderSiteVariables(settings[key], currentUser, {
       ...(metadataKey === 'user' ? { user_agreement_version: metadata.version, user_agreement_last_updated_date: metadata.lastUpdatedDate } : {}),
       ...(metadataKey === 'service' ? { service_terms_version: metadata.version, service_terms_last_updated_date: metadata.lastUpdatedDate } : {}),
       ...(metadataKey === 'privacy' ? { privacy_policy_version: metadata.version, privacy_policy_last_updated_date: metadata.lastUpdatedDate } : {}),
+      ...(metadataKey === 'software' ? { software_terms_version: metadata.version, software_terms_last_updated_date: metadata.lastUpdatedDate } : {}),
       ...(metadataKey === 'copyright' ? { refund_policy_version: metadata.version, refund_policy_last_updated_date: metadata.lastUpdatedDate, last_updated_date: metadata.lastUpdatedDate } : {}),
     })
     return c.html(buildLayout(title, `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">${code}</p><h2>${title}</h2></div></div><div class="legal-document__content">${content}</div></article>`, currentUser))
@@ -2350,7 +2352,7 @@ app.get('/admin/templates/:kind', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const kind = c.req.param('kind')
   if (kind === 'contract') return c.html(await pages.renderAdminContracts(c, user))
-  if (!['user', 'rental', 'service', 'privacy', 'copyright'].includes(kind)) return c.html(renderNotFound(), 404)
+  if (!['user', 'rental', 'service', 'privacy', 'software', 'copyright'].includes(kind)) return c.html(renderNotFound(), 404)
   await loadSystemSettingsFromDB(c)
   return c.html(pages.renderAdminAgreementEditor(user, kind))
 })
@@ -2359,7 +2361,7 @@ app.post('/admin/templates/:kind', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限保存协议' }, 403)
   const kind = c.req.param('kind')
-  if (!['user', 'rental', 'service', 'privacy', 'copyright'].includes(kind)) return c.json({ success: false, error: '未知的协议类型' }, 404)
+  if (!['user', 'rental', 'service', 'privacy', 'software', 'copyright'].includes(kind)) return c.json({ success: false, error: '未知的协议类型' }, 404)
   try {
     const contentType = c.req.header('content-type') || ''
     const payload = contentType.includes('application/json')
@@ -2367,12 +2369,12 @@ app.post('/admin/templates/:kind', async (c) => {
       : await c.req.parseBody()
     const content = sanitizeRichHtml(payload?.content || '')
     await loadSystemSettingsFromDB(c)
-    const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'copyright']
+    const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', software: 'softwareTerms', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright']
     const metadata = getSystemSettings().legalMetadata || {}
     const lastUpdatedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.lastUpdatedDate || '')) ? String(payload.lastUpdatedDate) : new Date().toISOString().slice(0, 10)
     const before = String((getSystemSettings() as any)[settingKey] || '')
     await updateSystemSettings(c, { [settingKey]: content, legalMetadata: { ...metadata, [kind]: { version: String(payload?.version || '1.0').trim().slice(0, 30) || '1.0', lastUpdatedDate } } } as any)
-    if (before !== content) await notifyAgreementUpdate(c, [[settingKey, ({ user: '用户协议', rental: '租赁协议', service: '网站服务条款', privacy: '隐私政策', copyright: '退款政策' } as any)[kind]]], getSystemSettings().companyDetails)
+    if (before !== content) await notifyAgreementUpdate(c, [[settingKey, ({ user: '用户协议', rental: '租赁协议', service: '网站服务条款', privacy: '隐私政策', software: '软件使用协议', copyright: '退款政策' } as any)[kind]]], getSystemSettings().companyDetails)
     return contentType.includes('application/json') ? c.json({ success: true }) : c.redirect(`/admin/templates/${kind}`)
   } catch (error: any) {
     return c.json({ success: false, error: error?.message || '协议保存失败' }, 400)
