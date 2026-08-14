@@ -5,11 +5,11 @@
 
 import { buildLayout } from '../../site'
 
-export function renderAdminDeviceNew(user: any, errorMessage = '') {
+export function renderAdminDeviceNew(user: any, errorMessage = '', registrationKey = '') {
   const body = `
     <div class="page-header"><div><p class="section-code">ASSET INTAKE</p><h2>添加入库设备</h2><p>登记资产身份、硬件配置和租赁价格；这些资料将供员工搜索和选择设备。</p></div><a href="/admin/devices" class="button button-secondary">返回设备列表</a></div>
     <div class="panel">
-      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}<form method="POST" action="/admin/devices/new" class="asset-editor">
+      ${errorMessage ? `<div class="page-notification page-notification--${registrationKey ? 'success' : 'error'}">${errorMessage}${registrationKey ? `<p class="mono" style="font-size:1.1rem;user-select:all;word-break:break-all;"><strong>${registrationKey}</strong></p><small>此密钥只显示这一次，请立即复制并交给 Windows 设备代理。</small>` : ''}</div>` : ''}<form method="POST" action="/admin/devices/new" class="asset-editor">
         <section class="form-section"><div class="form-section-title"><span class="mono">ID</span><div><h3>设备身份</h3><p>名称用于员工端分类，资产编号和序列号用于准确搜索单台设备。</p></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label class="form-label" for="name">设备名称</label><input class="form-control" id="name" name="name" required maxlength="120" placeholder="例如 MacBook Pro 14"></div>

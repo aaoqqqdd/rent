@@ -11,7 +11,7 @@ export function renderAdminDeviceEdit(user: any, device: any) {
   const value = (camel: string, snake = camel) => esc(device[camel] ?? device[snake] ?? '')
   const status = device.status || 'available'
   const body = `
-    <div class="page-header"><div><p class="section-code">ASSET RECORD</p><h2>编辑设备</h2><p>${value('name')} · <span class="mono">${value('assetTag', 'asset_tag') || value('id')}</span></p></div><a href="/admin/devices" class="button button-secondary">返回设备列表</a></div>
+    <div class="page-header"><div><p class="section-code">ASSET RECORD</p><h2>编辑设备</h2><p>${value('name')} · <span class="mono">${value('assetTag', 'asset_tag') || value('id')}</span></p></div><div><a href="/admin/devices/${value('id')}/agent-install" class="button button-primary">生成 Windows 客户端安装信息</a> <a href="/admin/devices" class="button button-secondary">返回设备列表</a></div></div>
     <div class="panel">
       <form method="POST" action="/admin/devices/${value('id')}/edit" class="asset-editor">
         <section class="form-section"><div class="form-section-title"><span class="mono">ID</span><div><h3>设备身份</h3><p>更新后，员工端设备目录和搜索结果会使用这里的资料。</p></div></div>
@@ -37,6 +37,20 @@ export function renderAdminDeviceEdit(user: any, device: any) {
           <div class="form-group"><label class="form-label" for="description">补充描述</label><textarea class="form-control" id="description" name="description" rows="4" maxlength="2000">${value('description')}</textarea></div>
         </section>
         <section class="form-section"><div class="form-section-title"><span class="mono">AUD</span><div><h3>租赁价格</h3><p>修改价格不会改写已经建立的历史合同。</p></div></div><div class="grid grid-2"><div class="form-group"><label class="form-label" for="pricePerDay">日租金（AUD）</label><input class="form-control" type="number" id="pricePerDay" name="pricePerDay" value="${value('pricePerDay', 'price_per_day') || '0'}" min="0" step="0.01" required></div><div class="form-group"><label class="form-label" for="depositAmount">押金（AUD）</label><input class="form-control" type="number" id="depositAmount" name="depositAmount" value="${value('depositAmount', 'deposit_amount') || '0'}" min="0" step="0.01" required></div></div></section>
+        <section class="form-section"><div class="form-section-title"><span class="mono">AGENT</span><div><h3>Windows 设备代理</h3><p>查看代理注册和心跳信息；最后在线时间及设备信息由代理自动更新。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="agentStatus">代理状态</label><select class="form-control" id="agentStatus" name="agentStatus"><option value="unregistered" ${value('agentStatus') === 'unregistered' ? 'selected' : ''}>未注册</option><option value="online" ${value('agentStatus') === 'online' ? 'selected' : ''}>在线</option><option value="offline" ${value('agentStatus') === 'offline' ? 'selected' : ''}>离线</option><option value="paused" ${value('agentStatus') === 'paused' ? 'selected' : ''}>暂停</option></select></div>
+            <div class="form-group"><label class="form-label">代理凭证</label><input class="form-control" value="${device.agentTokenHash || device.agent_token_hash ? '已注册（凭证已隐藏）' : '未设置'}" readonly></div>
+            <div class="form-group"><label class="form-label">注册时间</label><input class="form-control" value="${value('agentRegisteredAt', 'agent_registered_at') || '—'}" readonly></div>
+            <div class="form-group"><label class="form-label">最后心跳</label><input class="form-control" value="${value('agentLastSeenAt', 'agent_last_seen_at') || '—'}" readonly></div>
+            <div class="form-group"><label class="form-label">最后访问 IP</label><input class="form-control mono" value="${value('agentLastIp', 'agent_last_ip') || '—'}" readonly></div>
+            <div class="form-group"><label class="form-label">主机名</label><input class="form-control" value="${value('agentHostname', 'agent_hostname') || '—'}" readonly></div>
+            <div class="form-group"><label class="form-label">操作系统版本</label><input class="form-control" value="${value('agentOsVersion', 'agent_os_version') || '—'}" readonly></div>
+            <div class="form-group"><label class="form-label">CPU</label><input class="form-control" value="${value('agentCpu', 'agent_cpu') || '—'}" readonly></div>
+            <div class="form-group"><label class="form-label">内存</label><input class="form-control" value="${device.agentMemoryMb ?? device.agent_memory_mb ?? '—'}" readonly></div>
+            <div class="form-group"><label class="form-label">剩余存储空间</label><input class="form-control" value="${device.agentStorageFreeBytes ?? device.agent_storage_free_bytes ?? '—'}" readonly></div>
+          </div>
+        </section>
         <div class="record-actions"><button form="delete-device-form" type="submit" class="button button-danger">删除设备</button><button class="button button-primary" type="submit">保存设备资料</button></div>
       </form>
       <form id="delete-device-form" method="post" action="/admin/devices/${value('id')}/delete" onsubmit="return confirm('确定要删除此设备吗？此操作不可恢复。')"></form>

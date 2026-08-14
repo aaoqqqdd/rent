@@ -15,6 +15,7 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
   const usersData = await getUsers(c)
   const usersById = new Map(usersData.map(account => [account.id, account]))
   const orders = (await getOrders(c)).filter(order => order.deviceId === device.id && (user.role === 'ADMIN' || usersById.get(order.userId)?.staffId === user.id))
+  const setupCode = new URL(c.req.url).searchParams.get('agentSetupCode')
 
   const body = `
     <div class="panel">
@@ -31,6 +32,12 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
         </div>
         <div><h3>维护权限</h3><p class="section-note">设备身份、配置、价格和状态由管理员维护。</p></div>
       </div>
+
+      ${user.role === 'ADMIN' ? `<div class="panel" style="margin-top:20px;"><h3>Windows 客户端</h3>
+        <p class="section-note">在出租设备上安装客户端前，生成一次性注册码。注册码有效 7 天，使用一次后失效。</p>
+        ${setupCode ? `<p><strong>本次注册码：</strong><code>${setupCode}</code></p>` : ''}
+        <form method="post" action="/staff/devices/${device.id}/agent-setup"><button class="button" type="submit">生成 Windows 客户端注册码</button></form>
+      </div>` : ''}
 
       <div class="section-title" style="margin-top: 24px;"><h3>租赁历史</h3></div>
       ${orders.length ? `

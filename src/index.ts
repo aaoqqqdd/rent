@@ -1228,9 +1228,7 @@ app.get('/staff/rentals/tracking', async (c) => {
 
 app.get('/staff/devices', async (c) => {
   const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
-    return c.redirect('/login')
-  }
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   return c.html(await pages.renderStaffDevices(c, user))
 })
 
@@ -1273,8 +1271,18 @@ app.post('/staff/devices/:id/edit', async (c) => {
 
 app.get('/staff/devices/:id', async (c) => {
   const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) return c.redirect('/login')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   return c.html(await pages.renderStaffDeviceDetail(c, user, c.req.param('id')))
+})
+
+app.post('/staff/devices/:id/agent-setup', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const code = crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))
+  const hash = Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, '0')).join('')
+  await c.env.RENT.prepare(`UPDATE devices SET agent_setup_code_hash = ?, agent_setup_code_expires_at = datetime(CURRENT_TIMESTAMP, '+7 days'), updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(hash, c.req.param('id')).run()
+  return c.redirect(`/staff/devices/${c.req.param('id')}?agentSetupCode=${code}`)
 })
 
 
@@ -2141,6 +2149,9 @@ app.post('/admin/devices/new', async (c) => {
   const serialNumber = String(form.serialNumber || '').trim().slice(0, 120)
   const duplicate = await c.env.RENT.prepare('SELECT id FROM devices WHERE serialNumber = ?').bind(serialNumber).first()
   if (duplicate) return c.html(pages.renderAdminDeviceNew(user, '序列号已存在，请检查后重新填写。'), 409)
+  const registrationKey = nanoid(48)
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(registrationKey))
+  const agentTokenHash = Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
   try { await insertDevice(c, {
     name: form.name || '',
     brand: form.brand || '',
@@ -2155,12 +2166,13 @@ app.post('/admin/devices/new', async (c) => {
     pricePerDay: Number(form.pricePerDay) || 0,
     depositAmount: Number(form.depositAmount) || 0,
     status: (form.status as any) || 'available',
-    description: form.description || form.remark || ''
+    description: form.description || form.remark || '',
+    agentTokenHash
   }) } catch (error: any) {
     if (/UNIQUE constraint failed: devices\.serial(Number|_number)/i.test(String(error?.message || error))) return c.html(pages.renderAdminDeviceNew(user, '序列号已存在，请检查后重新填写。'), 409)
     throw error
   }
-  return c.redirect('/admin/devices')
+  return c.html(pages.renderAdminDeviceNew(user, '设备已成功入库，以下是本次生成的设备注册密钥：', registrationKey))
 })
 
 app.get('/admin/devices/:id/edit', async (c) => {
@@ -2176,6 +2188,40 @@ app.get('/admin/devices/:id/edit', async (c) => {
   return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates }))
 })
 
+app.get('/admin/devices/:id/agent-install-legacy', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const device = await getDeviceById(c, c.req.param('id')) as any
+  if (!device) return c.redirect('/admin/devices')
+  const code = nanoid(48)
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))
+  const codeHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+  await c.env.RENT.prepare('INSERT INTO device_registration_codes (id, device_id, code_hash, expires_at) VALUES (?, ?, ?, ?)').bind(`drc-${nanoid(12)}`, device.id, codeHash, expiresAt).run()
+  const installInfo = JSON.stringify({ serverUrl: new URL(c.req.url).origin, deviceId: device.id, registrationCode: code, expiresAt }, null, 2)
+  const encodedInstallInfo = encodeURIComponent(installInfo)
+  const body = `<div class="page-header"><div><p class="section-code">WINDOWS AGENT</p><h2>客户端安装信息</h2><p>${sanitizePlainText(device.name, 120)} · 配置文件内的注册码 30 分钟内有效且只能使用一次。</p></div><a href="/admin/devices/${device.id}/edit" class="button button-secondary">返回设备详情</a></div><div class="panel"><h3>下载客户端配置</h3><p>请下载配置文件并放入 Windows 客户端安装程序目录。客户端会自动读取文件并完成绑定，无需手动输入注册码。</p><div class="record-actions"><a class="button button-primary" download="device-agent.json" href="data:application/json;charset=utf-8,${encodedInstallInfo}">下载 device-agent.json</a><button class="button button-secondary" type="button" id="copy-agent-config">复制配置</button></div><textarea id="agent-config" class="form-control mono" rows="10" readonly style="margin-top:16px;">${installInfo.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea><p class="page-notification page-notification--warning">注册码只显示这一次。关闭页面后无法恢复，只能重新生成。</p></div><script>(()=>{const b=document.getElementById('copy-agent-config'),t=document.getElementById('agent-config');b?.addEventListener('click',async()=>{await navigator.clipboard.writeText(t.value);b.textContent='已复制';setTimeout(()=>b.textContent='复制配置',1600);});})();</script>`
+  return c.html(buildLayout('Windows 客户端安装信息 - 电脑租赁管理系统', body, user))
+})
+
+app.post('/api/device-agent/register-legacy', async (c) => {
+  const payload = await c.req.json().catch(() => ({})) as any
+  const registrationCode = String(payload.registrationCode || '')
+  if (!registrationCode) return c.json({ error: 'registrationCode is required' }, 400)
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(registrationCode))
+  const codeHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+  const row = await c.env.RENT.prepare("SELECT id, device_id FROM device_registration_codes WHERE code_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 1").bind(codeHash).first() as any
+  if (!row) return c.json({ error: 'registration code is invalid, expired, or already used' }, 401)
+  const now = new Date().toISOString()
+  const result = await c.env.RENT.prepare('UPDATE device_registration_codes SET used_at = ? WHERE id = ? AND used_at IS NULL').bind(now, row.id).run()
+  if (!result.success || !result.meta?.changes) return c.json({ error: 'registration code is already used' }, 409)
+  const agentToken = nanoid(48)
+  const tokenDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(agentToken))
+  const tokenHash = Array.from(new Uint8Array(tokenDigest), byte => byte.toString(16).padStart(2, '0')).join('')
+  await c.env.RENT.prepare("UPDATE devices SET agent_token_hash = ?, agent_registered_at = ?, agent_last_seen_at = ?, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_status = 'online' WHERE id = ?").bind(tokenHash, now, now, c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || '', String(payload.hostname || ''), String(payload.osVersion || ''), String(payload.cpu || ''), Number(payload.memoryMb) || null, Number(payload.storageFreeBytes) || null, row.device_id).run()
+  return c.json({ deviceId: row.device_id, agentToken, heartbeatUrl: new URL('/api/device-agent/heartbeat', c.req.url).toString() })
+})
+
 app.post('/admin/devices/:id/edit', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -2184,6 +2230,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const body = await c.req.text()
   const form = parseFormBody(body)
   if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
+  if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
   await updateDevice(c, c.req.param('id'), {
     name: form.name,
     brand: form.brand,
@@ -2197,6 +2244,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
     pricePerDay: Number(form.pricePerDay),
     depositAmount: Number(form.depositAmount),
     status: form.status as any,
+    agentStatus: form.agentStatus as any,
     description: form.description || form.remark
   })
   const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]
@@ -2514,6 +2562,43 @@ app.get('/api/address/details', async (c) => {
   return c.json({ formattedAddress: String(place.formattedAddress || ''), street, suburb, state: component('administrative_area_level_1', true), postcode: component('postal_code') })
 })
 
+
+async function hashAgentValue(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest)).map((item) => item.toString(16).padStart(2, '0')).join('')
+}
+
+async function getAgentDevice(c: any): Promise<any | null> {
+  const header = String(c.req.header('Authorization') || '')
+  if (!header.startsWith('Bearer ')) return null
+  return await c.env.RENT.prepare('SELECT * FROM devices WHERE agent_token_hash = ?').bind(await hashAgentValue(header.slice(7).trim())).first()
+}
+
+app.post('/api/device-agent/register', async (c) => {
+  const payload = await c.req.json().catch(() => ({})) as any
+  const serialNumber = String(payload.serialNumber || '').trim()
+  const setupCodeHash = await hashAgentValue(String(payload.setupCode || ''))
+  const device = await c.env.RENT.prepare(`SELECT id, name, serialNumber FROM devices WHERE serialNumber = ? AND agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP`).bind(serialNumber, setupCodeHash).first() as any
+  if (!device) return c.json({ ok: false, error: 'Invalid or expired setup code' }, 401)
+  const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '')
+  await c.env.RENT.prepare(`UPDATE devices SET agent_token_hash = ?, agent_setup_code_hash = NULL, agent_setup_code_expires_at = NULL, agent_registered_at = CURRENT_TIMESTAMP, agent_status = 'offline', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(await hashAgentValue(token), device.id).run()
+  return c.json({ ok: true, deviceId: device.id, deviceName: device.name, token })
+})
+
+app.post('/api/device-agent/heartbeat', async (c) => {
+  const device = await getAgentDevice(c)
+  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  const payload = await c.req.json().catch(() => ({})) as any
+  await c.env.RENT.prepare(`UPDATE devices SET agent_last_seen_at = CURRENT_TIMESTAMP, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_status = 'online', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(c.req.header('CF-Connecting-IP') || null, payload.hostname || null, payload.osVersion || null, payload.cpu || null, Number.isFinite(payload.memoryMb) ? payload.memoryMb : null, Number.isFinite(payload.storageFreeBytes) ? payload.storageFreeBytes : null, device.id).run()
+  return c.json({ ok: true, deviceId: device.id, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null })
+})
+
+app.get('/api/device-agent/state', async (c) => {
+  const device = await getAgentDevice(c)
+  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  const rental = await c.env.RENT.prepare(`SELECT id, start_date, end_date, status FROM rentals WHERE device_id = ? AND status IN ('paid', 'active') ORDER BY end_date DESC LIMIT 1`).bind(device.id).first()
+  return c.json({ ok: true, deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, rental })
+})
 
 app.get('*', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)

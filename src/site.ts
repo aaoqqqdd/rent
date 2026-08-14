@@ -1639,6 +1639,11 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     insertValues.push(sanitizePlainText((device as any)[sourceKey] ?? (device as any)[field], 200))
   }
 
+  if (deviceColumns.includes('agent_token_hash') && (device as any).agentTokenHash) {
+    insertFields.push('agent_token_hash')
+    insertValues.push(sanitizePlainText((device as any).agentTokenHash, 128))
+  }
+
   // 处理序列号字段
   if (hasSerialNumberCamel) {
     insertFields.push('serialNumber');
@@ -1701,6 +1706,7 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
     serialNumber: 'serialNumber', serial_number: 'serial_number',
     pricePerDay: 'pricePerDay', price_per_day: 'price_per_day',
     depositAmount: 'depositAmount', deposit_amount: 'deposit_amount',
+    agentStatus: 'agent_status', agent_status: 'agent_status',
   }
   const plainTextFields = new Set(['name', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
   const setEntries: [string, any][] = []
