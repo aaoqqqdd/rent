@@ -60,7 +60,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
         <input type="hidden" id="agreementKind" name="kind" value="${kind}">
         ${variableIndex}
         <div class="form-group">
-          <label for="agreementContentMarkdown">协议内容（HTML）</label>
+          <label for="agreementContentMarkdown">协议内容（支持 HTML 编辑）</label>
           <textarea id="agreementContentMarkdown" name="content" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
         </div>
         <div id="templateSaveStatus" class="template-save-status" role="status" aria-live="polite"></div>

@@ -1285,6 +1285,33 @@ button:disabled {
   appearance: auto !important;
 }
 
+/* HTML 源码编辑器 */
+.html-editor {
+  display: block;
+  width: 100%;
+  height: 420px;
+  min-height: 420px;
+  max-height: 420px;
+  padding: 16px 18px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  resize: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre;
+  overflow: auto;
+}
+
+.html-editor:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
 .markdown-editor-toolbar {
   display: flex;
   gap: 6px;
@@ -4849,6 +4876,7 @@ tr:hover td {
     font-size: 16px;
   }
   textarea:not(.markdown-editor) { min-height: 132px; }
+  textarea.html-editor { height: 320px !important; min-height: 320px !important; max-height: 320px !important; width: 100% !important; font-size: 13px !important; resize: none !important; }
   .sidebar {
     position: sticky;
     top: 64px;

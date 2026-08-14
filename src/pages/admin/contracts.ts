@@ -40,7 +40,7 @@ export async function renderAdminContracts(c: Context, user: any) {
             </div>
             <div class="form-group">
               <details class="variable-index" open><summary>完整合同变量索引（${CONTRACT_VARIABLE_GROUPS.reduce((total, [, names]) => total + names.length, 0)} 项）</summary>${completeVariableIndex}</details>
-              <label for="templateContentMarkdown">模板内容（HTML）</label>
+              <label for="templateContentMarkdown">模板内容（支持 HTML 编辑）</label>
               <textarea id="templateContentMarkdown" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
               <input type="hidden" id="templateContent" name="templateContent">
               <small class="form-text text-muted">请输入 HTML，系统会在生成合同时替换变量。</small>
