@@ -869,6 +869,7 @@ app.post('/customer/rent/:id', async (c) => {
   const deliveryMethod = String(form.deliveryMethod || 'Pickup') === 'Delivery' ? 'Delivery' : 'Pickup'
   const deliveryAddress = String(form.deliveryAddress || '').trim().slice(0, 1000)
   const rentalNote = String(form.rentalNote || '').trim().slice(0, 500)
+  const couponCode = String(form.couponCode || '').trim().toUpperCase().slice(0, 40)
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
   const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
@@ -878,13 +879,24 @@ app.post('/customer/rent/:id', async (c) => {
   if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
+  const rentAmount = rentalPeriod * device.pricePerDay
+  let discountAmount = 0
+  let appliedCouponCode: string | null = null
+  if (couponCode) {
+    const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(couponCode).first() as any
+    if (!coupon) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '优惠码无效、已过期或已达到使用次数上限'), 400)
+    discountAmount = coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : Number(coupon.discount_value)
+    discountAmount = Math.min(rentAmount, Math.max(0, Number(discountAmount.toFixed(2))))
+    appliedCouponCode = String(coupon.code).toUpperCase()
+    await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(coupon.id).run()
+  }
   const orderId = `o-${nanoid(8)}`
   await insertOrder(c, {
     id: orderId, orderNo: `OD${Date.now()}${nanoid(4).toUpperCase()}`, userId: user.id,
     deviceId: device.id, startDate, endDate, rentalPeriod, status: 'pending_approval',
-    paymentMethod: 'bank_transfer', totalAmount: rentalPeriod * device.pricePerDay + device.depositAmount,
+    paymentMethod: 'bank_transfer', totalAmount: rentAmount + device.depositAmount - discountAmount,
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
-    deliveryMethod, deliveryFee: 0, rentalNote,
+    deliveryMethod, deliveryFee: 0, rentalNote, couponCode: appliedCouponCode, discountAmount,
     createdAt: new Date().toISOString()
   } as any)
   const customer = await getUserById(c, user.id)
@@ -2080,7 +2092,28 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c)))
+  const coupons = (await c.env.RENT.prepare('SELECT * FROM coupons ORDER BY created_at DESC').all()).results || []
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), coupons as any[]))
+})
+
+app.post('/admin/coupons', async (c) => {
+  const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const code = String(form.code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 40)
+  const discountType = String(form.discountType || '')
+  const discountValue = Number(form.discountValue)
+  const maxUses = String(form.maxUses || '').trim() ? Number(form.maxUses) : null
+  if (!code || !['percent', 'fixed'].includes(discountType) || !Number.isFinite(discountValue) || discountValue <= 0 || (discountType === 'percent' && discountValue > 100) || (maxUses !== null && (!Number.isInteger(maxUses) || maxUses < 1))) return c.redirect('/admin/settings')
+  await c.env.RENT.prepare('INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(`cp-${nanoid(10)}`, code, discountType, discountValue, maxUses, String(form.startsAt || '').replace('T', ' ') || null, String(form.expiresAt || '').replace('T', ' ') || null, admin.id).run()
+  return c.redirect('/admin/settings')
+})
+
+app.post('/admin/coupons/:id/delete', async (c) => {
+  const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  await c.env.RENT.prepare('DELETE FROM coupons WHERE id = ?').bind(c.req.param('id')).run()
+  return c.redirect('/admin/settings')
 })
 
 app.get('/admin/templates', async (c) => {

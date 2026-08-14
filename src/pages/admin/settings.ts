@@ -5,7 +5,7 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, coupons: any[] = []) {
   const settings = getSystemSettings(); // 获取当前系统设置
 
   const body = `
@@ -15,6 +15,20 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
       <div class="template-settings-notice">
         <div><strong>协议与合同模板已集中管理</strong><p>用户协议、租赁协议和正式合同模板现在分别在独立页面编辑。</p></div>
         <a href="/admin/templates" class="button button-secondary">前往协议与模板</a>
+      </div>
+
+      <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">
+        <h4 style="margin-top:0;">优惠码管理</h4>
+        <form method="post" action="/admin/coupons" class="grid grid-2">
+          <input class="form-control" name="code" required maxlength="40" placeholder="优惠码，例如 WELCOME10">
+          <select class="form-control" name="discountType"><option value="percent">百分比折扣</option><option value="fixed">固定金额折扣</option></select>
+          <input class="form-control" name="discountValue" type="number" min="0.01" step="0.01" required placeholder="折扣值">
+          <input class="form-control" name="maxUses" type="number" min="1" step="1" placeholder="最多使用次数（可留空）">
+          <input class="form-control" name="startsAt" type="datetime-local" placeholder="开始时间（可留空）">
+          <input class="form-control" name="expiresAt" type="datetime-local" placeholder="结束时间（可留空）">
+          <button class="button button-primary" type="submit">创建优惠码</button>
+        </form>
+        ${coupons.length ? `<div class="table-wrapper" style="margin-top:18px"><table><thead><tr><th>优惠码</th><th>折扣</th><th>使用次数</th><th>有效期</th><th>操作</th></tr></thead><tbody>${coupons.map(c => `<tr><td class="mono">${c.code}</td><td>${c.discount_type === 'percent' ? `${c.discount_value}%` : `AUD$${Number(c.discount_value).toFixed(2)}`}</td><td>${c.used_count}${c.max_uses ? ` / ${c.max_uses}` : ''}</td><td>${c.starts_at || '-'} 至 ${c.expires_at || '-'}</td><td><form method="post" action="/admin/coupons/${encodeURIComponent(c.id)}/delete"><button class="button button-sm button-danger" type="submit">删除</button></form></td></tr>`).join('')}</tbody></table></div>` : '<p class="empty-state">暂无优惠码</p>'}
       </div>
 
       <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">

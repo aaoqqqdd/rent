@@ -272,6 +272,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             <div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required><option value="morning_service">7:00–8:00（早间服务费 10%）</option><option value="morning">9:00–12:00（无服务费）</option><option value="afternoon">13:00–20:00（无服务费）</option><option value="evening_service">21:00–23:00（晚间服务费 10%）</option></select></div>
           </div>
 
+            <div class="form-group" style="margin: 20px 0;"><label class="form-label" for="couponCode">优惠码（选填）</label><input class="form-control" id="couponCode" name="couponCode" maxlength="40" placeholder="输入优惠码后继续付款"></div>
+
             <div class="payment-options" style="display: flex; flex-direction: column; gap: 15px;">
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">

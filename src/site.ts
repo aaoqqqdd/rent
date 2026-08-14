@@ -215,6 +215,8 @@ export interface Order {
   paymentMethod: 'card' | 'bank_transfer' | 'balance'
   totalAmount: number
   depositAmount: number
+  couponCode?: string | null
+  discountAmount?: number
   dailyRate: number
   contractId: string
   signedAt: string | null
@@ -766,7 +768,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
   const db = getDB(c)
   await db
     .prepare(
-      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, startPeriod, endPeriod, rentalPeriod, status, paymentMethod, totalAmount, depositAmount, contractId, pickupTimeSlot, returnTimeSlot, pickupLocation, returnLocation, deliveryMethod, deliveryFee, rentalNote, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, startPeriod, endPeriod, rentalPeriod, status, paymentMethod, totalAmount, depositAmount, contractId, pickupTimeSlot, returnTimeSlot, pickupLocation, returnLocation, deliveryMethod, deliveryFee, rentalNote, coupon_code, discount_amount, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .bind(
       order.id,
@@ -782,7 +784,7 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
       order.totalAmount,
       order.depositAmount,
       order.contractId, order.pickupTimeSlot || null, order.returnTimeSlot || null, order.pickupLocation || null, order.returnLocation || null, (order as any).deliveryMethod || 'Pickup', Number((order as any).deliveryFee || 0), (order as any).rentalNote || null,
-      order.createdAt
+      (order as any).couponCode || null, Number((order as any).discountAmount || 0), order.createdAt
     )
     .run()
 }

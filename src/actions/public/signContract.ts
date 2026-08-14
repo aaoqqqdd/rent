@@ -255,6 +255,17 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         const { paymentMethod } = body;
+        const couponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
+        if (couponCode && !(order as any).couponCode && !(order as any).coupon_code) {
+          const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(couponCode).first() as any
+          if (!coupon) throw new Error('优惠码无效、已过期或已达到使用次数上限')
+          const rentAmount = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0))
+          const discountAmount = Math.min(rentAmount, Math.max(0, Number((coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : coupon.discount_value).toFixed(2))))
+          const discountedTotal = Number((Number(order.totalAmount) - discountAmount).toFixed(2))
+          await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND (max_uses IS NULL OR used_count < max_uses)').bind(coupon.id).run()
+          await c.env.RENT.prepare('UPDATE orders SET totalAmount = ?, coupon_code = ?, discount_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(discountedTotal, String(coupon.code).toUpperCase(), discountAmount, contract.rentalId).run()
+          ;(order as any).totalAmount = discountedTotal
+        }
         const pickupTimeSlot = ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
         const returnTimeSlot = ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
         if (!pickupTimeSlot || !returnTimeSlot) throw new Error('请选择取货和归还时间')

@@ -78,7 +78,19 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   const dailyRate = device.pricePerDay;
   const depositAmount = device.depositAmount;
-  const totalAmount = rentalPeriod * dailyRate + depositAmount + deliveryFee;
+  const couponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
+  const rentAmount = rentalPeriod * dailyRate
+  let discountAmount = 0
+  let appliedCouponCode: string | null = null
+  if (couponCode) {
+    const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(couponCode).first() as any
+    if (!coupon) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('优惠码无效、已过期或已达到使用次数上限')}`)
+    discountAmount = coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : Number(coupon.discount_value)
+    discountAmount = Math.min(rentAmount, Math.max(0, Number(discountAmount.toFixed(2))))
+    appliedCouponCode = String(coupon.code).toUpperCase()
+    await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(coupon.id).run()
+  }
+  const totalAmount = rentAmount + depositAmount + deliveryFee - discountAmount;
 
   const orderId = `o-${nanoid(8)}`;
   const contractId = `ct-${nanoid(10)}`;
@@ -104,7 +116,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     dailyRate: dailyRate,
     contractId: contractId,
     signedAt: null,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(), couponCode: appliedCouponCode, discountAmount
     // created_by 在部分旧代码/表结构中存在，这里与 Order 类型对齐使用 createdAt
     // createdAtBy: user.id,
   } as any;
