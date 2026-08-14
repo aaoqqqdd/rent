@@ -76,7 +76,7 @@ import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund } from './actions/stripePayments'
+import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import siteStyles from './styles.css'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
@@ -608,13 +608,10 @@ app.post('/admin/users/:id/balance-adjust', async (c) => {
   if (!Number.isFinite(amount) || amount === 0) return c.text('余额变动金额必须不为 0', 400)
   if (!reason) return c.text('管理员调整余额必须填写原因', 400)
   await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount REAL NOT NULL, balance_after REAL NOT NULL, type TEXT NOT NULL, reason TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
-  const current = Number(target.balance || 0)
-  const next = Number((current + amount).toFixed(2))
-  if (next < 0) return c.text('扣减后余额不能小于 0', 400)
-  await c.env.RENT.batch([
-    c.env.RENT.prepare('UPDATE users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, target.id),
-    c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`bt-${crypto.randomUUID()}`, target.id, amount, next, amount > 0 ? 'admin_credit' : 'admin_debit', reason, admin.id),
-  ])
+  const result = await c.env.RENT.prepare('UPDATE users SET balance = ROUND(balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND ROUND(balance + ?, 2) >= 0 RETURNING balance').bind(amount, target.id, amount).first() as any
+  if (!result) return c.text('扣减后余额不能小于 0，或余额已被其他操作更新，请重试', 409)
+  const next = Number(result.balance)
+  await c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`bt-${crypto.randomUUID()}`, target.id, amount, next, amount > 0 ? 'admin_credit' : 'admin_debit', reason, admin.id).run()
   return c.redirect(`/admin/users/${target.id}`)
 })
 
@@ -622,9 +619,12 @@ app.post('/admin/balance-topups/:id/approve', async (c) => {
   const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).first() as any
   if (!topup) return c.text('充值记录不存在或已处理', 409)
-  const current = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first() as any
-  const next = Number((Number(current?.balance || 0) + Number(topup.amount)).toFixed(2))
-  await c.env.RENT.batch([c.env.RENT.prepare("UPDATE balance_topups SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(topup.id), c.env.RENT.prepare('UPDATE users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, topup.user_id), c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, 'top_up_transfer', ?, ?)").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, next, `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id)])
+  const claimed = await c.env.RENT.prepare("UPDATE balance_topups SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(topup.id).run()
+  if (!claimed.meta?.changes) return c.text('充值记录已被其他管理员处理', 409)
+  await c.env.RENT.batch([
+    c.env.RENT.prepare('UPDATE users SET balance = ROUND(balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(Number(topup.amount), topup.user_id),
+    c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) SELECT ?, ?, ?, balance, 'top_up_transfer', ?, ? FROM users WHERE id = ?").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id, topup.user_id),
+  ])
   return c.redirect(`/admin/users/${topup.user_id}`)
 })
 
@@ -1167,6 +1167,11 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
     try { damagePhotos = validateHostedImageUrls(form.damagePhotos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
   }
   if (damageDescription && !damagePhotos) return c.text('记录损坏时必须提供至少一张损坏照片链接', 400)
+  try {
+    await refundUnusedRentalDays(c, user, order, now.slice(0, 10))
+  } catch (error: any) {
+    return c.text(error.message || '未使用租金退款失败，订单暂未完成', 502)
+  }
   Object.assign(data, checks, { battery_cycles: batteryCycles ?? '', battery_health: String(form.batteryHealth || '').trim().slice(0, 100), damage_description: damageDescription, damage_photos: damagePhotos, replacement_cost: replacementCost.toFixed(2), return_status: damageDescription ? 'Damaged' : 'Returned', return_date: now.slice(0, 10), inspection_date: now.slice(0, 10), inspection_by: user.name || user.id })
   await c.env.RENT.batch([
     c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(data), contract.id),
@@ -2035,6 +2040,12 @@ app.post('/admin/orders/:id/cancel-and-refund', async (c) => {
   }
 })
 
+app.post('/admin/refunds/:id/complete-bank-transfer', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.text('无权限', 403)
+  try { await completeBankTransferRefund(c, admin, c.req.param('id')); return c.redirect('/admin/refunds') } catch (error: any) { return c.text(error.message || '退款处理失败', 409) }
+})
+
 app.post('/admin/orders/:id/delete', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -2116,7 +2127,7 @@ app.post('/admin/devices/new', async (c) => {
     name: form.name || '',
     brand: form.brand || '',
     model: form.model || '',
-    assetTag: await generateAssetTag(c, form.brand || ''),
+    assetTag: String(form.assetTag || '').trim().slice(0, 80) || await generateAssetTag(c, form.brand || ''),
     serialNumber: form.serialNumber || '',
     cpu: form.cpu || '',
     ram: form.ram || '',

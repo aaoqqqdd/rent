@@ -2007,6 +2007,7 @@ export const systemSettings = {
   },
   rentalRules: {
     unavailableDates: [] as string[],
+    unavailableTimeSlots: {} as Record<string, string[]>,
     minimumRentalDays: 1,
     bufferDays: 0,
   },
@@ -2320,11 +2321,11 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
     .bind(`inv-${order.id}`, String(data.invoice_number || `INV-${order.orderNo || order.id}`), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
 }
 
-export async function issueCreditNote(c: Context, orderId: string, amount: number, refundedProcessingFee = 0): Promise<void> {
+export async function issueCreditNote(c: Context, orderId: string, amount: number, refundedProcessingFee = 0, refundKey = orderId): Promise<void> {
   const invoice = await c.env.RENT.prepare("SELECT id, invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice'").bind(orderId).first() as any
   if (!invoice) return
   await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status, related_invoice_id) VALUES (?, ?, ?, 'credit_note', ?, 0, 0, ?, ?, 'AUD', 'issued', ?)`)
-    .bind(`cn-${orderId}`, `CN-${invoice.invoice_number}`, orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
+    .bind(`cn-${refundKey}`, `CN-${invoice.invoice_number}-${refundKey.slice(-8)}`, orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
 }
 
 export const contractTemplate = {
@@ -2814,7 +2815,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
-    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/refund-policy">退款政策</a></nav></footer>`
+    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/refund-policy">退款政策</a><a href="/copyright">版权与退款说明</a></nav></footer>`
   })
 }
 

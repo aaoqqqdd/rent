@@ -3375,7 +3375,7 @@ tr:hover td {
   top: 5px;
   left: 5px;
   width: var(--filter-indicator-width, 0px);
-  height: 34px;
+  height: 42px;
   border-radius: 4px;
   background: linear-gradient(135deg, #1e40af, #315ccf);
   box-shadow: 0 7px 16px rgba(30, 64, 175, .2);
@@ -3423,9 +3423,17 @@ tr:hover td {
 }
 
 .filter-tabs .button {
-  min-height: 34px;
-  padding: 6px 12px;
+  min-height: 42px;
+  padding: 8px 14px;
   box-shadow: none !important;
+}
+
+.contract-management-page {
+  padding-top: clamp(24px, 3vw, 36px);
+}
+
+.contract-management-page .filter-tabs {
+  align-items: stretch;
 }
 
 .search-bar {

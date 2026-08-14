@@ -267,13 +267,15 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           const rentAmount = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0))
           const discountAmount = Math.min(rentAmount, Math.max(0, Number((coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : coupon.discount_value).toFixed(2))))
           const discountedTotal = Number((Number(order.totalAmount) - discountAmount).toFixed(2))
-          await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND (max_uses IS NULL OR used_count < max_uses)').bind(coupon.id).run()
+          const couponClaim = await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND active = 1 AND (max_uses IS NULL OR used_count < max_uses)').bind(coupon.id).run()
+          if (!couponClaim.meta?.changes) throw new Error('优惠码已达到使用次数上限，请重新选择')
           await c.env.RENT.prepare('UPDATE orders SET totalAmount = ?, coupon_code = ?, discount_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(discountedTotal, String(coupon.code).toUpperCase(), discountAmount, contract.rentalId).run()
           ;(order as any).totalAmount = discountedTotal
         }
         const pickupTimeSlot = ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
         const returnTimeSlot = ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
-        if (!pickupTimeSlot || !returnTimeSlot) throw new Error('请选择取货和归还时间')
+        const unavailableTimeSlots = getSystemSettings().rentalRules.unavailableTimeSlots || {}
+        if (!pickupTimeSlot || !returnTimeSlot || (unavailableTimeSlots[order.startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[order.endDate] || []).includes(returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
         const canUseBalance = canUseAccountBalance(currentUser)
         const refundMethod = canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original'
         const refundBsb = String(body.refundBsb || '').trim()

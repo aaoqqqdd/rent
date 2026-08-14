@@ -52,7 +52,7 @@ export function stripeCheckoutItems(order: any): Array<{ name: string; amountCen
   return [
     { name: rentalLabel, amountCents: rentalCents },
     { name: '设备押金', amountCents: depositCents },
-    { name: `Stripe 支付手续费（${(getStripeProcessingFeeRate() * 100).toFixed(2)}%）`, amountCents: feeCents },
+    { name: `Stripe 支付手续费（${(getStripeProcessingFeeRate() * 100).toString()}%）`, amountCents: feeCents },
   ].filter(item => item.amountCents > 0)
 }
 
@@ -121,7 +121,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     // are rejected from business processing and logged for investigation;
     // returning 4xx here only causes Stripe to retry the same bad delivery.
     console.error('Stripe webhook verification failed:', error?.message || error)
-    return c.json({ received: true, accepted: false, reason: 'verification_failed' }, 200)
+    return c.json({ received: false, accepted: false, reason: 'verification_failed' }, 400)
   }
 
   const processed = await c.env.RENT.prepare('SELECT event_id FROM stripe_webhook_events WHERE event_id = ?').bind(event.id).first()
@@ -251,8 +251,39 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
-  if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount, refundedProcessingFee)
+  if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount, refundedProcessingFee, `deposit-${nanoid(12)}`)
   return c.redirect(`/admin/orders/${order.id}`, 303)
+}
+
+export async function refundUnusedRentalDays(c: Context, admin: any, order: any, returnedDate: string): Promise<void> {
+  const end = new Date(`${order.endDate}T00:00:00Z`).getTime()
+  const returned = new Date(`${returnedDate}T00:00:00Z`).getTime()
+  const unusedDays = Math.max(0, Math.ceil((end - returned) / 86400000))
+  const amount = Number((unusedDays * Number(order.dailyRate || 0)).toFixed(2))
+  if (!amount) return
+  const existing = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'early_return' AND status IN ('pending', 'succeeded')").bind(order.id).first()
+  if (existing) return
+  const payment = await paidPayment(c, order)
+  let channel = refundChannel(order, payment)
+  if (channel === 'unavailable') channel = 'balance'
+  if (channel === 'bank_transfer') {
+    await c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, 'early_return', ?, ?, 0, 'pending', ?, 'bank_transfer', ?, ?, ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, order.id, payment.id, amount, amount, admin.id, order.refundBsb || null, order.refundAccountNumber || null, order.refundAccountName || null, `提前归还，未使用 ${unusedDays} 天租金`)
+      .run()
+    return
+  }
+  let stripeRefundId: string | null = null
+  if (channel === 'stripe') {
+    const refund = await stripeRequest(c, 'refunds', new URLSearchParams({ payment_intent: payment.stripe_payment_intent_id, amount: String(cents(amount)), 'metadata[order_id]': order.id, 'metadata[type]': 'early_return' }), `early-return-refund-${order.id}`)
+    if (refund.status !== 'succeeded') throw new Error('未使用租金退款尚未成功，请稍后重试')
+    stripeRefundId = refund.id
+  }
+  await c.env.RENT.batch([
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, stripe_refund_id, status, processed_by, refund_method) VALUES (?, ?, ?, 'early_return', ?, ?, 0, ?, 'succeeded', ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, order.id, payment.id, amount, amount, stripeRefundId, admin.id, channel),
+    ...(channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(amount, order.userId)] : []),
+  ])
+  await issueCreditNote(c, order.id, amount, 0, `early-${nanoid(12)}`)
 }
 
 export async function cancelAndRefund(c: Context, admin: any, orderId: string): Promise<Response> {
@@ -267,6 +298,17 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
   if (channel === 'unavailable') return c.text('历史信用卡付款没有 Stripe 交易编号，无法原路退款；请先将退款方式改为余额', 409)
   if (channel === 'bank_transfer' && (!order.refundBsb || !order.refundAccountNumber || !order.refundAccountName)) return c.text('订单缺少银行退款账户信息', 409)
 
+  if (channel === 'bank_transfer') {
+    await c.env.RENT.batch([
+      c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, 'cancellation', ?, ?, 0, 'pending', ?, 'bank_transfer', ?, ?, ?, '租前取消，等待管理员银行转账')`)
+        .bind(`rf-${nanoid(12)}`, order.id, payment.id, order.totalAmount, order.totalAmount, admin.id, order.refundBsb, order.refundAccountNumber, order.refundAccountName),
+      c.env.RENT.prepare("UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(payment.id),
+      c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
+      c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
+    ])
+    return c.redirect(`/admin/orders/${order.id}`, 303)
+  }
+
   let stripeRefundId: string | null = null
   if (channel === 'stripe') {
     const params = new URLSearchParams({ payment_intent: payment.stripe_payment_intent_id, amount: String(cents(order.totalAmount)), 'metadata[order_id]': order.id, 'metadata[type]': 'cancellation' })
@@ -277,12 +319,17 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
 
   await c.env.RENT.batch([
     c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, 'cancellation', ?, ?, 0, ?, 'succeeded', ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, order.id, payment.id, order.totalAmount, order.totalAmount, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
+      .bind(`rf-${nanoid(12)}`, order.id, payment.id, order.totalAmount, order.totalAmount, stripeRefundId, admin.id, channel, null, null, null),
     ...(channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(order.totalAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(payment.id),
     c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
-  await issueCreditNote(c, order.id, order.totalAmount)
+  await issueCreditNote(c, order.id, order.totalAmount, 0, `cancellation-${nanoid(12)}`)
   return c.redirect(`/admin/orders/${order.id}`, 303)
+}
+
+export async function completeBankTransferRefund(c: Context, admin: any, refundId: string): Promise<void> {
+  const result = await c.env.RENT.prepare("UPDATE payment_refunds SET status = 'succeeded', processed_by = ?, created_at = CURRENT_TIMESTAMP WHERE id = ? AND type IN ('cancellation', 'early_return') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(admin.id, refundId).run()
+  if (!result.meta?.changes) throw new Error('退款记录不存在或已经处理')
 }

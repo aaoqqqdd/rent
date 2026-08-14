@@ -13,7 +13,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
       <div class="section-title"><h2>系统设置</h2><span class="section-note">配置公司资料、支付方式和推荐分成规则。</span></div>
 
       <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">
-        <h4 style="margin-top:0;">邮件 SMTP 配置</h4>
+        <h4 style="margin-top:0;">邮件 SMTP 配置</h4><a href="/admin/email-templates">完整邮件变量索引</a>
         <p class="section-note">用于邮箱验证、收据、合同、退款和其他通知。SMTP 密码加密保存，留空表示保留原密码。</p>
         <div class="grid grid-2">
           <div><label class="form-label" for="smtpHost">SMTP 主机</label><input class="form-control" id="smtpHost" value="${email.host || ''}" placeholder="smtp-relay.brevo.com"></div>
@@ -47,6 +47,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <div><label class="form-label" for="companyLogo">公司 Logo URL</label><input type="url" id="companyLogo" name="companyLogo" class="form-control" value="${settings.companyDetails.logo}" placeholder="https://"></div>
             <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
             <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><textarea id="unavailableDates" name="unavailableDates" class="form-control" rows="4" placeholder="2026-12-25\n2026-12-26">${settings.rentalRules.unavailableDates.join('\n')}</textarea><small class="form-text">每行一个 YYYY-MM-DD；这些日期不能取货或归还。</small></div>
+            <div class="form-group"><label class="form-label" for="unavailableTimeSlots">按日期设置不可用时间段</label><textarea id="unavailableTimeSlots" name="unavailableTimeSlots" class="form-control" rows="4" placeholder="2026-12-25: afternoon, evening_service">${Object.entries(settings.rentalRules.unavailableTimeSlots || {}).map(([date, slots]) => `${date}: ${(slots as string[]).join(', ')}`).join('\n')}</textarea><small class="form-text">每行格式：日期: 时间段；例如 2026-12-25: afternoon, evening_service。可用时间段：morning_service、morning、afternoon、evening_service。</small></div>
             <div class="grid grid-2"><div><label class="form-label" for="minimumRentalDays">最短租赁天数</label><input id="minimumRentalDays" name="minimumRentalDays" type="number" min="1" step="1" class="form-control" value="${settings.rentalRules.minimumRentalDays}"></div><div><label class="form-label" for="bufferDays">设备周转缓冲天数</label><input id="bufferDays" name="bufferDays" type="number" min="0" step="1" class="form-control" value="${settings.rentalRules.bufferDays}"><small class="form-text">自动扩展订单前后不可预约的缓冲时间。</small></div></div>
           </div>
         </div>
@@ -188,6 +189,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           },
           rentalRules: {
             unavailableDates: String(formData.get('unavailableDates') || '').split(/\\n+/).map(value => value.trim()).filter(Boolean),
+            unavailableTimeSlots: String(formData.get('unavailableTimeSlots') || '').split(/\\n+/).reduce((result, line) => { const [date, values] = line.split(':'); const slots = String(values || '').split(',').map(value => value.trim()).filter(value => ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(value)); if (/^\\d{4}-\\d{2}-\\d{2}$/.test(String(date || '').trim()) && slots.length) result[String(date).trim()] = slots; return result; }, {}),
             minimumRentalDays: Number(formData.get('minimumRentalDays') || 1),
             bufferDays: Number(formData.get('bufferDays') || 0),
           },

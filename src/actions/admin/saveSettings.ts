@@ -95,6 +95,9 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       unavailableDates: Array.isArray(payload.rentalRules?.unavailableDates)
         ? payload.rentalRules.unavailableDates.map((value: unknown) => String(value).trim()).filter((value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)).slice(0, 366)
         : getSystemSettings().rentalRules.unavailableDates,
+      unavailableTimeSlots: payload.rentalRules?.unavailableTimeSlots && typeof payload.rentalRules.unavailableTimeSlots === 'object' && !Array.isArray(payload.rentalRules.unavailableTimeSlots)
+        ? Object.fromEntries(Object.entries(payload.rentalRules.unavailableTimeSlots).filter(([date, slots]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Array.isArray(slots)).slice(0, 366).map(([date, slots]) => [date, (slots as unknown[]).filter(value => ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(value))).slice(0, 4)]).filter(([, slots]) => (slots as unknown[]).length > 0))
+        : getSystemSettings().rentalRules.unavailableTimeSlots,
       minimumRentalDays: Math.max(1, Math.floor(Number(payload.rentalRules?.minimumRentalDays ?? getSystemSettings().rentalRules.minimumRentalDays) || 1)),
       bufferDays: Math.max(0, Math.floor(Number(payload.rentalRules?.bufferDays ?? getSystemSettings().rentalRules.bufferDays) || 0)),
     },
@@ -104,7 +107,18 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   }
 
   if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)
-  if (payload.emailTransport) await saveEmailConfig(c, payload.emailTransport)
+  const emailTransportInput = payload.emailTransport
+  const shouldSaveEmailTransport = Boolean(
+    emailTransportInput &&
+    (
+      emailTransportInput.clear === true ||
+      emailTransportInput.host ||
+      emailTransportInput.user ||
+      emailTransportInput.password ||
+      emailTransportInput.from
+    )
+  )
+  if (shouldSaveEmailTransport) await saveEmailConfig(c, emailTransportInput)
   await updateSystemSettings(c, next as any)
 
   const changedAgreements = [

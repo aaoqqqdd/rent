@@ -73,7 +73,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
   const activeRentals = ordersWithDetails
 
   const body = `
-    <div class="panel">
+    <div class="panel contract-management-page">
       <div class="section-title"><div><h2>合同与租赁进度管理</h2><span class="section-note">${isAdmin ? '查看全部员工创建的合同、签署状态和租赁进度。' : '管理自己负责的租赁合同、签署状态和租赁进度。'}</span></div><div class="record-actions"><a class="button" href="/staff/contracts/new">新建合同</a>${isAdmin ? '<a class="button button-secondary" href="/admin/templates">协议与模板</a><a class="button button-secondary" href="/admin/calendar">租赁日历</a>' : ''}</div></div>
 
       ${successMessage ? `<div class="page-notification page-notification--success">${successMessage}</div>` : ''}
