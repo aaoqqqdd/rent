@@ -1253,7 +1253,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata'
+type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'softwareTerms' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -1276,6 +1276,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const rentalTermsValue = values.get('rentalTerms')
   const serviceTermsValue = values.get('serviceTerms')
   const privacyPolicyValue = values.get('privacyPolicy')
+  const softwareTermsValue = values.get('softwareTerms')
   const copyrightNoticeValue = values.get('copyrightNotice')
   const priceStrategyValue = values.get('priceStrategy')
   const paymentMethodsValue = values.get('paymentMethods')
@@ -1290,6 +1291,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
   systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue ?? systemSettings.serviceTerms)
   systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue ?? systemSettings.privacyPolicy)
+  systemSettings.softwareTerms = sanitizeRichHtml(softwareTermsValue ?? systemSettings.softwareTerms)
   const parsedLegalMetadata = safeJsonParse<any>(legalMetadataValue)
   if (parsedLegalMetadata) systemSettings.legalMetadata = { ...systemSettings.legalMetadata, ...parsedLegalMetadata }
   systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue ?? systemSettings.copyrightNotice)
@@ -1339,6 +1341,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   await write('rentalTerms', systemSettings.rentalTerms)
   await write('serviceTerms', systemSettings.serviceTerms)
   await write('privacyPolicy', systemSettings.privacyPolicy)
+  await write('softwareTerms', systemSettings.softwareTerms)
   await write('copyrightNotice', systemSettings.copyrightNotice)
   await write('priceStrategy', systemSettings.priceStrategy)
   await write('paymentMethods', systemSettings.paymentMethods)
@@ -2023,6 +2026,12 @@ export const systemSettings = {
     account: '87654321',
     accountName: '账户名',
   },
+  softwareTerms: `<h1>软件使用协议</h1>
+<p>本软件用于连接出租设备与 PC Rental 管理平台。安装、运行或使用本软件即表示您同意遵守本协议。</p>
+<h2>授权与用途</h2><p>本软件仅限授权设备和授权用户使用，不得复制、反向工程、绕过授权或用于违法用途。</p>
+<h2>设备连接</h2><p>软件会按平台要求发送设备状态、硬件信息和租期相关信息，用于设备管理、技术支持和履行租赁服务。</p>
+<h2>更新与停止</h2><p>软件可能自动检查并安装安全更新。平台可以因安全、服务或协议原因暂停软件连接。</p>
+<h2>协议更新</h2><p>更新后的软件使用协议将在本页面公布。</p>`,
   userTerms: `<h1>用户协议</h1>
 <p>欢迎使用 PC Rental 电脑租赁服务。注册或使用本网站即表示您同意遵守本协议。</p>
 <h2>账户与资料</h2>
@@ -2061,6 +2070,7 @@ export const systemSettings = {
     requireEmailVerification: false,
   },
   legalMetadata: {
+    software: { version: '1.0', lastUpdatedDate: '' },
     user: { version: '1.0', lastUpdatedDate: '' },
     rental: { version: '1.0', lastUpdatedDate: '' },
     service: { version: '1.0', lastUpdatedDate: '' },

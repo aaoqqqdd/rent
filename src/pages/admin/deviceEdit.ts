@@ -9,6 +9,14 @@ export function renderAdminDeviceEdit(user: any, device: any) {
   if (!device) return buildLayout('编辑设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求的设备不存在。</p></div>', user)
   const esc = (value: unknown) => sanitizePlainText(value, 2000).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const value = (camel: string, snake = camel) => esc(device[camel] ?? device[snake] ?? '')
+  const agentValue = (camel: string, snake = camel) => device[camel] ?? device[snake] ?? ''
+  const formatGb = (value: unknown, divisor: number) => {
+    const number = Number(value)
+    return Number.isFinite(number) && number > 0 ? `${(number / divisor).toFixed(1)} GB` : '—'
+  }
+  const hardwareValue = (manualCamel: string, manualSnake: string, agentCamel: string, agentSnake: string) => esc(agentValue(agentCamel, agentSnake) || device[manualCamel] || device[manualSnake] || '')
+  const agentMemory = formatGb(agentValue('agentMemoryMb', 'agent_memory_mb'), 1024)
+  const agentStorage = formatGb(agentValue('agentStorageFreeBytes', 'agent_storage_free_bytes'), 1024 ** 3)
   const status = device.status || 'available'
   const body = `
     <div class="page-header"><div><p class="section-code">ASSET RECORD</p><h2>编辑设备</h2><p>${value('name')} · <span class="mono">${value('assetTag', 'asset_tag') || value('id')}</span></p></div><div><a href="/admin/devices/${value('id')}/agent-install" class="button button-primary">生成 Windows 客户端安装信息</a> <a href="/admin/devices" class="button button-secondary">返回设备列表</a></div></div>
@@ -25,13 +33,13 @@ export function renderAdminDeviceEdit(user: any, device: any) {
             <div class="form-group"><label class="form-label" for="status">状态</label><select class="form-control" id="status" name="status"><option value="available" ${status === 'available' ? 'selected' : ''}>可用</option><option value="rented" ${status === 'rented' ? 'selected' : ''}>已出租</option><option value="maintenance" ${status === 'maintenance' ? 'selected' : ''}>维修中</option><option value="retired" ${status === 'retired' ? 'selected' : ''}>已退役</option></select></div>
           </div>
         </section>
-        <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3><p>各字段均可被员工端设备搜索匹配。</p></div></div>
+        <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3>/div></div>
           <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="cpu">CPU</label><input class="form-control" id="cpu" name="cpu" value="${value('cpu')}" maxlength="200"></div>
-            <div class="form-group"><label class="form-label" for="ram">内存</label><input class="form-control" id="ram" name="ram" value="${value('ram')}" maxlength="200"></div>
-            <div class="form-group"><label class="form-label" for="storage">存储</label><input class="form-control" id="storage" name="storage" value="${value('storage')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="cpu">CPU</label><input class="form-control" id="cpu" name="cpu" value="${hardwareValue('cpu', 'cpu', 'agentCpu', 'agent_cpu')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="ram">内存</label><input class="form-control" id="ram" name="ram" value="${agentMemory !== '—' ? agentMemory : value('ram')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="storage">存储</label><input class="form-control" id="storage" name="storage" value="${agentStorage !== '—' ? agentStorage : value('storage')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="gpu">显卡</label><input class="form-control" id="gpu" name="gpu" value="${value('gpu')}" maxlength="200"></div>
-            <div class="form-group"><label class="form-label" for="os">操作系统</label><input class="form-control" id="os" name="os" value="${value('os')}" maxlength="200"></div>
+            <div class="form-group"><label class="form-label" for="os">操作系统</label><input class="form-control" id="os" name="os" value="${hardwareValue('os', 'os', 'agentOsVersion', 'agent_os_version')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><input class="form-control" id="unavailableDates" name="unavailableDates" value="${esc((device.unavailableDates || []).join(', '))}" placeholder="2026-12-25, 2026-12-26"><small class="form-text">多个日期用逗号分隔；这些日期不能被客户或员工安排租赁。</small></div>
           </div>
           <div class="form-group"><label class="form-label" for="description">补充描述</label><textarea class="form-control" id="description" name="description" rows="4" maxlength="2000">${value('description')}</textarea></div>
@@ -47,8 +55,8 @@ export function renderAdminDeviceEdit(user: any, device: any) {
             <div class="form-group"><label class="form-label">主机名</label><input class="form-control" value="${value('agentHostname', 'agent_hostname') || '—'}" readonly></div>
             <div class="form-group"><label class="form-label">操作系统版本</label><input class="form-control" value="${value('agentOsVersion', 'agent_os_version') || '—'}" readonly></div>
             <div class="form-group"><label class="form-label">CPU</label><input class="form-control" value="${value('agentCpu', 'agent_cpu') || '—'}" readonly></div>
-            <div class="form-group"><label class="form-label">内存</label><input class="form-control" value="${device.agentMemoryMb ?? device.agent_memory_mb ?? '—'}" readonly></div>
-            <div class="form-group"><label class="form-label">剩余存储空间</label><input class="form-control" value="${device.agentStorageFreeBytes ?? device.agent_storage_free_bytes ?? '—'}" readonly></div>
+            <div class="form-group"><label class="form-label">内存</label><input class="form-control" value="${agentMemory}" readonly></div>
+            <div class="form-group"><label class="form-label">剩余存储空间</label><input class="form-control" value="${agentStorage}" readonly></div>
           </div>
         </section>
         <div class="record-actions"><button form="delete-device-form" type="submit" class="button button-danger">删除设备</button><button class="button button-primary" type="submit">保存设备资料</button></div>
