@@ -2770,6 +2770,16 @@ app.post('/api/device-agent/inspection', async (c) => {
   const previous = await c.env.RENT.prepare('SELECT snapshot_json FROM device_inspections WHERE device_id = ? ORDER BY created_at DESC LIMIT 1').bind(device.id).first() as any
   const before = previous ? JSON.parse(previous.snapshot_json || '{}') : {}
   const current = payload.snapshot || {}
+  if (type === 'automated_health' && device.inspection_requested_at) {
+    const pendingRentalInspection = await c.env.RENT.prepare("SELECT i.id FROM device_inspections i JOIN orders o ON o.id = i.rental_id WHERE i.device_id = ? AND i.inspection_type = 'before_rental' AND o.status = 'draft' ORDER BY i.created_at DESC LIMIT 1").bind(device.id).first() as any
+    if (pendingRentalInspection?.id) {
+      await c.env.RENT.batch([
+        c.env.RENT.prepare('UPDATE device_inspections SET snapshot_json = ?, differences_json = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?').bind(snapshot, JSON.stringify({}), pendingRentalInspection.id),
+        c.env.RENT.prepare('UPDATE devices SET inspection_requested_at = NULL WHERE id = ?').bind(device.id),
+      ])
+      return c.json({ ok: true, inspectionId: pendingRentalInspection.id, updated: true })
+    }
+  }
   const differences = Object.fromEntries(Object.keys({ ...before, ...current }).filter(key => String(before[key] ?? '') !== String(current[key] ?? '')).map(key => [key, { before: before[key] ?? null, after: current[key] ?? null }]))
   const id = `inspection-${nanoid(12)}`
   if (type === 'automated_health') {

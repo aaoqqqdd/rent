@@ -89,7 +89,7 @@ export async function renderNewContractPage(c: Context, user: any) {
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
-            <label for="device-condition" class="form-label">出租时设备状况</label>
+            <label for="device-condition" class="form-label">出租前验机</label>
             <textarea id="device-condition" name="deviceCondition" class="form-control" required placeholder="选择设备后自动填写最近一次 EXE 系统状态，也可以人工补充外观检查"></textarea>
             <small id="device-condition-source" class="form-text">选择设备后将读取 EXE 最近一次上报状态。</small>
           </div>

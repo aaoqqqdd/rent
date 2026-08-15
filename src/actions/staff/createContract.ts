@@ -169,6 +169,17 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const latestInspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE device_id = ? ORDER BY created_at DESC LIMIT 1").bind(deviceId).first() as any
   let inspectionSnapshot: Record<string, any> = {}
   try { inspectionSnapshot = JSON.parse(latestInspection?.snapshot_json || '{}') } catch (_) {}
+  if (String(device.agent_status || '').toLowerCase() === 'online') {
+    Object.assign(inspectionSnapshot, {
+      hostname: device.agent_hostname,
+      osVersion: device.agent_os_version,
+      cpu: device.agent_cpu,
+      memoryMb: device.agent_memory_mb,
+      storageFreeBytes: device.agent_storage_free_bytes,
+      agentVersion: device.agent_version,
+      detectedSerialNumber: device.agent_detected_serial,
+    })
+  }
   Object.assign(inspectionSnapshot, {
     deviceName: device.name,
     deviceId,
