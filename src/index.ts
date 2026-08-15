@@ -1236,6 +1236,9 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
   if (!contract) return c.text('订单缺少合同', 409)
   const data = JSON.parse(contract.contract_data || '{}')
+  const beforeInspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE device_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.deviceId).first() as any
+  let inspectionSnapshot: Record<string, any> = {}
+  try { inspectionSnapshot = JSON.parse(beforeInspection?.snapshot_json || '{}') } catch (_) {}
   let damagePhotos = ''
   if (String(form.damagePhotos || '').trim()) {
     try { damagePhotos = validateHostedImageUrls(form.damagePhotos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
@@ -1247,10 +1250,13 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
     return c.text(error.message || '未使用租金退款失败，订单暂未完成', 502)
   }
   Object.assign(data, checks, { battery_cycles: batteryCycles ?? '', battery_health: String(form.batteryHealth || '').trim().slice(0, 100), damage_description: damageDescription, damage_photos: damagePhotos, replacement_cost: replacementCost.toFixed(2), return_status: damageDescription ? 'Damaged' : 'Returned', return_date: now.slice(0, 10), inspection_date: now.slice(0, 10), inspection_by: user.name || user.id })
+  Object.assign(inspectionSnapshot, checks, { batteryCycles, batteryHealth: String(form.batteryHealth || '').trim().slice(0, 100), damageDescription, damagePhotos, replacementCost: replacementCost.toFixed(2), returnDate: now.slice(0, 10), inspectionBy: user.name || user.id })
+  const inspectionId = `inspection-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(data), contract.id),
     c.env.RENT.prepare("UPDATE orders SET status = 'completed', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
     c.env.RENT.prepare('UPDATE devices SET status = ? WHERE id = ?').bind(damageDescription ? 'maintenance' : 'available', order.deviceId),
+    c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, rental_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, \'after_return\', ?, ?)').bind(inspectionId, order.deviceId, order.id, JSON.stringify(inspectionSnapshot), JSON.stringify({})),
   ])
   return c.redirect(`/staff/orders/${order.id}`)
 })
@@ -1388,6 +1394,12 @@ app.get('/staff/inspections', async (c) => {
   return c.html(await pages.renderInspectionRecords(c, user))
 })
 
+app.get('/staff/inspections/device/:deviceId', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderInspectionDevice(c, user, c.req.param('deviceId'), c.req.query('page') || '1'))
+})
+
 app.get('/admin/inspections', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
@@ -1407,8 +1419,10 @@ app.post('/staff/inspections/:id/edit', async (c) => {
   if (!record) return c.html(renderNotFound(), 404)
   const form = await c.req.parseBody()
   let snapshot: any = {}
-  try { snapshot = JSON.parse(String(form.snapshotJson || '')) } catch (_) { return c.text('EXE 上报数据必须是有效 JSON', 400) }
-  if (!snapshot || Array.isArray(snapshot) || typeof snapshot !== 'object' || JSON.stringify(snapshot).length > 20000) return c.text('EXE 上报数据格式或大小无效', 400)
+  try { snapshot = JSON.parse(String(record.snapshot_json || '{}')) } catch (_) {}
+  const editableFields = ['screen', 'keyboard', 'touchpad', 'body', 'camera', 'wifi', 'power', 'batteryCycles', 'batteryHealth', 'damageDescription', 'inspectionNotes']
+  for (const field of editableFields) if (form[field] !== undefined) snapshot[field] = String(form[field] || '').trim().slice(0, 500)
+  if (!snapshot || Array.isArray(snapshot) || typeof snapshot !== 'object' || JSON.stringify(snapshot).length > 20000) return c.text('验机记录内容无效', 400)
   await c.env.RENT.prepare('UPDATE device_inspections SET snapshot_json = ?, edited_by = ?, edited_at = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(snapshot), user.id, c.req.param('id')).run()
   return c.redirect('/staff/inspections')
 })
@@ -2758,7 +2772,14 @@ app.post('/api/device-agent/inspection', async (c) => {
   const current = payload.snapshot || {}
   const differences = Object.fromEntries(Object.keys({ ...before, ...current }).filter(key => String(before[key] ?? '') !== String(current[key] ?? '')).map(key => [key, { before: before[key] ?? null, after: current[key] ?? null }]))
   const id = `inspection-${nanoid(12)}`
-  await c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, ?, ?)').bind(id, device.id, type, snapshot, JSON.stringify(differences)).run()
+  if (type === 'automated_health') {
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("DELETE FROM device_inspections WHERE device_id = ? AND inspection_type = 'automated_health' AND date(created_at) < date('now')").bind(device.id),
+      c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, ?, ?)').bind(id, device.id, type, snapshot, JSON.stringify(differences)),
+    ])
+  } else {
+    await c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, ?, ?)').bind(id, device.id, type, snapshot, JSON.stringify(differences)).run()
+  }
   if (type === 'automated_health') await c.env.RENT.prepare('UPDATE devices SET inspection_requested_at = NULL WHERE id = ?').bind(device.id).run()
   if (type === 'automated_health' && Number(current.storageFreeBytes) < 10 * 1024 * 1024 * 1024) await c.env.RENT.prepare("INSERT INTO device_health_alerts (id, device_id, alert_type, severity, message) VALUES (?, ?, 'low_storage', 'warning', ?)").bind(`alert-${nanoid(12)}`, device.id, '设备剩余空间低于 10GB').run()
   return c.json({ ok: true, inspectionId: id, differences })
@@ -2816,12 +2837,14 @@ export default {
           const expiredPaymentCount = await cancelExpiredPendingPaymentOrders(c)
           const dueNotificationCount = await createDueDateNotifications(c)
           const overduePaymentNotificationCount = await notifyOverduePaymentProofs(c)
+          const expiredInspectionResult = await env.RENT.prepare("DELETE FROM device_inspections WHERE created_at < datetime('now', '-1 year')").run()
           console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
           console.log(`Scheduled account cleanup completed: disabled ${Number(deletedAccountResult.meta?.changes || 0)} accounts`)
           console.log(`Scheduled guest cleanup completed: disabled ${expiredGuestCount} expired guest accounts`)
           console.log(`Scheduled payment cleanup completed: cancelled ${expiredPaymentCount} unpaid orders`)
           console.log(`Scheduled due notifications completed: created ${dueNotificationCount} reminders`)
           console.log(`Scheduled payment review notifications completed: notified ${overduePaymentNotificationCount} proofs`)
+          console.log(`Scheduled inspection cleanup completed: removed ${Number(expiredInspectionResult.meta?.changes || 0)} records`)
         } catch (error) {
           await logError(c, 'ERROR', 'Failed to run scheduled contract cleanup', error as Error)
           console.error('Scheduled contract cleanup failed:', error)
