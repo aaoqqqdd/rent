@@ -34,7 +34,7 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
       </div>
 
       ${user.role === 'ADMIN' ? `<div class="panel" style="margin-top:20px;"><h3>Windows 客户端</h3>
-        <p class="section-note">在出租设备上安装客户端前，生成一次性注册码。注册码有效 7 天，使用一次后失效。</p>
+        <p class="section-note">客户端会优先按序列号自动绑定；没有匹配序列号时使用一次性注册码。注册码有效 15 分钟，使用一次后失效。</p>
         ${setupCode ? `<p><strong>本次注册码：</strong><code>${setupCode}</code></p>` : ''}
         <form method="post" action="/staff/devices/${device.id}/agent-setup"><button class="button" type="submit">生成 Windows 客户端注册码</button></form>
       </div>` : ''}

@@ -20,7 +20,7 @@ export async function renderNewContractPage(c: Context, user: any) {
     deviceGroups.set(groupName, [...(deviceGroups.get(groupName) || []), device])
   }
   const bookingRanges = ((await c.env.RENT.prepare(`SELECT id, deviceId, startDate, endDate, status FROM orders WHERE status NOT IN ('completed', 'cancelled') ORDER BY startDate`).all()).results || []) as any[]
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const bookedDeviceIds = new Set(bookingRanges.filter(item => item.deviceId && item.endDate >= today).map(item => item.deviceId))
   const deviceCatalog = [...deviceGroups.entries()].sort(([left], [right]) => left.localeCompare(right, 'zh-CN')).map(([groupName, groupDevices]) => {
     const [name, model] = groupName.split('\u0000')
@@ -42,6 +42,12 @@ export async function renderNewContractPage(c: Context, user: any) {
   }).join('')
   const bookingData = JSON.stringify(bookingRanges).replace(/</g, '\\u003c')
   const rentalRulesData = JSON.stringify(rentalRules).replace(/</g, '\\u003c')
+  const agentStatusData = JSON.stringify(Object.fromEntries(devices.map(device => [device.id, {
+    status: (device as any).agent_status || '', hostname: (device as any).agent_hostname || '',
+    os: (device as any).agent_os_version || '', cpu: (device as any).agent_cpu || '',
+    memoryMb: (device as any).agent_memory_mb || null, storageFreeBytes: (device as any).agent_storage_free_bytes || null,
+    lastSeen: (device as any).agent_last_seen_at || ''
+  }]))).replace(/</g, '\\u003c')
 
   const formHtml = `
     <div class="page-header"><div><p class="section-code">CONTRACT WORKFLOW</p><h2>新增租赁合同</h2><p>选择设备、租期与交付方式，生成客户签署链接。</p></div><a class="button button-secondary" href="/staff/contracts">返回合同管理</a></div>
@@ -77,7 +83,8 @@ export async function renderNewContractPage(c: Context, user: any) {
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="device-condition" class="form-label">出租时设备状况</label>
-            <textarea id="device-condition" name="deviceCondition" class="form-control" required placeholder="例如：外观良好，屏幕无划痕"></textarea>
+            <textarea id="device-condition" name="deviceCondition" class="form-control" required placeholder="选择设备后自动填写最近一次 EXE 系统状态，也可以人工补充外观检查"></textarea>
+            <small id="device-condition-source" class="form-text">选择设备后将读取 EXE 最近一次上报状态。</small>
           </div>
           <div class="form-group">
             <label for="device-accessories" class="form-label">配件列表</label>
@@ -142,6 +149,7 @@ export async function renderNewContractPage(c: Context, user: any) {
       const deviceEmptyState = document.getElementById('device-empty-state');
       const bookings = ${bookingData};
       const rentalRules = ${rentalRulesData};
+      const agentStatus = ${agentStatusData};
       const bookingCalendar = document.getElementById('booking-calendar');
       const bookingStatus = document.getElementById('booking-status');
       const bookingConflict = document.getElementById('booking-conflict');
@@ -156,7 +164,28 @@ export async function renderNewContractPage(c: Context, user: any) {
       function selectDevice(card) {
         deviceSelect.value = card.dataset.deviceId;
         deviceCards.forEach(item => { const selected = item === card; item.classList.toggle('is-selected', selected); item.setAttribute('aria-pressed', String(selected)); });
+        fillDeviceCondition(deviceSelect.value);
         validateBookingDates();
+      }
+      function formatStorage(bytes) { const value = Number(bytes); if (!Number.isFinite(value) || value <= 0) return ''; return (value / 1073741824).toFixed(1) + ' GB'; }
+      function fillDeviceCondition(deviceId) {
+        const data = agentStatus[deviceId];
+        const field = document.getElementById('device-condition');
+        const source = document.getElementById('device-condition-source');
+        if (!data || ![data.hostname, data.os, data.cpu, data.memoryMb, data.storageFreeBytes, data.lastSeen].some(Boolean)) {
+          source.textContent = '暂无 EXE 系统状态，请人工填写设备外观和功能检查。';
+          return;
+        }
+        const lines = ['EXE 最近一次系统状态：' + (data.status === 'online' ? '在线' : data.status || '未知')];
+        if (data.hostname) lines.push('主机名：' + data.hostname);
+        if (data.os) lines.push('操作系统：' + data.os);
+        if (data.cpu) lines.push('CPU：' + data.cpu);
+        if (data.memoryMb) lines.push('内存：' + data.memoryMb + ' MB');
+        if (data.storageFreeBytes) lines.push('系统盘剩余空间：' + formatStorage(data.storageFreeBytes));
+        if (data.lastSeen) lines.push('最后上报：' + data.lastSeen);
+        const current = field.value.trim();
+        if (!current || current.startsWith('EXE 最近一次系统状态：')) field.value = lines.join('\\n') + '\\n\\n人工检查：';
+        source.textContent = '已自动填入 EXE 最近一次上报状态，请继续补充外观、屏幕和配件检查。';
       }
       function filterDevices() {
         const query = deviceSearch.value.trim().toLocaleLowerCase('zh-CN');

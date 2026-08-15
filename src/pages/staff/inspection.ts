@@ -4,13 +4,22 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import type { Context } from 'hono'
-import { buildLayout, getOrderById, getDeviceById } from '../../site'
+import { buildLayout, getOrderById, getDeviceById, sanitizePlainText } from '../../site'
 
 export async function renderStaffInspection(c: Context, user: any, orderId: string) {
   const order = await getOrderById(c, orderId)
   if (!order || !['active', 'pending_return'].includes(order.status)) return buildLayout('无法验机', '<div class="panel"><h2>当前订单不能执行归还验机</h2></div>', user)
   const device = await getDeviceById(c, order.deviceId)
+  const value = (key: string) => sanitizePlainText(String((device as any)?.[key] || ''), 300)
+  const storage = Number((device as any)?.agent_storage_free_bytes)
+  const storageText = Number.isFinite(storage) && storage > 0 ? `${(storage / 1073741824).toFixed(1)} GB` : ''
+  const systemStatus = [
+    ['状态', value('agent_status') === 'online' ? '在线' : value('agent_status') || '未知'],
+    ['主机名', value('agent_hostname')], ['操作系统', value('agent_os_version')], ['CPU', value('agent_cpu')],
+    ['内存', Number((device as any)?.agent_memory_mb) > 0 ? `${Number((device as any).agent_memory_mb)} MB` : ''],
+    ['系统盘剩余空间', storageText], ['最后上报', value('agent_last_seen_at')]
+  ].filter(([, item]) => item).map(([label, item]) => `<div><dt>${label}</dt><dd>${item}</dd></div>`).join('')
   const checks = [['screenCondition','屏幕'],['keyboardCondition','键盘'],['trackpadCondition','触控板'],['bodyCondition','外壳'],['cameraCondition','摄像头'],['wifiCondition','WiFi'],['powerTest','开机测试']]
   const fields = checks.map(([name,label]) => `<div class="form-group"><label class="form-label">${label}</label><select class="form-control" name="${name}" required><option value="正常">正常</option><option value="异常">异常</option><option value="未测试">未测试</option></select></div>`).join('')
-  return buildLayout('归还验机', `<div class="panel"><div class="section-title"><h2>归还验机</h2><span>${device?.name || order.deviceId}</span></div><form method="post" action="/staff/orders/${order.id}/inspection" data-site-confirm="提交后订单将完成归还，确认验机结果无误？"><div class="grid grid-2">${fields}<div class="form-group"><label class="form-label">电池循环次数</label><input class="form-control" type="number" min="0" name="batteryCycles"></div><div class="form-group"><label class="form-label">电池健康</label><input class="form-control" name="batteryHealth" placeholder="例如 92%"></div></div><div class="form-group"><label class="form-label">损坏说明（无损坏可留空）</label><textarea class="form-control" name="damageDescription" rows="3"></textarea></div><div class="grid grid-2"><div class="form-group"><label class="form-label">损坏照片 URL</label><textarea class="form-control" name="damagePhotos" rows="2"></textarea></div><div class="form-group"><label class="form-label">预计更换/维修费用（AUD）</label><input class="form-control" type="number" min="0" step="0.01" name="replacementCost" value="0"></div></div><button class="button button-primary" type="submit">提交验机并完成归还</button></form></div>`, user)
+  return buildLayout('归还验机', `<div class="panel"><div class="section-title"><h2>归还验机</h2><span>${sanitizePlainText(String(device?.name || order.deviceId), 200)}</span></div>${systemStatus ? `<section class="panel" style="margin:16px 0;background:#f5f8fb"><h3>EXE 最近一次系统状态</h3><dl class="data-list">${systemStatus}</dl><p class="form-text">以上系统信息由租赁设备上的 EXE 自动上报；屏幕、键盘、外壳、摄像头、WiFi、损坏和照片仍需人工检查。</p></section>` : '<div class="alert">暂无 EXE 系统状态，请确认设备已联网并运行管理软件。</div>'}<form method="post" action="/staff/orders/${order.id}/inspection" data-site-confirm="提交后订单将完成归还，确认验机结果无误？"><div class="grid grid-2">${fields}<div class="form-group"><label class="form-label">电池循环次数</label><input class="form-control" type="number" min="0" name="batteryCycles"></div><div class="form-group"><label class="form-label">电池健康</label><input class="form-control" name="batteryHealth" placeholder="例如 92%（人工确认）"></div></div><div class="form-group"><label class="form-label">损坏说明（无损坏可留空）</label><textarea class="form-control" name="damageDescription" rows="3"></textarea></div><div class="grid grid-2"><div class="form-group"><label class="form-label">损坏照片 URL</label><textarea class="form-control" name="damagePhotos" rows="2"></textarea></div><div class="form-group"><label class="form-label">预计更换/维修费用（AUD）</label><input class="form-control" type="number" min="0" step="0.01" name="replacementCost" value="0"></div></div><button class="button button-primary" type="submit">提交验机并完成归还</button></form></div>`, user)
 }

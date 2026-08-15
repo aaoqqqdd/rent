@@ -1397,7 +1397,7 @@ app.post('/staff/devices/:id/agent-setup', async (c) => {
   const code = String(Math.floor(100000 + Math.random() * 900000))
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))
   const hash = Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, '0')).join('')
-  await c.env.RENT.prepare(`UPDATE devices SET agent_setup_code_hash = ?, agent_setup_code_expires_at = datetime(CURRENT_TIMESTAMP, '+7 days'), updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(hash, c.req.param('id')).run()
+  await c.env.RENT.prepare(`UPDATE devices SET agent_setup_code_hash = ?, agent_setup_code_expires_at = datetime(CURRENT_TIMESTAMP, '+15 minutes'), updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(hash, c.req.param('id')).run()
   return c.redirect(`/staff/devices/${c.req.param('id')}?agentSetupCode=${code}`)
 })
 
@@ -2218,6 +2218,19 @@ app.get('/admin/coupons', async (c) => {
   return c.html(pages.renderAdminCoupons(admin, coupons as any[], devices as any[]))
 })
 
+app.get('/admin/device-agent-bindings', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminDeviceAgentBindings(c, user))
+})
+
+app.post('/admin/device-agent-bindings/:id/unbind', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await c.env.RENT.prepare("UPDATE devices SET agent_token_hash = NULL, agent_registered_at = NULL, agent_last_seen_at = NULL, agent_last_ip = NULL, agent_hostname = NULL, agent_os_version = NULL, agent_cpu = NULL, agent_memory_mb = NULL, agent_storage_free_bytes = NULL, agent_status = 'unregistered', agent_setup_code_hash = NULL, agent_setup_code_expires_at = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(c.req.param('id')).run()
+  return c.redirect('/admin/device-agent-bindings')
+})
+
 app.get('/admin/devices', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -2312,9 +2325,9 @@ app.get('/admin/devices/:id/agent-install', async (c) => {
   const code = String(Math.floor(100000 + Math.random() * 900000))
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))
   const codeHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
   await c.env.RENT.prepare("UPDATE devices SET agent_token_hash = NULL, agent_registered_at = NULL, agent_last_seen_at = NULL, agent_last_ip = NULL, agent_hostname = NULL, agent_os_version = NULL, agent_cpu = NULL, agent_memory_mb = NULL, agent_storage_free_bytes = NULL, agent_status = 'unregistered', agent_setup_code_hash = ?, agent_setup_code_expires_at = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(codeHash, expiresAt, device.id).run()
-  const body = `<div class="page-header"><div><p class="section-code">WINDOWS AGENT</p><h2>Windows 客户端安装信息</h2><p>${sanitizePlainText(device.name, 120)} · 访问码有效 7 天且只能使用一次。</p></div><a href="/admin/devices/${device.id}/edit" class="button button-secondary">返回设备详情</a></div><div class="panel"><h3>6 位 Windows 客户端访问码</h3><p>点击下面按钮下载 GitHub Actions 构建的安装程序。首次启动时输入访问码完成设备绑定。</p><div style="font-size:42px;letter-spacing:12px;font-weight:700;margin:28px 0;color:var(--accent,#2563eb);"><code>${code}</code></div><div class="record-actions"><button class="button button-primary" type="button" id="copy-agent-code">复制 6 位访问码</button><a class="button button-primary" href="/downloads/RentDeviceAgent-Setup.exe">下载 Windows 安装程序（EXE）</a></div><p>安装程序会安装到系统目录并注册 Windows Service，软件包由 GitHub Actions 自动发布。</p><p class="page-notification page-notification--warning">访问码只显示这一次。关闭页面后无法恢复，只能重新生成。绑定成功后访问码立即失效。</p></div><script>(()=>{const b=document.getElementById('copy-agent-code');b?.addEventListener('click',async()=>{await navigator.clipboard.writeText('${code}');b.textContent='已复制';setTimeout(()=>b.textContent='复制 6 位访问码',1600);});})();</script>`
+  const body = `<div class="page-header"><div><p class="section-code">WINDOWS AGENT</p><h2>Windows 客户端安装信息</h2><p>${sanitizePlainText(device.name, 120)} · 访问码有效 15 分钟且只能使用一次。</p></div><a href="/admin/device-agent-bindings" class="button button-secondary">返回绑定设备</a></div><div class="panel"><h3>6 位 Windows 客户端访问码</h3><p>客户端会先读取 BIOS 序列号自动绑定；如果没有匹配序列号，才使用下面的访问码。</p><div style="font-size:42px;letter-spacing:12px;font-weight:700;margin:28px 0;color:var(--accent,#2563eb);"><code>${code}</code></div><div class="record-actions"><button class="button button-primary" type="button" id="copy-agent-code">复制 6 位访问码</button><a class="button button-primary" href="/downloads/RentDeviceAgent-Setup.exe">下载 Windows 安装程序（EXE）</a></div><p>访问码将在 ${sanitizePlainText(expiresAt, 40)} 失效。安装程序会安装到系统目录并注册 Windows Service。</p><p class="page-notification page-notification--warning">访问码只显示这一次。关闭页面后无法恢复，只能重新生成。绑定成功后访问码立即失效。</p></div><script>(()=>{const b=document.getElementById('copy-agent-code');b?.addEventListener('click',async()=>{await navigator.clipboard.writeText('${code}');b.textContent='已复制';setTimeout(()=>b.textContent='复制 6 位访问码',1600);});})();</script>`
   return c.html(buildLayout('Windows 客户端安装信息 - 电脑租赁管理系统', body, user))
 })
 
@@ -2693,9 +2706,16 @@ app.post('/api/device-agent/register', async (c) => {
   const payload = await c.req.json().catch(() => ({})) as any
   const serialNumber = String(payload.serialNumber || '').trim()
   const setupCode = String(payload.setupCode || '').trim()
-  if (!/^\d{6}$/.test(setupCode)) return c.json({ ok: false, error: 'setupCode must be exactly 6 digits' }, 400)
-  const setupCodeHash = await hashAgentValue(setupCode)
-  const device = await c.env.RENT.prepare(`SELECT id, name, serialNumber FROM devices WHERE agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP${serialNumber ? ' AND serialNumber = ?' : ''}`).bind(...(serialNumber ? [setupCodeHash, serialNumber] : [setupCodeHash])).first() as any
+  let device: any = null
+  if (serialNumber) {
+    device = await c.env.RENT.prepare('SELECT id, name, serialNumber, agent_token_hash FROM devices WHERE serialNumber = ? LIMIT 1').bind(serialNumber).first() as any
+    if (device?.agent_token_hash) device = null
+  }
+  if (!device) {
+    if (!/^\d{6}$/.test(setupCode)) return c.json({ ok: false, error: serialNumber ? '未找到可自动绑定的序列号，请填写 6 位访问码' : 'setupCode must be exactly 6 digits' }, 400)
+    const setupCodeHash = await hashAgentValue(setupCode)
+    device = await c.env.RENT.prepare(`SELECT id, name, serialNumber FROM devices WHERE agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP${serialNumber ? ' AND serialNumber = ?' : ''}`).bind(...(serialNumber ? [setupCodeHash, serialNumber] : [setupCodeHash])).first() as any
+  }
   if (!device) return c.json({ ok: false, error: 'Invalid or expired setup code' }, 401)
   const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '')
   await c.env.RENT.prepare(`UPDATE devices SET agent_token_hash = ?, agent_setup_code_hash = NULL, agent_setup_code_expires_at = NULL, agent_registered_at = CURRENT_TIMESTAMP, agent_status = 'offline', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(await hashAgentValue(token), device.id).run()
