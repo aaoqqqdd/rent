@@ -4908,6 +4908,10 @@ tr:hover td {
   .contract-viewer > .a4-document { display: block !important; width: 100%; min-height: 0; margin: 0; padding: 0; background: white; color: #111; border: 0; box-shadow: none; }
   .contract-viewer > .a4-document.contract-content { margin: 0 !important; padding: 0 !important; }
   .contract-viewer > .a4-document.contract-content > :first-child { margin-top: 0 !important; padding-top: 0 !important; }
+  .contract-viewer > .a4-document.contract-content > :first-child {
+    height: auto !important;
+    min-height: 0 !important;
+  }
   .contract-viewer > .a4-document .contract-content h1:first-child,
   .contract-viewer > .a4-document .contract-content h2:first-child,
   .contract-viewer > .a4-document .contract-content h3:first-child { margin-block-start: 0 !important; }
