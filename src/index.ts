@@ -2346,7 +2346,7 @@ app.post('/api/device-agent/register-legacy', async (c) => {
   const agentToken = nanoid(48)
   const tokenDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(agentToken))
   const tokenHash = Array.from(new Uint8Array(tokenDigest), byte => byte.toString(16).padStart(2, '0')).join('')
-  await c.env.RENT.prepare("UPDATE devices SET agent_token_hash = ?, agent_registered_at = ?, agent_last_seen_at = ?, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_status = 'online' WHERE id = ?").bind(tokenHash, now, now, c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || '', String(payload.hostname || ''), String(payload.osVersion || ''), String(payload.cpu || ''), Number(payload.memoryMb) || null, Number(payload.storageFreeBytes) || null, row.device_id).run()
+  await c.env.RENT.prepare("UPDATE devices SET agent_token_hash = ?, agent_registered_at = ?, agent_last_seen_at = ?, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_version = ?, agent_status = 'online' WHERE id = ?").bind(tokenHash, now, now, c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || '', String(payload.hostname || ''), String(payload.osVersion || ''), String(payload.cpu || ''), Number(payload.memoryMb) || null, Number(payload.storageFreeBytes) || null, String(payload.version || ''), row.device_id).run()
   return c.json({ deviceId: row.device_id, agentToken, heartbeatUrl: new URL('/api/device-agent/heartbeat', c.req.url).toString() })
 })
 
@@ -2727,7 +2727,7 @@ app.post('/api/device-agent/heartbeat', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
   const payload = await c.req.json().catch(() => ({})) as any
-  await c.env.RENT.prepare(`UPDATE devices SET agent_last_seen_at = CURRENT_TIMESTAMP, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_status = 'online', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(c.req.header('CF-Connecting-IP') || null, payload.hostname || null, payload.osVersion || null, payload.cpu || null, Number.isFinite(payload.memoryMb) ? payload.memoryMb : null, Number.isFinite(payload.storageFreeBytes) ? payload.storageFreeBytes : null, device.id).run()
+  await c.env.RENT.prepare(`UPDATE devices SET agent_last_seen_at = CURRENT_TIMESTAMP, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_version = ?, agent_status = 'online', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(c.req.header('CF-Connecting-IP') || null, payload.hostname || null, payload.osVersion || null, payload.cpu || null, Number.isFinite(payload.memoryMb) ? payload.memoryMb : null, Number.isFinite(payload.storageFreeBytes) ? payload.storageFreeBytes : null, String(payload.version || ''), device.id).run()
   return c.json({ ok: true, deviceId: device.id, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null })
 })
 
