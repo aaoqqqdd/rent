@@ -33,7 +33,7 @@ export function renderAdminDeviceEdit(user: any, device: any) {
             <div class="form-group"><label class="form-label" for="status">状态</label><select class="form-control" id="status" name="status"><option value="available" ${status === 'available' ? 'selected' : ''}>可用</option><option value="rented" ${status === 'rented' ? 'selected' : ''}>已出租</option><option value="maintenance" ${status === 'maintenance' ? 'selected' : ''}>维修中</option><option value="retired" ${status === 'retired' ? 'selected' : ''}>已退役</option></select></div>
           </div>
         </section>
-        <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3>/div></div>
+        <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3><p>有设备代理数据时优先显示代理实时信息，否则显示手工录入信息。</p></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label class="form-label" for="cpu">CPU</label><input class="form-control" id="cpu" name="cpu" value="${hardwareValue('cpu', 'cpu', 'agentCpu', 'agent_cpu')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="ram">内存</label><input class="form-control" id="ram" name="ram" value="${agentMemory !== '—' ? agentMemory : value('ram')}" maxlength="200"></div>

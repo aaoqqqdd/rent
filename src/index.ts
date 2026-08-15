@@ -2230,14 +2230,11 @@ app.get('/admin/devices/:id/agent-install', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const device = await getDeviceById(c, c.req.param('id')) as any
   if (!device) return c.redirect('/admin/devices')
-  if (device.agentTokenHash || device.agent_token_hash || device.agentRegisteredAt || device.agent_registered_at) {
-    return c.html(buildLayout('Windows 客户端安装信息 - 电脑租赁管理系统', `<div class="panel"><h2>设备已绑定</h2><p>该设备已经完成 Windows 客户端绑定，注册码已失效，不能再次生成或修改。</p><p><a class="button button-secondary" href="/admin/devices/${device.id}/edit">返回设备详情</a></p></div>`, user), 409)
-  }
   const code = String(Math.floor(100000 + Math.random() * 900000))
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))
   const codeHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-  await c.env.RENT.prepare("UPDATE devices SET agent_setup_code_hash = ?, agent_setup_code_expires_at = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(codeHash, expiresAt, device.id).run()
+  await c.env.RENT.prepare("UPDATE devices SET agent_token_hash = NULL, agent_registered_at = NULL, agent_last_seen_at = NULL, agent_last_ip = NULL, agent_hostname = NULL, agent_os_version = NULL, agent_cpu = NULL, agent_memory_mb = NULL, agent_storage_free_bytes = NULL, agent_status = 'unregistered', agent_setup_code_hash = ?, agent_setup_code_expires_at = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(codeHash, expiresAt, device.id).run()
   const body = `<div class="page-header"><div><p class="section-code">WINDOWS AGENT</p><h2>Windows 客户端安装信息</h2><p>${sanitizePlainText(device.name, 120)} · 访问码有效 7 天且只能使用一次。</p></div><a href="/admin/devices/${device.id}/edit" class="button button-secondary">返回设备详情</a></div><div class="panel"><h3>6 位 Windows 客户端访问码</h3><p>点击下面按钮下载 GitHub Actions 构建的安装程序。首次启动时输入访问码完成设备绑定。</p><div style="font-size:42px;letter-spacing:12px;font-weight:700;margin:28px 0;color:var(--accent,#2563eb);"><code>${code}</code></div><div class="record-actions"><button class="button button-primary" type="button" id="copy-agent-code">复制 6 位访问码</button><a class="button button-primary" href="/downloads/RentDeviceAgent-Setup.exe">下载 Windows 安装程序（EXE）</a></div><p>安装程序会安装到系统目录并注册 Windows Service，软件包由 GitHub Actions 自动发布。</p><p class="page-notification page-notification--warning">访问码只显示这一次。关闭页面后无法恢复，只能重新生成。绑定成功后访问码立即失效。</p></div><script>(()=>{const b=document.getElementById('copy-agent-code');b?.addEventListener('click',async()=>{await navigator.clipboard.writeText('${code}');b.textContent='已复制';setTimeout(()=>b.textContent='复制 6 位访问码',1600);});})();</script>`
   return c.html(buildLayout('Windows 客户端安装信息 - 电脑租赁管理系统', body, user))
 })
