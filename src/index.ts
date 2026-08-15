@@ -104,28 +104,6 @@ function shouldShowTestAccounts(c: any): boolean {
   return String(c.env.SHOW_TEST_ACCOUNTS || '').toLowerCase() === 'true' && isCustomerLoginHost(c)
 }
 
-async function ensureSoftwareAgreementColumns(c: any): Promise<void> {
-  for (const [column, definition] of [
-    ['software_agreement_accepted', 'INTEGER NOT NULL DEFAULT 0'],
-    ['software_agreement_version', 'TEXT'],
-    ['software_agreement_accepted_at', 'TEXT'],
-    ['software_agreement_accepted_ip', 'TEXT'],
-  ] as const) {
-    try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} ${definition}`).run() } catch (_) {}
-  }
-}
-
-async function requiresSoftwareAgreement(c: any, user: any): Promise<boolean> {
-  if (user.role !== 'CUSTOMER') return false
-  await ensureSoftwareAgreementColumns(c)
-  await loadSystemSettingsFromDB(c)
-  const version = String(getSystemSettings().legalMetadata?.software?.version || '1.0')
-  if (String(user.software_agreement_version || '') === version && Number(user.software_agreement_accepted) === 1) return false
-  const today = new Date().toISOString().slice(0, 10)
-  const rental = await c.env.RENT.prepare("SELECT id FROM orders WHERE userId = ? AND status = 'active' AND startDate <= ? LIMIT 1").bind(user.id, today).first()
-  return Boolean(rental)
-}
-
 async function getTableColumns(c: any, tableName: string): Promise<string[]> {
   const allowedTables = new Set(['users', 'commission_withdrawals'])
   if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
@@ -208,16 +186,6 @@ app.use('*', async (c, next) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     c.set('user', user)
-  }
-  await next()
-})
-
-// 租赁开始后未同意软件协议时，阻断整站功能，仅保留协议页和退出登录。
-app.use('*', async (c, next) => {
-  const user = c.get('user') as any
-  const allowed = new Set(['/software-agreement', '/logout', '/styles.css'])
-  if (user?.role === 'CUSTOMER' && !allowed.has(c.req.path) && await requiresSoftwareAgreement(c, user)) {
-    return c.redirect('/software-agreement?required=1')
   }
   await next()
 })
@@ -373,34 +341,13 @@ app.post('/login', async (c) => {
   await c.env.RENT.prepare("INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (?, ?, ?, ?, 'success')").bind(user.id, normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
   await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()
   const response = c.redirect(user.role === 'CUSTOMER'
-    ? (await requiresSoftwareAgreement(c, user) ? '/software-agreement' : (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'))
+    ? (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard')
     : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
   const session = await createAuthSession(c, user.id, form.remember === 'on')
   let cookieOptions = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`;
   if (new URL(c.req.url).protocol === 'https:') cookieOptions += '; Secure'
   response.headers.set('Set-Cookie', cookieOptions)
   return response
-})
-
-app.get('/software-agreement', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER' || !(await requiresSoftwareAgreement(c, user))) return c.redirect('/customer/dashboard')
-  const settings = getSystemSettings()
-  const body = `<div class="panel" style="max-width:860px;margin:32px auto"><h1>软件使用协议</h1><p>租赁已开始。首次登录必须阅读并同意软件使用协议后才能继续使用设备。</p><div class="legal-document__content" style="max-height:460px;overflow:auto;border:1px solid #d7e0e6;padding:20px">${renderSiteVariables(settings.softwareTerms, user)}</div><form method="post" action="/software-agreement" style="margin-top:20px"><label class="form-check"><input type="checkbox" name="agree" required> 我已阅读并同意软件使用协议</label><div class="form-actions" style="margin-top:16px"><button class="button button-primary" type="submit">同意并继续</button><button class="button button-danger" type="submit" name="reject" value="1">拒绝并退出</button></div></form></div>`
-  return c.html(buildLayout('软件使用协议', body, user))
-})
-
-app.post('/software-agreement', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
-  const form = await c.req.parseBody()
-  if (String(form.reject || '') === '1' || form.agree !== 'on') return logout(c)
-  await ensureSoftwareAgreementColumns(c)
-  await loadSystemSettingsFromDB(c)
-  const version = String(getSystemSettings().legalMetadata?.software?.version || '1.0')
-  const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0].trim() || null
-  await c.env.RENT.prepare('UPDATE users SET software_agreement_accepted = 1, software_agreement_version = ?, software_agreement_accepted_at = CURRENT_TIMESTAMP, software_agreement_accepted_ip = ? WHERE id = ?').bind(version, ip, user.id).run()
-  return c.redirect('/customer/dashboard')
 })
 
 app.get('/register', async (c) => {
@@ -1252,6 +1199,8 @@ app.post('/staff/orders/:orderId/complete', async (c) => {
 app.get('/staff/orders/:orderId/inspection', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('orderId'))
+  if (order) await c.env.RENT.prepare('UPDATE devices SET inspection_requested_at = CURRENT_TIMESTAMP WHERE id = ?').bind(order.deviceId).run()
   return c.html(await pages.renderStaffInspection(c, user, c.req.param('orderId')))
 })
 
@@ -1293,6 +1242,20 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
     c.env.RENT.prepare('UPDATE devices SET status = ? WHERE id = ?').bind(damageDescription ? 'maintenance' : 'available', order.deviceId),
   ])
   return c.redirect(`/staff/orders/${order.id}`)
+})
+
+app.post('/customer/orders/:orderId/inspection-dispute', async (c) => {
+  const user = c.get('user') as any
+  if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('orderId'))
+  if (!order || order.userId !== user.id) return c.html(renderForbidden(), 403)
+  const deduction = await c.env.RENT.prepare("SELECT deduction_amount FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (Number(deduction?.deduction_amount || 0) <= 0) return c.text('未发生押金扣除，不能提交验机异议', 409)
+  const form = await c.req.parseBody()
+  const message = sanitizePlainText(String(form.message || ''), 2000).trim()
+  if (!message) return c.text('请填写异议内容', 400)
+  await c.env.RENT.prepare('INSERT INTO inspection_disputes (id, order_id, customer_id, message) VALUES (?, ?, ?, ?)').bind(`idp-${nanoid(12)}`, order.id, user.id, message).run()
+  return c.redirect(`/customer/orders/${order.id}`)
 })
 
 app.post('/admin/orders/:orderId/confirm-device-cleanup', async (c) => {
@@ -1406,6 +1369,37 @@ app.get('/staff/contracts/new', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderNewContractPage(c, user))
+})
+
+app.get('/staff/inspections', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderInspectionRecords(c, user))
+})
+
+app.get('/admin/inspections', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderInspectionRecords(c, user))
+})
+
+app.get('/staff/inspections/:id/edit', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderInspectionEdit(c, user, c.req.param('id')))
+})
+
+app.post('/staff/inspections/:id/edit', async (c) => {
+  const user = c.get('user') as any
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
+  const record = await c.env.RENT.prepare('SELECT snapshot_json FROM device_inspections WHERE id = ?').bind(c.req.param('id')).first() as any
+  if (!record) return c.html(renderNotFound(), 404)
+  const form = await c.req.parseBody()
+  let snapshot: any = {}
+  try { snapshot = JSON.parse(String(form.snapshotJson || '')) } catch (_) { return c.text('EXE 上报数据必须是有效 JSON', 400) }
+  if (!snapshot || Array.isArray(snapshot) || typeof snapshot !== 'object' || JSON.stringify(snapshot).length > 20000) return c.text('EXE 上报数据格式或大小无效', 400)
+  await c.env.RENT.prepare('UPDATE device_inspections SET snapshot_json = ?, edited_by = ?, edited_at = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(snapshot), user.id, c.req.param('id')).run()
+  return c.redirect('/staff/inspections')
 })
 
 app.post('/staff/contracts/create', async (c) => {
@@ -2754,6 +2748,7 @@ app.post('/api/device-agent/inspection', async (c) => {
   const differences = Object.fromEntries(Object.keys({ ...before, ...current }).filter(key => String(before[key] ?? '') !== String(current[key] ?? '')).map(key => [key, { before: before[key] ?? null, after: current[key] ?? null }]))
   const id = `inspection-${nanoid(12)}`
   await c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, ?, ?)').bind(id, device.id, type, snapshot, JSON.stringify(differences)).run()
+  if (type === 'automated_health') await c.env.RENT.prepare('UPDATE devices SET inspection_requested_at = NULL WHERE id = ?').bind(device.id).run()
   if (type === 'automated_health' && Number(current.storageFreeBytes) < 10 * 1024 * 1024 * 1024) await c.env.RENT.prepare("INSERT INTO device_health_alerts (id, device_id, alert_type, severity, message) VALUES (?, ?, 'low_storage', 'warning', ?)").bind(`alert-${nanoid(12)}`, device.id, '设备剩余空间低于 10GB').run()
   return c.json({ ok: true, inspectionId: id, differences })
 })
@@ -2761,8 +2756,8 @@ app.post('/api/device-agent/inspection', async (c) => {
 app.get('/api/device-agent/state', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
-  const rental = await c.env.RENT.prepare(`SELECT id, start_date, end_date, status FROM rentals WHERE device_id = ? AND status IN ('paid', 'active') ORDER BY end_date DESC LIMIT 1`).bind(device.id).first()
-  return c.json({ ok: true, deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental })
+  const rental = await c.env.RENT.prepare(`SELECT id, startDate AS start_date, endDate AS end_date, status FROM orders WHERE deviceId = ? AND status IN ('paid', 'active') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, endDate DESC LIMIT 1`).bind(device.id).first()
+  return c.json({ ok: true, serverTime: new Date().toISOString(), inspectionRequested: Boolean(device.inspection_requested_at), deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental })
 })
 
 app.post('/api/device-agent/cleanup-result', async (c) => {

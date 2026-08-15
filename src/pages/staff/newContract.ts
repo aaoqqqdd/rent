@@ -20,6 +20,11 @@ export async function renderNewContractPage(c: Context, user: any) {
     deviceGroups.set(groupName, [...(deviceGroups.get(groupName) || []), device])
   }
   const bookingRanges = ((await c.env.RENT.prepare(`SELECT id, deviceId, startDate, endDate, status FROM orders WHERE status NOT IN ('completed', 'cancelled') ORDER BY startDate`).all()).results || []) as any[]
+  const inspectionRecords = ((await c.env.RENT.prepare(`SELECT id, device_id, inspection_type, created_at, snapshot_json FROM device_inspections WHERE rental_id IS NULL ORDER BY created_at DESC`).all()).results || []).map((record: any) => {
+    let snapshot: any = {}
+    try { snapshot = JSON.parse(record.snapshot_json || '{}') } catch (_) {}
+    return { id: record.id, deviceId: record.device_id, type: record.inspection_type, createdAt: record.created_at, summary: [snapshot.screen, snapshot.keyboard, snapshot.touchpad, snapshot.camera, snapshot.wifi, snapshot.power].filter(Boolean).join(' · ') || '系统巡检快照' }
+  })
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const bookedDeviceIds = new Set(bookingRanges.filter(item => item.deviceId && item.endDate >= today).map(item => item.deviceId))
   const deviceCatalog = [...deviceGroups.entries()].sort(([left], [right]) => left.localeCompare(right, 'zh-CN')).map(([groupName, groupDevices]) => {
@@ -42,6 +47,7 @@ export async function renderNewContractPage(c: Context, user: any) {
   }).join('')
   const bookingData = JSON.stringify(bookingRanges).replace(/</g, '\\u003c')
   const rentalRulesData = JSON.stringify(rentalRules).replace(/</g, '\\u003c')
+  const inspectionRecordsData = JSON.stringify(inspectionRecords).replace(/</g, '\\u003c')
   const agentStatusData = JSON.stringify(Object.fromEntries(devices.map(device => [device.id, {
     status: (device as any).agent_status || '', hostname: (device as any).agent_hostname || '',
     os: (device as any).agent_os_version || '', cpu: (device as any).agent_cpu || '',
@@ -66,6 +72,7 @@ export async function renderNewContractPage(c: Context, user: any) {
           </select>
         </section>
         <section class="booking-picker" aria-labelledby="booking-picker-title"><div class="booking-picker__header"><div><p class="section-code">DEVICE AVAILABILITY</p><h3 id="booking-picker-title">设备租赁日历</h3><p>请手动选择设备，再在日历中选择开始日期和归还日期；红色日期已有租赁。</p></div><span id="booking-status" class="badge badge-neutral">请先选择设备</span></div><div class="booking-month-nav" aria-label="切换租赁日历月份"><button class="button button-sm button-secondary" id="booking-prev" type="button" aria-label="上个月">←</button><strong id="booking-month-label"></strong><button class="button button-sm button-secondary" id="booking-today" type="button">本月</button><button class="button button-sm button-secondary" id="booking-next" type="button" aria-label="下个月">→</button></div><div class="booking-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div><div id="booking-calendar" class="booking-calendar"></div><div id="booking-conflict" class="field-error" role="alert"></div></section>
+        <section class="panel" style="margin-top:16px"><div class="section-title"><div><p class="section-code">INSPECTION RECORD</p><h3>选择验机记录</h3><p>创建合同前必须选择该设备一条尚未使用的验机记录。</p></div><a class="button button-sm button-secondary" href="/staff/inspections">查看验机记录</a></div><label class="form-label" for="inspection-select">验机记录</label><select id="inspection-select" name="inspectionId" class="form-control" required disabled><option value="">请先选择设备</option></select><small id="inspection-summary" class="form-text">验机记录会与本次租赁绑定。</small></section>
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="start-date" class="form-label">租赁开始日期</label>
@@ -149,6 +156,9 @@ export async function renderNewContractPage(c: Context, user: any) {
       const deviceEmptyState = document.getElementById('device-empty-state');
       const bookings = ${bookingData};
       const rentalRules = ${rentalRulesData};
+      const inspectionRecords = ${inspectionRecordsData};
+      const inspectionSelect = document.getElementById('inspection-select');
+      const inspectionSummary = document.getElementById('inspection-summary');
       const agentStatus = ${agentStatusData};
       const bookingCalendar = document.getElementById('booking-calendar');
       const bookingStatus = document.getElementById('booking-status');
@@ -164,7 +174,17 @@ export async function renderNewContractPage(c: Context, user: any) {
         deviceSelect.value = card.dataset.deviceId;
         deviceCards.forEach(item => { const selected = item === card; item.classList.toggle('is-selected', selected); item.setAttribute('aria-pressed', String(selected)); });
         fillDeviceCondition(deviceSelect.value);
+        fillInspectionRecords(deviceSelect.value);
         validateBookingDates();
+      }
+      function fillInspectionRecords(deviceId) {
+        const records = inspectionRecords.filter(item => item.deviceId === deviceId);
+        inspectionSelect.replaceChildren();
+        inspectionSelect.disabled = false;
+        const placeholder = new Option(records.length ? '请选择验机记录' : '该设备暂无可用验机记录', '');
+        inspectionSelect.add(placeholder);
+        records.forEach(item => inspectionSelect.add(new Option(item.createdAt + ' · ' + item.type + ' · ' + item.summary, item.id)));
+        inspectionSummary.textContent = records.length ? '请选择本次出租前的验机记录；选中后将锁定关联到本合同。' : '请先让 EXE 完成自动巡检，或在验机记录页面补充记录。';
       }
       function formatStorage(bytes) { const value = Number(bytes); if (!Number.isFinite(value) || value <= 0) return ''; return (value / 1073741824).toFixed(1) + ' GB'; }
       function fillDeviceCondition(deviceId) {

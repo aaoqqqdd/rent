@@ -2799,7 +2799,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/customer/dashboard': '◉', '/customer/rentals': '▤', '/customer/orders': '▦',
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣',
     '/staff/dashboard': '◉', '/staff/orders': '▦', '/staff/orders/ongoing': '◷', '/staff/customers': '◎', '/staff/contracts': '▤',
-    '/staff/contracts/new': '+', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
+    '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
     '/notifications': 'N', '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
     '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/calendar': '▦', '/admin/templates': '▤', '/admin/email-templates': '▤', '/admin/settings': '⚙'
@@ -2857,7 +2857,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/staff/dashboard', '工作台')}
             ${renderNavLink('/notifications', '通知中心')}
             ${renderNavGroup('客户与订单', [['/staff/customers', '客户管理'], ['/staff/orders', '订单状态'], ['/staff/orders/ongoing', '进行中的订单']])}
-            ${renderNavGroup('合同工作区', [['/staff/contracts', '合同管理'], ['/staff/contracts/new', '新建合同']])}
+            ${renderNavGroup('合同工作区', [['/staff/contracts', '合同管理'], ['/staff/contracts/new', '新建合同'], ['/staff/inspections', '验机记录']])}
             ${renderNavGroup('设备运营', [['/staff/devices', '设备管理'], ['/staff/rentals/tracking', '租赁追踪']])}
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
@@ -2865,7 +2865,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/notifications', '通知中心')}
             ${renderNavGroup('客户与用户', [['/admin/users', '用户管理']])}
             ${renderNavGroup('订单与合同', [['/admin/orders', '订单管理'], ['/admin/contracts', '合同管理']])}
-            ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/calendar', '租赁日历']])}
+            ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('协议与设置', [['/admin/templates', '协议与模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}

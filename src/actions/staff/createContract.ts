@@ -12,6 +12,7 @@ const uppercaseAlphanumericNanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQR
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
   const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, returnLocation } = body;
+  const inspectionId = String(body.inspectionId || '').trim()
   const startPeriod = body.startPeriod === 'PM' ? 'PM' : 'AM'
   const endPeriod = body.endPeriod === 'PM' ? 'PM' : 'AM'
   const deliveryMethod = body.deliveryMethod === 'Delivery' ? 'Delivery' : 'Pickup'
@@ -45,6 +46,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   if (!deviceId || !startDate || !endDate) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备、开始日期和结束日期均为必填项')}`);
   }
+  if (!inspectionId) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请选择验机记录')}`)
   const lateFeePerDay = Number(body.lateFeePerDay)
   const repairCost = body.repairCost === '' ? null : Number(body.repairCost)
   if (!deviceCondition?.trim() || !Number.isFinite(lateFeePerDay) || lateFeePerDay < 0 || (deliveryMethod === 'Delivery' && !deliveryFeeText) || !Number.isFinite(deliveryFee) || deliveryFee < 0 || (repairCost !== null && (!Number.isFinite(repairCost) || repairCost < 0))) {
@@ -55,6 +57,8 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   const normalizedStatus = String(device?.status || '').toLowerCase();
   if (!device || ['maintenance', 'retired'].includes(normalizedStatus)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('维修或退役设备不能新建合同')}`)
+  const inspection = await c.env.RENT.prepare('SELECT id FROM device_inspections WHERE id = ? AND device_id = ? AND rental_id IS NULL').bind(inspectionId, deviceId).first()
+  if (!inspection) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('验机记录无效、设备不匹配或已被其他合同使用')}`)
 
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -167,9 +171,12 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     contract_data: { invoice_number: '', delivery_method: deliveryMethod, delivery_fee: deliveryFee.toFixed(2), return_method: returnMethod, pickup_location: pickupLocationValue, return_location: returnLocationValue, ...deliveryAddressData, agreement_version: '1.0' },
   };
 
+  const inspectionLinked = await c.env.RENT.prepare('UPDATE device_inspections SET rental_id = ? WHERE id = ? AND device_id = ? AND rental_id IS NULL').bind(orderId, inspectionId, deviceId).run()
+  if (!inspectionLinked.meta?.changes) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('验机记录已被其他合同使用，请重新选择')}`)
   await insertOrder(c, newOrder);
   await insertContract(c, newContract);
   await c.env.RENT.prepare('UPDATE orders SET contractId = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(contractId, orderId).run();
+  await c.env.RENT.prepare('UPDATE devices SET inspection_requested_at = CURRENT_TIMESTAMP WHERE id = ?').bind(deviceId).run();
 
   const fullSignUrl = `${new URL(c.req.url).origin}/contract/sign?token=${newContract.signToken}&step=1`;
   const successPage = `

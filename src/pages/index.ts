@@ -44,6 +44,7 @@ export * from './staff/contracts';
 export * from './staff/contractView';
 export * from './staff/contractProgress';
 export * from './staff/inspection';
+export * from './staff/inspectionRecords';
 
 export * from './admin/dashboard';
 export * from './admin/finance';
