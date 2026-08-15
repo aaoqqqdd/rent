@@ -147,12 +147,12 @@ app.get('/downloads/RentDeviceAgent-Setup.exe', async (c) => {
 })
 
 app.get('/downloads/RentDeviceAgent.exe', async (c) => {
-  return c.redirect('https://github.com/aaoqqqdd/rent-app/raw/refs/heads/main/windows-agent/publish/RentDeviceAgent.exe', 302)
+  return c.redirect('https://github.com/aaoqqqdd/rent-app/releases/latest/download/RentDeviceAgent.exe', 302)
 })
 
 app.get('/api/device-agent/update', (c) => c.json({
   version: '1.0.0',
-  downloadUrl: 'https://github.com/aaoqqqdd/rent-app/raw/refs/heads/main/windows-agent/publish/RentDeviceAgent.exe'
+  downloadUrl: 'https://github.com/aaoqqqdd/rent-app/releases/latest/download/RentDeviceAgent.exe'
 }))
 
 let loginAttemptsSchemaReady: Promise<void> | null = null

@@ -19,7 +19,7 @@ export function renderAdminDeviceEdit(user: any, device: any) {
   const agentStorage = formatGb(agentValue('agentStorageFreeBytes', 'agent_storage_free_bytes'), 1024 ** 3)
   const status = device.status || 'available'
   const body = `
-    <div class="page-header"><div><p class="section-code">ASSET RECORD</p><h2>编辑设备</h2><p>${value('name')} · <span class="mono">${value('assetTag', 'asset_tag') || value('id')}</span></p></div><div><a href="/admin/devices/${value('id')}/agent-install" class="button button-primary">生成 Windows 客户端安装信息</a> <a href="/admin/devices" class="button button-secondary">返回设备列表</a></div></div>
+    <div class="page-header"><div><p class="section-code">ASSET RECORD</p><h2>编辑设备</h2><p>${value('name')} · <span class="mono">${value('assetTag', 'asset_tag') || value('id')}</span></p></div><div><a href="/admin/devices" class="button button-secondary">返回设备列表</a></div></div>
     <div class="panel">
       <form method="POST" action="/admin/devices/${value('id')}/edit" class="asset-editor">
         <section class="form-section"><div class="form-section-title"><span class="mono">ID</span><div><h3>设备身份</h3><p>更新后，员工端设备目录和搜索结果会使用这里的资料。</p></div></div>
