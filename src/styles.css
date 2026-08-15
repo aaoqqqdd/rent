@@ -822,6 +822,20 @@ header {
 .notification-drawer__all { justify-content: center; }
 .notification-drawer__pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1px solid #dce5ea; color: #71818d; font-size: .75rem; }
 .notification-drawer__pager button:disabled { opacity: .45; cursor: not-allowed; }
+.admin-notification-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.admin-notification-card { position: relative; display: flex; align-items: flex-start; gap: 12px; min-height: 128px; padding: 18px; color: var(--text-primary); background: linear-gradient(145deg, #f8fbfc, #edf3f6); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.admin-notification-card:hover { color: var(--text-primary); border-color: var(--primary); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.admin-notification-card.is-unread { border-left: 4px solid var(--accent); background: linear-gradient(145deg, #fffaf4, #f5f8fa); }
+.admin-notification-card__type { flex: 0 0 auto; padding: 5px 7px; color: var(--primary); background: var(--primary-light); border-radius: 6px; font: 700 .58rem var(--font-mono); letter-spacing: .06em; }
+.admin-notification-card__content { min-width: 0; flex: 1; }
+.admin-notification-card__content strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-notification-card__content p { display: -webkit-box; margin: 8px 0; overflow: hidden; color: var(--text-secondary); font-size: .86rem; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.admin-notification-card__content small { color: var(--text-tertiary); font: .66rem var(--font-mono); }
+.admin-notification-card > b { margin-left: auto; color: var(--primary); font-size: 1.15rem; }
+/* 普通用户通知中心也使用紧凑预览卡片，完整内容进入详情页查看。 */
+.notification-list > .notification-item { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 12px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.notification-list > .notification-item .notification-message { display: -webkit-box; max-width: 760px; margin: 7px 0; overflow: hidden; color: var(--text-secondary); -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.notification-list > .notification-item small { color: var(--text-tertiary); font: .68rem var(--font-mono); }
 body.is-navigating .content { opacity: .55; transition: opacity .18s ease; }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .2s; }
 
@@ -1602,17 +1616,18 @@ button:disabled {
 }
 
 .quick-actions {
-  overflow: hidden;
-  background: linear-gradient(145deg, #17283a 0%, #20384d 100%);
-  border-color: #29445d;
-  color: #f5f8fa;
+  display: block !important;
+  overflow: hidden !important;
+  background: linear-gradient(145deg, #17283a 0%, #20384d 100%) !important;
+  border-color: #29445d !important;
+  color: #f5f8fa !important;
 }
 .quick-actions__heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 13px; }
 .quick-actions__heading h3 { margin: 3px 0 0; color: #fff; }
 .quick-actions__heading .section-code { color: #f0a35b; font-size: .62rem; letter-spacing: .16em; }
 .quick-actions__mark { color: #f0a35b; font-size: 1.45rem; line-height: 1; }
-.quick-actions__list { display: grid; gap: 7px; }
-.quick-action { display: flex; align-items: center; gap: 10px; min-height: 45px; padding: 7px 9px; color: #eaf1f5; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; transition: background .2s ease, border-color .2s ease, transform .2s ease; }
+.quick-actions__list { display: grid !important; grid-template-columns: 1fr; gap: 7px; }
+.quick-action { display: flex !important; align-items: center; width: 100%; box-sizing: border-box; gap: 10px; min-height: 45px; padding: 7px 9px; color: #eaf1f5 !important; text-decoration: none !important; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; transition: background .2s ease, border-color .2s ease, transform .2s ease; }
 .quick-action:hover { color: #fff; background: rgba(255,255,255,.1); border-color: rgba(240,163,91,.7); transform: translateX(3px); }
 .quick-action__icon { display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; color: #17283a; background: #f0a35b; border-radius: 6px; font-weight: 700; }
 .quick-action span:nth-child(2) { display: grid; gap: 1px; min-width: 0; }

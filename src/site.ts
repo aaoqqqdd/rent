@@ -2816,7 +2816,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣',
     '/staff/dashboard': '◍', '/staff/orders': '▰', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
     '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭',
-    '/notifications': 'N', '/admin/dashboard': '◉', '/admin/users': '♙', '/admin/orders': '▥',
+    '/notifications': 'N', '/admin/notifications': '☷', '/admin/dashboard': '◉', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/payment-reviews': '✓', '/admin/devices': '▣', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
   }
@@ -2853,6 +2853,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       ,'▱': '<path d="M6 4h9l3 3v13H6z"></path><path d="M15 4v4h4M9 12h6M9 16h4"></path>'
       ,'⌖': '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle><path d="M12 3v2M12 19v2M3 12h2M19 12h2"></path>'
       ,'▭': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 9h8M8 13h8M8 16h4"></path>'
+      ,'☷': '<path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="8" cy="6" r="1"></circle><circle cx="16" cy="12" r="1"></circle><circle cx="10" cy="18" r="1"></circle>'
     }
     return `<svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || paths['▣']}</svg>`
   }
@@ -2893,7 +2894,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
-            ${renderNavLink('/notifications', '通知中心')}
+            ${renderNavLink('/admin/notifications', '通知中心')}
+            ${renderNavLink('/notifications', '发布通知')}
             ${renderNavGroup('客户与用户', [['/admin/users', '用户管理']])}
             ${renderNavGroup('订单与合同', [['/admin/orders', '订单管理'], ['/admin/contracts', '合同管理']])}
             ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/calendar', '租赁日历']])}

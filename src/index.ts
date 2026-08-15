@@ -806,6 +806,15 @@ app.get('/notifications', async (c) => {
   return c.html(buildLayout('通知中心', bodyWithArchiveLink + pagination, user))
 })
 
+app.get('/admin/notifications', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureNotificationsTable(c)
+  const notifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
+  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(item.type || 'SYSTEM', 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(item.created_at, 80)}</small></div><b aria-hidden="true">→</b></a>`).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
+  return c.html(buildLayout('管理员通知中心', body, user))
+})
+
 app.get('/admin/announcements', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
