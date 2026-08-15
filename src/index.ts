@@ -133,6 +133,12 @@ app.get('/api/device-agent/update', (c) => c.json({
   downloadUrl: 'https://github.com/aaoqqqdd/rent-app/releases/latest/download/RentDeviceAgent-x64.exe'
 }))
 
+app.get('/api/device-agent/software-terms', async (c) => {
+  const settings = await loadSystemSettingsFromDB(c)
+  const metadata = settings.legalMetadata.software
+  return c.json({ content: settings.softwareTerms, version: metadata.version, lastUpdatedDate: metadata.lastUpdatedDate })
+})
+
 let loginAttemptsSchemaReady: Promise<void> | null = null
 
 async function ensureLoginAttemptsSchema(c: any): Promise<void> {
@@ -658,6 +664,11 @@ app.get('/customer/guest', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER' || user.accountType !== 'guest') return c.redirect('/login')
   return c.html(await pages.renderGuestAccount(c, user))
+})
+app.get('/customer/guest/upgrade', async (c) => {
+  const user = c.get('user')
+  if (!user || user.accountType !== 'guest') return c.redirect('/login')
+  return c.html(await pages.renderGuestAccount(c, user, '', 'error', true))
 })
 
 app.post('/customer/guest/upgrade', async (c) => {
