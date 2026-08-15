@@ -3769,7 +3769,8 @@ tr:hover td {
 }
 
 .legal-document {
-  width: 100%;
+  width: min(794px, 100%);
+  margin-inline: auto;
 }
 
 .legal-document__content, .signing-agreement {
@@ -4866,7 +4867,7 @@ tr:hover td {
 .contract-viewer > .a4-document {
   width: min(100%, 794px);
   min-height: 0;
-  margin: 0;
+  margin: 0 auto 20px;
   padding: 42px 40px;
   background: #f8fafb;
   color: var(--text);
