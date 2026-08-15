@@ -72,7 +72,7 @@ export async function renderNewContractPage(c: Context, user: any) {
           </select>
         </section>
         <section class="booking-picker" aria-labelledby="booking-picker-title"><div class="booking-picker__header"><div><p class="section-code">DEVICE AVAILABILITY</p><h3 id="booking-picker-title">设备租赁日历</h3><p>请手动选择设备，再在日历中选择开始日期和归还日期；红色日期已有租赁。</p></div><span id="booking-status" class="badge badge-neutral">请先选择设备</span></div><div class="booking-month-nav" aria-label="切换租赁日历月份"><button class="button button-sm button-secondary" id="booking-prev" type="button" aria-label="上个月">←</button><strong id="booking-month-label"></strong><button class="button button-sm button-secondary" id="booking-today" type="button">本月</button><button class="button button-sm button-secondary" id="booking-next" type="button" aria-label="下个月">→</button></div><div class="booking-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div><div id="booking-calendar" class="booking-calendar"></div><div id="booking-conflict" class="field-error" role="alert"></div></section>
-        <section class="panel" style="margin-top:16px"><div class="section-title"><div><p class="section-code">INSPECTION RECORD</p><h3>选择验机记录</h3><p>创建合同前必须选择该设备一条尚未使用的验机记录。</p></div><a class="button button-sm button-secondary" href="/staff/inspections">查看验机记录</a></div><label class="form-label" for="inspection-select">验机记录</label><select id="inspection-select" name="inspectionId" class="form-control" required disabled><option value="">请先选择设备</option></select><small id="inspection-summary" class="form-text">验机记录会与本次租赁绑定。</small></section>
+        <section class="panel" style="margin-top:16px"><div class="section-title"><div><p class="section-code">INSPECTION RECORD</p><h3>出租前验机</h3><p>创建合同并生成签署链接时，系统会自动保存当前设备验机记录。</p></div><a class="button button-sm button-secondary" href="/staff/inspections">查看验机记录</a></div><small class="form-text">无需提前选择验机记录。系统会读取设备最新状态，并将本次出租前记录与合同关联。</small></section>
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="start-date" class="form-label">租赁开始日期</label>
@@ -174,7 +174,6 @@ export async function renderNewContractPage(c: Context, user: any) {
         deviceSelect.value = card.dataset.deviceId;
         deviceCards.forEach(item => { const selected = item === card; item.classList.toggle('is-selected', selected); item.setAttribute('aria-pressed', String(selected)); });
         fillDeviceCondition(deviceSelect.value);
-        fillInspectionRecords(deviceSelect.value);
         validateBookingDates();
       }
       function fillInspectionRecords(deviceId) {
