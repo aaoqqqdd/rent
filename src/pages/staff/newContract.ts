@@ -156,8 +156,7 @@ export async function renderNewContractPage(c: Context, user: any) {
       const bookingMonthLabel = document.getElementById('booking-month-label');
       const now = new Date();
       const isoDate = date => date.toISOString().slice(0, 10);
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const todayValue = isoDate(today);
+      const todayValue = ${JSON.stringify(today)};
       let bookingMonth = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
       const devicePageSize = 4;
       const selectedBookings = () => bookings.filter(item => item.deviceId === deviceSelect.value);

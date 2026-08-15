@@ -58,9 +58,8 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   const start = new Date(startDate);
   const end = new Date(endDate);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  if (start < today || end < today) {
+  const todayValue = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  if (startDate < todayValue || endDate < todayValue) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('开始日期和结束日期必须是今天或之后的日期')}`);
   }
   if (start >= end) {
