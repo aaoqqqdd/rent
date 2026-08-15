@@ -1384,8 +1384,10 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     await db.prepare(`
       INSERT INTO systemSettings (key, value)
       VALUES (?, ?)
-      ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP
     `).bind(key, serialized).run()
+    const saved = await db.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(key).first() as any
+    if (String(saved?.value ?? '') !== serialized) throw new Error(`系统设置保存校验失败：${key}`)
   }
 
   await write('userTerms', systemSettings.userTerms)

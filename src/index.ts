@@ -810,7 +810,7 @@ app.post('/admin/email-templates/send', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const form = await c.req.parseBody()
-  const template = form.templateId
+  const template = form.templateId && String(form.templateId) !== 'custom'
     ? await c.env.RENT.prepare('SELECT subject, body, theme_color FROM email_templates WHERE id = ? AND enabled = 1').bind(String(form.templateId)).first() as any
     : { subject: String(form.subject || '').trim().slice(0, 200), body: String(form.body || '').trim().slice(0, 20000), theme_color: '#71818d' }
   const to = String(form.to || '').trim().toLowerCase()
