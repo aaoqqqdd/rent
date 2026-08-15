@@ -5,7 +5,6 @@
 
 import { buildLayout, getOrderById, getDeviceById, formatCurrency, getContractByOrderId, systemSettings } from '../../site';
 import { Context } from 'hono';
-import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
 
 export async function renderCustomerOrderDetail(c: Context, user: any, orderId: string, message?: string, type: 'success' | 'error' = 'error') {
   const order = await getOrderById(c, orderId)
@@ -13,7 +12,6 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在或无权访问。</p></div>', user)
   }
   const [device, contract, transferProof, timeChanges] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), ['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod)) ? c.env.RENT.prepare("SELECT pp.status, pp.reference_number, pp.rejection_reason FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() : Promise.resolve(null), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all()]) as any[]
-  const rmbRate = ['alipay', 'wechat'].includes(String(order.paymentMethod)) ? await getAudCnyRate().catch(() => null) : null
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const stripeFee = Math.round(Number(order.totalAmount) * 100 * 0.025) / 100
   const stripeTotal = Number(order.totalAmount) + stripeFee
@@ -78,7 +76,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
               <button class="button" type="submit" style="margin-top:12px">提交转账信息</button>
             </form>`}
           </div>` : ''}
-          ${['alipay', 'wechat'].includes(String(order.paymentMethod)) && rmbRate ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p>请支付 <strong>CNY ${roundCnyUp(Number(order.totalAmount), rmbRate).toFixed(2)}</strong>，汇率 1 AUD = ${rmbRate.toFixed(6)} CNY，金额按两位小数上舍入。</p><img src="${order.paymentMethod === 'alipay' ? systemSettings.rmbPayment.alipayQrUrl : systemSettings.rmbPayment.wechatQrUrl}" alt="${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}收款码" loading="lazy" style="max-width:240px;display:block;margin:12px 0"><form method="POST" action="/customer/orders/${order.id}/bank-transfer-proof"><label class="form-label">付款 Reference</label><input class="form-control" name="referenceNumber" maxlength="100" required><label class="form-label">付款凭证图片链接</label><input class="form-control" type="url" name="imageUrl" placeholder="https://..." required><label class="form-label">备注（选填）</label><textarea class="form-control" name="note" maxlength="500"></textarea><button class="button" type="submit" style="margin-top:12px">提交付款凭证</button></form></div>` : ''}
+          ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p id="rmb-order-summary">提交付款凭证前获取实时汇率并计算人民币金额。</p><img src="${order.paymentMethod === 'alipay' ? systemSettings.rmbPayment.alipayQrUrl : systemSettings.rmbPayment.wechatQrUrl}" alt="${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}收款码" loading="lazy" style="max-width:240px;display:block;margin:12px 0"><form method="POST" action="/customer/orders/${order.id}/bank-transfer-proof"><label class="form-label">付款 Reference</label><input class="form-control" name="referenceNumber" maxlength="100" required><label class="form-label">付款凭证图片链接</label><input class="form-control" type="url" name="imageUrl" placeholder="https://..." required><label class="form-label">备注（选填）</label><textarea class="form-control" name="note" maxlength="500"></textarea><button class="button" type="submit" style="margin-top:12px">提交付款凭证</button></form><script>(()=>{const s=document.getElementById('rmb-order-summary');fetch('/api/payment/aud-cny?amount=${encodeURIComponent(String(order.totalAmount))}').then(r=>r.ok?r.json():Promise.reject()).then(d=>{s.innerHTML='请支付 <strong>CNY '+Number(d.cnyAmount).toFixed(2)+'</strong>，1 AUD = '+Number(d.rate).toFixed(6)+' CNY，金额按两位小数上舍入。'}).catch(()=>{s.textContent='暂时无法获取实时汇率，请稍后重试。'})})()</script></div>` : ''}
           ${systemSettings.paymentMethods.stripe ? `<div class="payment-card">
             <h4>信用卡支付（Stripe）</h4>
             <p>前往 Stripe 安全结账页面完成支付，本站不会接触您的卡号。</p>

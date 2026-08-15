@@ -5,7 +5,6 @@
 
 import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, splitPersonName, canUseAccountBalance } from '../../site';
 import { Context } from 'hono';
-import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
 
 export function readContractSignDraft(cookieHeader: string | undefined, token: string): Record<string, string> {
   const encoded = cookieHeader?.match(/(?:^|;\s*)contract_sign_draft=([^;]*)/)?.[1]
@@ -113,10 +112,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   if (!order) return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
   await loadSystemSettingsFromDB(c)
   const systemSettings = getSystemSettings();
-  let rmbRate: number | null = null
-  if ((systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl) || (systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl)) {
-    try { rmbRate = await getAudCnyRate() } catch { rmbRate = null }
-  }
   const [device, contractCustomer, variableData] = await Promise.all([
     getDeviceById(c, order.deviceId),
     currentUser ? Promise.resolve(currentUser) : (order.userId ? getUserById(c, order.userId) : Promise.resolve(null)),
@@ -292,8 +287,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 <span><strong>银行转账</strong><small>查看账户资料并提交转账凭证截图。</small></span>
               </label>
               ` : ''}
-              ${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl && rmbRate ? `<label class="payment-option"><input type="radio" name="paymentMethod" value="alipay" required /><span><strong>支付宝（人民币）</strong><small>应付 CNY ${roundCnyUp(Number(order.totalAmount), rmbRate).toFixed(2)}（实时汇率 1 AUD = ${rmbRate.toFixed(6)} CNY）</small></span></label>` : ''}
-              ${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl && rmbRate ? `<label class="payment-option"><input type="radio" name="paymentMethod" value="wechat" required /><span><strong>微信支付（人民币）</strong><small>应付 CNY ${roundCnyUp(Number(order.totalAmount), rmbRate).toFixed(2)}（实时汇率 1 AUD = ${rmbRate.toFixed(6)} CNY）</small></span></label>` : ''}
+              ${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<label class="payment-option"><input type="radio" name="paymentMethod" value="alipay" required /><span><strong>支付宝（人民币）</strong><small class="rmb-summary">选择后获取实时汇率</small></span></label>` : ''}
+              ${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<label class="payment-option"><input type="radio" name="paymentMethod" value="wechat" required /><span><strong>微信支付（人民币）</strong><small class="rmb-summary">选择后获取实时汇率</small></span></label>` : ''}
               ${systemSettings.paymentMethods.balancePayment && canUseBalance ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="balance" required ${Number(paymentUser?.balance || 0) >= order.totalAmount ? '' : 'disabled'} />
@@ -302,7 +297,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ` : ''}
             </div>
             ${systemSettings.paymentMethods.bankTransfer ? `<aside id="bank-transfer-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>银行转账资料</strong><span class="mono">AUD</span></div><dl><div><dt>银行</dt><dd>${escapeAttribute(systemSettings.bankDetails.bankName || '—')}</dd></div><div><dt>账户名</dt><dd>${escapeAttribute(systemSettings.bankDetails.accountName)}</dd></div><div><dt>BSB</dt><dd>${escapeAttribute(systemSettings.bankDetails.bsb)}</dd></div><div><dt>账号</dt><dd>${escapeAttribute(systemSettings.bankDetails.account)}</dd></div><div><dt>转账金额</dt><dd>${formatCurrency(order.totalAmount)}</dd></div></dl><div class="grid grid-2"><div class="form-group"><label class="form-label" for="transferReference">银行 Reference</label><input class="form-control bank-proof-input" id="transferReference" name="transferReference" maxlength="100" placeholder="银行交易 Reference"><span class="field-error" data-payment-error="transferReference"></span></div><div class="form-group"><label class="form-label" for="transferProofUrl">付款截图链接</label><input class="form-control bank-proof-input" id="transferProofUrl" name="transferProofUrl" type="url" placeholder="https://.../payment-proof.jpg"><span class="field-error" data-payment-error="transferProofUrl"></span></div></div><div class="form-group"><label class="form-label" for="transferNote">转账备注（选填）</label><textarea class="form-control" id="transferNote" name="transferNote" maxlength="500"></textarea><small class="form-text">请先把截图上传到可公开访问的 HTTPS 图床，再粘贴图片链接；提交后由管理员审核。</small></div></aside>` : ''}
-            ${(systemSettings.paymentMethods.alipay || systemSettings.paymentMethods.wechat) && rmbRate ? `<aside id="rmb-payment-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>人民币付款</strong><span class="mono">CNY</span></div><p>请使用对应收款码支付 <strong>CNY ${roundCnyUp(Number(order.totalAmount), rmbRate).toFixed(2)}</strong>；金额按实时汇率计算并上舍入到两位小数。</p><div class="grid grid-2">${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<div><strong>支付宝收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.alipayQrUrl)}" alt="支付宝收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<div><strong>微信收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.wechatQrUrl)}" alt="微信收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}</div><div class="grid grid-2"><div class="form-group"><label class="form-label">付款 Reference</label><input class="form-control bank-proof-input" name="transferReference" maxlength="100" placeholder="支付宝/微信交易单号"></div><div class="form-group"><label class="form-label">付款凭证图片链接</label><input class="form-control bank-proof-input" name="transferProofUrl" type="url" placeholder="https://..."></div></div><div class="form-group"><label class="form-label">备注（选填）</label><textarea class="form-control" name="transferNote" maxlength="500"></textarea></div></aside>` : ''}
+            ${((systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl) || (systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl)) ? `<aside id="rmb-payment-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>人民币付款</strong><span class="mono">CNY</span></div><p id="rmb-payment-summary">选择支付宝或微信后获取实时汇率。</p><div class="grid grid-2">${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<div><strong>支付宝收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.alipayQrUrl)}" alt="支付宝收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<div><strong>微信收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.wechatQrUrl)}" alt="微信收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}</div><div class="grid grid-2"><div class="form-group"><label class="form-label">付款 Reference</label><input class="form-control bank-proof-input" name="transferReference" maxlength="100" placeholder="支付宝/微信交易单号"></div><div class="form-group"><label class="form-label">付款凭证图片链接</label><input class="form-control bank-proof-input" name="transferProofUrl" type="url" placeholder="https://..."></div></div><div class="form-group"><label class="form-label">备注（选填）</label><textarea class="form-control" name="transferNote" maxlength="500"></textarea></div></aside>` : ''}
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">2.5%</span></div>
@@ -344,6 +339,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const stripeFeeNotice = document.getElementById('stripe-fee-notice');
               const bankTransferNotice = document.getElementById('bank-transfer-notice');
               const rmbPaymentNotice = document.getElementById('rmb-payment-notice');
+              const rmbSummary = document.getElementById('rmb-payment-summary');
               const bankProofInputs = Array.from(document.querySelectorAll('.bank-proof-input'));
               const bankInputs = fields.querySelectorAll('input');
               const update = () => {
@@ -356,6 +352,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 if (bankTransferNotice) bankTransferNotice.hidden = payment !== 'bank_transfer';
                 if (rmbPaymentNotice) rmbPaymentNotice.hidden = !['alipay', 'wechat'].includes(payment);
                 bankProofInputs.forEach(input => input.required = input.closest('aside')?.id === 'bank-transfer-notice' ? payment === 'bank_transfer' : ['alipay', 'wechat'].includes(payment));
+                if (['alipay', 'wechat'].includes(payment) && rmbSummary) {
+                  rmbSummary.textContent = '正在获取实时汇率…';
+                  fetch('/api/payment/aud-cny?amount=${encodeURIComponent(String(order.totalAmount))}').then(response => response.ok ? response.json() : Promise.reject(new Error('rate'))).then(data => { rmbSummary.innerHTML = '请使用对应收款码支付 <strong>CNY ' + Number(data.cnyAmount).toFixed(2) + '</strong>；1 AUD = ' + Number(data.rate).toFixed(6) + ' CNY，金额按两位小数上舍入。'; }).catch(() => { rmbSummary.textContent = '暂时无法获取实时汇率，请稍后重试。'; });
+                }
               };
               form.addEventListener('change', update);
               form.addEventListener('submit', event => {

@@ -77,6 +77,7 @@ import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
+import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import siteStyles from './styles.css'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
@@ -634,6 +635,12 @@ app.get('/customer/balance/top-up', async (c) => {
   return c.html(pages.renderCustomerBalanceTopUp(c, user, '', pending))
 })
 
+app.get('/api/payment/aud-cny', async (c) => {
+  const amount = Number(c.req.query('amount') || 0)
+  if (!Number.isFinite(amount) || amount < 1 || amount > 10000) return c.json({ error: '金额无效' }, 400)
+  try { const rate = await getAudCnyRate(); return c.json({ rate, cnyAmount: roundCnyUp(amount, rate) }) } catch (error: any) { return c.json({ error: error.message || '汇率暂不可用' }, 503) }
+})
+
 app.post('/customer/balance/top-up', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.html(renderForbidden(), 403)
@@ -641,10 +648,13 @@ app.post('/customer/balance/top-up', async (c) => {
   const form = await c.req.parseBody()
   const amount = Number(form.amount)
   const method = String(form.method || '')
-  if (!Number.isFinite(amount) || amount < 1 || amount > 10000 || !['card', 'bank_transfer'].includes(method)) return c.html(pages.renderCustomerBalanceTopUp(c, user, '请输入 1 至 10,000 AUD 的有效充值金额。'), 400)
+  if (!Number.isFinite(amount) || amount < 1 || amount > 10000 || !['card', 'bank_transfer', 'alipay', 'wechat'].includes(method)) return c.html(pages.renderCustomerBalanceTopUp(c, user, '请输入 1 至 10,000 AUD 的有效充值金额。'), 400)
+  if (['alipay', 'wechat'].includes(method) && (!(getSystemSettings().paymentMethods as any)[method] || !getSystemSettings().rmbPayment[`${method}QrUrl`])) return c.text('该人民币支付方式当前未启用', 400)
+  const rmbRate = ['alipay', 'wechat'].includes(method) ? await getAudCnyRate().catch(() => null) : null
+  if (['alipay', 'wechat'].includes(method) && !rmbRate) return c.text('暂时无法获取实时汇率，请稍后重试', 503)
   const id = `topup-${nanoid(12)}`
-  await c.env.RENT.prepare("INSERT INTO balance_topups (id, user_id, amount, payment_method, status) VALUES (?, ?, ?, ?, 'pending')").bind(id, user.id, Number(amount.toFixed(2)), method).run()
-  if (method === 'bank_transfer') {
+  await c.env.RENT.prepare("INSERT INTO balance_topups (id, user_id, amount, payment_method, cny_amount, status) VALUES (?, ?, ?, ?, ?, 'pending')").bind(id, user.id, Number(amount.toFixed(2)), method, rmbRate ? roundCnyUp(amount, rmbRate) : null).run()
+  if (['bank_transfer', 'alipay', 'wechat'].includes(method)) {
     await c.env.RENT.prepare("UPDATE balance_topups SET status = 'awaiting_transfer' WHERE id = ?").bind(id).run()
     return c.redirect('/customer/balance/top-up')
   }
@@ -663,7 +673,9 @@ app.post('/customer/balance/top-up/transfer', async (c) => {
   const form = await c.req.parseBody(); const id = String(form.id || ''); const reference = String(form.reference || '').trim()
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND status = 'awaiting_transfer'").bind(id, user.id).first() as any
   if (!topup || !reference) return c.text('充值记录或 Reference 无效', 400)
-  await c.env.RENT.prepare("UPDATE balance_topups SET reference = ?, note = ?, status = 'submitted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(reference, String(form.note || '').trim(), id).run()
+  let imageUrl = ''
+  if (form.imageUrl) { try { imageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) } }
+  await c.env.RENT.prepare("UPDATE balance_topups SET reference = ?, note = ?, proof_image_url = ?, status = 'submitted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(reference, String(form.note || '').trim(), imageUrl || null, id).run()
   return c.redirect('/customer/balance')
 })
 
