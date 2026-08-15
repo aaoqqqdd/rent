@@ -428,7 +428,7 @@ export function generateTemporaryPassword(): string {
   // Fisher-Yates shuffle so the required character classes are not fixed in position.
   for (let index = password.length - 1; index > 0; index -= 1) {
     const swapIndex = bytes[index] % (index + 1)
-    ;[password[index], password[swapIndex]] = [password[swapIndex], password[index]]
+      ;[password[index], password[swapIndex]] = [password[swapIndex], password[index]]
   }
   return password.join('')
 }
@@ -2831,7 +2831,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
-    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/software-terms">软件协议</a><a href="/refund-policy">退款政策</a><a href="/copyright">版权与退款说明</a></nav></footer>`
+    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/refund-policy">退款政策</a><a href="/software-terms">软件协议</a></nav></footer>`
   })
 }
 

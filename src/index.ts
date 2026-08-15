@@ -1231,6 +1231,18 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   return c.redirect(`/staff/orders/${order.id}`)
 })
 
+app.post('/admin/orders/:orderId/confirm-device-cleanup', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('orderId'))
+  if (!order || order.status !== 'completed') return c.text('只有已完成归还的订单才能确认清理', 409)
+  const contract = await c.env.RENT.prepare('SELECT contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
+  const contractData = JSON.parse(contract?.contract_data || '{}')
+  if (!contractData.return_date || !['Returned', 'Damaged'].includes(String(contractData.return_status || ''))) return c.text('订单尚未完成归还验机', 409)
+  await c.env.RENT.prepare("UPDATE devices SET cleanup_requested = 1, cleanup_requested_at = CURRENT_TIMESTAMP, cleanup_completed_at = NULL, cleanup_result = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.deviceId).run()
+  return c.redirect(`/admin/orders/${order.id}`)
+})
+
 app.post('/staff/orders/:orderId/cancel', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
@@ -2651,7 +2663,16 @@ app.get('/api/device-agent/state', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
   const rental = await c.env.RENT.prepare(`SELECT id, start_date, end_date, status FROM rentals WHERE device_id = ? AND status IN ('paid', 'active') ORDER BY end_date DESC LIMIT 1`).bind(device.id).first()
-  return c.json({ ok: true, deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, rental })
+  return c.json({ ok: true, deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental })
+})
+
+app.post('/api/device-agent/cleanup-result', async (c) => {
+  const device = await getAgentDevice(c)
+  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  const payload = await c.req.json().catch(() => ({})) as any
+  const result = JSON.stringify({ ok: Boolean(payload.ok), removed: Array.isArray(payload.removed) ? payload.removed.slice(0, 100) : [], skipped: Array.isArray(payload.skipped) ? payload.skipped.slice(0, 100) : [], errors: Array.isArray(payload.errors) ? payload.errors.slice(0, 100) : [], completedAt: new Date().toISOString() })
+  await c.env.RENT.prepare("UPDATE devices SET cleanup_requested = 0, cleanup_completed_at = CURRENT_TIMESTAMP, cleanup_result = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(result, device.id).run()
+  return c.json({ ok: true })
 })
 
 app.get('*', async (c) => {
