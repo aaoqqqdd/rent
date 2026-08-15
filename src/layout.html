@@ -129,7 +129,7 @@
     }, true);
 
     // 页面动画统一由 runSiteAnimations 管理，避免重复创建 GSAP timeline。
-    if (false) document.addEventListener('DOMContentLoaded', function () {
+    document.addEventListener('DOMContentLoaded', function () {
       const showNavigationLoading = function () {
         if (document.getElementById('navigation-loading')) return;
         const overlay = document.createElement('div');

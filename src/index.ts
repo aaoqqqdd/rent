@@ -778,14 +778,15 @@ app.get('/notifications', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
   await ensureNotificationsTable(c)
-  const allNotifications = await getNotifications(c, user.id)
+  const allNotifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
   const pageSize = 10
   const requestedPage = Math.max(1, Number(c.req.query('page') || 1) || 1)
   const pageCount = Math.max(1, Math.ceil(allNotifications.length / pageSize))
   const page = Math.min(requestedPage, pageCount)
   const pageNotifications = allNotifications.slice((page - 1) * pageSize, page * pageSize)
   const notifications = pageNotifications
-  const sentAnnouncements = user.role === 'ADMIN' ? ((await c.env.RENT.prepare("SELECT MAX(id) AS id, title, message, created_at FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC LIMIT 100").bind(user.id).all()).results || []) : []
+  // 通告历史单独放在 /admin/announcements，通知中心只显示收件通知。
+  const sentAnnouncements: any[] = []
   const recipients = user.role === 'ADMIN' || user.role === 'STAFF' ? (await getUsers(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive') : []
   if (user.role === 'ADMIN' || user.role === 'STAFF') await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
   const emailTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM email_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
@@ -952,7 +953,7 @@ app.get('/notifications/unread', async (c) => {
 app.get('/notifications/recent', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [], unreadCount: 0 }, 401)
-  const result = await c.env.RENT.prepare('SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10').bind(user.id).all() as any
+  const result = await c.env.RENT.prepare("SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10").bind(user.id).all() as any
   const unread = await c.env.RENT.prepare('SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL AND read_at IS NULL').bind(user.id).first() as any
   return c.json({ notifications: result.results || [], unreadCount: Number(unread?.count || 0) })
 })
