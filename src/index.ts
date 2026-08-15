@@ -2465,6 +2465,13 @@ app.get('/admin/templates', async (c) => {
   return c.html(pages.renderAdminTemplateHub(user))
 })
 
+app.get('/admin/templates/preview', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await loadSystemSettingsFromDB(c)
+  return c.html(await pages.renderAdminTemplatePreview(user, c))
+})
+
 app.get('/admin/templates/:kind', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')

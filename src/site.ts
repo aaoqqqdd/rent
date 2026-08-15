@@ -2187,6 +2187,16 @@ function escapeContractValue(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
 }
 
+function maskContractValue(name: string, value: unknown): string {
+  const text = String(value ?? '')
+  if (!text) return ''
+  if (name === 'customer_id_number') return text.length <= 4 ? '****' : `${text.slice(0, 2)}${'*'.repeat(Math.max(2, text.length - 4))}${text.slice(-2)}`
+  if (name === 'customer_dob') return '****-**-**'
+  if (name === 'customer_address') return text.length > 8 ? `${text.slice(0, 8)}****` : '****'
+  if (name === 'esign_ip') return text.includes(':') ? `${text.split(':').slice(0, 2).join(':')}:****` : `${text.split('.').slice(0, 2).join('.')}.*.*`
+  return text
+}
+
 export const CONTRACT_VARIABLE_NAMES = [
   'contract_number', 'agreement_version', 'contract_status', 'created_time', 'updated_time', 'jurisdiction',
   'company_name', 'company_abn', 'company_address', 'company_phone', 'company_email', 'company_website', 'company_logo',
@@ -2309,7 +2319,7 @@ export function renderContractVariables(content: string, contract: Contract, ord
     const raw = String(value ?? '')
     const safe = signature && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(raw)
       ? `<img src="${raw}" alt="电子签名" style="max-width:280px;max-height:100px;object-fit:contain">`
-      : escapeContractValue(value)
+      : escapeContractValue(!includeInternal ? maskContractValue(name, value) : value)
     return result.replace(new RegExp(`\\$\\{${name}\\}|\\{${name}\\}`, 'g'), safe)
   }, String(content || ''))
   return renderFlexibleContent(filled)

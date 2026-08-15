@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, CONTRACT_VARIABLE_GROUPS, getSystemSettings } from '../../site'
+import { buildLayout, CONTRACT_VARIABLE_GROUPS, getSystemSettings, getContractTemplate, renderContractVariables, sanitizeRichHtml } from '../../site'
 
 type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright'
 
@@ -12,6 +12,7 @@ export function renderAdminTemplateHub(user: any) {
     <div class="entity-header template-library-header"><div class="identity-strip mono"><span>DOCUMENT CONTROL</span><span>6 ACTIVE TEMPLATES</span></div><div class="entity-heading"><div><p class="section-code">LEGAL & CONTRACTS</p><h2>协议与合同模板</h2><p>管理注册、租赁签署、网站法律信息和正式合同文本。</p></div></div></div>
     <div class="panel template-register">
       <div class="template-register__labels mono"><span>文档</span><span>显示位置</span><span>类型</span><span>操作</span></div>
+      <div class="form-actions" style="margin-bottom:18px"><a class="button button-primary" href="/admin/templates/preview">预览租赁协议与正式合同</a></div>
       <article class="template-register__row">
         <div class="template-register__document"><span class="document-mark">UA</span><div><h3>用户协议</h3><p>账户注册与正式账户升级时确认。</p></div></div>
         <p>注册页面</p><span class="badge badge-neutral">法律文本</span><a class="button button-sm button-secondary" href="/admin/templates/user">编辑协议</a>
@@ -30,6 +31,27 @@ export function renderAdminTemplateHub(user: any) {
       </article>
     </div>`
   return buildLayout('协议与合同模板 - 电脑租赁管理系统', body, user)
+}
+
+export async function renderAdminTemplatePreview(user: any, c: any) {
+  const settings = getSystemSettings()
+  const template = await getContractTemplate(c)
+  const sampleContract: any = { id: 'preview-contract', rentalId: 'preview-order', contractNumber: 'CTR-PREVIEW-001', content: template.content, signedAt: '2026-08-08T10:00:00.000Z', status: 'signed', contract_data: { customer_address: '墨尔本 VIC', customer_dob: '1990-01-01', customer_id_number: 'A1234567', device_condition: '正常', pickup_location: '市中心门店', return_location: '市中心门店' } }
+  const sampleOrder: any = { id: 'preview-order', orderNo: 'OD-PREVIEW-001', deviceId: 'preview-device', startDate: '2026-08-10', endDate: '2026-08-15', rentalPeriod: 5, totalAmount: 1500, depositAmount: 300, dailyRate: 240, paymentMethod: 'card', status: 'completed' }
+  const sampleDevice: any = { id: 'preview-device', name: 'MacBook Pro', brand: 'Apple', model: 'M2', serialNumber: 'SN-PREVIEW', cpu: 'M2', ram: '16GB', storage: '512GB', gpu: 'Apple', os: 'macOS' }
+  const sampleCustomer: any = { name: '测试客户', email: 'test@example.com', phone: '0412 345 678', address: '墨尔本 VIC' }
+  const variables = { customer_name: '测试客户', customer_email: 'test@example.com', customer_phone: '0412 345 678', company_name: settings.companyDetails.name }
+  const rentalPreview = renderContractVariables(settings.rentalTerms, sampleContract, sampleOrder, sampleDevice, sampleCustomer, variables)
+  const contractPreview = renderContractVariables(template.content, sampleContract, sampleOrder, sampleDevice, sampleCustomer, variables, true)
+  const softwarePreview = settings.softwareTerms
+  const legalPreviews = [
+    ['用户协议', settings.userTerms],
+    ['网站服务条款', settings.serviceTerms],
+    ['隐私政策', settings.privacyPolicy],
+    ['退款政策', settings.copyrightNotice],
+  ].map(([title, content]) => `<section class="panel"><div class="section-title"><h3>${title}</h3><span class="badge badge-neutral">网站</span></div><div class="template-preview-paper">${sanitizeRichHtml(content)}</div></section>`).join('')
+  const body = `<div class="page-header"><div><p class="section-code">DOCUMENT PREVIEW</p><h2>协议与合同预览</h2><p>统一预览全部协议、租赁协议和正式合同的实际内容。</p></div><a class="button button-secondary" href="/admin/templates">返回模板管理</a></div><div class="template-preview-grid"><section class="panel"><div class="section-title"><h3>租赁协议</h3><span class="badge badge-neutral">签署前</span></div><div class="template-preview-paper">${sanitizeRichHtml(rentalPreview)}</div></section><section class="panel"><div class="section-title"><h3>正式合同</h3><span class="badge badge-success">签署后</span></div><div class="template-preview-paper">${sanitizeRichHtml(contractPreview)}</div></section><section class="panel"><div class="section-title"><h3>软件使用协议</h3><span class="badge badge-neutral">设备端</span></div><div class="template-preview-paper">${sanitizeRichHtml(softwarePreview)}</div></section>${legalPreviews}</div>`
+  return buildLayout('协议与合同预览 - 电脑租赁管理系统', body, user)
 }
 
 export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {

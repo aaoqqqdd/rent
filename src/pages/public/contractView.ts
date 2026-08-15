@@ -27,7 +27,9 @@ export async function renderContractView(c: Context, contractId: string, user: a
   }
   const device = order ? await getDeviceById(c, order.deviceId) : null;
   const customer = order ? await getUserById(c, order.userId) : null;
-  const renderedContract = trimContractLeadingWhitespace(renderContractVariables(contract.signed_content || contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order)))
+  const internalViewer = user.role === 'ADMIN' || user.role === 'STAFF'
+  const contractSource = internalViewer ? contract.content : (contract.signed_content || contract.content)
+  const renderedContract = trimContractLeadingWhitespace(renderContractVariables(contractSource, contract, order, device, customer, await getContractVariableData(c, contract, order), internalViewer))
   const returnUrl = user.role === 'ADMIN' ? '/admin/contracts' : user.role === 'STAFF' ? '/staff/contracts' : order ? `/customer/orders/${order.id}` : '/customer/dashboard'
 
   const body = `

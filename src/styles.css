@@ -3773,6 +3773,12 @@ tr:hover td {
   margin-inline: auto;
 }
 
+.template-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.template-preview-paper { min-height: 520px; padding: 28px; background: #fff; border: 1px solid var(--border); color: var(--text-primary); overflow: auto; }
+.template-preview-paper h1, .template-preview-paper h2, .template-preview-paper h3 { color: var(--text-primary); }
+.template-preview-paper table { width: 100%; table-layout: fixed; }
+@media (max-width: 900px) { .template-preview-grid { grid-template-columns: 1fr; } }
+
 .legal-document__content, .signing-agreement {
   max-width: none;
   color: var(--text-secondary);

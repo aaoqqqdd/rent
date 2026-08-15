@@ -26,7 +26,7 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
 
   const customer = await getUserById(c, order.userId);
   const device = await getDeviceById(c, order.deviceId)
-  const renderedContract = renderContractVariables(contract.signed_content || contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
+  const renderedContract = renderContractVariables(contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
 
   // 客户信息脱敏处理
   const maskedCustomerName = customer ? `${customer.name.charAt(0)}**` : '未知';
