@@ -3769,12 +3769,11 @@ tr:hover td {
 }
 
 .legal-document {
-  width: min(880px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 
 .legal-document__content, .signing-agreement {
-  max-width: 72ch;
+  max-width: none;
   color: var(--text-secondary);
   font-size: 1rem;
   line-height: 1.8;
