@@ -370,9 +370,6 @@ app.post('/login', async (c) => {
       await c.env.RENT.prepare('UPDATE users SET deletion_requested_at = NULL, deletion_scheduled_at = NULL WHERE id = ?').bind(user.id).run()
     } catch (_) {}
   }
-  const isDemoAccount = ['u-admin', 'u-staff', 'u-customer'].includes(String(user.id))
-  if (isDemoAccount && !isCustomerLoginHost(c)) return c.html(pages.renderLogin('展示账户只能从 test-rent.ydnw6zt6vj.workers.dev 访问。', shouldShowTestAccounts(c)), 403)
-  if (user.role === 'CUSTOMER' && !isCustomerLoginHost(c)) return c.html(pages.renderLogin('客户账户只能从测试租赁域名登录。', shouldShowTestAccounts(c)), 403)
   await c.env.RENT.prepare("INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (?, ?, ?, ?, 'success')").bind(user.id, normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
   await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()
   const response = c.redirect(user.role === 'CUSTOMER'

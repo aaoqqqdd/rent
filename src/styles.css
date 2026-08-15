@@ -4902,11 +4902,14 @@ tr:hover td {
   .contract-viewer > .a4-document .contract-content h1:first-child,
   .contract-viewer > .a4-document .contract-content h2:first-child,
   .contract-viewer > .a4-document .contract-content h3:first-child { margin-block-start: 0 !important; }
-  .a4-document { page-break-after: always; }
+  .a4-document { page-break-after: auto; break-after: auto; }
   .contract-print-page .a4-document.contract-content { width: auto !important; max-width: none !important; }
   .contract-print-page .a4-document.contract-content > * { break-inside: avoid; }
   .contract-print-page table { break-inside: auto; }
   .contract-print-page tr, .contract-print-page img { break-inside: avoid; }
+  .contract-print-page .page-break { height: 0; margin: 0; border: 0; page-break-after: always; break-after: page; }
+  .contract-print-page .page-break::before { display: none; }
+  .contract-print-page .page-break + p:has(> br:only-child) { display: none; }
 }
 
 /* Mobile control-room layer */
