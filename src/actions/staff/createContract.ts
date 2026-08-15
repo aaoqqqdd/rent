@@ -119,7 +119,9 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     totalAmount: totalAmount,
     depositAmount: depositAmount,
     dailyRate: dailyRate,
-    contractId: contractId,
+    // The orders table may enforce contractId -> contracts(id). The contract
+    // must exist before this field can be populated.
+    contractId: null,
     signedAt: null,
     createdAt: new Date().toISOString(), couponCode: appliedCouponCode, discountAmount
     // created_by 在部分旧代码/表结构中存在，这里与 Order 类型对齐使用 createdAt
@@ -160,6 +162,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   await insertOrder(c, newOrder);
   await insertContract(c, newContract);
+  await c.env.RENT.prepare('UPDATE orders SET contractId = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(contractId, orderId).run();
 
   const fullSignUrl = `${new URL(c.req.url).origin}/contract/sign?token=${newContract.signToken}&step=1`;
   const successPage = `
