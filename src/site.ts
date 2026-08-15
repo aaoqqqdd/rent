@@ -2812,13 +2812,13 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     : ''
 
   const navIcons: Record<string, string> = {
-    '/customer/dashboard': '◉', '/customer/rentals': '▤', '/customer/orders': '▦',
+    '/customer/dashboard': '⌂', '/customer/rentals': '▤', '/customer/orders': '▦',
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣',
-    '/staff/dashboard': '◉', '/staff/orders': '▦', '/staff/orders/ongoing': '◷', '/staff/customers': '◎', '/staff/contracts': '▤',
-    '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '◈', '/staff/devices': '▣',
-    '/notifications': 'N', '/admin/dashboard': '◉', '/admin/users': '◎', '/admin/orders': '▦',
-    '/admin/refunds': '↺', '/admin/contracts': '▤', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/devices': '▣', '/admin/calendar': '▦', '/admin/templates': '▤', '/admin/email-templates': '▤', '/admin/settings': '⚙'
+    '/staff/dashboard': '◍', '/staff/orders': '▰', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
+    '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭',
+    '/notifications': 'N', '/admin/dashboard': '◉', '/admin/users': '♙', '/admin/orders': '▥',
+    '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/finance': '$',
+    '/admin/withdrawals': '↗', '/admin/payment-reviews': '✓', '/admin/devices': '▣', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
   }
 
   const navIconSvg = (kind: string) => {
@@ -2837,7 +2837,22 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       '⚿': '<rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>',
       '✦': '<path d="m12 3 1.7 6.3L20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3Z"></path>',
       '◈': '<path d="m12 3 8 9-8 9-8-9 8-9Z"></path><path d="m12 8 3 4-3 4-3-4 3-4Z"></path>',
-      '+': '<path d="M12 5v14M5 12h14"></path>'
+      '+': '<path d="M12 5v14M5 12h14"></path>',
+      '♙': '<circle cx="12" cy="8" r="3"></circle><path d="M5 20c.8-3.2 3.1-5 7-5s6.2 1.8 7 5"></path><path d="M8 4h8"></path>',
+      '▥': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M4 10h16M9 10v9M15 10v9"></path>',
+      '⌑': '<path d="m12 3 8 5-8 5-8-5 8-5Z"></path><path d="m6 12 6 4 6-4M6 16l6 4 6-4"></path>',
+      '⌁': '<rect x="5" y="6" width="14" height="12" rx="2"></rect><path d="M8 9h8M8 13h5"></path><circle cx="17" cy="16" r="2"></circle>',
+      '◫': '<rect x="5" y="4" width="14" height="16" rx="2"></rect><path d="M8 8h8M8 12h3M13 12h3M8 16h8"></path>',
+      '%': '<circle cx="8" cy="8" r="2"></circle><circle cx="16" cy="16" r="2"></circle><path d="m17 7-10 10"></path>',
+      '◇': '<path d="m12 3 8 9-8 9-8-9 8-9Z"></path><path d="M9 12h6"></path>',
+      '✉': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="m5 8 7 5 7-5"></path>'
+      ,'⌂': '<path d="m4 11 8-7 8 7"></path><path d="M6 10v10h12V10M10 20v-6h4v6"></path>'
+      ,'◍': '<circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle><path d="M12 4v5M20 12h-5"></path>'
+      ,'▰': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="M4 10h16M8 14h3M8 16h6"></path>'
+      ,'♧': '<path d="M8 10a3 3 0 1 1 4-3 3 3 0 1 1 4 3 3 3 0 1 1-4 3 3 3 0 1 1-4-3Z"></path><path d="M12 13v7"></path>'
+      ,'▱': '<path d="M6 4h9l3 3v13H6z"></path><path d="M15 4v4h4M9 12h6M9 16h4"></path>'
+      ,'⌖': '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle><path d="M12 3v2M12 19v2M3 12h2M19 12h2"></path>'
+      ,'▭': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 9h8M8 13h8M8 16h4"></path>'
     }
     return `<svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || paths['▣']}</svg>`
   }
@@ -2882,7 +2897,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('客户与用户', [['/admin/users', '用户管理']])}
             ${renderNavGroup('订单与合同', [['/admin/orders', '订单管理'], ['/admin/contracts', '合同管理']])}
             ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/calendar', '租赁日历']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/payment-reviews', '充值与转账审核'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('协议与设置', [['/admin/templates', '协议与模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}
         </div>

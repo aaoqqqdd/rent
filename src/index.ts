@@ -666,6 +666,13 @@ app.post('/admin/balance-topups/:id/approve', async (c) => {
   return c.redirect(`/admin/users/${topup.user_id}`)
 })
 
+app.post('/admin/balance-topups/:id/reject', async (c) => {
+  const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const result = await c.env.RENT.prepare("UPDATE balance_topups SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).run()
+  if (!result.meta?.changes) return c.text('充值记录不存在或已处理', 409)
+  return c.redirect('/admin/payment-reviews')
+})
+
 app.get('/customer/guest', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER' || user.accountType !== 'guest') return c.redirect('/login')
@@ -954,7 +961,7 @@ app.get('/notifications/recent', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [], unreadCount: 0 }, 401)
   const result = await c.env.RENT.prepare("SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10").bind(user.id).all() as any
-  const unread = await c.env.RENT.prepare('SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL AND read_at IS NULL').bind(user.id).first() as any
+  const unread = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND read_at IS NULL").bind(user.id).first() as any
   return c.json({ notifications: result.results || [], unreadCount: Number(unread?.count || 0) })
 })
 
@@ -2000,6 +2007,12 @@ app.get('/admin/withdrawals', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderAdminWithdrawals(c, user))
+})
+
+app.get('/admin/payment-reviews', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminPaymentReviews(c, user))
 })
 
 app.post('/admin/withdrawals/:id/status', async (c) => {

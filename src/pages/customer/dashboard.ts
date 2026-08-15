@@ -41,7 +41,7 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
     </div>
     <div class="grid grid-3">
       ${currentRentals.length > 0 ? `
-      <div class="card quick-actions">
+      <div class="card upcoming-rental">
         <h3>即将到期提醒</h3>
         <p><span class="mono">${currentRentals[0].orderNo}</span> 将于 3 天后到期</p>
         <p style="margin-top: 12px;">
@@ -49,11 +49,13 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
           <a class="button button-sm button-secondary" href="/customer/rentals" style="margin-left:8px;">提前归还</a>
         </p>
       </div>` : ''}
-      <div class="card">
-        <h3>快捷操作</h3>
-        <p><a class="link-button" href="/customer/devices">浏览可租设备 →</a></p>
-        <p><a class="link-button" href="/customer/referral">邀请好友赚佣金 →</a></p>
-        <p><a class="link-button" href="/customer/profile">完善账户信息 →</a></p>
+      <div class="card quick-actions">
+        <div class="quick-actions__heading"><div><span class="section-code">SHORTCUTS</span><h3>快捷操作</h3></div><span class="quick-actions__mark">↗</span></div>
+        <div class="quick-actions__list">
+          <a class="quick-action" href="/customer/devices"><span class="quick-action__icon">⌘</span><span><strong>浏览可租设备</strong><small>查找下一台设备</small></span><b>→</b></a>
+          <a class="quick-action" href="/customer/referral"><span class="quick-action__icon">+</span><span><strong>邀请好友赚佣金</strong><small>分享你的推荐链接</small></span><b>→</b></a>
+          <a class="quick-action" href="/customer/profile"><span class="quick-action__icon">◎</span><span><strong>完善账户信息</strong><small>更新资料与联系方式</small></span><b>→</b></a>
+        </div>
       </div>
       <div class="card dashboard-announcements">
         <div class="section-title"><h3>历史通告</h3><a class="link-button" href="/notifications">通知中心 →</a></div>
