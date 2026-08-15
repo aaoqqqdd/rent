@@ -15,7 +15,7 @@ export async function notifyAgreementUpdate(c: Context, changedAgreements: Array
   const template = await c.env.RENT.prepare("SELECT subject, body, enabled FROM email_templates WHERE id = 'agreement_update'").first() as any
   const fill = (value: unknown, customer: any) => String(value || '').replace(/\{customer_name\}/g, String(customer.name || '')).replace(/\{customer_email\}/g, String(customer.email || '')).replace(/\{changed_agreements\}/g, names).replace(/\{company_name\}/g, String(companyDetails.name || '')).replace(/\{company_email\}/g, String(companyDetails.email || ''))
   const title = template?.enabled === 0 ? '协议内容已更新' : String(template?.subject || '协议内容已更新')
-  const defaultMessage = `我们已更新以下协议内容：${names}。请登录后查看最新版本。`
+  const defaultMessage = `我们已更新以下协议内容：${names}。请打开通知详情查看最新版本。`
   const customers = await c.env.RENT.prepare("SELECT id, name, email FROM users WHERE role = 'CUSTOMER' AND status = 'active' AND email NOT LIKE '%@invalid.local'").all() as any
   const recipients = (customers.results || []).filter((customer: any) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(customer.email || '')))
   await Promise.allSettled(recipients.map(async (customer: any) => {
@@ -35,6 +35,11 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   // index.ts 已经完成 admin 权限校验，这里不再依赖 c.get('user')。
   const bodyText = await c.req.text()
   const payload = JSON.parse(bodyText || '{}')
+
+  // Always hydrate the current values before merging the settings form.
+  // Otherwise a fresh worker can overwrite database-backed agreements with
+  // the in-code defaults when only company settings are being saved.
+  await loadSystemSettingsFromDB(c)
 
   const stripeConfigInput = payload.stripeConfig
   const shouldSaveStripeConfig = Boolean(

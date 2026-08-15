@@ -5,7 +5,8 @@
 
 import { buildLayout, formatCurrency } from '../../site';
 
-export function renderCustomerDashboard(user: any, allOrders: any[], devices: any[]) {
+export function renderCustomerDashboard(user: any, allOrders: any[], devices: any[], announcementData: { items: any[], page: number, pageCount: number } = { items: [], page: 1, pageCount: 1 }) {
+  const announcements = announcementData.items || []
   const orders = allOrders.filter(o => o.userId === user.id)
   const currentRentals = orders.filter((order) => order.status === 'active' || order.status === 'paid')
   const pendingPayment = orders.filter((order) => order.status === 'pending_payment').length
@@ -38,9 +39,9 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
         <div class="trend">历史租赁</div>
       </a>
     </div>
-    <div class="grid grid-2">
+    <div class="grid grid-3">
       ${currentRentals.length > 0 ? `
-      <div class="card">
+      <div class="card quick-actions">
         <h3>即将到期提醒</h3>
         <p><span class="mono">${currentRentals[0].orderNo}</span> 将于 3 天后到期</p>
         <p style="margin-top: 12px;">
@@ -53,6 +54,10 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
         <p><a class="link-button" href="/customer/devices">浏览可租设备 →</a></p>
         <p><a class="link-button" href="/customer/referral">邀请好友赚佣金 →</a></p>
         <p><a class="link-button" href="/customer/profile">完善账户信息 →</a></p>
+      </div>
+      <div class="card dashboard-announcements">
+        <div class="section-title"><h3>历史通告</h3><a class="link-button" href="/notifications">通知中心 →</a></div>
+        ${announcements.length ? `<div class="notification-list">${announcements.map(item => `<a class="dashboard-announcement" href="/notifications/${encodeURIComponent(item.id)}"><strong>${item.title}</strong><span>${item.created_at}</span><p>${item.message}</p></a>`).join('')}</div>${announcementData.pageCount > 1 ? `<nav class="pagination" aria-label="历史通告分页">${Array.from({ length: announcementData.pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === announcementData.page ? 'button-primary' : 'button-secondary'}" href="/customer/dashboard?announcementPage=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''}` : '<p class="empty-state">暂无历史通告</p>'}
       </div>
     </div>
     <div class="panel" style="margin-top: 20px;">

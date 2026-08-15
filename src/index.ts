@@ -219,12 +219,12 @@ app.use('*', async (c, next) => {
       return c.redirect('/login?error=guest_expired')
     }
     const path = c.req.path
-    const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result'])
+    const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result', '/notifications', '/notifications/unread'])
     const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/checkout|bank-transfer-proof))?$/)
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
-    const permitted = allowedExact.has(path) || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css'
+    const permitted = allowedExact.has(path) || path.startsWith('/notifications/') || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css'
     if (!permitted && path.startsWith('/customer/')) return c.redirect('/customer/guest')
   }
   await next()
@@ -323,8 +323,8 @@ app.post('/login', async (c) => {
   await ensureLoginHistorySchema(c)
   const recentFailures = await c.env.RENT.prepare("SELECT COUNT(*) count, MAX(attempted_at) latest FROM login_attempts WHERE ip_address = ? AND account = ? AND attempted_at > datetime('now', '-30 minutes')").bind(loginIp, normalizedAccount).first() as any
   const failureCount = Number(recentFailures?.count || 0)
-  if (failureCount > 0 && recentFailures?.latest) {
-    const lockMinutes = Math.min(60, failureCount === 1 ? 1 : failureCount === 2 ? 3 : failureCount === 3 ? 5 : failureCount + 2)
+  if (failureCount >= 3 && recentFailures?.latest) {
+    const lockMinutes = Math.min(60, failureCount === 3 ? 1 : failureCount + 2)
     const elapsedSeconds = Math.floor((Date.now() - new Date(`${recentFailures.latest}Z`).getTime()) / 1000)
     const remainingSeconds = lockMinutes * 60 - elapsedSeconds
     if (remainingSeconds > 0) {
@@ -568,7 +568,13 @@ app.get('/customer/dashboard', async (c) => {
   }
   const orders = await getOrdersAsync(c)
   const devices = await getDevicesAsync(c)
-  return c.html(pages.renderCustomerDashboard(user, orders, devices))
+  await ensureNotificationsTable(c)
+  const announcementPageSize = 10
+  const announcementPageCount = Math.max(1, Math.ceil(Number(((await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type = 'announcement' AND deleted_at IS NULL").bind(user.id).first()) as any)?.count || 0) / announcementPageSize))
+  const requestedAnnouncementPage = Math.max(1, Number(c.req.query('announcementPage') || 1) || 1)
+  const announcementPage = Math.min(requestedAnnouncementPage, announcementPageCount)
+  const announcements = (await c.env.RENT.prepare("SELECT id, title, message, created_at FROM notifications WHERE recipient_id = ? AND type = 'announcement' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?").bind(user.id, announcementPageSize, (announcementPage - 1) * announcementPageSize).all()).results || []
+  return c.html(pages.renderCustomerDashboard(user, orders, devices, { items: announcements, page: announcementPage, pageCount: announcementPageCount }))
 })
 
 app.get('/customer/balance', async (c) => {
@@ -772,15 +778,48 @@ app.get('/notifications', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
   await ensureNotificationsTable(c)
-  // Opening the notification center counts as reading the inbox, so the
-  // header badge disappears immediately while the full history remains visible.
-  await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE recipient_id = ? AND deleted_at IS NULL').bind(user.id).run()
-  const notifications = await getNotifications(c, user.id)
+  const allNotifications = await getNotifications(c, user.id)
+  const pageSize = 10
+  const requestedPage = Math.max(1, Number(c.req.query('page') || 1) || 1)
+  const pageCount = Math.max(1, Math.ceil(allNotifications.length / pageSize))
+  const page = Math.min(requestedPage, pageCount)
+  const pageNotifications = allNotifications.slice((page - 1) * pageSize, page * pageSize)
+  const notifications = pageNotifications
   const sentAnnouncements = user.role === 'ADMIN' ? ((await c.env.RENT.prepare("SELECT MAX(id) AS id, title, message, created_at FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC LIMIT 100").bind(user.id).all()).results || []) : []
   const recipients = user.role === 'ADMIN' || user.role === 'STAFF' ? (await getUsers(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive') : []
+  if (user.role === 'ADMIN' || user.role === 'STAFF') await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
+  const emailTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM email_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
+  const emailTemplateOptions = `<option value="custom">自定义通知</option>${emailTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
   const recipientOptions = recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')
   const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};search.addEventListener('input',update);select.addEventListener('change',update);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<article class="notification-item ${item.read_at ? '' : 'is-unread'}"><div><strong>${item.title}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div>${item.order_id ? `<a class="button button-sm button-secondary" href="${user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`}" >查看订单</a>` : ''}</article>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
-  return c.html(buildLayout('通知中心', body, user))
+  const pagination = pageCount > 1 ? `<nav class="pagination" aria-label="通知分页">${Array.from({ length: pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === page ? 'button-primary' : 'button-secondary'}" href="/notifications?page=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''
+  const bodyWithTemplateChoice = body.replace('<div class="form-group"><label class="form-label" for="notificationTitle">标题</label>', `<div class="form-group"><label class="form-label" for="notificationTemplate">发送内容</label><select class="form-control" id="notificationTemplate" name="templateId">${emailTemplateOptions}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label>`)
+  const bodyWithArchiveLink = user.role === 'ADMIN' ? bodyWithTemplateChoice.replace('<h3>发布通告</h3>', '<div class="section-title"><h3>发布通告</h3><a class="link-button" href="/admin/announcements">历史通告 →</a></div>') : bodyWithTemplateChoice
+  return c.html(buildLayout('通知中心', bodyWithArchiveLink + pagination, user))
+})
+
+app.get('/admin/announcements', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureNotificationsTable(c)
+  const result = await c.env.RENT.prepare("SELECT MIN(id) AS id, title, message, created_at, COUNT(*) AS recipient_count FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC").bind(user.id).all() as any
+  const esc = (value: unknown) => sanitizePlainText(value, 500).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const body = `<div class="page-header"><div><p class="section-code">ANNOUNCEMENT ARCHIVE</p><h2>历史公告</h2><p>编辑已发布公告后，所有收件人会同步更新。</p></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="announcement-archive">${(result.results || []).map((item: any) => `<form class="panel announcement-archive__item" method="post" action="/admin/announcements/${encodeURIComponent(item.id)}"><div class="section-title"><div><h3>${esc(item.title)}</h3><small>${esc(item.created_at)} · 已发送 ${item.recipient_count} 人</small></div></div><label class="form-label">标题</label><input class="form-control" name="title" value="${esc(item.title)}" maxlength="120" required><label class="form-label">内容</label><textarea class="form-control" name="message" rows="5" maxlength="2000" required>${esc(item.message)}</textarea><button class="button button-primary" type="submit">保存公告</button></form>`).join('') || '<p class="empty-state">暂无历史公告</p>'}</div>`
+  return c.html(buildLayout('历史公告 - 电脑租赁管理系统', body, user))
+})
+
+app.post('/admin/announcements/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const title = String(form.title || '').trim().slice(0, 120)
+  const message = String(form.message || '').trim().slice(0, 2000)
+  if (!title || !message) return c.text('公告标题和内容不能为空', 400)
+  await ensureNotificationsTable(c)
+  const source = await c.env.RENT.prepare('SELECT title, message, created_at FROM notifications WHERE id = ? AND sender_id = ? AND type = \'announcement\'').bind(c.req.param('id'), user.id).first() as any
+  if (!source) return c.text('公告不存在', 404)
+  await c.env.RENT.prepare('UPDATE notifications SET title = ?, message = ? WHERE sender_id = ? AND type = \'announcement\' AND title = ? AND message = ? AND created_at = ?').bind(title, message, user.id, source.title, source.message, source.created_at).run()
+  return c.redirect('/admin/announcements')
 })
 
 app.get('/admin/email-templates', async (c) => {
@@ -873,6 +912,16 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
   return c.redirect('/admin/email-templates')
 })
 
+app.get('/notifications/:id', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.redirect('/login')
+  const item = await c.env.RENT.prepare('SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), user.id).first() as any
+  if (!item) return c.html(renderNotFound(), 404)
+  await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
+  const body = `<div class="panel notification-detail"><div class="section-title"><div><p class="section-code">NOTIFICATION DETAIL</p><h2>${sanitizePlainText(item.title, 200)}</h2><small>${sanitizePlainText(item.created_at, 80)}</small></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="notification-message">${renderNotificationMarkdown(item.message)}</div></div>`
+  return c.html(buildLayout('通知详情', body, user))
+})
+
 app.get('/notifications/announcements', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ announcements: [] }, 401)
@@ -898,6 +947,14 @@ app.get('/notifications/unread', async (c) => {
     }
   }
   return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message_html: renderFlexibleContent(item.message) })) })
+})
+
+app.get('/notifications/recent', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.json({ notifications: [], unreadCount: 0 }, 401)
+  const result = await c.env.RENT.prepare('SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10').bind(user.id).all() as any
+  const unread = await c.env.RENT.prepare('SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL AND read_at IS NULL').bind(user.id).first() as any
+  return c.json({ notifications: result.results || [], unreadCount: Number(unread?.count || 0) })
 })
 
 app.post('/notifications/announcements/:id/dismiss', async (c) => {
@@ -944,8 +1001,15 @@ app.post('/notifications/send', async (c) => {
   const recipientIds = (Array.isArray(rawRecipientIds) ? rawRecipientIds : [rawRecipientIds])
     .map((value: unknown) => String(value || '').trim())
     .filter(Boolean)
-  const title = String(form.title || '').trim().slice(0, 120)
-  const message = String(form.message || '').trim().slice(0, 1000)
+  const templateId = String(form.templateId || 'custom').trim()
+  let title = String(form.title || '').trim().slice(0, 120)
+  let message = String(form.message || '').trim().slice(0, 1000)
+  if (templateId !== 'custom') {
+    const template = await c.env.RENT.prepare('SELECT subject, body FROM email_templates WHERE id = ? AND enabled = 1').bind(templateId).first() as any
+    if (!template) return c.text('通知模板不存在或已停用', 400)
+    title = String(template.subject || '').trim().slice(0, 120)
+    message = String(template.body || '').trim().slice(0, 1000)
+  }
   const allowedRecipients = (await getUsers(c)).filter((recipient: any) =>
     recipientIds.includes(recipient.id) &&
     ['CUSTOMER', 'STAFF'].includes(recipient.role) &&

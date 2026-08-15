@@ -27,7 +27,7 @@ const errorStyles = `
   </style>
 `;
 
-export function renderNotFound() {
+export function renderNotFound(currentUser: any = null) {
   const body = `
     <div class="error-page">
       <div class="error-card error-warning">
@@ -51,7 +51,7 @@ export function renderNotFound() {
     </div>
     ${errorStyles}
   `;
-  return buildLayout('404 - 页面未找到', body);
+  return buildLayout('404 - 页面未找到', body, currentUser);
 }
 
 export function renderForbidden() {

@@ -108,7 +108,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先同意租赁协议。');
         }
 
-        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature, handSignature } = body;
+        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature } = body;
         const createAccount = !currentUser && Boolean(createAccountInput)
         const selectedAccountMode = createAccount ? 'formal' : 'guest'
         const cleanFirstName = String(firstName || '').trim()
@@ -129,9 +129,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请完整填写姓名、邮箱和联系电话；电子签名必须与姓名一致。');
         }
         const typedSignature = String(esignSignature || '').trim()
-        const drawnSignature = String(handSignature || '').trim()
-        const signature = typedSignature || drawnSignature
-        if (!signature || (typedSignature && typedSignature !== name) || (drawnSignature && !drawnSignature.startsWith('data:image/png;base64,'))) {
+        const signature = typedSignature
+        if (!signature || signature !== name) {
           throw new Error('请输入与姓名一致的签名，或完成手写签名。')
         }
         if (cleanFirstName.length > 100 || cleanLastName.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -240,9 +239,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
       case 3: {
         if (!signSession.userInfo) throw new Error('请先填写您的个人信息。');
         const typedSignature = String(body.esignSignature || '').trim();
-        const handSignature = String(body.handSignature || '').trim();
-        const signature = typedSignature || handSignature;
-        if (!signature || (typedSignature && typedSignature !== String(signSession.userInfo.name || '').trim()) || (handSignature && !handSignature.startsWith('data:image/png;base64,'))) throw new Error('请输入与姓名一致的签名，或完成手写签名。');
+        const signature = typedSignature;
+        if (!signature || signature !== String(signSession.userInfo.name || '').trim()) throw new Error('请输入与姓名一致的签名。');
         await updateSignSession(c, token, { userInfo: { ...signSession.userInfo, esignSignature: signature } });
         redirectUrl = `/contract/sign?token=${token}&step=4`;
         break;

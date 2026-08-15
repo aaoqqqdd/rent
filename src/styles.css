@@ -820,6 +820,8 @@ header {
 .notification-drawer__item p { margin: 6px 0; color: #526574; font-size: .88rem; line-height: 1.5; }
 .notification-drawer__item small { color: #84929d; font: .68rem var(--font-mono); }
 .notification-drawer__all { justify-content: center; }
+.notification-drawer__pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1px solid #dce5ea; color: #71818d; font-size: .75rem; }
+.notification-drawer__pager button:disabled { opacity: .45; cursor: not-allowed; }
 body.is-navigating .content { opacity: .55; transition: opacity .18s ease; }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .2s; }
 
@@ -1527,6 +1529,14 @@ button:disabled {
   border-color: #bfdbfe;
   color: #1d4ed8;
 }
+.login-card .page-notification {
+  position: static;
+  width: auto;
+  margin: 16px 0;
+  padding: 12px 14px;
+  box-shadow: none;
+  font-size: .92rem;
+}
 .motion-status-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.35em; height: 1.35em; margin-right: 8px; border-radius: 50%; font-weight: 800; line-height: 1; vertical-align: -0.15em; }
 .page-transition-curtain { position: fixed; z-index: 9999; inset: 0; overflow: hidden; background: #0b1420; transform: scaleY(0); transform-origin: top; pointer-events: none; }
 .initial-load-curtain { transform: scaleY(1); transform-origin: bottom; transition: transform .38s cubic-bezier(.22,.8,.25,1); }
@@ -1581,6 +1591,14 @@ button:disabled {
   color: var(--text-secondary);
   font-size: 0.9rem;
   margin-bottom: 8px;
+}
+
+/* Customer dashboard utility cards stay the same height; long notices scroll inside. */
+.quick-actions,
+.dashboard-announcements {
+  height: 240px;
+  box-sizing: border-box;
+  overflow: auto;
 }
 
 .text-muted {
