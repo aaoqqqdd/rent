@@ -81,10 +81,6 @@ export async function renderNewContractPage(c: Context, user: any) {
           <div class="form-group"><label for="end-period" class="form-label">归还时段</label><select id="end-period" name="endPeriod" class="form-control"><option value="AM">00:00–12:59</option><option value="PM">13:00–23:59</option></select></div>
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
-          <div class="form-group"><label for="pickup-time-slot" class="form-label">取货具体时段</label><select id="pickup-time-slot" name="pickupTimeSlot" class="form-control" required><option value="morning_service">7:00–8:00</option><option value="morning">9:00–12:00</option><option value="afternoon">13:00–20:00</option><option value="evening_service">21:00–23:00</option></select></div>
-          <div class="form-group"><label for="return-time-slot" class="form-label">归还具体时段</label><select id="return-time-slot" name="returnTimeSlot" class="form-control" required><option value="morning_service">7:00–8:00</option><option value="morning">9:00–12:00</option><option value="afternoon">13:00–20:00</option><option value="evening_service">21:00–23:00</option></select></div>
-        </div>
-        <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="device-condition" class="form-label">出租时设备状况</label>
             <textarea id="device-condition" name="deviceCondition" class="form-control" required placeholder="选择设备后自动填写最近一次 EXE 系统状态，也可以人工补充外观检查"></textarea>
@@ -157,8 +153,6 @@ export async function renderNewContractPage(c: Context, user: any) {
       const bookingCalendar = document.getElementById('booking-calendar');
       const bookingStatus = document.getElementById('booking-status');
       const bookingConflict = document.getElementById('booking-conflict');
-      const pickupTimeSlot = document.getElementById('pickup-time-slot');
-      const returnTimeSlot = document.getElementById('return-time-slot');
       const bookingMonthLabel = document.getElementById('booking-month-label');
       const now = new Date();
       const isoDate = date => date.toISOString().slice(0, 10);
@@ -256,23 +250,25 @@ export async function renderNewContractPage(c: Context, user: any) {
         const message = past ? '租赁日期不能早于今天。' : invalidRange ? '归还日期必须晚于租赁开始日期。' : rentalDays < rentalRules.minimumRentalDays ? '最短租赁时间为 ' + rentalRules.minimumRentalDays + ' 天。' : unavailable ? '租期包含不可取货或归还日期：' + unavailable : conflict ? '所选日期与已有租赁重叠：' + conflict.startDate + ' 至 ' + conflict.endDate : '';
         startDateInput.setCustomValidity(message); endDateInput.setCustomValidity(message); bookingConflict.textContent = message;
         bookingStatus.className = 'badge ' + (message ? 'badge-danger' : deviceSelect.value ? 'badge-success' : 'badge-neutral');
-        updateTimeSlots();
+        updateRentalPeriods();
         if (!message && deviceSelect.value) bookingStatus.textContent = '所选日期可用';
         renderBookingCalendar();
         return !message;
       }
-      function updateTimeSlots() {
-        const slots = ['morning_service', 'morning', 'afternoon', 'evening_service'];
-        const update = (select, date, isPickup) => {
+      function updateRentalPeriods() {
+        const startPeriod = document.getElementById('start-period');
+        const endPeriod = document.getElementById('end-period');
+        const nowHour = Number(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', hour12: false }).format(new Date()));
+        const update = (select, date, isStart) => {
           Array.from(select.options).forEach(option => {
-            const occupied = selectedBookings().some(item => (isPickup && item.startDate === date && item.pickupTimeSlot === option.value) || (!isPickup && item.endDate === date && item.returnTimeSlot === option.value) || (isPickup && item.endDate === date && item.returnTimeSlot === option.value));
-            const past = date === todayValue && new Date().toLocaleString('en-US', { timeZone: 'Australia/Melbourne' }) && ({ morning_service: 7, morning: 9, afternoon: 13, evening_service: 21 })[option.value] <= Number(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', hour12: false }).format(new Date()));
-            const blocked = (rentalRules.unavailableTimeSlots?.[date] || []).includes(option.value) || occupied || past;
-            option.disabled = Boolean(blocked);
+            const occupied = selectedBookings().some(item => (item.startDate === date && item.startPeriod === option.value) || (item.endDate === date && item.endPeriod === option.value));
+            const past = isStart && date === todayValue && option.value === 'AM' && nowHour >= 13;
+            option.disabled = occupied || past;
           });
-          if (select.selectedOptions[0]?.disabled) select.value = slots.find(slot => !select.querySelector('option[value="' + slot + '"]').disabled) || '';
+          if (select.selectedOptions[0]?.disabled) select.value = Array.from(select.options).find(option => !option.disabled)?.value || '';
         };
-        update(pickupTimeSlot, startDateInput.value, true); update(returnTimeSlot, endDateInput.value, false);
+        update(startPeriod, startDateInput.value, true);
+        update(endPeriod, endDateInput.value, false);
       }
       
       function updateValidityDates() {

@@ -21,10 +21,6 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   await loadSystemSettingsFromDB(c)
   const allowedLocations = getSystemSettings().companyDetails.pickupLocations
   const rentalRules = getSystemSettings().rentalRules
-  const isDelivery = body.deliveryMethod === 'Delivery'
-  const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
-  const pickupTimeSlot = String(body.pickupTimeSlot || '').trim()
-  const returnTimeSlot = String(body.returnTimeSlot || '').trim()
   let returnLocationValue = String(returnLocation || '').trim()
   let pickupLocationValue = String(body.pickupLocation || '').trim()
   let deliveryAddressData: Record<string, string> = {}
@@ -69,16 +65,8 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   if (start >= end) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
   }
-  if (!allowedTimeSlots.includes(pickupTimeSlot) || !allowedTimeSlots.includes(returnTimeSlot)) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请选择有效的取货和归还时间段')}`)
-  }
-  const unavailableTimeSlots = rentalRules.unavailableTimeSlots || {}
-  if ((unavailableTimeSlots[startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[endDate] || []).includes(returnTimeSlot)) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('所选取货或归还时间段不可用')}`)
-  }
   const melbourneNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Australia/Melbourne' }))
-  const slotHour = (slot: string) => slot === 'morning_service' ? 7 : slot === 'morning' || slot === 'delivery_morning' ? 9 : slot === 'afternoon' || slot === 'delivery_afternoon' ? 13 : 21
-  if (startDate === todayValue && melbourneNow.getHours() >= slotHour(pickupTimeSlot)) {
+  if (startDate === todayValue && startPeriod === 'AM' && melbourneNow.getHours() >= 13) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('取货时间段已过，请选择尚未开始的时段')}`)
   }
   const halfDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
@@ -92,9 +80,10 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const deviceUnavailable = new Set(((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ?').bind(deviceId).all()).results || []).map((row: any) => row.unavailable_date))
   for (let day = new Date(startDate); day < new Date(endDate); day.setDate(day.getDate() + 1)) if (deviceUnavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备包含管理员设置的不可用日期')}`)
   if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备在所选日期或缓冲时间内已有订单')}`)
-  const sameDayBookings = ((await c.env.RENT.prepare(`SELECT startDate, endDate, pickupTimeSlot, returnTimeSlot FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled') AND (startDate = ? OR endDate = ? OR (startDate < ? AND endDate > ?))`).bind(deviceId, startDate, startDate, startDate, startDate).all()).results || []) as any[]
-  if (sameDayBookings.some(item => (item.startDate === startDate && item.pickupTimeSlot === pickupTimeSlot) || (item.endDate === startDate && item.returnTimeSlot === pickupTimeSlot))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备的取货时间段已被出租')}`)
-  if (sameDayBookings.some(item => (item.startDate === endDate && item.pickupTimeSlot === returnTimeSlot) || (item.endDate === endDate && item.returnTimeSlot === returnTimeSlot))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备的归还时间段已被出租')}`)
+  const sameDayBookings = ((await c.env.RENT.prepare(`SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled') AND (startDate = ? OR endDate = ? OR startDate = ? OR endDate = ?)`)
+    .bind(deviceId, startDate, startDate, endDate, endDate).all()).results || []) as any[]
+  if (sameDayBookings.some(item => (item.startDate === startDate && item.startPeriod === startPeriod) || (item.endDate === startDate && item.endPeriod === startPeriod))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备的取货时段已被出租')}`)
+  if (sameDayBookings.some(item => (item.startDate === endDate && item.startPeriod === endPeriod) || (item.endDate === endDate && item.endPeriod === endPeriod))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备的归还时段已被出租')}`)
 
   const dailyRate = device.pricePerDay;
   const depositAmount = device.depositAmount;
@@ -124,8 +113,8 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     startDate: startDate,
     endDate: endDate,
     startPeriod, endPeriod,
-    pickupTimeSlot,
-    returnTimeSlot,
+    pickupTimeSlot: null,
+    returnTimeSlot: null,
     pickupLocation: pickupLocationValue,
     returnLocation: returnLocationValue,
     deliveryMethod: deliveryMethod as any,
