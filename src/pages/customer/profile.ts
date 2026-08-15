@@ -94,7 +94,7 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
         <h3>删除账户</h3>
         ${deletionScheduledAt
           ? `<p class="form-text">账户已进入冷静期，将于 <strong>${String(deletionScheduledAt).replace('T', ' ').slice(0, 19)}</strong> 后删除。7 天内重新登录即可取消。</p>`
-          : `<p class="form-text">申请后进入 7 天冷静期。冷静期结束后账户将永久删除且无法恢复，账户余额和佣金余额会清零且不退还；合同、订单和支付记录仅保留为“删除账户”。</p><form method="POST" action="/customer/profile/delete-account" onsubmit="if (!this.confirmDelete.checked) { alert('请先勾选确认项'); return false; } return confirm('最终确认：账户将进入7天冷静期，之后永久删除且无法恢复，余额和佣金余额清零。确定继续吗？')"><label class="form-check" style="display:flex;gap:8px;align-items:flex-start;margin:16px 0"><input type="checkbox" name="confirmDelete" required><span>我已了解账户永久删除后无法恢复，余额及佣金余额不会退还，合同和订单只保留匿名记录。</span></label><button class="button button-danger" type="submit">申请删除账户</button></form>`}
+          : `<p class="form-text">申请后进入 7 天冷静期。冷静期结束后账户才会永久删除，余额和佣金余额会清零且不退还；合同、订单和支付记录仅保留为“删除账户”。</p><form method="POST" action="/customer/profile/delete-account" onsubmit="if (!this.confirmDelete.checked) { alert('请先勾选确认项'); return false; } return confirm('最终确认：账户将进入7天冷静期，期间重新登录可取消删除。确定继续吗？')"><label class="form-check" style="display:flex;gap:8px;align-items:flex-start;margin:16px 0"><input type="checkbox" name="confirmDelete" required><span>我已了解账户进入冷静期，余额及佣金余额不会退还，合同和订单只保留匿名记录。</span></label><button class="button button-danger" type="submit">申请删除账户</button></form>`}
       </section>
     </div>
     <script>

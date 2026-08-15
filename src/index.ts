@@ -307,7 +307,8 @@ app.get('/login', async (c) => {
   if (user) {
     return c.redirect('/')
   }
-  return c.html(pages.renderLogin(undefined, shouldShowTestAccounts(c)))
+  const deletedMessage = c.req.query('deletion_requested') === '1' ? '账户删除申请已提交，进入 7 天冷静期；您已退出登录。7 天内重新登录可取消删除。' : undefined
+  return c.html(pages.renderLogin(deletedMessage, shouldShowTestAccounts(c)))
 })
 
 app.post('/login', async (c) => {
@@ -1741,9 +1742,11 @@ app.post('/customer/profile/delete-account', async (c) => {
   }
   const requestedAt = new Date()
   const scheduledAt = new Date(requestedAt.getTime() + 7 * 24 * 60 * 60 * 1000)
-  await c.env.RENT.prepare('UPDATE users SET deletion_requested_at = ?, deletion_scheduled_at = ? WHERE id = ? AND status = \'active\'')
-    .bind(requestedAt.toISOString(), scheduledAt.toISOString(), user.id).run()
-  return c.html(await pages.renderCustomerProfile(c, { ...user, deletionScheduledAt: scheduledAt.toISOString() }, '账户已进入 7 天冷静期。期间重新登录即可取消删除。', 'success'))
+  await c.env.RENT.prepare("UPDATE users SET deletion_requested_at = ?, deletion_scheduled_at = ? WHERE id = ? AND role = 'CUSTOMER' AND status = 'active'").bind(requestedAt.toISOString(), scheduledAt.toISOString(), user.id).run()
+  await deleteAuthSession(c, c.req.header('cookie') ?? null)
+  const response = c.redirect('/login?deletion_requested=1')
+  response.headers.set('Set-Cookie', 'session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT')
+  return response
 })
 
 app.get('/customer/referral', async (c) => {

@@ -50,7 +50,7 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
         </p>
       </div>` : ''}
       <div class="card quick-actions">
-        <div class="quick-actions__heading"><div><span class="section-code">SHORTCUTS</span><h3>快捷操作</h3></div><span class="quick-actions__mark">↗</span></div>
+        <div class="quick-actions__heading"><div><h3>快捷操作</h3></div></div>
         <div class="quick-actions__list">
           <a class="quick-action" href="/customer/devices"><span class="quick-action__icon">⌘</span><span><strong>浏览可租设备</strong><small>查找下一台设备</small></span><b>→</b></a>
           <a class="quick-action" href="/customer/referral"><span class="quick-action__icon">+</span><span><strong>邀请好友赚佣金</strong><small>分享你的推荐链接</small></span><b>→</b></a>
