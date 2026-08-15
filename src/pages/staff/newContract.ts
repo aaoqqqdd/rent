@@ -69,11 +69,11 @@ export async function renderNewContractPage(c: Context, user: any) {
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="start-date" class="form-label">租赁开始日期</label>
-            <input type="date" id="start-date" name="startDate" class="form-control" required>
+            <input type="date" id="start-date" name="startDate" class="form-control" required min="${today}">
           </div>
           <div class="form-group">
             <label for="end-date" class="form-label">租赁结束日期</label>
-            <input type="date" id="end-date" name="endDate" class="form-control" required>
+            <input type="date" id="end-date" name="endDate" class="form-control" required min="${today}">
           </div>
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
@@ -235,6 +235,7 @@ export async function renderNewContractPage(c: Context, user: any) {
         bookingStatus.textContent = deviceSelect.value ? first.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', timeZone: 'UTC' }) : '请先选择设备';
       }
       function selectBookingDate(value) {
+        if (value < todayValue) return;
         if (!startDateInput.value || endDateInput.value || value < startDateInput.value) { startDateInput.value = value; endDateInput.value = ''; }
         else if (value === startDateInput.value) { const next = new Date(value + 'T00:00:00Z'); next.setUTCDate(next.getUTCDate() + 1); endDateInput.value = isoDate(next); }
         else endDateInput.value = value;
@@ -246,7 +247,8 @@ export async function renderNewContractPage(c: Context, user: any) {
         const conflict = !invalidRange && deviceSelect.value && startDateInput.value && endDateInput.value && selectedBookings().find(item => startDateInput.value < item.endDate && endDateInput.value > item.startDate);
         const rentalDays = !invalidRange && startDateInput.value && endDateInput.value ? Math.ceil((new Date(endDateInput.value + 'T00:00:00Z').getTime() - new Date(startDateInput.value + 'T00:00:00Z').getTime()) / 86400000) : 0;
         const unavailable = !invalidRange && startDateInput.value && endDateInput.value && rentalRules.unavailableDates.find(date => date >= startDateInput.value && date < endDateInput.value);
-        const message = invalidRange ? '归还日期必须晚于租赁开始日期。' : rentalDays < rentalRules.minimumRentalDays ? '最短租赁时间为 ' + rentalRules.minimumRentalDays + ' 天。' : unavailable ? '租期包含不可取货或归还日期：' + unavailable : conflict ? '所选日期与已有租赁重叠：' + conflict.startDate + ' 至 ' + conflict.endDate : '';
+        const past = (startDateInput.value && startDateInput.value < todayValue) || (endDateInput.value && endDateInput.value < todayValue);
+        const message = past ? '租赁日期不能早于今天。' : invalidRange ? '归还日期必须晚于租赁开始日期。' : rentalDays < rentalRules.minimumRentalDays ? '最短租赁时间为 ' + rentalRules.minimumRentalDays + ' 天。' : unavailable ? '租期包含不可取货或归还日期：' + unavailable : conflict ? '所选日期与已有租赁重叠：' + conflict.startDate + ' 至 ' + conflict.endDate : '';
         startDateInput.setCustomValidity(message); endDateInput.setCustomValidity(message); bookingConflict.textContent = message;
         bookingStatus.className = 'badge ' + (message ? 'badge-danger' : deviceSelect.value ? 'badge-success' : 'badge-neutral');
         if (!message && deviceSelect.value) bookingStatus.textContent = '所选日期可用';
