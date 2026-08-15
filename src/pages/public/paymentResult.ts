@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getContractByOrderId, formatCurrency } from '../../site';
+import { buildLayout, getOrderById, getContractByOrderId, formatCurrency, sanitizePlainText } from '../../site';
 import type { Context } from 'hono';
 
 export function paymentResultState(order: any, payment: any, cancelled = false): 'cancelled' | 'success' | 'fail' | 'bank_pending' | 'stripe_pending' {
@@ -19,6 +19,12 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
   const paymentMethod = String(order?.paymentMethod ?? 'card')
   const payment = order ? await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod).first() as any : null
   const status = paymentResultState(order, payment, cancelled)
+  const credentialCookie = c.req.header('cookie')?.match(/(?:^|;\s*)guest_payment_credentials=([^;]*)/)?.[1]
+  let guestCredentials: { email: string; password: string } | null = null
+  try {
+    const value = JSON.parse(decodeURIComponent(credentialCookie || ''))
+    if (value?.orderId === orderId && typeof value.email === 'string' && typeof value.password === 'string') guestCredentials = { email: value.email, password: value.password }
+  } catch {}
 
   let title = '';
   let message = '';
@@ -149,6 +155,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
         ${icon}
         <h2>${title}</h2>
         <p>${message}</p>
+        ${(status === 'fail' || status === 'cancelled') && guestCredentials ? `<div class="page-notification page-notification--warning" style="text-align:left"><strong>临时账户登录资料</strong><p style="margin:8px 0 0">登录邮箱：<code>${sanitizePlainText(guestCredentials.email, 200)}</code><br>临时密码：<code>${sanitizePlainText(guestCredentials.password, 200)}</code></p><small>请保存后登录查看订单并重新付款。</small></div>` : ''}
         ${contract ? `<p style="font-size: 0.85rem; color: var(--text-tertiary);">合同编号: <span class="mono">${contract.contractNumber}</span></p>` : ''}
         <div class="button-group">
           <a class="button" href="${buttonLink}">${buttonText}</a>
