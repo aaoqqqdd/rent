@@ -2715,7 +2715,9 @@ app.post('/api/device-agent/register', async (c) => {
   if (!device) {
     if (!/^\d{6}$/.test(setupCode)) return c.json({ ok: false, error: serialNumber ? '未找到可自动绑定的序列号，请填写 6 位访问码' : 'setupCode must be exactly 6 digits' }, 400)
     const setupCodeHash = await hashAgentValue(setupCode)
-    device = await c.env.RENT.prepare(`SELECT id, name, serialNumber FROM devices WHERE agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP${serialNumber ? ' AND serialNumber = ?' : ''}`).bind(...(serialNumber ? [setupCodeHash, serialNumber] : [setupCodeHash])).first() as any
+    // A manually entered setup code is the authority when BIOS/board serials differ.
+    // Serial matching is only used for the automatic binding path above.
+    device = await c.env.RENT.prepare('SELECT id, name, serialNumber FROM devices WHERE agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP').bind(setupCodeHash).first() as any
   }
   if (!device) return c.json({ ok: false, error: 'Invalid or expired setup code' }, 401)
   const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '')
@@ -2727,7 +2729,7 @@ app.post('/api/device-agent/heartbeat', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
   const payload = await c.req.json().catch(() => ({})) as any
-  await c.env.RENT.prepare(`UPDATE devices SET agent_last_seen_at = CURRENT_TIMESTAMP, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_version = ?, agent_status = 'online', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(c.req.header('CF-Connecting-IP') || null, payload.hostname || null, payload.osVersion || null, payload.cpu || null, Number.isFinite(payload.memoryMb) ? payload.memoryMb : null, Number.isFinite(payload.storageFreeBytes) ? payload.storageFreeBytes : null, String(payload.version || ''), device.id).run()
+  await c.env.RENT.prepare(`UPDATE devices SET agent_last_seen_at = CURRENT_TIMESTAMP, agent_last_ip = ?, agent_hostname = ?, agent_os_version = ?, agent_cpu = ?, agent_memory_mb = ?, agent_storage_free_bytes = ?, agent_version = ?, agent_detected_serial = ?, agent_status = 'online', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).bind(c.req.header('CF-Connecting-IP') || null, payload.hostname || null, payload.osVersion || null, payload.cpu || null, Number.isFinite(payload.memoryMb) ? payload.memoryMb : null, Number.isFinite(payload.storageFreeBytes) ? payload.storageFreeBytes : null, String(payload.version || ''), String(payload.serialNumber || ''), device.id).run()
   return c.json({ ok: true, deviceId: device.id, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null })
 })
 
