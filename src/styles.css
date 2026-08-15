@@ -4847,7 +4847,7 @@ tr:hover td {
     grid-template-columns: 1fr;
   }
 }
-.contract-viewer { background: #172331; padding: 0; overflow: hidden; border: 1px solid #26394b; box-shadow: 0 22px 60px rgba(15, 29, 43, .18); }
+.contract-viewer { width: 100%; max-width: 794px; margin-inline: auto; background: transparent; padding: 0; overflow: hidden; border: 0; box-shadow: 0 22px 60px rgba(15, 29, 43, .18); }
 .contract-archive-bar { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding: 34px 40px 30px; color: #f7f3ea; background: linear-gradient(120deg, #172331, #203448); border-bottom: 1px solid rgba(255,255,255,.12); }
 .contract-archive-bar h1 { margin: 7px 0 2px; color: #fff; font-size: clamp(1.8rem, 4vw, 2.8rem); letter-spacing: -.04em; }
 .contract-kicker { color: #f0a35b; font: 600 .68rem var(--font-mono); letter-spacing: .12em; }

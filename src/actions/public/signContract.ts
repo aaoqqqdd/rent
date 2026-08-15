@@ -108,7 +108,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先同意租赁协议。');
         }
 
-        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature } = body;
+        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature, handSignature } = body;
         const createAccount = !currentUser && Boolean(createAccountInput)
         const selectedAccountMode = createAccount ? 'formal' : 'guest'
         const cleanFirstName = String(firstName || '').trim()
@@ -127,6 +127,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             hasPhone: !!submittedPhone
           });
           throw new Error('请完整填写姓名、邮箱和联系电话；电子签名必须与姓名一致。');
+        }
+        const typedSignature = String(esignSignature || '').trim()
+        const drawnSignature = String(handSignature || '').trim()
+        const signature = typedSignature || drawnSignature
+        if (!signature || (typedSignature && typedSignature !== name) || (drawnSignature && !drawnSignature.startsWith('data:image/png;base64,'))) {
+          throw new Error('请输入与姓名一致的签名，或完成手写签名。')
         }
         if (cleanFirstName.length > 100 || cleanLastName.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           throw new Error('姓名或电子邮箱格式不正确。')
@@ -224,11 +230,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         // 保存用户信息到会话
         const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
         await updateSignSession(c, token, {
-          userInfo: { ...body, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone }
+          userInfo: { ...body, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, esignSignature: signature }
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
 
-        redirectUrl = `/contract/sign?token=${token}&step=3`;
+        redirectUrl = `/contract/sign?token=${token}&step=4`;
         break;
 
       case 3: {

@@ -15,10 +15,10 @@ function renderLayoutTemplate(values: Record<string, string>): string {
 
 export function sanitizeRichHtml(value: unknown): string {
   return sanitizeHtml(String(value ?? ''), {
-    allowedTags: ['h1', 'h2', 'h3', 'h4', 'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ol', 'ul', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'blockquote', 'a', 'span', 'div', 'hr', 'code', 'pre'],
-    allowedAttributes: { a: ['href', 'target', 'rel'], '*': ['class', 'style'] },
-    allowedSchemes: ['http', 'https', 'mailto'],
-    allowedSchemesByTag: { a: ['http', 'https', 'mailto'] },
+    allowedTags: ['h1', 'h2', 'h3', 'h4', 'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ol', 'ul', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'blockquote', 'a', 'span', 'div', 'hr', 'code', 'pre', 'img'],
+    allowedAttributes: { a: ['href', 'target', 'rel'], img: ['src', 'alt'], '*': ['class', 'style'] },
+    allowedSchemes: ['http', 'https', 'mailto', 'data'],
+    allowedSchemesByTag: { a: ['http', 'https', 'mailto'], img: ['data'] },
     allowedStyles: {
       '*': {
         color: [/^#[0-9a-f]{3,8}$/i, /^rgb\([\d\s,.%]+\)$/i],
@@ -2305,7 +2305,11 @@ export function renderContractVariables(content: string, contract: Contract, ord
   }
   if (!includeInternal) values.deleted = ''
   const filled = Object.entries(values).reduce((result, [name, value]) => {
-    const safe = escapeContractValue(value)
+    const signature = name === 'esign_signature' || name === 'company_signature'
+    const raw = String(value ?? '')
+    const safe = signature && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(raw)
+      ? `<img src="${raw}" alt="电子签名" style="max-width:280px;max-height:100px;object-fit:contain">`
+      : escapeContractValue(value)
     return result.replace(new RegExp(`\\$\\{${name}\\}|\\{${name}\\}`, 'g'), safe)
   }, String(content || ''))
   return renderFlexibleContent(filled)
