@@ -304,7 +304,7 @@ test('site layout loads the external stylesheet and resolves template slots', ()
   assert.match(html, /class="legal-footer"/)
   assert.match(html, /href="\/service-terms"/)
   assert.match(html, /href="\/privacy"/)
-  assert.match(html, /href="\/copyright"/)
+  assert.match(html, /href="\/refund-policy"/)
 })
 
 test('order status failures stay on the page and use a modal dialog', () => {

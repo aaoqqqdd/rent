@@ -103,6 +103,28 @@ function shouldShowTestAccounts(c: any): boolean {
   return String(c.env.SHOW_TEST_ACCOUNTS || '').toLowerCase() === 'true' && isCustomerLoginHost(c)
 }
 
+async function ensureSoftwareAgreementColumns(c: any): Promise<void> {
+  for (const [column, definition] of [
+    ['software_agreement_accepted', 'INTEGER NOT NULL DEFAULT 0'],
+    ['software_agreement_version', 'TEXT'],
+    ['software_agreement_accepted_at', 'TEXT'],
+    ['software_agreement_accepted_ip', 'TEXT'],
+  ] as const) {
+    try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} ${definition}`).run() } catch (_) {}
+  }
+}
+
+async function requiresSoftwareAgreement(c: any, user: any): Promise<boolean> {
+  if (user.role !== 'CUSTOMER') return false
+  await ensureSoftwareAgreementColumns(c)
+  await loadSystemSettingsFromDB(c)
+  const version = String(getSystemSettings().legalMetadata?.software?.version || '1.0')
+  if (String(user.software_agreement_version || '') === version && Number(user.software_agreement_accepted) === 1) return false
+  const today = new Date().toISOString().slice(0, 10)
+  const rental = await c.env.RENT.prepare("SELECT id FROM orders WHERE userId = ? AND status = 'active' AND startDate <= ? LIMIT 1").bind(user.id, today).first()
+  return Boolean(rental)
+}
+
 async function getTableColumns(c: any, tableName: string): Promise<string[]> {
   const allowedTables = new Set(['users', 'commission_withdrawals'])
   if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
@@ -185,6 +207,16 @@ app.use('*', async (c, next) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     c.set('user', user)
+  }
+  await next()
+})
+
+// 租赁开始后未同意软件协议时，阻断整站功能，仅保留协议页和退出登录。
+app.use('*', async (c, next) => {
+  const user = c.get('user') as any
+  const allowed = new Set(['/software-agreement', '/logout', '/styles.css'])
+  if (user?.role === 'CUSTOMER' && !allowed.has(c.req.path) && await requiresSoftwareAgreement(c, user)) {
+    return c.redirect('/software-agreement?required=1')
   }
   await next()
 })
@@ -342,12 +374,35 @@ app.post('/login', async (c) => {
   if (user.role === 'CUSTOMER' && !isCustomerLoginHost(c)) return c.html(pages.renderLogin('客户账户只能从测试租赁域名登录。', shouldShowTestAccounts(c)), 403)
   await c.env.RENT.prepare("INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (?, ?, ?, ?, 'success')").bind(user.id, normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
   await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()
-  const response = c.redirect(user.role === 'CUSTOMER' ? (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard') : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
+  const response = c.redirect(user.role === 'CUSTOMER'
+    ? (await requiresSoftwareAgreement(c, user) ? '/software-agreement' : (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'))
+    : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
   const session = await createAuthSession(c, user.id, form.remember === 'on')
   let cookieOptions = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`;
   if (new URL(c.req.url).protocol === 'https:') cookieOptions += '; Secure'
   response.headers.set('Set-Cookie', cookieOptions)
   return response
+})
+
+app.get('/software-agreement', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER' || !(await requiresSoftwareAgreement(c, user))) return c.redirect('/customer/dashboard')
+  const settings = getSystemSettings()
+  const body = `<div class="panel" style="max-width:860px;margin:32px auto"><h1>软件使用协议</h1><p>租赁已开始。首次登录必须阅读并同意软件使用协议后才能继续使用设备。</p><div class="legal-document__content" style="max-height:460px;overflow:auto;border:1px solid #d7e0e6;padding:20px">${renderSiteVariables(settings.softwareTerms, user)}</div><form method="post" action="/software-agreement" style="margin-top:20px"><label class="form-check"><input type="checkbox" name="agree" required> 我已阅读并同意软件使用协议</label><div class="form-actions" style="margin-top:16px"><button class="button button-primary" type="submit">同意并继续</button><button class="button button-danger" type="submit" name="reject" value="1">拒绝并退出</button></div></form></div>`
+  return c.html(buildLayout('软件使用协议', body, user))
+})
+
+app.post('/software-agreement', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  if (String(form.reject || '') === '1' || form.agree !== 'on') return logout(c)
+  await ensureSoftwareAgreementColumns(c)
+  await loadSystemSettingsFromDB(c)
+  const version = String(getSystemSettings().legalMetadata?.software?.version || '1.0')
+  const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0].trim() || null
+  await c.env.RENT.prepare('UPDATE users SET software_agreement_accepted = 1, software_agreement_version = ?, software_agreement_accepted_at = CURRENT_TIMESTAMP, software_agreement_accepted_ip = ? WHERE id = ?').bind(version, ip, user.id).run()
+  return c.redirect('/customer/dashboard')
 })
 
 app.get('/register', async (c) => {

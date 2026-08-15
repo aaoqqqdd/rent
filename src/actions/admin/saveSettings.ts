@@ -4,7 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
-import { getSystemSettings, updateSystemSettings, sanitizeRichHtml, createNotification, renderEmailNotificationHtml } from '../../site'
+import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, sanitizeRichHtml, createNotification, renderEmailNotificationHtml } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
 import { saveEmailConfig } from '../../emailConfig'
 
@@ -81,10 +81,10 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       processingFeeRate: Math.min(1, Math.max(0, Number(payload.paymentMethods?.processingFeeRate ?? getSystemSettings().paymentMethods.processingFeeRate ?? 0.025))),
     },
     bankDetails: {
-      bankName: payload.bankDetails?.bankName ?? getSystemSettings().bankDetails.bankName,
-      accountName: payload.bankDetails?.accountName ?? getSystemSettings().bankDetails.accountName,
-      bsb: payload.bankDetails?.bsb ?? getSystemSettings().bankDetails.bsb,
-      account: payload.bankDetails?.account ?? getSystemSettings().bankDetails.account,
+      bankName: String(payload.bankDetails?.bankName ?? getSystemSettings().bankDetails.bankName).trim().slice(0, 120),
+      accountName: String(payload.bankDetails?.accountName ?? getSystemSettings().bankDetails.accountName).trim().slice(0, 120),
+      bsb: String(payload.bankDetails?.bsb ?? getSystemSettings().bankDetails.bsb).trim().replace(/\s+/g, '').slice(0, 20),
+      account: String(payload.bankDetails?.account ?? getSystemSettings().bankDetails.account).trim().replace(/\s+/g, '').slice(0, 40),
     },
     referralSettings: {
       defaultRate: Number(payload.referralSettings?.defaultRate ?? getSystemSettings().referralSettings.defaultRate),
@@ -120,6 +120,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   )
   if (shouldSaveEmailTransport) await saveEmailConfig(c, emailTransportInput)
   await updateSystemSettings(c, next as any)
+  await loadSystemSettingsFromDB(c)
 
   const changedAgreements = [
     ['userTerms', '用户协议'],

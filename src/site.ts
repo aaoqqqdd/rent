@@ -214,6 +214,12 @@ export interface Order {
   returnTimeSlot?: string
   pickupLocation?: string
   returnLocation?: string
+  deliveryMethod?: 'Pickup' | 'Delivery' | string
+  delivery_method?: string
+  deliveryFee?: number
+  delivery_fee?: number
+  serviceFee?: number
+  service_fee?: number
   rentalPeriod?: number
   orderDate?: string
   status: 'pending_approval' | 'pending_payment' | 'approved' | 'paid' | 'active' | 'completed' | 'cancelled'
