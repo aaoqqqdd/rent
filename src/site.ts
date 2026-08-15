@@ -223,7 +223,7 @@ export interface Order {
   rentalPeriod?: number
   orderDate?: string
   status: 'pending_approval' | 'pending_payment' | 'approved' | 'paid' | 'active' | 'completed' | 'cancelled'
-  paymentMethod: 'card' | 'bank_transfer' | 'balance'
+  paymentMethod: 'card' | 'bank_transfer' | 'alipay' | 'wechat' | 'balance'
   totalAmount: number
   depositAmount: number
   couponCode?: string | null
@@ -311,6 +311,46 @@ export async function createDueDateNotifications(c: Context): Promise<number> {
     }
   }
   return created
+}
+
+export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
+  await c.env.RENT.prepare('ALTER TABLE payment_proofs ADD COLUMN admin_notified_at TEXT').run().catch(() => undefined)
+  await ensureNotificationsTable(c)
+  const proofs = await c.env.RENT.prepare(`
+    SELECT pp.id, pp.payment_id, pp.uploaded_at, o.id AS order_id, o.orderNo, o.totalAmount,
+           p.payment_method, u.name AS customer_name
+    FROM payment_proofs pp
+    JOIN payments p ON p.id = pp.payment_id
+    JOIN orders o ON o.id = p.rental_id
+    LEFT JOIN users u ON u.id = o.userId
+    WHERE pp.status = 'submitted'
+      AND pp.admin_notified_at IS NULL
+      AND pp.uploaded_at <= datetime('now', '-1 hour')
+      AND p.payment_method IN ('bank_transfer', 'alipay', 'wechat')
+      AND o.status = 'pending_payment'
+    ORDER BY pp.uploaded_at ASC
+    LIMIT 100
+  `).all() as any
+  if (!(proofs.results || []).length) return 0
+  const admins = (await c.env.RENT.prepare("SELECT id, email, name FROM users WHERE role = 'ADMIN' AND status = 'active'").all() as any).results || []
+  if (!admins.length) return 0
+  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
+  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+  let notified = 0
+  for (const proof of proofs.results as any[]) {
+    const method = proof.payment_method === 'alipay' ? '支付宝' : proof.payment_method === 'wechat' ? '微信' : '银行转账'
+    const orderLabel = proof.orderNo || proof.order_id
+    const title = `${method}付款待审核超过 1 小时`
+    const message = `订单 ${orderLabel} 的${method}付款凭证已提交超过 1 小时，客户：${proof.customer_name || '未填写'}，金额：AUD ${Number(proof.totalAmount || 0).toFixed(2)}。请尽快审核。`
+    await Promise.all(admins.map((admin: any) => createNotification(c, { recipientId: admin.id, type: 'payment_review_overdue', title, message, orderId: proof.order_id })))
+    if (apiKey && from) {
+      const html = renderEmailNotificationHtml(title, `<p>${message}</p><p><a href="${new URL(`/admin/orders/${proof.order_id}`, c.req.url).toString()}">打开订单审核</a></p>`, getSystemSettings().companyDetails.name)
+      await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: admins.map((admin: any) => admin.email).filter((email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)), subject: title, text: message, html }) })
+    }
+    await c.env.RENT.prepare('UPDATE payment_proofs SET admin_notified_at = CURRENT_TIMESTAMP WHERE id = ? AND admin_notified_at IS NULL').bind(proof.id).run()
+    notified += 1
+  }
+  return notified
 }
 
 export interface Contract {
@@ -1259,7 +1299,7 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'softwareTerms' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata'
+type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'softwareTerms' | 'copyrightNotice' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata'
 
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
@@ -1287,6 +1327,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const priceStrategyValue = values.get('priceStrategy')
   const paymentMethodsValue = values.get('paymentMethods')
   const bankDetailsValue = values.get('bankDetails')
+  const rmbPaymentValue = values.get('rmbPayment')
   const referralSettingsValue = values.get('referralSettings')
   const companyDetailsValue = values.get('companyDetails')
   const rentalRulesValue = values.get('rentalRules')
@@ -1305,6 +1346,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
 
   const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
+  const parsedRmbPayment = safeJsonParse<typeof systemSettings.rmbPayment>(rmbPaymentValue)
   const parsedReferralSettings = safeJsonParse<typeof systemSettings.referralSettings>(referralSettingsValue)
   const parsedCompanyDetails = safeJsonParse<typeof systemSettings.companyDetails>(companyDetailsValue)
   const parsedRentalRules = safeJsonParse<typeof systemSettings.rentalRules>(rentalRulesValue)
@@ -1318,9 +1360,12 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
         ? systemSettings.paymentMethods.balancePayment
         : Boolean((parsedPaymentMethods as any).balancePayment),
       processingFeeRate: Math.min(1, Math.max(0, Number((parsedPaymentMethods as any).processingFeeRate ?? systemSettings.paymentMethods.processingFeeRate ?? 0.025))),
+      alipay: Boolean((parsedPaymentMethods as any).alipay),
+      wechat: Boolean((parsedPaymentMethods as any).wechat),
     }
   }
   if (parsedBankDetails) systemSettings.bankDetails = parsedBankDetails
+  if (parsedRmbPayment) systemSettings.rmbPayment = { ...systemSettings.rmbPayment, ...parsedRmbPayment }
   if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
   if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
@@ -1352,6 +1397,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   await write('priceStrategy', systemSettings.priceStrategy)
   await write('paymentMethods', systemSettings.paymentMethods)
   await write('bankDetails', systemSettings.bankDetails)
+  await write('rmbPayment', systemSettings.rmbPayment)
   await write('referralSettings', systemSettings.referralSettings)
   await write('companyDetails', systemSettings.companyDetails)
   await write('rentalRules', systemSettings.rentalRules)
@@ -2071,6 +2117,12 @@ export const systemSettings = {
     bankTransfer: true,
     balancePayment: true,
     processingFeeRate: 0.025,
+    alipay: false,
+    wechat: false,
+  },
+  rmbPayment: {
+    alipayQrUrl: '',
+    wechatQrUrl: '',
   },
   registrationSettings: {
     requireEmailVerification: false,

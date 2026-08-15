@@ -11,6 +11,7 @@ import {
   getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance
 } from '../../site';
 import { nanoid } from 'nanoid';
+import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
 import { createStripeCheckout } from '../stripePayments';
 import { getStripeRuntimeConfig } from '../../stripe';
 
@@ -303,6 +304,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const enabledMethods = [
           ...(getSystemSettings().paymentMethods.stripe ? ['stripe'] : []),
           ...(getSystemSettings().paymentMethods.bankTransfer ? ['bank_transfer'] : []),
+          ...(getSystemSettings().paymentMethods.alipay && getSystemSettings().rmbPayment.alipayQrUrl ? ['alipay'] : []),
+          ...(getSystemSettings().paymentMethods.wechat && getSystemSettings().rmbPayment.wechatQrUrl ? ['wechat'] : []),
           ...(getSystemSettings().paymentMethods.balancePayment && canUseBalance ? ['balance'] : []),
         ]
         if (paymentMethod === 'balance' && !canUseBalance) throw new Error('只有已登录的正式客户账户可以使用余额支付')
@@ -313,8 +316,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             throw new Error('选择银行原路退款时，请填写正确的账户名、BSB 和银行账号')
           }
         }
-        if (paymentMethod === 'bank_transfer') {
-          if (!transferReference) throw new Error('银行转账必须填写付款 Reference')
+        if (['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {
+          if (!transferReference) throw new Error('请填写付款 Reference')
           try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
 
@@ -444,7 +447,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await c.env.RENT.prepare(`UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?`)
           .bind(refundMethod, refundMethod === 'original' ? refundBsb || null : null, refundMethod === 'original' ? refundAccountNumber || null : null, refundMethod === 'original' ? refundAccountName || null : null, contract.rentalId).run()
 
-        if (paymentMethod === 'balance' || paymentMethod === 'bank_transfer') {
+        if (paymentMethod === 'balance' || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {
           const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
           const paymentTotal = Number(paymentOrder?.totalAmount || 0)
           const paymentDeposit = Number(paymentOrder?.depositAmount || 0)
@@ -460,14 +463,17 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? new Date().toISOString() : null
             ).run()
           }
-          if (paymentMethod === 'bank_transfer') {
+          if (['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {
+            const rate = await getAudCnyRate()
+            const cnyAmount = roundCnyUp(paymentTotal, rate)
+            const paymentNote = `${transferNote}${transferNote ? '；' : ''}人民币金额：CNY ${cnyAmount.toFixed(2)}，汇率：1 AUD = ${rate.toFixed(6)} CNY`
             const existingProof = await c.env.RENT.prepare("SELECT id FROM payment_proofs WHERE payment_id = ? AND status = 'submitted' ORDER BY uploaded_at DESC LIMIT 1").bind(paymentId).first() as any
             if (existingProof) {
               await c.env.RENT.prepare("UPDATE payment_proofs SET reference_number = ?, note = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-                .bind(transferReference, transferNote || null, transferProofUrl, existingProof.id).run()
+                .bind(transferReference, paymentNote || null, transferProofUrl, existingProof.id).run()
             } else {
               await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')")
-                .bind(`proof-${nanoid(12)}`, paymentId, transferReference, transferNote || null, transferProofUrl).run()
+                .bind(`proof-${nanoid(12)}`, paymentId, transferReference, paymentNote || null, transferProofUrl).run()
             }
           }
         }

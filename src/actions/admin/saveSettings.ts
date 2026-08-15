@@ -6,7 +6,7 @@
 import { Context } from 'hono'
 import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, sanitizeRichHtml, createNotification, renderEmailNotificationHtml } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
-import { saveEmailConfig } from '../../emailConfig'
+import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
 
 export async function notifyAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, companyDetails: any): Promise<void> {
   if (!changedAgreements.length) return
@@ -78,6 +78,8 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       stripe: Boolean(payload.paymentMethods?.stripe),
       bankTransfer: Boolean(payload.paymentMethods?.bankTransfer),
       balancePayment: Boolean(payload.paymentMethods?.balancePayment),
+      alipay: Boolean(payload.paymentMethods?.alipay),
+      wechat: Boolean(payload.paymentMethods?.wechat),
       processingFeeRate: Math.min(1, Math.max(0, Number(payload.paymentMethods?.processingFeeRate ?? getSystemSettings().paymentMethods.processingFeeRate ?? 0.025))),
     },
     bankDetails: {
@@ -85,6 +87,10 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       accountName: String(payload.bankDetails?.accountName ?? getSystemSettings().bankDetails.accountName).trim().slice(0, 120),
       bsb: String(payload.bankDetails?.bsb ?? getSystemSettings().bankDetails.bsb).trim().replace(/\s+/g, '').slice(0, 20),
       account: String(payload.bankDetails?.account ?? getSystemSettings().bankDetails.account).trim().replace(/\s+/g, '').slice(0, 40),
+    },
+    rmbPayment: {
+      alipayQrUrl: String(payload.rmbPayment?.alipayQrUrl ?? getSystemSettings().rmbPayment.alipayQrUrl).trim().slice(0, 500),
+      wechatQrUrl: String(payload.rmbPayment?.wechatQrUrl ?? getSystemSettings().rmbPayment.wechatQrUrl).trim().slice(0, 500),
     },
     referralSettings: {
       defaultRate: Number(payload.referralSettings?.defaultRate ?? getSystemSettings().referralSettings.defaultRate),
@@ -104,6 +110,10 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     registrationSettings: {
       requireEmailVerification: Boolean(payload.registrationSettings?.requireEmailVerification),
     },
+  }
+
+  for (const [name, value] of Object.entries(next.rmbPayment)) {
+    if (value && (!/^https:\/\//i.test(String(value)) || String(value).includes('"'))) throw new Error(`${name} 必须是 HTTPS 图片地址`)
   }
 
   if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)
@@ -134,5 +144,5 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     await notifyAgreementUpdate(c, changedAgreements as Array<[string, string]>, current.companyDetails)
   }
 
-  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c) })
+  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c) })
 }

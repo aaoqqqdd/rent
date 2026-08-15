@@ -86,6 +86,14 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <input type="checkbox" id="enableBalancePayment" name="enableBalancePayment" ${settings.paymentMethods.balancePayment ? 'checked' : ''}>
             <label for="enableBalancePayment">启用余额支付</label>
           </div>
+          <div class="checkbox-group">
+            <input type="checkbox" id="enableAlipay" name="enableAlipay" ${settings.paymentMethods.alipay ? 'checked' : ''}>
+            <label for="enableAlipay">启用支付宝人民币付款</label>
+          </div>
+          <div class="checkbox-group">
+            <input type="checkbox" id="enableWechat" name="enableWechat" ${settings.paymentMethods.wechat ? 'checked' : ''}>
+            <label for="enableWechat">启用微信支付人民币付款</label>
+          </div>
           
           <!-- 银行转账账户信息设置 -->
           <div style="margin-top: 24px; padding: 24px; background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 12px; border: 1px solid #bae6fd;">
@@ -113,6 +121,14 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <p style="margin: 16px 0 0 0; color: #0c4a6e; font-size: 0.9rem;">
               💡 这些银行账户信息将会在用户选择银行转账时显示，供客户转账使用。
             </p>
+          </div>
+          <div style="margin-top: 18px; padding: 18px; background: #fff7ed; border-radius: 12px; border: 1px solid #fed7aa;">
+            <h4 style="margin-top:0;">人民币收款码</h4>
+            <p class="form-text">请输入公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。</p>
+            <label class="form-label" for="alipayQrUrl">支付宝收款码 URL</label>
+            <input class="form-control" id="alipayQrUrl" name="alipayQrUrl" type="url" value="${settings.rmbPayment.alipayQrUrl}" placeholder="https://.../alipay-qr.png">
+            <label class="form-label" for="wechatQrUrl">微信收款码 URL</label>
+            <input class="form-control" id="wechatQrUrl" name="wechatQrUrl" type="url" value="${settings.rmbPayment.wechatQrUrl}" placeholder="https://.../wechat-qr.png">
           </div>
         </div>
 
@@ -149,6 +165,8 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             stripe: formData.has('enableStripe'),
             bankTransfer: formData.has('enableBankTransfer'),
             balancePayment: formData.has('enableBalancePayment'),
+            alipay: formData.has('enableAlipay'),
+            wechat: formData.has('enableWechat'),
             processingFeeRate: Number(formData.get('processingFeeRate') || 0) / 100,
           },
           stripeConfig: {
@@ -174,6 +192,10 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             accountName: formData.get('bankAccountName'),
             bsb: formData.get('bankBSB'),
             account: formData.get('bankAccount'),
+          },
+          rmbPayment: {
+            alipayQrUrl: formData.get('alipayQrUrl'),
+            wechatQrUrl: formData.get('wechatQrUrl'),
           },
           companyDetails: {
             name: formData.get('companyName'),
@@ -220,7 +242,9 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         .then(data => {
           if (data.success) {
             alert('系统设置已保存成功！');
-            updateEmailTemplatePreview?.();
+            // Reload from D1 so the form always displays the persisted values,
+            // rather than the browser's pre-submit values.
+            window.location.reload();
           } else {
             alert('保存失败: ' + data.error);
           }

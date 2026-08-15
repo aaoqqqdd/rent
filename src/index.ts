@@ -1556,14 +1556,14 @@ app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || order.userId !== user.id || order.status !== 'pending_payment' || order.paymentMethod !== 'bank_transfer') return c.text('订单不能提交转账信息', 409)
+  if (!order || order.userId !== user.id || order.status !== 'pending_payment' || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
   const form = await c.req.parseBody()
   const reference = String(form.referenceNumber || '').trim().slice(0, 100)
   const note = String(form.note || '').trim().slice(0, 500)
   let proofImageUrl = ''
   try { proofImageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) }
-  if (!reference) return c.text('请填写银行 Reference', 400)
-  const payment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'bank_transfer' AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!reference) return c.text('请填写付款 Reference', 400)
+  const payment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, order.paymentMethod).first() as any
   if (!payment) return c.text('未找到待审核的转账付款记录', 409)
   await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'superseded' WHERE payment_id = ? AND status = 'submitted'").bind(payment.id).run()
   await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')").bind(`proof-${nanoid(12)}`, payment.id, reference, note || null, proofImageUrl).run()
@@ -2093,7 +2093,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || order.status !== 'pending_payment' || order.paymentMethod !== 'bank_transfer') return c.text('订单状态不允许审核', 409)
+  if (!order || order.status !== 'pending_payment' || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单状态不允许审核', 409)
   const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
   if (!proof) return c.text('没有待审核的转账信息', 409)
   await c.env.RENT.batch([
@@ -2753,7 +2753,7 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, logError } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, logError } = await import('./site')
     ctx.waitUntil(
       (async () => {
         try {
@@ -2765,11 +2765,13 @@ export default {
           const expiredGuestCount = await cleanupExpiredGuestAccounts(c)
           const expiredPaymentCount = await cancelExpiredPendingPaymentOrders(c)
           const dueNotificationCount = await createDueDateNotifications(c)
+          const overduePaymentNotificationCount = await notifyOverduePaymentProofs(c)
           console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
           console.log(`Scheduled account cleanup completed: disabled ${Number(deletedAccountResult.meta?.changes || 0)} accounts`)
           console.log(`Scheduled guest cleanup completed: disabled ${expiredGuestCount} expired guest accounts`)
           console.log(`Scheduled payment cleanup completed: cancelled ${expiredPaymentCount} unpaid orders`)
           console.log(`Scheduled due notifications completed: created ${dueNotificationCount} reminders`)
+          console.log(`Scheduled payment review notifications completed: notified ${overduePaymentNotificationCount} proofs`)
         } catch (error) {
           await logError(c, 'ERROR', 'Failed to run scheduled contract cleanup', error as Error)
           console.error('Scheduled contract cleanup failed:', error)
