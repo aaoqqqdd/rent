@@ -69,11 +69,11 @@ export async function renderNewContractPage(c: Context, user: any) {
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="start-date" class="form-label">租赁开始日期</label>
-            <input type="date" id="start-date" name="startDate" class="form-control" required min="${today}">
+            <input type="date" id="start-date" name="startDate" class="form-control" required>
           </div>
           <div class="form-group">
             <label for="end-date" class="form-label">租赁结束日期</label>
-            <input type="date" id="end-date" name="endDate" class="form-control" required min="${today}">
+            <input type="date" id="end-date" name="endDate" class="form-control" required>
           </div>
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
