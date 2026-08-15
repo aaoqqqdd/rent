@@ -9,7 +9,7 @@ import type { Context } from 'hono'
 function trimContractLeadingWhitespace(html: string): string {
   return html
     .replace(/^(?:\s|<!--.*?-->)+/s, '')
-    .replace(/^(?:(?:<p(?:\s[^>]*)?>\s*(?:<br\s*\/?>)?\s*<\/p>)|<br\s*\/?>|<div(?:\s[^>]*)?>\s*<\/div>\s*)+/i, '')
+    .replace(/^(?:(?:<p(?:\s[^>]*)?>\s*(?:(?:<br\s*\/?>|&nbsp;|\u00a0)\s*)*<\/p>)|<br\s*\/?>|<div(?:\s[^>]*)?>\s*<\/div>\s*)+/i, '')
     .trim()
 }
 

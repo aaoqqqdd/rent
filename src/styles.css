@@ -4864,7 +4864,7 @@ tr:hover td {
 .official-print-toolbar button, .official-print-toolbar a { padding: 9px 14px; color: #fff; background: #172331; border: 0; font: 600 13px/1.2 Arial, sans-serif; text-decoration: none; cursor: pointer; }
 .official-print-toolbar a { color: #172331; background: #fff; border: 1px solid #c8d3dc; }
 .contract-viewer > .a4-document {
-  width: 100%;
+  width: min(100%, 794px);
   min-height: 0;
   margin: 0;
   padding: 42px 40px;
@@ -4888,6 +4888,15 @@ tr:hover td {
   transition: transform .25s ease;
 }
 .a4-document.document-zoomed { transform: scale(1.08); transform-origin: top center; }
+.contract-content table {
+  width: 100%;
+  table-layout: fixed;
+}
+.contract-content th,
+.contract-content td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .signature-pad { display: block; width: 100%; max-width: 700px; height: 180px; background: #fff; border: 2px dashed #94a3b8; border-radius: 10px; touch-action: none; }
 @media print {
   @page { margin: 14mm; }
@@ -4905,6 +4914,19 @@ tr:hover td {
   .contract-print-page .a4-document.contract-content { width: auto !important; max-width: none !important; }
   .contract-print-page .a4-document.contract-content > * { break-inside: avoid; }
   .contract-print-page table { break-inside: auto; }
+  .contract-print-page .contract-content table {
+    width: 100% !important;
+    table-layout: fixed;
+    border-collapse: collapse;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .contract-print-page .contract-content tr,
+  .contract-print-page .contract-content td,
+  .contract-print-page .contract-content th {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
   .contract-print-page tr, .contract-print-page img { break-inside: avoid; }
   .contract-print-page .page-break { height: 0; margin: 0; border: 0; page-break-after: always; break-after: page; }
   .contract-print-page .page-break::before { display: none; }
