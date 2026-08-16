@@ -2859,7 +2859,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   }
   const renderNavLink = (href: string, text: string) => {
     const icon = navIcons[href] || '▣'
-    return `<a href="${href}"><span class="nav-icon">${navIconSvg(icon)}</span>${text}</a>`
+    const navigationFallback = href === '/admin/payment-reviews' ? ' data-full-navigation="true"' : ''
+    return `<a href="${href}"${navigationFallback}><span class="nav-icon">${navIconSvg(icon)}</span>${text}</a>`
   }
   const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group" open><summary>${label}<span aria-hidden="true">⌄</span></summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
