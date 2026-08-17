@@ -5392,8 +5392,11 @@ tr:hover td {
 .official-document-page { max-width: 1060px; margin: 0 auto; }
 .official-document { overflow: visible !important; border-radius: 0 !important; }
 .official-document__archive {
-  position: sticky !important;
-  top: 0;
+  position: fixed !important;
+  top: 60px;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
   z-index: 20;
   min-height: 220px !important;
   margin: -72px -64px 42px !important;
@@ -5414,6 +5417,7 @@ tr:hover td {
 .official-document__archive .official-document__status { order: 0; padding: 11px 22px; color: #172331 !important; background: #ffad5c !important; border-radius: 999px; font: 700 13px/1 var(--font-mono); }
 .official-document__archive .official-document__title h2 { order: 1; margin: 32px 0 8px !important; color: #fff !important; font: 600 clamp(20px, 2.8vw, 32px)/1.1 var(--font-display); letter-spacing: -.03em; }
 .official-document__archive .official-document__title p { order: 2; margin: 0 !important; color: #aebdca !important; font: 500 13px/1.4 var(--font-mono); }
+.official-document { padding-top: 292px !important; }
 .official-document__rule { height: 4px !important; margin: 0 0 34px !important; background: #ffad5c !important; }
 .official-document__meta { gap: 0 !important; margin-bottom: 36px !important; border: 1px solid #dbe2ea; }
 .official-document__meta > div { min-width: 0; padding: 20px 18px; border-right: 1px solid #dbe2ea; }
@@ -5424,7 +5428,8 @@ tr:hover td {
 .official-document__table th { background: #172331 !important; color: #fff !important; }
 .official-document__grand-total { border-top-color: #ffad5c !important; }
 @media (max-width: 700px) {
-  .official-document__archive { grid-template-columns: 1fr; gap: 18px; min-height: 0 !important; padding: 28px 20px 26px !important; margin: -28px -20px 28px !important; }
+  .official-document { padding-top: 240px !important; }
+  .official-document__archive { grid-template-columns: 1fr; gap: 18px; min-height: 0 !important; padding: 28px 20px 26px !important; margin: 0 !important; }
   .official-document__archive .official-document__title { align-items: flex-start; text-align: left; }
   .official-document__archive .official-document__title h2 { margin-top: 18px !important; }
   .official-document__meta > div { border-right: 0; border-bottom: 1px solid #dbe2ea; }

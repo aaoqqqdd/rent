@@ -9,7 +9,7 @@ type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'c
 
 export function renderAdminTemplateHub(user: any) {
   const body = `
-    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>AGREEMENT CONTROL</span><span>6 ACTIVE AGREEMENTS</span></div><div class="entity-heading"><div><p class="section-code">LEGAL AGREEMENTS</p><h2>协议模板</h2><p>独立管理用户协议、租赁协议、服务条款、隐私政策、软件协议和退款政策。</p></div><a class="button button-primary" href="/admin/contracts">合同模板</a></div></div>
+    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>AGREEMENT CONTROL</span><span>6 ACTIVE AGREEMENTS</span></div><div class="entity-heading"><div><p class="section-code">LEGAL AGREEMENTS</p><h2>协议模板</h2><p>独立管理用户协议、租赁协议、服务条款、隐私政策、软件协议和退款政策。</p></div><div class="record-actions"><a class="button button-secondary" href="/admin/templates/preview/agreements">预览协议</a><a class="button button-primary" href="/admin/contracts">合同模板</a></div></div></div>
     <div class="panel template-register">
       <div class="template-register__labels mono"><span>文档</span><span>显示位置</span><span>类型</span><span>操作</span></div>
       <article class="template-register__row">
@@ -25,7 +25,7 @@ export function renderAdminTemplateHub(user: any) {
   return buildLayout('协议模板 - 电脑租赁管理系统', body, user)
 }
 
-export async function renderAdminTemplatePreview(user: any, c: any) {
+export async function renderAdminTemplatePreview(user: any, c: any, previewKind: 'agreements' | 'contract' = 'agreements') {
   const settings = getSystemSettings()
   const template = await getContractTemplate(c)
   const sampleContract: any = { id: 'preview-contract', rentalId: 'preview-order', contractNumber: 'CTR-PREVIEW-001', content: template.content, signedAt: '2026-08-08T10:00:00.000Z', status: 'signed', contract_data: { customer_address: '墨尔本 VIC', customer_dob: '1990-01-01', customer_id_number: 'A1234567', device_condition: '正常', pickup_location: '市中心门店', return_location: '市中心门店' } }
@@ -38,12 +38,16 @@ export async function renderAdminTemplatePreview(user: any, c: any) {
   const softwarePreview = settings.softwareTerms
   const legalPreviews = [
     ['用户协议', settings.userTerms],
-    ['网站服务条款', settings.serviceTerms],
+    ['服务条款', settings.serviceTerms],
     ['隐私政策', settings.privacyPolicy],
     ['退款政策', settings.copyrightNotice],
   ].map(([title, content]) => `<section class="panel"><div class="section-title"><h3>${title}</h3><span class="badge badge-neutral">网站</span></div><div class="template-preview-paper">${sanitizeRichHtml(content)}</div></section>`).join('')
-  const body = `<div class="page-header"><div><p class="section-code">DOCUMENT PREVIEW</p><h2>协议与合同预览</h2><p>统一预览全部协议、租赁协议和正式合同的实际内容。</p></div><a class="button button-secondary" href="/admin/templates">返回模板管理</a></div><div class="template-preview-grid"><section class="panel"><div class="section-title"><h3>租赁协议</h3><span class="badge badge-neutral">签署前</span></div><div class="template-preview-paper">${sanitizeRichHtml(rentalPreview)}</div></section><section class="panel"><div class="section-title"><h3>正式合同</h3><span class="badge badge-success">签署后</span></div><div class="template-preview-paper">${sanitizeRichHtml(contractPreview)}</div></section><section class="panel"><div class="section-title"><h3>软件使用协议</h3><span class="badge badge-neutral">设备端</span></div><div class="template-preview-paper">${sanitizeRichHtml(softwarePreview)}</div></section>${legalPreviews}</div>`
-  return buildLayout('协议与合同预览 - 电脑租赁管理系统', body, user)
+  const previewTitle = previewKind === 'contract' ? '合同预览' : '协议预览'
+  const previewBody = previewKind === 'contract'
+    ? `<section class="panel"><div class="section-title"><h3>正式合同</h3><span class="badge badge-success">签署后</span></div><div class="template-preview-paper">${sanitizeRichHtml(contractPreview)}</div></section>`
+    : `<section class="panel"><div class="section-title"><h3>租赁协议</h3><span class="badge badge-neutral">签署前</span></div><div class="template-preview-paper">${sanitizeRichHtml(rentalPreview)}</div></section><section class="panel"><div class="section-title"><h3>软件使用协议</h3><span class="badge badge-neutral">设备端</span></div><div class="template-preview-paper">${sanitizeRichHtml(softwarePreview)}</div></section>${legalPreviews}`
+  const body = `<div class="page-header"><div><p class="section-code">DOCUMENT PREVIEW</p><h2>${previewTitle}</h2><p>${previewKind === 'contract' ? '预览正式合同签署完成后生成的实际内容。' : '预览网站协议、租赁协议和软件协议的实际内容。'}</p></div><a class="button button-secondary" href="/admin/templates">返回模板管理</a></div><div class="template-preview-grid">${previewBody}</div>`
+  return buildLayout(`${previewTitle} - 电脑租赁管理系统`, body, user)
 }
 
 export function renderAdminAgreementEditor(user: any, kind: AgreementKind, databaseContent?: string) {

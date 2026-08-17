@@ -2189,7 +2189,7 @@ export const systemSettings = {
 <p>您不得利用本服务从事违法活动、干扰平台运行或侵犯他人合法权益。</p>
 <h2>协议更新</h2>
 <p>更新后的协议将在本页面公布。继续使用服务即表示接受更新后的内容。</p>`,
-  serviceTerms: `<h1>网站服务条款</h1>
+  serviceTerms: `<h1>服务条款</h1>
 <p>欢迎访问 PC Rental。使用本网站、提交租赁申请或使用相关服务，即表示您同意本服务条款。</p>
 <h2>服务范围</h2><p>本网站提供设备信息展示、租赁合同签署、付款、订单与售后管理服务。具体租赁权利义务以双方签署的租赁协议和合同为准。</p>
 <h2>合理使用</h2><p>您不得干扰网站运行、绕过安全措施、冒用他人身份或利用本网站从事违法活动。</p>
@@ -2982,11 +2982,11 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const navIcons: Record<string, string> = {
     '/customer/dashboard': '⌂', '/customer/rentals': '▤', '/customer/orders': '▦',
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣', '/customer/balance': '◌', '/customer/guest': '▰', '/customer/guest/upgrade': '↥',
-    '/staff/dashboard': '◍', '/staff/orders': '▰', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
+    '/staff/dashboard': '◍', '/staff/orders': '◓', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
     '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭',
-    '/notifications': 'N', '/admin/notifications': '☷', '/admin/dashboard': '◉', '/admin/users': '♙', '/admin/orders': '▥',
+    '/notifications': 'N', '/admin/notifications': '☷', '/admin/dashboard': '⌘', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/payment-reviews': '✓', '/admin/devices': '▣', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
+    '/admin/withdrawals': '↗', '/admin/payment-reviews': '✓', '/admin/devices': '◒', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
   }
 
   const navIconSvg = (kind: string) => {
@@ -3024,11 +3024,14 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       ,'⌖': '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle><path d="M12 3v2M12 19v2M3 12h2M19 12h2"></path>'
       ,'▭': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 9h8M8 13h8M8 16h4"></path>'
       ,'☷': '<path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="8" cy="6" r="1"></circle><circle cx="16" cy="12" r="1"></circle><circle cx="10" cy="18" r="1"></circle>'
+      ,'◓': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4v16a8 8 0 0 0 0-16Z"></path>'
+      ,'◒': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4a8 8 0 0 0 0 16Z"></path>'
+      ,'⌘': '<path d="M7 5a3 3 0 1 0 0 6h10a3 3 0 1 0 0-6 3 3 0 1 0-5 2 3 3 0 1 0-5-2Z"></path><path d="M7 13a3 3 0 1 0 0 6 3 3 0 1 0 5-2 3 3 0 1 0 5 2 3 3 0 1 0 0-6Z"></path>'
     }
     return `<svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || paths['▣']}</svg>`
   }
   const renderNavLink = (href: string, text: string) => {
-    const icon = navIcons[href] || '▣'
+    const icon = navIcons[href] || navIcons[href.split('?')[0]] || '▣'
     const navigationFallback = href === '/admin/payment-reviews' ? ' data-full-navigation="true"' : ''
     return `<a href="${href}"${navigationFallback}><span class="nav-icon">${navIconSvg(icon)}</span>${text}</a>`
   }

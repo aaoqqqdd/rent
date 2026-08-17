@@ -436,7 +436,7 @@ app.get(['/terms', '/user-terms'], async (c) => {
 })
 
 for (const [path, title, key, code] of [
-  ['/service-terms', '网站服务条款', 'serviceTerms', 'LEGAL / SERVICE TERMS'],
+  ['/service-terms', '服务条款', 'serviceTerms', 'LEGAL / SERVICE TERMS'],
   ['/privacy', '隐私政策', 'privacyPolicy', 'LEGAL / PRIVACY'],
   ['/software-terms', '软件使用协议', 'softwareTerms', 'LEGAL / SOFTWARE'],
   ['/refund-policy', '退款政策', 'copyrightNotice', 'LEGAL / REFUND POLICY'],
@@ -2743,7 +2743,16 @@ app.get('/admin/templates/preview', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await loadSystemSettingsFromDB(c)
-  return c.html(await pages.renderAdminTemplatePreview(user, c))
+  return c.redirect('/admin/templates/preview/agreements')
+})
+
+app.get('/admin/templates/preview/:previewKind', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const previewKind = c.req.param('previewKind')
+  if (!['agreements', 'contract'].includes(previewKind)) return c.html(renderNotFound(), 404)
+  await loadSystemSettingsFromDB(c)
+  return c.html(await pages.renderAdminTemplatePreview(user, c, previewKind))
 })
 
 app.get('/admin/templates/:kind', async (c) => {
