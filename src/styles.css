@@ -181,6 +181,10 @@
   color: #fff !important;
   border-bottom: 1px solid rgba(255,255,255,.14);
 }
+.official-document__archive > div,
+.official-document__archive .official-document__title {
+  background: transparent !important;
+}
 .official-document__archive h1,
 .official-document__archive h2,
 .official-document__archive strong { color: #fff !important; }
