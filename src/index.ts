@@ -93,6 +93,17 @@ function parseFormBody(body: string | null | undefined): Record<string, string> 
   return form
 }
 
+async function sendPaymentReviewEmail(c: any, customer: any, subject: string, message: string, orderId: string): Promise<void> {
+  const email = String(customer?.email || '').trim()
+  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
+  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+  if (!apiKey || !from || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return
+  try {
+    const html = renderEmailNotificationHtml(subject, `<p>${sanitizePlainText(message, 1000)}</p><p><a href="${new URL(`/customer/orders/${encodeURIComponent(orderId)}`, c.req.url).toString()}">查看订单详情</a></p>`, getSystemSettings().companyDetails.name)
+    await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [email], subject, text: message, html }) })
+  } catch (error) { console.error('Payment review email failed:', error) }
+}
+
 async function ensureDeviceCommandTables(db: any): Promise<void> {
   await db.prepare(`CREATE TABLE IF NOT EXISTS device_commands (
     id TEXT PRIMARY KEY NOT NULL, device_id TEXT NOT NULL, command_type TEXT NOT NULL,
@@ -1743,6 +1754,8 @@ app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   if (!payment) return c.text('未找到待审核的转账付款记录', 409)
   await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'superseded' WHERE payment_id = ? AND status = 'submitted'").bind(payment.id).run()
   await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')").bind(`proof-${nanoid(12)}`, payment.id, reference, note || null, proofImageUrl).run()
+  const admins = (await c.env.RENT.prepare("SELECT id FROM users WHERE role = 'ADMIN' AND status = 'active'").all()).results || []
+  await Promise.all((admins as any[]).map(admin => createNotification(c, { recipientId: admin.id, type: 'payment_review_submitted', title: '新的付款凭证待审核', message: `客户已提交订单 ${order.orderNo || order.id} 的${order.paymentMethod === 'bank_transfer' ? '银行转账' : order.paymentMethod === 'alipay' ? '支付宝' : '微信'}付款凭证，请及时审核。`, orderId: order.id })))
   return c.redirect(`/customer/orders/${order.id}`)
 })
 
@@ -2287,6 +2300,11 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   ])
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
   await issueInvoice(c, order.id)
+  const customer = await getUserById(c, order.userId) as any
+  const title = '付款审核已通过'
+  const message = `您的订单 ${order.orderNo || order.id} 付款凭证已审核通过，订单已确认。`
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title, message, orderId: order.id })
+  await sendPaymentReviewEmail(c, customer, title, message, order.id)
   return c.redirect(`/admin/orders/${order.id}`)
 })
 
@@ -2295,7 +2313,14 @@ app.post('/admin/orders/:id/transfer-proof/reject', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const reason = String((await c.req.parseBody()).reason || '').trim().slice(0, 300)
   if (!reason) return c.text('请填写驳回原因', 400)
-  await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'rejected', rejection_reason = ?, rejected_at = CURRENT_TIMESTAMP, rejected_by = ? WHERE id = (SELECT pp.id FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1)").bind(reason, user.id, c.req.param('id')).run()
+  const order = await getOrderById(c, c.req.param('id')) as any
+  if (!order) return c.text('订单不存在', 404)
+  await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'rejected', rejection_reason = ?, rejected_at = CURRENT_TIMESTAMP, rejected_by = ? WHERE id = (SELECT pp.id FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1)").bind(reason, user.id, order.id).run()
+  const customer = await getUserById(c, order.userId) as any
+  const title = '付款审核未通过'
+  const message = `您的订单 ${order.orderNo || order.id} 付款凭证未通过审核。原因：${reason}。请重新提交正确的付款凭证。`
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_rejected', title, message, orderId: order.id })
+  await sendPaymentReviewEmail(c, customer, title, message, order.id)
   return c.redirect(`/admin/orders/${c.req.param('id')}`)
 })
 

@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -475,6 +475,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')")
                 .bind(`proof-${nanoid(12)}`, paymentId, transferReference, paymentNote || null, transferProofUrl).run()
             }
+            const admins = (await c.env.RENT.prepare("SELECT id FROM users WHERE role = 'ADMIN' AND status = 'active'").all()).results || []
+            await Promise.all((admins as any[]).map(admin => createNotification(c, { recipientId: admin.id, type: 'payment_review_submitted', title: '新的付款凭证待审核', message: `客户已提交订单 ${order.orderNo || order.id} 的付款凭证，请及时审核。`, orderId: order.id })))
           }
         }
         let stripeResponse: Response | null = null
