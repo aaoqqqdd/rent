@@ -5420,6 +5420,7 @@ tr:hover td {
 .official-document__meta > div:last-child { border-right: 0; }
 .official-document__meta span { color: #2457d6 !important; font: 700 10px/1.2 var(--font-mono); }
 .official-document__meta strong { font-size: 15px; }
+.official-document__stripe-id { color: #2457d6 !important; font-family: var(--font-mono); font-size: 11px !important; overflow-wrap: anywhere; }
 .official-document__table th { background: #172331 !important; color: #fff !important; }
 .official-document__grand-total { border-top-color: #ffad5c !important; }
 @media (max-width: 700px) {
