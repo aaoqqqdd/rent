@@ -191,6 +191,18 @@
 }
 
 @media print {
+  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+  .desktop-header,
+  .mobile-header,
+  .sidebar,
+  .mobile-bottom-nav,
+  .notification-drawer,
+  .notification-toast-layer,
+  .page-transition-curtain,
+  .legal-footer,
+  .official-print-toolbar { display: none !important; }
+  .container,
+  .content { display: block !important; width: 100% !important; max-width: none !important; margin: 0 !important; padding: 0 !important; }
   .official-document-page { padding-top: 0 !important; }
   body * { visibility: hidden !important; }
   .official-document,
