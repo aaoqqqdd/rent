@@ -9,11 +9,13 @@ import type { Context } from 'hono';
 export async function renderCustomerRent(c: Context, deviceId: string, user: any, errorMessage?: string) {
   const device = await getDeviceById(c, deviceId);
   await loadSystemSettingsFromDB(c)
-  const rentalRules = getSystemSettings().rentalRules
+  const globalRules = getSystemSettings().rentalRules
 
   if (!device) {
     return buildLayout('租赁设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求租赁的设备不存在。</p></div>', user);
   }
+  const deviceDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(deviceId).all().catch(() => ({ results: [] }))).results || []).map((row: any) => String(row.unavailable_date).slice(0, 10))
+  const rentalRules = { ...globalRules, unavailableDates: [...new Set([...(globalRules.unavailableDates || []), ...deviceDates])] }
 
   // Do not use toISOString() here: UTC can already be tomorrow while the
   // customer is still on the previous local calendar date.
