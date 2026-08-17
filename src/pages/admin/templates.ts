@@ -46,17 +46,19 @@ export async function renderAdminTemplatePreview(user: any, c: any) {
   return buildLayout('协议与合同预览 - 电脑租赁管理系统', body, user)
 }
 
-export function renderAdminAgreementEditor(user: any, kind: AgreementKind) {
+export function renderAdminAgreementEditor(user: any, kind: AgreementKind, databaseContent?: string) {
   const settings = getSystemSettings()
   const isRental = kind === 'rental'
-  const documentMeta = {
+  const documentMetaMap = {
     user: ['编辑用户协议', '用于注册和正式账户创建流程。', settings.userTerms],
     rental: ['编辑租赁协议', '用于合同签署流程第一步。变量会在展示时替换为对应合同数据。', settings.rentalTerms],
     service: ['编辑网站服务条款', '显示在全站右下角的服务条款页面。', settings.serviceTerms],
     privacy: ['编辑隐私政策', '显示在全站右下角的隐私政策页面。', settings.privacyPolicy],
     software: ['编辑软件使用协议', '显示在管理软件的软件协议页面。', settings.softwareTerms],
     copyright: ['编辑退款政策', '显示在全站右下角的退款政策页面。', settings.copyrightNotice],
-  }[kind]
+  }
+  const documentMeta = documentMetaMap[kind]
+  if (databaseContent !== undefined) documentMeta[2] = databaseContent
   const [title, description, content] = documentMeta
   const metadata = getSystemSettings().legalMetadata?.[kind] || { version: '1.0', lastUpdatedDate: '' }
   const initialContent = JSON.stringify(content).replace(/</g, '\\u003c')

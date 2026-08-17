@@ -2753,7 +2753,9 @@ app.get('/admin/templates/:kind', async (c) => {
   if (kind === 'contract') return c.html(await pages.renderAdminContracts(c, user))
   if (!['user', 'rental', 'service', 'privacy', 'software', 'copyright'].includes(kind)) return c.html(renderNotFound(), 404)
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminAgreementEditor(user, kind))
+  const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', software: 'softwareTerms', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright']
+  const databaseSetting = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
+  return c.html(pages.renderAdminAgreementEditor(user, kind, databaseSetting?.value !== undefined ? String(databaseSetting.value) : undefined))
 })
 
 app.post('/admin/templates/:kind', async (c) => {
