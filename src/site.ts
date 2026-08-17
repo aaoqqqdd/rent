@@ -2442,11 +2442,14 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   if (!order) return
   const contract = await getContractByOrderId(c, orderId)
   const data = contract && typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : ((contract?.contract_data as Record<string, unknown>) || {})
-  const taxableGross = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount))
+  // Keep the rental line at its original price. The coupon is shown as a
+  // separate deduction on the receipt, while the payable total stays lower.
+  const discountAmount = Math.max(0, Number((order as any).discountAmount || (order as any).discount_amount || 0))
+  const taxableGross = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount) + discountAmount)
   const gstAmount = systemSettings.companyDetails.gstIncluded ? taxableGross / 11 : 0
   const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
-  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued')`)
+  await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
     .bind(`inv-${order.id}`, String(data.invoice_number || `INV-${order.orderNo || order.id}`), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
 }
 
