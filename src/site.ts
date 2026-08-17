@@ -198,6 +198,8 @@ export interface Device {
 
   status: 'available' | 'rented' | 'maintenance' | 'retired'
   description: string
+  deviceMode?: 'normal' | 'return' | 'maintenance' | 'lost'
+  device_mode?: 'normal' | 'return' | 'maintenance' | 'lost'
 }
 
 export interface Order {
@@ -1764,6 +1766,7 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
     pricePerDay: 'pricePerDay', price_per_day: 'price_per_day',
     depositAmount: 'depositAmount', deposit_amount: 'deposit_amount',
     agentStatus: 'agent_status', agent_status: 'agent_status',
+    deviceMode: 'device_mode', device_mode: 'device_mode',
   }
   const plainTextFields = new Set(['name', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
   const setEntries: [string, any][] = []
@@ -2904,9 +2907,9 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ` : ''}
         </div>
         <div class="sidebar-footer">
-          <div class="status-indicator online">
+          <div class="status-indicator online" id="system-status-indicator" title="正在检查系统状态">
             <span class="led"></span>
-            <span>系统正常</span>
+            <span id="system-status-label">系统检查中</span>
           </div>
         </div>
       </aside>`

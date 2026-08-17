@@ -160,6 +160,26 @@
     });
 
     document.addEventListener('DOMContentLoaded', function () {
+      const indicator = document.getElementById('system-status-indicator');
+      const label = document.getElementById('system-status-label');
+      if (!indicator || !label || !window.fetch) return;
+      const check = function () {
+        fetch('/api/system-status', { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' })
+          .then(function (response) { return response.json().then(function (data) { return { ok: response.ok, data: data }; }); })
+          .then(function (result) {
+            const status = result.data.status || (result.ok ? 'healthy' : 'down');
+            label.textContent = result.data.label || '状态未知';
+            indicator.classList.toggle('online', status === 'healthy');
+            indicator.classList.toggle('degraded', status === 'degraded');
+            indicator.classList.toggle('offline', status === 'down');
+            indicator.title = result.data.checkedAt ? '最近检查：' + result.data.checkedAt : (result.data.detail || '系统状态');
+          })
+          .catch(function () { label.textContent = '状态未知'; indicator.classList.remove('online', 'degraded'); indicator.classList.add('offline'); indicator.title = '无法连接状态检查服务'; });
+      };
+      check(); window.setInterval(check, 30000);
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
       const pageTitle = document.title;
       let lastNotificationIds = [];
       const notifiedStorageKey = 'rent-notified-notification-ids';
@@ -376,13 +396,22 @@
           const parsed = new DOMParser().parseFromString(html, 'text/html');
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
-          // 侧边栏切换只替换内容区，不做整页淡出/淡入，避免看起来像刷新网页。
-          document.body.classList.add('has-navigated');
-          content.replaceChildren(...Array.from(nextContent.childNodes));
-          document.title = parsed.title;
-          runScripts(content);
-          setActiveLink(url.pathname);
-          if (window.runFilterTabMotion) window.runFilterTabMotion();
+          // 保留轻量过渡，避免切换过硬；不隐藏到 0，防止长表格页面出现白闪。
+          const swap = function () {
+            document.body.classList.add('has-navigated');
+            content.replaceChildren(...Array.from(nextContent.childNodes));
+            document.title = parsed.title;
+            runScripts(content);
+            setActiveLink(url.pathname);
+            if (window.runFilterTabMotion) window.runFilterTabMotion();
+          };
+          if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            await new Promise(function (resolve) { window.gsap.to(content, { autoAlpha: .92, duration: .12, ease: 'power1.out', onComplete: resolve }); });
+            swap();
+            window.gsap.to(content, { autoAlpha: 1, duration: .28, ease: 'power2.out', overwrite: 'auto' });
+          } else {
+            swap();
+          }
           if (addHistory) window.history.pushState({}, '', url.href);
         } catch (error) {
           // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。

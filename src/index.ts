@@ -120,6 +120,19 @@ app.get('/styles.css', (c) => {
   return c.body(siteStyles)
 })
 
+app.get('/api/system-status', async (c) => {
+  const user = c.get('user') as any
+  if (!user || !['ADMIN', 'STAFF'].includes(user.role)) return c.json({ status: 'unknown', label: '未授权' }, 403)
+  try {
+    await c.env.RENT.prepare('SELECT 1 AS ok').first()
+    const recent = await c.env.RENT.prepare("SELECT COUNT(*) AS total FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
+    const errors = Number(recent?.total || 0)
+    return c.json({ status: errors ? 'degraded' : 'healthy', label: errors ? `有 ${errors} 个异常` : '系统正常', checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    return c.json({ status: 'down', label: '系统异常', detail: error?.message || '数据库不可用' }, 503, { 'Cache-Control': 'no-store' })
+  }
+})
+
 app.get('/downloads/RentDeviceAgent-Setup.exe', async (c) => {
   return c.redirect('https://github.com/aaoqqqdd/rent-app/releases/latest/download/RentDeviceAgent-Setup.exe', 302)
 })
@@ -2482,6 +2495,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const form = parseFormBody(body)
   if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
+  if (!['normal', 'return', 'maintenance', 'lost'].includes(form.deviceMode || 'normal')) return c.text('客户设备状态无效', 400)
   await updateDevice(c, c.req.param('id'), {
     name: form.name,
     brand: form.brand,
@@ -2496,6 +2510,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
     depositAmount: Number(form.depositAmount),
     status: form.status as any,
     agentStatus: form.agentStatus as any,
+    deviceMode: form.deviceMode as any,
     description: form.description || form.remark
   })
   const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]

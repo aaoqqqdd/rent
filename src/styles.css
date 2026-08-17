@@ -1773,6 +1773,9 @@ button:disabled {
   box-shadow: 0 0 0 2px var(--success-light), 0 0 6px var(--success);
   animation: pulse 2s infinite;
 }
+.status-indicator.degraded .led { background: var(--warning); box-shadow: 0 0 0 2px var(--warning-light); }
+.status-indicator.offline .led { background: var(--danger); box-shadow: 0 0 0 2px var(--danger-light); }
+.status-indicator.degraded, .status-indicator.offline { color: var(--text-secondary); }
 
 @keyframes pulse {
 
@@ -4993,10 +4996,35 @@ tr:hover td {
 .signature-pad { display: block; width: 100%; max-width: 700px; height: 180px; background: #fff; border: 2px dashed #94a3b8; border-radius: 10px; touch-action: none; }
 @media print {
   @page { margin: 14mm; }
+  html, body, .page, .container, .content {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
   body * { visibility: hidden !important; }
   .contract-viewer, .contract-viewer > .a4-document, .contract-viewer > .a4-document * { visibility: visible !important; }
   .contract-viewer { position: static; width: 100%; height: auto; overflow: visible; padding: 0; margin: 0; background: white; border: 0; box-shadow: none; }
   .contract-viewer > * { display: none !important; }
+  .contract-print-page > .contract-archive-bar {
+    display: flex !important;
+    visibility: visible !important;
+    width: 100% !important;
+    box-sizing: border-box;
+    padding: 0 0 8mm !important;
+    margin: 0 0 8mm !important;
+    color: #111827 !important;
+    background: #fff !important;
+    border-bottom: 1px solid #cbd5e1 !important;
+  }
+  .contract-print-page > .contract-archive-bar h1,
+  .contract-print-page > .contract-archive-bar .contract-kicker,
+  .contract-print-page > .contract-archive-bar .contract-number { color: #111827 !important; }
+  .contract-print-page > .contract-archive-bar .contract-status { color: #111827 !important; background: #e5e7eb !important; }
   .contract-viewer > .a4-document { display: block !important; width: 100%; min-height: 0; margin: 0; padding: 0; background: white; color: #111; border: 0; box-shadow: none; }
   .contract-viewer > .a4-document.contract-content { margin: 0 !important; padding: 0 !important; }
   .contract-viewer > .a4-document.contract-content > :first-child { margin-top: 0 !important; padding-top: 0 !important; }
@@ -5018,12 +5046,10 @@ tr:hover td {
     break-inside: auto;
     page-break-inside: auto;
   }
-  .contract-print-page .contract-content tr,
+  .contract-print-page .contract-content thead { display: table-header-group; }
+  .contract-print-page .contract-content tr { break-inside: avoid; page-break-inside: avoid; }
   .contract-print-page .contract-content td,
-  .contract-print-page .contract-content th {
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
+  .contract-print-page .contract-content th { break-inside: auto; page-break-inside: auto; }
   .contract-print-page tr, .contract-print-page img { break-inside: avoid; page-break-inside: avoid; }
   .contract-print-page h1, .contract-print-page h2, .contract-print-page h3,
   .contract-print-page h4, .contract-print-page h5, .contract-print-page h6,
