@@ -2287,7 +2287,7 @@ app.post('/admin/orders/:id/update', async (c) => {
   const status = String(form.status || '')
   const force = String(form.force || '') === '1'
   const order = await getOrderById(c, c.req.param('id'))
-  const editableStatuses = ['pending_payment', 'awaiting_signature', 'paid', 'pending_pickup', 'active', 'extended', 'overdue', 'suspended', 'pending_return', 'returned', 'completed', 'cancelled']
+  const editableStatuses = ['suspended', 'cancelled']
   if (!order || !editableStatuses.includes(status) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
   if (status === 'completed') {
     const contract = await c.env.RENT.prepare('SELECT contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
@@ -2365,7 +2365,7 @@ app.post('/admin/orders/bulk-update', async (c) => {
   const targetStatus = String(form.status || '')
   const selectedIds = Array.isArray(form.orderIds) ? form.orderIds.map(String) : form.orderIds ? [String(form.orderIds)] : []
 
-  if (!['pending_payment', 'awaiting_signature', 'paid', 'pending_pickup', 'active', 'extended', 'overdue', 'suspended', 'pending_return', 'returned', 'completed', 'cancelled'].includes(targetStatus) || selectedIds.length === 0) {
+  if (!['suspended', 'cancelled'].includes(targetStatus) || selectedIds.length === 0) {
     return c.redirect('/admin/orders')
   }
 

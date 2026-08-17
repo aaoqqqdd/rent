@@ -250,17 +250,7 @@ export async function renderAdminOrders(c: Context, user: any) {
                     <div style="display: flex; flex-direction: column; gap: 8px; min-width: 160px;">
                       <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; gap: 8px; align-items: center;">
                         <select name="status" class="form-control" style="min-width: 110px; padding: 6px 10px; font-size: 0.85rem;">
-                          <option value="pending_payment" ${order.status === 'pending_payment' ? 'selected' : ''}>待处理</option>
-                          <option value="awaiting_signature" ${order.status === 'awaiting_signature' ? 'selected' : ''}>待签合同</option>
-                          <option value="paid" ${order.status === 'paid' ? 'selected' : ''}>租赁已确认，等待开始</option>
-                          <option value="pending_pickup" ${order.status === 'pending_pickup' ? 'selected' : ''}>待取货</option>
-                          <option value="active" ${order.status === 'active' ? 'selected' : ''}>租赁中</option>
-                          <option value="extended" ${order.status === 'extended' ? 'selected' : ''}>已延期 / 租赁中</option>
-                          <option value="overdue" ${order.status === 'overdue' ? 'selected' : ''}>已逾期</option>
-                          <option value="suspended" ${order.status === 'suspended' ? 'selected' : ''}>已暂停</option>
-                          <option value="pending_return" ${order.status === 'pending_return' ? 'selected' : ''}>待归还</option>
-                          <option value="returned" ${order.status === 'returned' ? 'selected' : ''}>已归还</option>
-                          <option value="completed" ${order.status === 'completed' ? 'selected' : ''}>已完成</option>
+                          <option value="suspended" ${order.status === 'suspended' ? 'selected' : ''}>已暂停（仅管理员）</option>
                           <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
                         </select>
                         <button type="submit" class="button button-secondary" style="padding: 6px 10px; font-size: 0.8rem;">更新</button>

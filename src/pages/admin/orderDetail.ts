@@ -29,20 +29,20 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
 
   const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
-    'pending': { label: 'PENDING: 待处理', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
+    'pending': { label: '待处理', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
     'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
-    'awaiting_signature': { label: 'AWAITING_SIGNATURE: 待签合同', color: '#7c3aed', bg: '#ede9fe', icon: '✍️' },
-    'paid': { label: 'CONFIRMED: 租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '💳' },
-    'approved': { label: 'CONFIRMED: 租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '✅' },
-    'pending_pickup': { label: 'READY_FOR_PICKUP: 待取货', color: '#0891b2', bg: '#cffafe', icon: '📦' },
-    'active': { label: 'ACTIVE: 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '📦' },
-    'extended': { label: 'EXTENDED: 已延期 / 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '🔁' },
-    'overdue': { label: 'OVERDUE: 已逾期', color: '#dc2626', bg: '#fee2e2', icon: '⚠️' },
-    'suspended': { label: 'SUSPENDED: 已暂停', color: '#6b7280', bg: '#f3f4f6', icon: '⏸️' },
-    'pending_return': { label: 'RETURN_PENDING: 待归还', color: '#d97706', bg: '#fef3c7', icon: '↩️' },
-    'returned': { label: 'RETURNED: 已归还', color: '#0891b2', bg: '#cffafe', icon: '📥' },
-    'completed': { label: 'COMPLETED: 已完成', color: '#0891b2', bg: '#cffafe', icon: '✅' },
-    'cancelled': { label: 'CANCELLED: 已取消', color: '#dc2626', bg: '#fee2e2', icon: '❌' }
+    'awaiting_signature': { label: '待签合同', color: '#7c3aed', bg: '#ede9fe', icon: '✍️' },
+    'paid': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '💳' },
+    'approved': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '✅' },
+    'pending_pickup': { label: '待取货', color: '#0891b2', bg: '#cffafe', icon: '📦' },
+    'active': { label: '租赁中', color: '#2563eb', bg: '#dbeafe', icon: '📦' },
+    'extended': { label: '已延期 / 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '🔁' },
+    'overdue': { label: '已逾期', color: '#dc2626', bg: '#fee2e2', icon: '⚠️' },
+    'suspended': { label: '已暂停', color: '#6b7280', bg: '#f3f4f6', icon: '⏸️' },
+    'pending_return': { label: '待归还', color: '#d97706', bg: '#fef3c7', icon: '↩️' },
+    'returned': { label: '已归还', color: '#0891b2', bg: '#cffafe', icon: '📥' },
+    'completed': { label: '已完成', color: '#0891b2', bg: '#cffafe', icon: '✅' },
+    'cancelled': { label: '已取消', color: '#dc2626', bg: '#fee2e2', icon: '❌' }
   };
   const currentStatus = statusLabels[order.status] || { label: order.status, color: '#6b7280', bg: '#f3f4f6', icon: '❓' };
   const refundStatusLabel = completedRefund?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : completedRefund?.status === 'succeeded' ? (Number(completedRefund.refund_amount || 0) < Number(completedRefund.refundable_amount || completedRefund.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : '';
@@ -140,17 +140,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             <div>
               <label for="status" style="display: block; margin-bottom: 8px; font-weight: 500; color: #374151;">选择新状态</label>
               <select id="status" name="status" style="width: 100%; padding: 14px 16px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 1rem; transition: all 0.2s; outline: none; background: white;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'">
-                <option value="pending_payment" ${order.status === 'pending_payment' ? 'selected' : ''}>待处理</option>
-                <option value="awaiting_signature" ${order.status === 'awaiting_signature' ? 'selected' : ''}>待签合同</option>
-                <option value="paid" ${order.status === 'paid' ? 'selected' : ''}>租赁已确认，等待开始</option>
-                <option value="pending_pickup" ${order.status === 'pending_pickup' ? 'selected' : ''}>待取货</option>
-                <option value="active" ${order.status === 'active' ? 'selected' : ''}>租赁中</option>
-                <option value="extended" ${order.status === 'extended' ? 'selected' : ''}>已延期 / 租赁中</option>
-                <option value="overdue" ${order.status === 'overdue' ? 'selected' : ''}>已逾期</option>
-                <option value="suspended" ${order.status === 'suspended' ? 'selected' : ''}>已暂停</option>
-                <option value="pending_return" ${order.status === 'pending_return' ? 'selected' : ''}>待归还</option>
-                <option value="returned" ${order.status === 'returned' ? 'selected' : ''}>已归还</option>
-                <option value="completed" ${order.status === 'completed' ? 'selected' : ''}>已完成</option>
+                <option value="suspended" ${order.status === 'suspended' ? 'selected' : ''}>已暂停（仅管理员）</option>
                 <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
               </select>
             </div>
