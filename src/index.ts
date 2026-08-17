@@ -2486,6 +2486,22 @@ app.post('/api/device-agent/register-legacy', async (c) => {
   return c.json({ deviceId: row.device_id, agentToken, heartbeatUrl: new URL('/api/device-agent/heartbeat', c.req.url).toString() })
 })
 
+app.post('/admin/devices/:id/commands', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const device = await c.env.RENT.prepare('SELECT id FROM devices WHERE id = ?').bind(c.req.param('id')).first()
+  if (!device) return c.text('设备不存在', 404)
+  const form = await c.req.parseBody()
+  const type = String(form.commandType || '')
+  const allowed = ['SYNC', 'SHOW_MESSAGE', 'PAUSE_RENTAL', 'RESUME_RENTAL', 'REFRESH_DEVICE_INFO', 'CHECK_UPDATE']
+  if (!allowed.includes(type)) return c.text('命令类型无效', 400)
+  const payload = type === 'SHOW_MESSAGE' ? JSON.stringify({ title: String(form.title || '租赁通知').slice(0, 120), message: String(form.message || '').slice(0, 500) }) : '{}'
+  if (type === 'SHOW_MESSAGE' && !JSON.parse(payload).message) return c.text('通知内容不能为空', 400)
+  const expiryHours = ['PAUSE_RENTAL', 'RESUME_RENTAL'].includes(type) ? 1 : 24
+  await c.env.RENT.prepare('INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\', ?))').bind(`cmd-${nanoid(12)}`, c.req.param('id'), type, payload, user.id, `+${expiryHours} hours`).run()
+  return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/edit?success=命令已发送，设备下次同步时执行`)
+})
+
 app.post('/admin/devices/:id/edit', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -2922,6 +2938,33 @@ app.get('/api/device-agent/state', async (c) => {
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
   const rental = await c.env.RENT.prepare(`SELECT id, startDate AS start_date, endDate AS end_date, status FROM orders WHERE deviceId = ? AND status IN ('paid', 'active') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, endDate DESC LIMIT 1`).bind(device.id).first()
   return c.json({ ok: true, serverTime: new Date().toISOString(), inspectionRequested: Boolean(device.inspection_requested_at), deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental })
+})
+
+app.get('/api/device-agent/commands', async (c) => {
+  const device = await getAgentDevice(c)
+  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  await c.env.RENT.prepare("UPDATE device_commands SET status = 'EXPIRED', completed_at = CURRENT_TIMESTAMP WHERE device_id = ? AND status IN ('PENDING', 'DELIVERED') AND datetime(expires_at) <= CURRENT_TIMESTAMP").bind(device.id).run()
+  const commands = (await c.env.RENT.prepare("SELECT id, device_id, command_type, payload, status, created_at, expires_at FROM device_commands WHERE device_id = ? AND status = 'PENDING' AND datetime(expires_at) > CURRENT_TIMESTAMP ORDER BY created_at ASC LIMIT 10").bind(device.id).all()).results || []
+  if (commands.length) await c.env.RENT.prepare(`UPDATE device_commands SET status = 'DELIVERED', claimed_at = COALESCE(claimed_at, CURRENT_TIMESTAMP) WHERE device_id = ? AND status = 'PENDING' AND id IN (${commands.map(() => '?').join(',')})`).bind(device.id, ...commands.map((item: any) => item.id)).run()
+  return c.json({ ok: true, commands })
+})
+
+app.post('/api/device-agent/command-results', async (c) => {
+  const device = await getAgentDevice(c)
+  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  const payload = await c.req.json().catch(() => ({})) as any
+  const commandId = String(payload.commandId || '').slice(0, 120)
+  const resultCode = String(payload.resultCode || 'FAILED').slice(0, 40)
+  if (!commandId || !/^[A-Z0-9_]+$/.test(resultCode)) return c.json({ ok: false, error: 'Invalid command result' }, 400)
+  const command = await c.env.RENT.prepare('SELECT id FROM device_commands WHERE id = ? AND device_id = ?').bind(commandId, device.id).first()
+  if (!command) return c.json({ ok: false, error: 'Command not found' }, 404)
+  const success = Boolean(payload.success)
+  const executedAt = String(payload.executedAt || new Date().toISOString()).slice(0, 40)
+  await c.env.RENT.batch([
+    c.env.RENT.prepare("UPDATE device_commands SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ? AND device_id = ? AND status NOT IN ('SUCCEEDED', 'FAILED', 'EXPIRED', 'CANCELLED')").bind(success ? 'SUCCEEDED' : 'FAILED', commandId, device.id),
+    c.env.RENT.prepare('INSERT OR IGNORE INTO device_command_results (id, command_id, device_id, success, result_code, result_message, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`result-${nanoid(12)}`, commandId, device.id, success ? 1 : 0, resultCode, String(payload.message || '').slice(0, 500), executedAt),
+  ])
+  return c.json({ ok: true })
 })
 
 app.post('/api/device-agent/cleanup-result', async (c) => {
