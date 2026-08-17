@@ -2334,6 +2334,7 @@ export const CONTRACT_VARIABLE_GROUPS = [
 export function renderContractVariables(content: string, contract: Contract, order?: any, device?: any, customer?: any, extra: Record<string, unknown> = {}, includeInternal = false): string {
   const rentOnly = Math.max(0, Number(order?.totalAmount ?? order?.total_amount ?? 0) - Number(order?.depositAmount ?? order?.deposit_amount ?? 0))
   const stored = typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : (contract.contract_data || {})
+  const creatorName = String(extra.created_by || stored.created_by || '').trim()
   const emptyVariables = Object.fromEntries(CONTRACT_VARIABLE_NAMES.map(name => [name, '']))
   const values: Record<string, unknown> = {
     ...emptyVariables,
@@ -2390,6 +2391,7 @@ export function renderContractVariables(content: string, contract: Contract, ord
     account_name: systemSettings.bankDetails.accountName,
     company_abn: systemSettings.companyDetails.abn,
     gst_included: systemSettings.companyDetails.gstIncluded ? '是' : '否',
+    company_signature: creatorName,
     signer_name: stored.signer_name || customer?.name,
     sign_time: contract.signedAt ? new Date(contract.signedAt).toLocaleString('en-AU') : '',
     esign_ip: contract.esign_ip,
@@ -2405,7 +2407,7 @@ export function renderContractVariables(content: string, contract: Contract, ord
     rental_agreement_last_updated_date: stored.rental_agreement_last_updated_date || systemSettings.legalMetadata.rental.lastUpdatedDate,
     contract_version: systemSettings.legalMetadata.contract.version,
     contract_last_updated_date: systemSettings.legalMetadata.contract.lastUpdatedDate,
-    company_representative: stored.company_representative || systemSettings.companyDetails.contact,
+    company_representative: creatorName,
     contract_url: stored.contract_url || `/contract/view/${contract.id}`,
     invoice_url: stored.invoice_url || (order?.id ? `/orders/${order.id}/invoice` : ''),
     deleted: contract.deleted_at ? '是' : '否',
@@ -2457,7 +2459,7 @@ export async function getContractVariableData(c: Context, contract: Contract, or
     c.env.RENT.prepare("SELECT COALESCE(SUM(amount),0) paid, COALESCE(SUM(deposit_amount),0) deposit_paid, COALESCE(SUM(rental_amount),0) rent_paid, MAX(paid_at) payment_date, MAX(currency) currency FROM payments WHERE rental_id = ? AND status = 'paid'").bind(order.id).first(),
     c.env.RENT.prepare("SELECT pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.created_at DESC LIMIT 1").bind(order.id).first(),
     c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
-    contract.createdBy ? getUserById(c, contract.createdBy) : Promise.resolve(null),
+    (contract.createdBy || contract.created_by) ? getUserById(c, contract.createdBy || contract.created_by || '') : Promise.resolve(null),
   ]) as any[]
   const invoice = await c.env.RENT.prepare("SELECT invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice' ORDER BY issued_at DESC LIMIT 1").bind(order.id).first() as any
   const publicOrigin = new URL(c.req.url).origin
