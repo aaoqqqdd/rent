@@ -2534,7 +2534,9 @@ app.post('/admin/devices/:id/commands', async (c) => {
   const device = await c.env.RENT.prepare('SELECT id FROM devices WHERE id = ?').bind(c.req.param('id')).first()
   if (!device) return c.text('设备不存在', 404)
   const form = await c.req.parseBody()
-  const type = String(form.commandType || '')
+  // Accept the current field name and the names used by older cached control
+  // pages, then normalize it before validating the command.
+  const type = String(form.commandType || form.command || form.type || '').trim().toUpperCase()
   const allowed = ['SYNC', 'SHOW_MESSAGE', 'PAUSE_RENTAL', 'RESUME_RENTAL', 'REFRESH_DEVICE_INFO', 'CHECK_UPDATE', 'CREATE_RENTAL_USER', 'UPDATE_RENTAL_USER', 'DELETE_RENTAL_USER']
   if (!allowed.includes(type)) return c.text('命令类型无效', 400)
   const payload = type === 'SHOW_MESSAGE' ? JSON.stringify({ title: String(form.title || '租赁通知').slice(0, 120), message: String(form.message || '').slice(0, 500) }) : '{}'
