@@ -9,7 +9,7 @@ import layoutTemplate from './layout.html'
 import { customAlphabet } from 'nanoid'
 
 const referenceCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
-export function generateReferenceNumber(prefix: 'ORD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD', at = new Date()): string {
+export function generateReferenceNumber(prefix: 'ORD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD' | 'CN', at = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(at)
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
   return `${prefix}-${values.year}${values.month}${values.day}-${referenceCode()}`
@@ -2517,7 +2517,7 @@ export async function issueCreditNote(c: Context, orderId: string, amount: numbe
   const invoice = await c.env.RENT.prepare("SELECT id, invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice'").bind(orderId).first() as any
   if (!invoice) return
   await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status, related_invoice_id) VALUES (?, ?, ?, 'credit_note', ?, 0, 0, ?, ?, 'AUD', 'issued', ?)`)
-    .bind(`cn-${refundKey}`, `CN-${invoice.invoice_number}-${refundKey.slice(-8)}`, orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
+    .bind(`cn-${refundKey}`, generateReferenceNumber('CN'), orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
 }
 
 export const contractTemplate = {
