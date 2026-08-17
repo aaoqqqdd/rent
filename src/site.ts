@@ -965,7 +965,7 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
     pending_approval: { order: 'PENDING', payment: 'UNPAID', rental: 'PENDING' },
     approved: { order: 'AWAITING_PAYMENT', payment: 'UNPAID', rental: 'AWAITING_PAYMENT' },
     pending_payment: { order: 'AWAITING_PAYMENT', payment: 'UNPAID', rental: 'PENDING' },
-    paid: { order: 'CONFIRMED', payment: 'PAID', rental: 'CONFIRMED' },
+    paid: { order: 'CONFIRMED', payment: 'PAID', rental: 'READY_FOR_PICKUP' },
     pending_pickup: { order: 'READY_FOR_PICKUP', payment: 'PAID', rental: 'READY_FOR_PICKUP' },
     active: { order: 'ACTIVE', payment: 'PAID', rental: 'ACTIVE' },
     pending_return: { order: 'RETURN_PENDING', payment: 'PAID', rental: 'RETURN_PENDING' },

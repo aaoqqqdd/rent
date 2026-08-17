@@ -18,10 +18,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user);
   }
 
-  const [customer, device, contract, completedRefund, transferProof] = await Promise.all([
+  const [customer, device, contract, completedRefund, transferProof, statusHistory] = await Promise.all([
     getUserById(c, order.userId), getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id),
     c.env.RENT.prepare("SELECT type, status, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
-    c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first()
+    c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first(),
+    c.env.RENT.prepare('SELECT old_status, new_status, trigger_type, triggered_by, reason, created_at FROM rental_status_history WHERE rental_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all()
   ]) as any[];
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
@@ -62,8 +63,10 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
     <div class="order-detail-actions">
       ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
+      ${['paid', 'pending_pickup'].includes(String(order.status)) ? `<form method="post" action="/staff/orders/${order.id}/pickup" style="display:inline" data-site-confirm="确认设备已经实际交付给客户吗？确认后订单将进入租赁中。"><button class="button button-primary" type="submit">确认设备已交付</button></form>` : ''}
       ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order" target="_blank">查看合同</a>` : ''}
     </div>
+    ${statusHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>租赁状态历史</h3><span class="section-note">最近 ${statusHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>状态变化</th><th>触发方式</th><th>原因</th></tr></thead><tbody>${statusHistory.results.map((item: any) => `<tr><td class="mono">${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.old_status || '—')} → <strong>${escapeHtml(item.new_status)}</strong></td><td>${escapeHtml(item.trigger_type)}${item.triggered_by ? ` · ${escapeHtml(item.triggered_by)}` : ''}</td><td>${escapeHtml(item.reason || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">

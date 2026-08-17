@@ -1294,8 +1294,10 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
   }
   const orderId = c.req.param('orderId')
   const pickupOrder = await getOrderById(c, orderId)
-  if (!pickupOrder || pickupOrder.status !== 'paid') return c.json({ success: false, message: '只有已付款订单可以确认取货' }, 409)
+  if (!pickupOrder || !['paid', 'pending_pickup'].includes(String(pickupOrder.status))) return c.json({ success: false, message: '只有待取货订单可以确认交付' }, 409)
   await updateOrderStatus(c, orderId, 'active')
+  await c.env.RENT.prepare('UPDATE orders SET handover_completed_at = CURRENT_TIMESTAMP, handover_by = ?, handover_overdue = 0, possible_handover = 0 WHERE id = ?').bind(user.id, orderId).run()
+  await c.env.RENT.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, pickupOrder.rental_status || 'READY_FOR_PICKUP', 'ACTIVE', 'MANUAL', user.id, '员工确认设备已交付').run()
   return c.json({ success: true, message: '订单已进入租赁中' })
 })
 
@@ -1394,7 +1396,8 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   const inspectionId = `inspection-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify(data), contract.id),
-    c.env.RENT.prepare("UPDATE orders SET status = 'completed', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
+    c.env.RENT.prepare("UPDATE orders SET status = 'completed', order_status = 'COMPLETED', payment_status = COALESCE(payment_status, 'PAID'), rental_status = 'COMPLETED', return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP), return_received_by = COALESCE(return_received_by, ?), updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(user.id, order.id),
+    c.env.RENT.prepare("INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, 'RETURNED', 'MANUAL', ?, ?), (?, ?, 'RETURNED', 'COMPLETED', 'SYSTEM', ?, ?)").bind(`rsh-${nanoid(16)}`, order.id, order.rental_status || 'RETURN_PENDING', user.id, '工作人员收到设备并开始归还验机', `rsh-${nanoid(16)}`, order.id, user.id, '归还验机完成，订单结算完成'),
     c.env.RENT.prepare('UPDATE devices SET status = ? WHERE id = ?').bind(damageDescription ? 'maintenance' : 'available', order.deviceId),
     c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, rental_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, \'after_return\', ?, ?)').bind(inspectionId, order.deviceId, order.id, JSON.stringify(inspectionSnapshot), JSON.stringify({})),
   ])
@@ -2299,7 +2302,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.payment_id),
-    c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'CONFIRMED', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
+    c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
   ])
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
   await issueInvoice(c, order.id)
@@ -3123,6 +3126,13 @@ export default {
       (async () => {
         try {
           await ensureDeviceCommandTables(env.RENT)
+          const handoverRows = (await env.RENT.prepare("SELECT id, rental_status, startDate FROM orders WHERE payment_status = 'PAID' AND rental_status = 'READY_FOR_PICKUP' AND startDate <= date('now')").all()).results || []
+          for (const row of handoverRows as any[]) {
+            await env.RENT.batch([
+              env.RENT.prepare("UPDATE orders SET rental_status = 'HANDOVER_PENDING', handover_overdue = 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND rental_status = 'READY_FOR_PICKUP'").bind(row.id),
+              env.RENT.prepare("INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, 'SYSTEM', ?)").bind(`rsh-${crypto.randomUUID()}`, row.id, row.rental_status, 'HANDOVER_PENDING', '已到预约取货日期但尚未确认交付')
+            ])
+          }
           const lifecycleRows = (await env.RENT.prepare(`SELECT o.id, o.deviceId, o.status, o.startDate, o.endDate, c.id AS contract_id, c.contract_data, u.name AS customer_name FROM orders o JOIN contracts c ON c.orderId = o.id LEFT JOIN users u ON u.id = o.userId WHERE o.status IN ('paid', 'active', 'completed') AND c.status IN ('signed', 'completed')`).all()).results || []
           const today = new Date().toISOString().slice(0, 10)
           for (const row of lifecycleRows as any[]) {
