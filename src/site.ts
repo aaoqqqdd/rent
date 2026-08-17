@@ -1419,14 +1419,14 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const registrationSettingsValue = values.get('registrationSettings')
   const legalMetadataValue = values.get('legalMetadata')
 
-  systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? systemSettings.userTerms)
-  systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? systemSettings.rentalTerms)
-  systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue ?? systemSettings.serviceTerms)
-  systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue ?? systemSettings.privacyPolicy)
-  systemSettings.softwareTerms = sanitizeRichHtml(softwareTermsValue ?? systemSettings.softwareTerms)
+  systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? '')
+  systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? '')
+  systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue ?? '')
+  systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue ?? '')
+  systemSettings.softwareTerms = sanitizeRichHtml(softwareTermsValue ?? '')
   const parsedLegalMetadata = safeJsonParse<any>(legalMetadataValue)
   if (parsedLegalMetadata) systemSettings.legalMetadata = { ...systemSettings.legalMetadata, ...parsedLegalMetadata }
-  systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue ?? systemSettings.copyrightNotice)
+  systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue ?? '')
   systemSettings.priceStrategy = priceStrategyValue ?? systemSettings.priceStrategy
 
   const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)

@@ -2769,6 +2769,7 @@ app.post('/admin/templates/:kind', async (c) => {
       ? await c.req.json()
       : await c.req.parseBody()
     const content = sanitizeRichHtml(payload?.content || '')
+    if (!String(content).trim()) return c.json({ success: false, error: '协议内容不能为空，请填写后再保存' }, 400)
     await loadSystemSettingsFromDB(c)
     const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', software: 'softwareTerms', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright']
     const metadata = getSystemSettings().legalMetadata || {}
