@@ -3051,7 +3051,7 @@ app.post('/api/device-agent/inspection', async (c) => {
 app.get('/api/device-agent/state', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
-  const rental = await c.env.RENT.prepare(`SELECT id, startDate AS start_date, endDate AS end_date, status FROM orders WHERE deviceId = ? AND status IN ('paid', 'active') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, endDate DESC LIMIT 1`).bind(device.id).first()
+  const rental = await c.env.RENT.prepare(`SELECT o.id, o.startDate AS start_date, o.endDate AS end_date, o.status, u.name AS customer_name FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.deviceId = ? AND o.status IN ('paid', 'active') ORDER BY CASE o.status WHEN 'active' THEN 0 ELSE 1 END, o.endDate DESC LIMIT 1`).bind(device.id).first()
   return c.json({ ok: true, serverTime: new Date().toISOString(), inspectionRequested: Boolean(device.inspection_requested_at), deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental })
 })
 
