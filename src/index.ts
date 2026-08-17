@@ -2533,6 +2533,8 @@ app.post('/admin/devices/:id/commands', async (c) => {
   await ensureDeviceCommandTables(c.env.RENT)
   const device = await c.env.RENT.prepare('SELECT id FROM devices WHERE id = ?').bind(c.req.param('id')).first()
   if (!device) return c.text('设备不存在', 404)
+  const deviceStatus = await c.env.RENT.prepare('SELECT agent_status FROM devices WHERE id = ?').bind(c.req.param('id')).first() as any
+  if (String(deviceStatus?.agent_status || '').toLowerCase() !== 'online') return c.text('设备当前不在线，无法执行远程操作', 409)
   const form = await c.req.parseBody()
   // Accept the current field name and the names used by older cached control
   // pages, then normalize it before validating the command.
