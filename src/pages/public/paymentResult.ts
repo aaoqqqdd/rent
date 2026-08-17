@@ -98,7 +98,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
         align-items: center;
         justify-content: center;
         margin-bottom: 24px;
-        animation: site-pop 0.5s cubic-bezier(.2,.8,.2,1) both;
+        animation: payment-icon-pop 1.2s cubic-bezier(.2,.8,.2,1) both;
       }
       .icon-wrapper.success {
         background: var(--success-light);
@@ -122,13 +122,13 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
         to { stroke-dashoffset: 0; }
       }
       .icon-wrapper svg {
-        animation: payment-icon-pop .5s cubic-bezier(.2,.8,.2,1) both;
+        animation: payment-icon-pop 1.2s cubic-bezier(.2,.8,.2,1) both;
       }
       .icon-wrapper.success svg polyline,
       .icon-wrapper.danger svg line {
         stroke-dasharray: 48;
         stroke-dashoffset: 48;
-        animation: payment-icon-draw 0.45s 0.25s ease-out forwards;
+        animation: payment-icon-draw 1.4s 0.45s cubic-bezier(.2,.8,.2,1) forwards;
       }
       .payment-result-card h2 {
         font-family: var(--font-display);
