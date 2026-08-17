@@ -67,7 +67,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}
 
       ${order.status === 'pending_payment' ? `
-        ${transferProof ? `<div class="alert">转账审核状态：${transferProof.status === 'submitted' ? '待审核' : transferProof.status === 'rejected' ? `已驳回（${String(transferProof.rejection_reason || '').replace(/[&<>"']/g, '')}）` : transferProof.status}</div>` : ''}
+        ${transferProof ? `<div class="payment-review-status payment-review-status--${transferProof.status === 'submitted' ? 'pending' : transferProof.status === 'rejected' ? 'failed' : 'success'}"><span class="payment-review-status__icon" aria-hidden="true">${transferProof.status === 'submitted' ? '⌛' : transferProof.status === 'rejected' ? '❌' : '✅'}</span><div><strong>${transferProof.status === 'submitted' ? '转账凭证待审核' : transferProof.status === 'rejected' ? '转账审核未通过' : '转账审核已通过'}</strong><p>${transferProof.status === 'submitted' ? '管理员正在核对付款信息，请耐心等待。' : transferProof.status === 'rejected' ? `已驳回（${String(transferProof.rejection_reason || '').replace(/[&<>"']/g, '')}）` : '付款已确认，订单正在继续处理。'}</p></div></div>` : ''}
         <div class="section-title" style="margin-top: 24px;"><h3>支付信息</h3></div>
         <div class="alert"><strong>收款明细：</strong>租金 ${formatCurrency(Number(order.totalAmount) - Number(order.depositAmount) - Number(order.serviceFee || order.service_fee || 0))} ＋ 押金 ${formatCurrency(order.depositAmount)} ＋ 时段服务费 ${formatCurrency(order.serviceFee || order.service_fee || 0)} ＝ 订单本金 ${formatCurrency(order.totalAmount)}。Stripe 付款另收手续费 ${formatCurrency(stripeFee)}，合计 ${formatCurrency(stripeTotal)}。</div>
         <div class="payment-options" style="display: flex; gap: 20px; margin-top: 16px;">
@@ -77,7 +77,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
             <p><strong>BSB:</strong> ${systemSettings.bankDetails.bsb}</p>
             <p><strong>账号:</strong> ${systemSettings.bankDetails.account}</p>
             <p>请转账 ${formatCurrency(order.totalAmount)} 到以上账户，并在备注中填写合同编号 ${contract?.contractNumber || order.contractId}。</p>
-            ${transferProof?.status === 'submitted' ? '<p>转账信息已提交，请等待管理员审核。</p>' : `<form method="post" action="/customer/orders/${order.id}/bank-transfer-proof">
+            ${transferProof?.status === 'submitted' ? '<div class="payment-waiting-note"><span class="payment-hourglass" aria-hidden="true">⌛</span><span>转账信息已提交，正在等待管理员审核</span></div>' : `<form method="post" action="/customer/orders/${order.id}/bank-transfer-proof">
               <label class="form-label" for="referenceNumber">银行 Reference</label>
               <input class="form-control" id="referenceNumber" name="referenceNumber" maxlength="100" required>
               <label class="form-label" for="proofImageUrl">转账凭证图片链接</label>

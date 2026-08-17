@@ -5325,3 +5325,17 @@ tr:hover td {
 .navigation-loading { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; gap: 10px; background: rgba(15, 23, 42, 0.28); color: #fff; font-weight: 600; pointer-events: all; }
 .navigation-loading__spinner { width: 20px; height: 20px; border: 3px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%; animation: navigation-loading-spin .75s linear infinite; }
 @keyframes navigation-loading-spin { to { transform: rotate(360deg); } }
+/* Payment review status: clear state icons with a calm waiting animation. */
+.payment-review-status { display:flex; align-items:center; gap:14px; padding:16px 18px; border:1px solid; border-radius:14px; margin:16px 0; }
+.payment-review-status__icon { display:grid; place-items:center; width:42px; height:42px; border-radius:50%; font-size:25px; flex:0 0 auto; }
+.payment-review-status p { margin:4px 0 0; color:var(--muted,#667085); }
+.payment-review-status--pending { background:#fff8e7; border-color:#f4d48a; }
+.payment-review-status--pending .payment-review-status__icon { background:#ffe9a8; animation:payment-hourglass 1.8s ease-in-out infinite; }
+.payment-review-status--success { background:#ecfdf3; border-color:#a6e3be; }
+.payment-review-status--success .payment-review-status__icon { background:#c8f5d8; }
+.payment-review-status--failed { background:#fff1f1; border-color:#f2b8b8; }
+.payment-review-status--failed .payment-review-status__icon { background:#ffd6d6; }
+.payment-waiting-note { display:flex; align-items:center; gap:10px; color:#8a5a00; font-weight:600; margin:16px 0; }
+.payment-hourglass { display:inline-block; font-size:24px; animation:payment-hourglass 1.8s ease-in-out infinite; }
+@keyframes payment-hourglass { 0%,100% { transform:rotate(0deg) translateY(0); } 45% { transform:rotate(8deg) translateY(-2px); } 55% { transform:rotate(-8deg) translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .payment-review-status--pending .payment-review-status__icon, .payment-hourglass { animation:none; } }
