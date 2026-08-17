@@ -47,6 +47,7 @@ import {
   updateDeviceStatus,
   releaseDeviceIfUnbooked,
   getContractById,
+  getContractByOrderId,
   updateContractTemplate,
   CONTRACT_OPERATIONAL_FIELDS,
   CONTRACT_SIGNED_FIELDS,
