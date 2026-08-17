@@ -71,6 +71,7 @@ import {
   , renderFlexibleContent
   , renderEmailNotificationHtml
   , ensureNotificationsTable
+  , getContractBySignToken
 } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -1623,6 +1624,27 @@ app.get('/contract/sign', async (c) => {
   const error = c.req.query('error');
   return c.html(await pages.renderContractSignPage(c, token, step, error));
 });
+
+app.get('/api/contract-sign/coupon-preview', async (c) => {
+  const token = c.req.query('token') || c.req.query('number') || ''
+  const code = String(c.req.query('code') || '').trim().toUpperCase().slice(0, 40)
+  if (!token || !code) return c.json({ ok: true, discount: 0, total: null, message: '' })
+  const contract = await getContractBySignToken(c, token) as any
+  if (!contract) return c.json({ ok: false, message: '合同链接无效或已过期' }, 404)
+  const order = await getOrderById(c, contract.rentalId || contract.rental_id) as any
+  if (!order) return c.json({ ok: false, message: '订单不存在' }, 404)
+  const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(code).first() as any
+  if (!coupon) return c.json({ ok: false, message: '优惠码无效、已过期或已达到使用次数上限' })
+  const device = await getDeviceById(c, order.deviceId || order.device_id) as any
+  const deviceText = `${device?.name || ''} ${device?.brand || ''} ${device?.model || ''}`.toLowerCase()
+  if ((coupon.device_id && String(coupon.device_id) !== String(device?.id)) || (coupon.brand && String(device?.brand || '').trim().toLowerCase() !== String(coupon.brand).trim().toLowerCase()) || (coupon.config_keyword && !deviceText.includes(String(coupon.config_keyword).trim().toLowerCase()))) return c.json({ ok: false, message: '该优惠码不适用于当前设备' })
+  const deposit = Number(order.depositAmount || order.deposit_amount || 0)
+  const delivery = Number(order.deliveryFee || order.delivery_fee || 0)
+  const base = Number(order.totalAmount || order.total_amount || 0)
+  const rentAmount = Math.max(0, base - deposit - delivery)
+  const discount = Math.min(rentAmount, Math.max(0, Number((coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : coupon.discount_value).toFixed(2))))
+  return c.json({ ok: true, discount, total: Number((base - discount).toFixed(2)), message: `已优惠 AUD$${discount.toFixed(2)}` })
+})
 
 app.post('/contract/sign', async (c) => {
   const token = c.req.query('token') || c.req.query('number') || '';

@@ -207,7 +207,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               <div id="passwordFields" class="grid grid-2" hidden style="display:none"><div class="form-group"><label class="form-label" for="password">设置密码</label><input id="password" class="form-control" type="password" name="password" minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s])\\S{8,}" title="至少 8 位，并同时包含字母、数字和符号" autocomplete="new-password"><small class="form-text">至少 8 位，必须包含字母、数字和符号。</small><span class="field-error" data-error-for="password"></span></div><div class="form-group"><label class="form-label" for="passwordConfirm">确认密码</label><input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" minlength="8" autocomplete="new-password"><span class="field-error" data-error-for="passwordConfirm"></span></div></div>
             `}
             <div class="form-group"><label class="form-label" for="windowsPassword">Windows 登录密码</label><input id="windowsPassword" class="form-control" type="password" name="windowsPassword" minlength="8" required autocomplete="new-password"><small class="form-text">这是租赁设备上的 Windows 客户账户密码，与网站登录密码独立；可在订单详情中修改。</small><span class="field-error" data-error-for="windowsPassword"></span></div>
-            <section class="signature-section"><h3>电子签署</h3><p class="form-text">请输入与上方姓名一致的签名。</p><div class="form-group"><label class="form-label" for="esignSignature">输入姓名签名</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name" required><span class="field-error" data-error-for="esignSignature"></span></div></section>
+            <section class="signature-section"><h3>电子签署</h3><p class="form-text">输入全名签名</p><div class="form-group"><label class="form-label" for="esignSignature">请输入与上方姓名一致的签名。</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name" required><span class="field-error" data-error-for="esignSignature"></span></div></section>
             <div id="form-error-summary" class="form-error-summary" role="alert" hidden>请先修正标记的资料。</div>
             <div class="record-actions"><a href="/contract/sign?token=${token}&step=1" class="button button-secondary">返回上一步</a><button class="button" id="sign-info-submit" type="submit">保存信息并进入下一步</button></div>
           </form>
@@ -263,7 +263,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           <h2>${title}</h2>
           ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
           
-          <div class="alert">
+          <div class="alert" id="coupon-total-preview">
             <strong>应付总额: ${formatCurrency(order.totalAmount)}</strong> (租金 + 押金)
           </div>
 
@@ -272,7 +272,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ${(() => { const unavailable = getSystemSettings().rentalRules.unavailableTimeSlots || {}; const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'; const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00（早间服务费 10%）'], ['morning', '9:00–12:00（无服务费）'], ['afternoon', '13:00–20:00（无服务费）'], ['evening_service', '21:00–23:00（晚间服务费 10%）']]; const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value)); return `<div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>`; })()}
           </div>
 
-            <div class="form-group" style="margin: 20px 0;"><label class="form-label" for="couponCode">优惠码（选填）</label><input class="form-control" id="couponCode" name="couponCode" maxlength="40" placeholder="输入优惠码后继续付款"></div>
+            <div class="form-group" style="margin: 20px 0;"><label class="form-label" for="couponCode">优惠码（选填）</label><input class="form-control" id="couponCode" name="couponCode" maxlength="40" placeholder="输入优惠码后继续付款"><small class="form-text" id="coupon-preview" aria-live="polite"></small></div>
 
             <div class="payment-options" style="display: flex; flex-direction: column; gap: 15px;">
               ${systemSettings.paymentMethods.stripe ? `
@@ -340,6 +340,17 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const bankTransferNotice = document.getElementById('bank-transfer-notice');
               const rmbPaymentNotice = document.getElementById('rmb-payment-notice');
               const rmbSummary = document.getElementById('rmb-payment-summary');
+              const couponInput = document.getElementById('couponCode');
+              const couponPreview = document.getElementById('coupon-preview');
+              const totalPreview = document.getElementById('coupon-total-preview');
+              let couponTimer;
+              const previewCoupon = () => {
+                clearTimeout(couponTimer);
+                const code = couponInput?.value.trim() || '';
+                if (!code) { if (couponPreview) couponPreview.textContent = ''; return; }
+                couponTimer = setTimeout(() => fetch('/api/contract-sign/coupon-preview?${tokenOrNumber === contract.contractNumber ? `number=${encodeURIComponent(tokenOrNumber)}` : `token=${encodeURIComponent(tokenOrNumber)}`}&code=' + encodeURIComponent(code)).then(response => response.json()).then(data => { if (couponPreview) { couponPreview.textContent = data.message || ''; couponPreview.style.color = data.ok ? '#16794f' : '#b42318'; } if (data.ok && totalPreview) totalPreview.innerHTML = '<strong>优惠后应付总额: AUD$' + Number(data.total).toFixed(2) + '</strong>（已优惠 AUD$' + Number(data.discount).toFixed(2) + '）'; }).catch(() => {}), 250);
+              };
+              couponInput?.addEventListener('input', previewCoupon);
               const bankProofInputs = Array.from(document.querySelectorAll('.bank-proof-input'));
               const bankInputs = fields.querySelectorAll('input');
               const update = () => {
