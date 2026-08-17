@@ -224,7 +224,15 @@ export interface Order {
   service_fee?: number
   rentalPeriod?: number
   orderDate?: string
-  status: 'pending_approval' | 'pending_payment' | 'approved' | 'paid' | 'active' | 'completed' | 'cancelled'
+  status: string
+  order_status?: string
+  payment_status?: string
+  rental_status?: string
+  amount_due?: number
+  handover_completed_at?: string | null
+  handover_by?: string | null
+  return_received_at?: string | null
+  return_received_by?: string | null
   paymentMethod: 'card' | 'bank_transfer' | 'alipay' | 'wechat' | 'balance'
   totalAmount: number
   depositAmount: number
@@ -953,7 +961,23 @@ export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<num
 
 export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
   const db = getDB(c);
-  await db.prepare('UPDATE orders SET status = ? WHERE id = ?').bind(status, orderId).run();
+  const mapping: Record<string, { order: string, payment: string, rental: string }> = {
+    pending_approval: { order: 'PENDING', payment: 'UNPAID', rental: 'PENDING' },
+    approved: { order: 'AWAITING_PAYMENT', payment: 'UNPAID', rental: 'AWAITING_PAYMENT' },
+    pending_payment: { order: 'AWAITING_PAYMENT', payment: 'UNPAID', rental: 'PENDING' },
+    paid: { order: 'CONFIRMED', payment: 'PAID', rental: 'CONFIRMED' },
+    pending_pickup: { order: 'READY_FOR_PICKUP', payment: 'PAID', rental: 'READY_FOR_PICKUP' },
+    active: { order: 'ACTIVE', payment: 'PAID', rental: 'ACTIVE' },
+    pending_return: { order: 'RETURN_PENDING', payment: 'PAID', rental: 'RETURN_PENDING' },
+    completed: { order: 'COMPLETED', payment: 'PAID', rental: 'COMPLETED' },
+    cancelled: { order: 'CANCELLED', payment: 'PAYMENT_FAILED', rental: 'CANCELLED' },
+  }
+  const next = mapping[status] || { order: status.toUpperCase(), payment: 'UNPAID', rental: status.toUpperCase() }
+  const previous = await db.prepare('SELECT rental_status FROM orders WHERE id = ?').bind(orderId).first() as any
+  await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
+  if (previous && previous.rental_status !== next.rental) {
+    await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'SYSTEM', '订单状态同步').run()
+  }
 }
 
 export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string, bufferDays = 0): Promise<boolean> {

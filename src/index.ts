@@ -2299,7 +2299,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.payment_id),
-    c.env.RENT.prepare("UPDATE orders SET status = 'paid', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
+    c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'CONFIRMED', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
   ])
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
   await issueInvoice(c, order.id)
@@ -3051,7 +3051,7 @@ app.post('/api/device-agent/inspection', async (c) => {
 app.get('/api/device-agent/state', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
-  const rental = await c.env.RENT.prepare(`SELECT o.id, o.startDate AS start_date, o.endDate AS end_date, o.status, u.name AS customer_name FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.deviceId = ? AND o.status IN ('paid', 'active') ORDER BY CASE o.status WHEN 'active' THEN 0 ELSE 1 END, o.endDate DESC LIMIT 1`).bind(device.id).first()
+  const rental = await c.env.RENT.prepare(`SELECT o.id, o.startDate AS start_date, o.endDate AS end_date, o.status, COALESCE(o.rental_status, CASE o.status WHEN 'active' THEN 'ACTIVE' WHEN 'paid' THEN 'CONFIRMED' ELSE o.status END) AS rental_status, COALESCE(o.payment_status, CASE WHEN o.status IN ('paid', 'active') THEN 'PAID' ELSE 'UNPAID' END) AS payment_status, u.name AS customer_name FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.deviceId = ? AND o.status IN ('paid', 'active', 'pending_pickup', 'pending_return') ORDER BY CASE o.status WHEN 'active' THEN 0 WHEN 'pending_return' THEN 1 WHEN 'pending_pickup' THEN 2 ELSE 3 END, o.endDate DESC LIMIT 1`).bind(device.id).first()
   return c.json({ ok: true, serverTime: new Date().toISOString(), inspectionRequested: Boolean(device.inspection_requested_at), deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental })
 })
 
