@@ -20,7 +20,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
   const [customer, device, contract, completedRefund, transferProof] = await Promise.all([
     getUserById(c, order.userId), getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id),
-    c.env.RENT.prepare("SELECT type, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
+    c.env.RENT.prepare("SELECT type, status, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
     c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first()
   ]) as any[];
   let proofImage = ''
@@ -35,6 +35,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     'cancelled': { label: '已取消', color: '#dc2626', bg: '#fee2e2', icon: '❌' }
   };
   const currentStatus = statusLabels[order.status] || { label: order.status, color: '#6b7280', bg: '#f3f4f6', icon: '❓' };
+  const refundStatusLabel = completedRefund?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : completedRefund?.status === 'succeeded' ? (Number(completedRefund.refund_amount || 0) < Number(completedRefund.refundable_amount || completedRefund.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : '';
 
   const body = `
     <div class="panel hero order-detail-shell admin-order-detail" style="padding: 32px; margin-bottom: 24px;">
@@ -76,6 +77,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             <span style="color: #6b7280;">支付方式</span>
             <span style="font-weight: 500;">${order.paymentMethod || 'N/A'}</span>
           </div>
+          ${refundStatusLabel ? `<div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #fff7ed; border-radius: 8px;"><span style="color: #6b7280;">退款状态</span><strong>${escapeHtml(refundStatusLabel)}</strong></div>` : ''}
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
             <span style="color: #6b7280;">下单日期</span>
             <span style="font-weight: 500;">${order.createdAt}</span>
@@ -147,8 +149,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         <div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #c2410c;">💸 退款处理</h4>
           <p class="section-note">客户选择：${order.refundMethod === 'original' ? `原路退回${order.paymentMethod === 'bank_transfer' ? `（${escapeHtml(order.refundAccountName)} / ${escapeHtml(order.refundBsb)} / ${escapeHtml(order.refundAccountNumber)}）` : ''}` : '退回账户余额'}</p>
-          ${completedRefund ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
-          ${order.status === 'completed' && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/deposit-refund" onsubmit="return confirm('确定提交本次押金处理吗？每笔订单只能处理一次。');">
+          ${completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
+          ${order.status === 'completed' && completedRefund?.status !== 'succeeded' ? `<form method="POST" action="/admin/orders/${order.id}/deposit-refund" onsubmit="return confirm('确定提交本次押金处理吗？每笔订单只能处理一次。');">
             ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先按上方账户信息完成银行转账，再确认本操作。</div>' : ''}
             <label class="form-label" for="refundItem">退款项目</label>
             <select class="form-control" id="refundItem" name="refundItem" required onchange="document.getElementById('customRefundItem').hidden=this.value!=='other';document.getElementById('customRefundItem').required=this.value==='other';">

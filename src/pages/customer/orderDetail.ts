@@ -11,7 +11,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   if (!order || order.userId !== user.id) {
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在或无权访问。</p></div>', user)
   }
-  const [device, contract, transferProof, timeChanges, preInspection, depositRefund] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), ['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod)) ? c.env.RENT.prepare("SELECT pp.status, pp.reference_number, pp.rejection_reason FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() : Promise.resolve(null), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT snapshot_json, created_at FROM device_inspections WHERE rental_id = ? ORDER BY created_at DESC LIMIT 1').bind(order.id).first(), c.env.RENT.prepare("SELECT deduction_amount, deduction_reason FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first()]) as any[]
+  const [device, contract, transferProof, timeChanges, preInspection, depositRefund, refundStatus] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), ['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod)) ? c.env.RENT.prepare("SELECT pp.status, pp.reference_number, pp.rejection_reason FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() : Promise.resolve(null), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT snapshot_json, created_at FROM device_inspections WHERE rental_id = ? ORDER BY created_at DESC LIMIT 1').bind(order.id).first(), c.env.RENT.prepare("SELECT deduction_amount, deduction_reason FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(), c.env.RENT.prepare("SELECT status, refundable_amount, refund_amount FROM payment_refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first()]) as any[]
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const stripeFee = Math.round(Number(order.totalAmount) * 100 * 0.025) / 100
   const stripeTotal = Number(order.totalAmount) + stripeFee
@@ -27,6 +27,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   }
   const report = (data: any, keys: string[]) => `<dl class="data-list">${keys.map(key => `<div><dt>${esc(key)}</dt><dd>${esc(data[key])}</dd></div>`).join('')}</dl>`
   const deducted = Number(depositRefund?.deduction_amount || 0) > 0
+  const refundLabel = refundStatus?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : ''
   const windowsData = typeof contract?.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })() : (contract?.contract_data || {})
   const windowsPassword = String(windowsData.windows_password || '')
 
@@ -45,6 +46,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           <p><strong>总金额:</strong> ${formatCurrency(order.totalAmount)}</p>
           <p><strong>押金:</strong> ${formatCurrency(order.depositAmount)}</p>
           <p><strong>租金:</strong> ${formatCurrency(order.totalAmount - order.depositAmount)}</p>
+          ${refundLabel ? `<p><strong>退款状态:</strong> ${esc(refundLabel)}</p>` : ''}
         </div>
         <div class="order-info-card">
           <h3>设备信息</h3>
