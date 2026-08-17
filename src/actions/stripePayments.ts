@@ -215,6 +215,17 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   const existingRefund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded'").bind(order.id).first()
   if (existingRefund) return c.text('该订单的押金已经处理', 409)
   const payment = await paidPayment(c, order)
+  const selectedRefundMethod = String(form.refundMethod || order.refundMethod || 'balance')
+  if (!['balance', 'original', 'bank_transfer'].includes(selectedRefundMethod)) return c.text('退款方式无效', 400)
+  if (selectedRefundMethod === 'bank_transfer') order.refundMethod = 'original'
+  else order.refundMethod = selectedRefundMethod as any
+  if (selectedRefundMethod === 'bank_transfer') {
+    const bankAccount = { bsb: String(form.refundBsb || order.refundBsb || '').trim(), number: String(form.refundAccountNumber || order.refundAccountNumber || '').trim(), name: String(form.refundAccountName || order.refundAccountName || '').trim() }
+    if (!/^\d{3}-?\d{3}$/.test(bankAccount.bsb) || !/^\d{4,10}$/.test(bankAccount.number) || !bankAccount.name) return c.text('银行转账退款需要完整的 BSB、账号和账户名', 400)
+    order.refundBsb = bankAccount.bsb; order.refundAccountNumber = bankAccount.number; order.refundAccountName = bankAccount.name
+    payment.payment_method = 'bank_transfer'
+  }
+  await c.env.RENT.prepare('UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?').bind(order.refundMethod, order.refundBsb || null, order.refundAccountNumber || null, order.refundAccountName || null, order.id).run()
 
   const refundText = String(form.refundAmount ?? '').trim()
   const refundAmount = Number(refundText)
