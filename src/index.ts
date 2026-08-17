@@ -150,7 +150,7 @@ app.get('/styles.css', (c) => {
 
 app.get('/api/system-status', async (c) => {
   const user = c.get('user') as any
-  if (!user || !['ADMIN', 'STAFF'].includes(user.role)) return c.json({ status: 'unknown', label: '未授权' }, 403)
+  if (!user) return c.json({ status: 'unknown', label: '请登录' }, 401)
   try {
     await c.env.RENT.prepare('SELECT 1 AS ok').first()
     const recent = await c.env.RENT.prepare("SELECT COUNT(*) AS total FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
