@@ -2403,6 +2403,8 @@ export async function getContractVariableData(c: Context, contract: Contract, or
     c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
     contract.createdBy ? getUserById(c, contract.createdBy) : Promise.resolve(null),
   ]) as any[]
+  const invoice = await c.env.RENT.prepare("SELECT invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice' ORDER BY issued_at DESC LIMIT 1").bind(order.id).first() as any
+  const publicOrigin = new URL(c.req.url).origin
   const paid = Number(payments?.paid || 0)
   const deposit = Number(order.depositAmount ?? order.deposit_amount ?? 0)
   const total = Number(order.totalAmount ?? order.total_amount ?? 0)
@@ -2415,7 +2417,7 @@ export async function getContractVariableData(c: Context, contract: Contract, or
   const returnStatus = stored.damage_description ? 'Damaged' : stored.return_date ? (lateDays > 0 ? 'Overdue' : 'Returned') : (order.status === 'completed' ? 'Returned' : '')
   return {
     ...stored,
-    invoice_number: stored.invoice_number || (order.orderNo ? `INV-${order.orderNo}` : ''),
+    invoice_number: invoice?.invoice_number || stored.invoice_number || (order.orderNo ? `INV-${order.orderNo}` : ''),
     currency: payments?.currency || 'AUD',
     deposit_paid: Number(payments?.deposit_paid || 0).toFixed(2),
     rent_paid: Number(payments?.rent_paid || 0).toFixed(2),
@@ -2433,7 +2435,7 @@ export async function getContractVariableData(c: Context, contract: Contract, or
     return_status: returnStatus,
     created_by: creator?.name || contract.createdBy || '',
     contract_url: `/contract/view/${contract.id}`,
-    invoice_url: `/orders/${order.id}/invoice`,
+    invoice_url: new URL(`/orders/${order.id}/invoice`, publicOrigin).toString(),
   }
 }
 
