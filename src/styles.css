@@ -172,8 +172,31 @@
 .official-document__header *,
 .official-document__title * { color: #172033 !important; }
 .official-document__header .official-document__eyebrow { color: #2457d6 !important; }
+.official-document__archive {
+  margin: -72px -64px 42px !important;
+  padding: 42px 48px 38px !important;
+  min-height: 250px !important;
+  align-items: flex-start;
+  background: linear-gradient(135deg, #172331, #203448) !important;
+  color: #fff !important;
+  border-bottom: 1px solid rgba(255,255,255,.14);
+}
+.official-document__archive h1,
+.official-document__archive h2,
+.official-document__archive strong { color: #fff !important; }
+.official-document__archive p { color: #aebdca !important; }
+.official-document__archive .official-document__eyebrow { color: #ffad5c !important; letter-spacing: .16em; font-weight: 700; }
+.official-document__archive .official-document__company { margin: 8px 0 4px; color: #fff !important; font-size: 14px; }
+.official-document__archive .official-document__number { margin: 0; color: #aebdca !important; font: 500 14px/1.3 var(--font-mono); letter-spacing: .04em; }
+.official-document__archive .official-document__title { max-width: 46%; padding-top: 0; }
+.official-document__archive .official-document__title h2 { margin: 42px 0 8px; color: #fff !important; font-size: clamp(18px, 2.5vw, 28px); }
+.official-document__archive .official-document__title p { color: #aebdca !important; }
+.official-document__status { display: inline-block; padding: 10px 24px; color: #172331 !important; background: #ffad5c; border-radius: 999px; font: 700 13px/1 var(--font-mono); }
 @media (max-width: 700px) {
   .official-document__title { max-width: none; }
+  .official-document__archive { margin: -28px -20px 28px !important; padding: 28px 20px 30px !important; display: block; }
+  .official-document__archive .official-document__title { max-width: none; margin-top: 24px; text-align: left; }
+  .official-document__archive .official-document__title h2 { margin-top: 18px; }
 }
 .official-document h1,
 .official-document h2,
