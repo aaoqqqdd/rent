@@ -3011,7 +3011,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
         <div class="sidebar-footer">
           <div class="status-indicator online" id="system-status-indicator" title="正在检查系统状态">
             <span class="led"></span>
-            <span id="system-status-label">系统检查中</span>
+            <span id="system-status-label">正常</span>
           </div>
         </div>
       </aside>`

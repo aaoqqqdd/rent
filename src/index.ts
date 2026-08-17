@@ -150,15 +150,16 @@ app.get('/styles.css', (c) => {
 })
 
 app.get('/api/system-status', async (c) => {
-  const user = c.get('user') as any
-  if (!user) return c.json({ status: 'unknown', label: '请登录' }, 401)
+  const startedAt = Date.now()
   try {
     await c.env.RENT.prepare('SELECT 1 AS ok').first()
     const recent = await c.env.RENT.prepare("SELECT COUNT(*) AS total FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
     const errors = Number(recent?.total || 0)
-    return c.json({ status: errors ? 'degraded' : 'healthy', label: errors ? `有 ${errors} 个异常` : '系统正常', checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
+    const latency = Date.now() - startedAt
+    const delayed = latency >= 1000
+    return c.json({ status: errors ? 'degraded' : delayed ? 'delayed' : 'healthy', label: errors ? '异常' : delayed ? '延迟' : '正常', checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
   } catch (error: any) {
-    return c.json({ status: 'down', label: '系统异常', detail: error?.message || '数据库不可用' }, 503, { 'Cache-Control': 'no-store' })
+    return c.json({ status: 'down', label: '错误', detail: error?.message || '数据库不可用' }, 503, { 'Cache-Control': 'no-store' })
   }
 })
 

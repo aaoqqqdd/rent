@@ -164,11 +164,12 @@
             const status = result.data.status || (result.ok ? 'healthy' : 'down');
             label.textContent = result.data.label || '状态未知';
             indicator.classList.toggle('online', status === 'healthy');
-            indicator.classList.toggle('degraded', status === 'degraded');
+            indicator.classList.toggle('degraded', status === 'degraded' || status === 'delayed');
+            indicator.classList.toggle('delayed', status === 'delayed');
             indicator.classList.toggle('offline', status === 'down');
             indicator.title = result.data.checkedAt ? '最近检查：' + result.data.checkedAt : (result.data.detail || '系统状态');
           })
-          .catch(function () { label.textContent = '状态未知'; indicator.classList.remove('online', 'degraded'); indicator.classList.add('offline'); indicator.title = '无法连接状态检查服务'; });
+          .catch(function () { label.textContent = '错误'; indicator.classList.remove('online', 'degraded', 'delayed'); indicator.classList.add('offline'); indicator.title = '无法连接状态检查服务'; });
       };
       window.setTimeout(function () { check(); window.setInterval(check, 60000); }, 2000);
     });
