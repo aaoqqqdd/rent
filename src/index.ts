@@ -2541,7 +2541,7 @@ app.post('/admin/devices/:id/commands', async (c) => {
   if (type === 'SHOW_MESSAGE' && !JSON.parse(payload).message) return c.text('通知内容不能为空', 400)
   const expiryHours = ['PAUSE_RENTAL', 'RESUME_RENTAL'].includes(type) ? 1 : 24
   await c.env.RENT.prepare('INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\', ?))').bind(`cmd-${nanoid(12)}`, c.req.param('id'), type, payload, user.id, `+${expiryHours} hours`).run()
-  return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/edit?success=命令已发送，设备下次同步时执行`)
+  return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/control?success=命令已发送，设备下次同步时执行`)
 })
 
 app.post('/admin/devices/:id/edit', async (c) => {
@@ -2989,7 +2989,9 @@ app.get('/api/device-agent/commands', async (c) => {
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
   await ensureDeviceCommandTables(c.env.RENT)
   await c.env.RENT.prepare("UPDATE device_commands SET status = 'EXPIRED', completed_at = CURRENT_TIMESTAMP WHERE device_id = ? AND status IN ('PENDING', 'DELIVERED') AND datetime(expires_at) <= CURRENT_TIMESTAMP").bind(device.id).run()
-  const commands = (await c.env.RENT.prepare("SELECT id, device_id, command_type, payload, status, created_at, expires_at FROM device_commands WHERE device_id = ? AND status = 'PENDING' AND datetime(expires_at) > CURRENT_TIMESTAMP ORDER BY created_at ASC LIMIT 10").bind(device.id).all()).results || []
+  // Return the camelCase contract expected by the Windows client. SQLite column
+  // names use snake_case, and System.Text.Json does not translate underscores.
+  const commands = (await c.env.RENT.prepare("SELECT id, device_id AS deviceId, command_type AS commandType, payload, status, created_at AS createdAt, expires_at AS expiresAt FROM device_commands WHERE device_id = ? AND status = 'PENDING' AND datetime(expires_at) > CURRENT_TIMESTAMP ORDER BY created_at ASC LIMIT 10").bind(device.id).all()).results || []
   if (commands.length) await c.env.RENT.prepare(`UPDATE device_commands SET status = 'DELIVERED', claimed_at = COALESCE(claimed_at, CURRENT_TIMESTAMP) WHERE device_id = ? AND status = 'PENDING' AND id IN (${commands.map(() => '?').join(',')})`).bind(device.id, ...commands.map((item: any) => item.id)).run()
   return c.json({ ok: true, commands })
 })
