@@ -54,13 +54,13 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   } else if (status === 'bank_pending') {
     title = '银行转账等待审核';
-    message = '转账资料已提交，管理员核对到账信息后会更新订单状态。银行转账不经过 Stripe，无需等待 Stripe 确认。';
+    message = '转账资料已提交，管理员核对到账信息后会更新订单状态。请耐心等待，审核结果会通过邮件通知您。';
     icon = '<div class="icon-wrapper">⌛</div>';
     buttonText = '查看订单与审核状态';
     buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   } else if (status === 'fail') {
     title = '支付失败';
-    message = `合同付款未能成功，订单目前仍为待付款状态。请查看订单状态，系统不会自动重复扣款；超过 24 小时仍未付款时订单才会自动取消并释放设备。`;
+    message = `合同付款未能成功，订单目前仍为待付款状态。请查看订单状态，系统不会自动重复扣款；超过 24 小时仍未付款时订单会自动取消并释放设备。`;
     icon = `
       <div class="icon-wrapper danger">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-x"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -176,7 +176,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
           }
         }, 1000);
       })();
-    </script>` : status === 'stripe_pending' ? '<script>setTimeout(() => window.location.reload(), 3000)</script>' : ''}
+    </script>` : (status === 'stripe_pending' || status === 'bank_pending') ? '<script>setTimeout(() => window.location.reload(), 3000)</script>' : ''}
   `;
 
   return buildLayout('支付结果 - 电脑租赁管理系统', body, user);

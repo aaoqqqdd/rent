@@ -2300,6 +2300,21 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   ])
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
   await issueInvoice(c, order.id)
+  // Bank-transfer approval is a completed payment event too: enqueue the
+  // Windows rental-user creation immediately instead of waiting for the cron.
+  const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
+  if (contract?.contract_data) {
+    let contractData: any = {}
+    try { contractData = JSON.parse(contract.contract_data) } catch (_) {}
+    const password = String(contractData.windows_password || '')
+    const username = String(contractData.windows_username || order.customer?.name || 'RentalUser')
+    if (password && !contractData.windows_account_created) {
+      await ensureDeviceCommandTables(c.env.RENT)
+      await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CREATE_RENTAL_USER', ?, NULL, datetime('now', '+7 days'))").bind(`cmd-${nanoid(12)}`, order.deviceId, JSON.stringify({ username, password })).run()
+      contractData.windows_account_created = true
+      await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(contractData), contract.id).run()
+    }
+  }
   const customer = await getUserById(c, order.userId) as any
   const title = '付款审核已通过'
   const message = `您的订单 ${order.orderNo || order.id} 付款凭证已审核通过，订单已确认。`
