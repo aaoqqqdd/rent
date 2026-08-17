@@ -72,6 +72,7 @@ import {
   , renderEmailNotificationHtml
   , ensureNotificationsTable
   , getContractBySignToken
+  , enqueueRentalUserDeletion
 } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -2280,6 +2281,7 @@ app.post('/admin/orders/:id/update', async (c) => {
     if (!JSON.parse(contract?.contract_data || '{}').inspection_date && !force) return wantsJson ? c.json({ ok: false, error: '完成订单前必须提交归还验机' }, 409) : c.text('完成订单前必须提交归还验机', 409)
   }
   await updateOrderStatus(c, order.id, status)
+  if (status === 'completed') await enqueueRentalUserDeletion(c, order)
   if (status === 'cancelled' || status === 'completed') await releaseDeviceIfUnbooked(c, order.deviceId)
   if (status === 'paid') await ensureOrderNumber(c, order.id)
   if (wantsJson) return c.json({ ok: true })
@@ -3132,7 +3134,7 @@ export default {
               data.windows_account_created = true
               await env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), row.contract_id).run()
             }
-            if (String(row.endDate) < today && !data.windows_account_deleted) {
+            if (String(row.status) === 'completed' && !data.windows_account_deleted) {
               await env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'DELETE_RENTAL_USER', ?, NULL, datetime('now', '+30 days'))").bind(`cmd-${crypto.randomUUID()}`, row.deviceId, JSON.stringify({ username })).run()
               data.windows_account_deleted = true
               await env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), row.contract_id).run()
