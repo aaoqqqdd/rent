@@ -703,7 +703,7 @@ app.post('/admin/balance-topups/:id/approve', async (c) => {
   if (!claimed.meta?.changes) return c.text('充值记录已被其他管理员处理', 409)
   await c.env.RENT.batch([
     c.env.RENT.prepare('UPDATE users SET balance = ROUND(balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(Number(topup.amount), topup.user_id),
-    c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) SELECT ?, ?, ?, ROUND(balance + ?, 2), 'top_up_transfer', ?, ? FROM users WHERE id = ?").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, Number(topup.amount), `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id, topup.user_id),
+    c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) SELECT ?, ?, ?, ROUND(balance, 2), 'top_up_transfer', ?, ? FROM users WHERE id = ?").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id, topup.user_id),
   ])
   return c.redirect(`/admin/users/${topup.user_id}`)
 })
