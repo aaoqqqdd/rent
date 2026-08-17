@@ -4993,6 +4993,18 @@ tr:hover td {
 .contract-content table {
   width: 100%;
   table-layout: fixed;
+  display: table !important;
+  border-collapse: collapse !important;
+}
+.contract-viewer > .a4-document.contract-content > :first-child {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+.contract-content th,
+.contract-content td {
+  border: 1px solid #cbd5df !important;
+  padding: 10px 12px !important;
+  vertical-align: top;
 }
 .contract-content th,
 .contract-content td {
