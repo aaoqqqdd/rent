@@ -30,6 +30,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const refundLabel = refundStatus?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : ''
   const windowsData = typeof contract?.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })() : (contract?.contract_data || {})
   const windowsPassword = String(windowsData.windows_password || '')
+  const rentalStatusLabels: Record<string, string> = { pending: 'PENDING: 待处理', pending_payment: 'PENDING: 待处理', awaiting_signature: 'AWAITING_SIGNATURE: 待签合同', paid: 'CONFIRMED: 租赁已确认，等待开始', approved: 'CONFIRMED: 租赁已确认，等待开始', pending_pickup: 'READY_FOR_PICKUP: 待取货', active: 'ACTIVE: 租赁中', extended: 'EXTENDED: 已延期 / 租赁中', overdue: 'OVERDUE: 已逾期', suspended: 'SUSPENDED: 已暂停', pending_return: 'RETURN_PENDING: 待归还', returned: 'RETURNED: 已归还', completed: 'COMPLETED: 已完成', cancelled: 'CANCELLED: 已取消' }
 
   const body = `
     <div class="panel order-detail-shell customer-order-detail">
@@ -38,7 +39,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
       <div class="order-detail-grid">
         <div class="order-info-card">
           <h3>订单信息</h3>
-          <p><strong>订单状态:</strong> ${order.status}</p>
+          <p><strong>订单状态:</strong> ${esc(rentalStatusLabels[String(order.status)] || String(order.status))}</p>
           <p><strong>下单时间:</strong> ${order.orderDate}</p>
           <p><strong>租期:</strong> ${order.startDate} ${order.startPeriod === 'PM' ? '下午' : '上午'} 至 ${order.endDate} ${order.endPeriod === 'PM' ? '下午' : '上午'}（${order.rentalPeriod || 0} 天）</p>
           <p><strong>领取/归还地点:</strong> ${order.pickupLocation || '待确认'} / ${order.returnLocation || '待确认'}</p>

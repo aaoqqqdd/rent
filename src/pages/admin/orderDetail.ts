@@ -28,11 +28,20 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
 
   const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
+    'pending': { label: 'PENDING: 待处理', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
     'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
-    'paid': { label: '已付款', color: '#059669', bg: '#d1fae5', icon: '💳' },
-    'active': { label: '租赁中', color: '#2563eb', bg: '#dbeafe', icon: '📦' },
-    'completed': { label: '已完成', color: '#0891b2', bg: '#cffafe', icon: '✅' },
-    'cancelled': { label: '已取消', color: '#dc2626', bg: '#fee2e2', icon: '❌' }
+    'awaiting_signature': { label: 'AWAITING_SIGNATURE: 待签合同', color: '#7c3aed', bg: '#ede9fe', icon: '✍️' },
+    'paid': { label: 'CONFIRMED: 租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '💳' },
+    'approved': { label: 'CONFIRMED: 租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '✅' },
+    'pending_pickup': { label: 'READY_FOR_PICKUP: 待取货', color: '#0891b2', bg: '#cffafe', icon: '📦' },
+    'active': { label: 'ACTIVE: 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '📦' },
+    'extended': { label: 'EXTENDED: 已延期 / 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '🔁' },
+    'overdue': { label: 'OVERDUE: 已逾期', color: '#dc2626', bg: '#fee2e2', icon: '⚠️' },
+    'suspended': { label: 'SUSPENDED: 已暂停', color: '#6b7280', bg: '#f3f4f6', icon: '⏸️' },
+    'pending_return': { label: 'RETURN_PENDING: 待归还', color: '#d97706', bg: '#fef3c7', icon: '↩️' },
+    'returned': { label: 'RETURNED: 已归还', color: '#0891b2', bg: '#cffafe', icon: '📥' },
+    'completed': { label: 'COMPLETED: 已完成', color: '#0891b2', bg: '#cffafe', icon: '✅' },
+    'cancelled': { label: 'CANCELLED: 已取消', color: '#dc2626', bg: '#fee2e2', icon: '❌' }
   };
   const currentStatus = statusLabels[order.status] || { label: order.status, color: '#6b7280', bg: '#f3f4f6', icon: '❓' };
   const refundStatusLabel = completedRefund?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : completedRefund?.status === 'succeeded' ? (Number(completedRefund.refund_amount || 0) < Number(completedRefund.refundable_amount || completedRefund.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : '';
