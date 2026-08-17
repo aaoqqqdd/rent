@@ -92,6 +92,20 @@ function parseFormBody(body: string | null | undefined): Record<string, string> 
   return form
 }
 
+async function ensureDeviceCommandTables(db: any): Promise<void> {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS device_commands (
+    id TEXT PRIMARY KEY NOT NULL, device_id TEXT NOT NULL, command_type TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL, claimed_at TEXT, completed_at TEXT
+  )`).run()
+  await db.prepare(`CREATE TABLE IF NOT EXISTS device_command_results (
+    id TEXT PRIMARY KEY NOT NULL, command_id TEXT NOT NULL UNIQUE, device_id TEXT NOT NULL,
+    success INTEGER NOT NULL DEFAULT 0, result_code TEXT NOT NULL, result_message TEXT,
+    executed_at TEXT NOT NULL, reported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run()
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_device_commands_poll ON device_commands(device_id, status, expires_at, created_at)').run()
+}
+
 function requestHost(c: any): string {
   return String(c.req.header('Host') || '').split(':')[0].trim().toLowerCase()
 }
@@ -1136,6 +1150,7 @@ app.post('/customer/orders/:id/windows-password', async (c) => {
   if (!isStrongPassword(password)) return c.redirect(`/customer/orders/${encodeURIComponent(order.id)}?error=Windows密码格式无效`)
   const contract = await getContractByOrderId(c, order.id)
   if (!contract) return c.text('合同不存在', 409)
+  await ensureDeviceCommandTables(c.env.RENT)
   const data = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : { ...(contract.contract_data || {}) }
   data.windows_password = password
   await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
@@ -2453,6 +2468,7 @@ app.get('/admin/devices/:id/edit', async (c) => {
   if (!device) {
     return c.redirect('/admin/devices')
   }
+  await ensureDeviceCommandTables(c.env.RENT)
   const unavailableDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(device.id).all()).results || []).map((row: any) => row.unavailable_date)
   const commandHistory = (await c.env.RENT.prepare(`SELECT dc.created_at, dc.command_type, dc.status, dc.payload, dcr.result_message FROM device_commands dc LEFT JOIN device_command_results dcr ON dcr.command_id = dc.id WHERE dc.device_id = ? ORDER BY dc.created_at DESC LIMIT 20`).bind(device.id).all()).results || []
   return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates }, commandHistory))
@@ -2506,6 +2522,7 @@ app.post('/api/device-agent/register-legacy', async (c) => {
 app.post('/admin/devices/:id/commands', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureDeviceCommandTables(c.env.RENT)
   const device = await c.env.RENT.prepare('SELECT id FROM devices WHERE id = ?').bind(c.req.param('id')).first()
   if (!device) return c.text('设备不存在', 404)
   const form = await c.req.parseBody()
@@ -2962,6 +2979,7 @@ app.get('/api/device-agent/state', async (c) => {
 app.get('/api/device-agent/commands', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  await ensureDeviceCommandTables(c.env.RENT)
   await c.env.RENT.prepare("UPDATE device_commands SET status = 'EXPIRED', completed_at = CURRENT_TIMESTAMP WHERE device_id = ? AND status IN ('PENDING', 'DELIVERED') AND datetime(expires_at) <= CURRENT_TIMESTAMP").bind(device.id).run()
   const commands = (await c.env.RENT.prepare("SELECT id, device_id, command_type, payload, status, created_at, expires_at FROM device_commands WHERE device_id = ? AND status = 'PENDING' AND datetime(expires_at) > CURRENT_TIMESTAMP ORDER BY created_at ASC LIMIT 10").bind(device.id).all()).results || []
   if (commands.length) await c.env.RENT.prepare(`UPDATE device_commands SET status = 'DELIVERED', claimed_at = COALESCE(claimed_at, CURRENT_TIMESTAMP) WHERE device_id = ? AND status = 'PENDING' AND id IN (${commands.map(() => '?').join(',')})`).bind(device.id, ...commands.map((item: any) => item.id)).run()
@@ -2971,6 +2989,7 @@ app.get('/api/device-agent/commands', async (c) => {
 app.post('/api/device-agent/command-results', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  await ensureDeviceCommandTables(c.env.RENT)
   const payload = await c.req.json().catch(() => ({})) as any
   const commandId = String(payload.commandId || '').slice(0, 120)
   const resultCode = String(payload.resultCode || 'FAILED').slice(0, 40)
@@ -3022,6 +3041,7 @@ export default {
     ctx.waitUntil(
       (async () => {
         try {
+          await ensureDeviceCommandTables(env.RENT)
           const lifecycleRows = (await env.RENT.prepare(`SELECT o.id, o.deviceId, o.status, o.startDate, o.endDate, c.id AS contract_id, c.contract_data, u.name AS customer_name FROM orders o JOIN contracts c ON c.orderId = o.id LEFT JOIN users u ON u.id = o.userId WHERE o.status IN ('paid', 'active', 'completed') AND c.status IN ('signed', 'completed')`).all()).results || []
           const today = new Date().toISOString().slice(0, 10)
           for (const row of lifecycleRows as any[]) {
