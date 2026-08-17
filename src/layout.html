@@ -5,11 +5,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{TITLE}}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
-    rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 
 </head>
@@ -37,8 +32,6 @@
     <aside class="notification-drawer" id="notification-drawer" aria-hidden="true"><div class="notification-drawer__head"><div><span class="section-code">INBOX</span><h2>通知中心</h2></div><button type="button" class="notification-drawer__close" aria-label="关闭通知">×</button></div><div class="notification-drawer__body" id="notification-drawer-body"><p class="empty-state">正在加载通知…</p></div><a class="button button-primary notification-drawer__all" href="/notifications">查看全部通知</a></aside>
     {{FOOTER}}
   </div>
-  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
   <script>
     window.createRichTextEditor = function (selector, options) {
       if (window.Quill) {
@@ -155,7 +148,8 @@
       const render = function () { if (!body) return; const pageSize = Math.max(1, Math.floor((window.innerHeight - 260) / 92)); const pageCount = Math.max(1, Math.ceil(notifications.length / pageSize)); notificationPage = Math.min(notificationPage, pageCount - 1); const pageItems = notifications.slice(notificationPage * pageSize, (notificationPage + 1) * pageSize); body.innerHTML = pageItems.length ? pageItems.map(function (item) { return '<a class="notification-drawer__item" href="/notifications/' + encodeURIComponent(item.id) + '"><strong></strong><p></p><small></small></a>'; }).join('') : '<p class="empty-state">暂无通知</p>'; pageItems.forEach(function (item, i) { const row = body.children[i]; if (row) { row.querySelector('strong').textContent = item.title || '新通知'; row.querySelector('p').textContent = item.message || ''; row.querySelector('small').textContent = item.created_at || ''; } }); if (pageCount > 1) { const pager = document.createElement('div'); pager.className = 'notification-drawer__pager'; pager.innerHTML = '<button type="button" class="button button-sm button-secondary">上一页</button><span>第 ' + (notificationPage + 1) + ' / ' + pageCount + ' 页</span><button type="button" class="button button-sm button-secondary">下一页</button>'; const buttons = pager.querySelectorAll('button'); buttons[0].disabled = notificationPage === 0; buttons[1].disabled = notificationPage >= pageCount - 1; buttons[0].addEventListener('click', function () { notificationPage--; render(); }); buttons[1].addEventListener('click', function () { notificationPage++; render(); }); body.appendChild(pager); } };
       bell?.addEventListener('click', function () { const open = !drawer.classList.contains('is-open'); drawer.classList.toggle('is-open', open); drawer.setAttribute('aria-hidden', String(!open)); bell.setAttribute('aria-expanded', String(open)); if (open) render(); });
       drawer?.querySelector('.notification-drawer__close')?.addEventListener('click', function () { drawer.classList.remove('is-open'); drawer.setAttribute('aria-hidden', 'true'); bell?.setAttribute('aria-expanded', 'false'); });
-      refresh(); window.setInterval(refresh, 30000);
+      // Do not compete with the first paint; notifications refresh after the page is usable.
+      window.setTimeout(function () { refresh(); window.setInterval(refresh, 60000); }, 1500);
       window.addEventListener('resize', function () { if (drawer?.classList.contains('is-open')) render(); });
     });
 
@@ -176,7 +170,7 @@
           })
           .catch(function () { label.textContent = '状态未知'; indicator.classList.remove('online', 'degraded'); indicator.classList.add('offline'); indicator.title = '无法连接状态检查服务'; });
       };
-      check(); window.setInterval(check, 30000);
+      window.setTimeout(function () { check(); window.setInterval(check, 60000); }, 2000);
     });
 
     document.addEventListener('DOMContentLoaded', function () {
@@ -223,8 +217,7 @@
         if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
         document.removeEventListener('click', requestNotificationPermission);
       }, { once: true });
-      pollNotifications();
-      window.setInterval(pollNotifications, 30000);
+      window.setTimeout(function () { pollNotifications(); window.setInterval(pollNotifications, 60000); }, 2500);
     });
 
     document.addEventListener('DOMContentLoaded', function () {

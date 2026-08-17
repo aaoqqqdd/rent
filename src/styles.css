@@ -1553,7 +1553,7 @@ button:disabled {
 }
 .motion-status-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.35em; height: 1.35em; margin-right: 8px; border-radius: 50%; font-weight: 800; line-height: 1; vertical-align: -0.15em; }
 .page-transition-curtain { position: fixed; z-index: 9999; inset: 0; overflow: hidden; background: #0b1420; transform: scaleY(0); transform-origin: top; pointer-events: none; }
-.initial-load-curtain { transform: scaleY(1); transform-origin: bottom; transition: transform .38s cubic-bezier(.22,.8,.25,1); }
+.initial-load-curtain { transform: scaleY(1); transform-origin: bottom; transition: transform .18s cubic-bezier(.22,.8,.25,1); }
 .auth-page .initial-load-curtain { display: none; }
 .initial-load-curtain.initial-load-complete { transform: scaleY(0); }
 .initial-load-screen { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 20px; color: #f5f8fa; background: radial-gradient(circle at 50% 43%, rgb(42 76 104 / .8) 0, rgb(23 35 49 / .96) 38%, #0b1420 78%); font-family: var(--font-body, Arial, sans-serif); isolation: isolate; }

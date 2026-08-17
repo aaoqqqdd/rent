@@ -2510,6 +2510,8 @@ app.post('/admin/devices/:id/edit', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
+  if (![form.name, form.brand, form.model, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号和序列号', 400)
+  if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
   if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
   if (!['normal', 'return', 'maintenance', 'lost'].includes(form.deviceMode || 'normal')) return c.text('客户设备状态无效', 400)
@@ -2533,7 +2535,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]
   await c.env.RENT.prepare('DELETE FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).run()
   if (dates.length) await c.env.RENT.batch(dates.map(date => c.env.RENT.prepare('INSERT INTO device_unavailable_dates (device_id, unavailable_date) VALUES (?, ?)').bind(c.req.param('id'), date)))
-  return c.redirect('/admin/devices')
+  return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/edit?success=设备资料已保存`)
 })
 
 app.post('/admin/devices/:id/delete', async (c) => {

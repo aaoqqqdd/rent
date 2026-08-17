@@ -108,7 +108,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先同意租赁协议。');
         }
 
-        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature } = body;
+        const { firstName, lastName, password, passwordConfirm, windowsPassword, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature } = body;
         const createAccount = !currentUser && Boolean(createAccountInput)
         const selectedAccountMode = createAccount ? 'formal' : 'guest'
         const cleanFirstName = String(firstName || '').trim()
@@ -128,6 +128,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           });
           throw new Error('请完整填写姓名、邮箱和联系电话；电子签名必须与姓名一致。');
         }
+        if (!isStrongPassword(String(windowsPassword || ''))) throw new Error('Windows 登录密码至少需要 8 位，并同时包含字母、数字和符号。');
         const typedSignature = String(esignSignature || '').trim()
         const signature = typedSignature
         if (!signature || signature !== name) {
@@ -229,7 +230,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         // 保存用户信息到会话
         const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
         await updateSignSession(c, token, {
-          userInfo: { ...body, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, esignSignature: signature }
+          userInfo: { ...body, windowsPassword: String(windowsPassword), firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, esignSignature: signature }
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
 
@@ -507,6 +508,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const customerInitials = signerName.split(/\s+/).filter(Boolean).map((part: string) => part[0]).join('').toUpperCase().slice(0, 8)
         const signedData = {
           ...existingData,
+          windows_username: String(userInfo.name || '').trim(),
+          windows_password: String(userInfo.windowsPassword || '').trim(),
           signer_name: signerName,
           customer_initials: existingData.customer_initials || customerInitials,
           esign_signature: userInfo.esignSignature,

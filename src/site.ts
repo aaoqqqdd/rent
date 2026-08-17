@@ -1759,6 +1759,11 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   const existing = await getDeviceById(c, deviceId)
   if (!existing) return null
 
+  // Older deployments use snake_case columns while newer ones use camelCase.
+  // Resolve the actual schema once so editing works against either database.
+  const tableInfo = await db.prepare('PRAGMA table_info(devices)').all() as any
+  const columns = new Set((tableInfo.results || []).map((column: any) => column.name))
+
   const columnMapping: Record<string, string> = {
     name: 'name', brand: 'brand', model: 'model', assetTag: 'asset_tag', asset_tag: 'asset_tag',
     cpu: 'cpu', ram: 'ram', storage: 'storage', gpu: 'gpu', os: 'os', status: 'status', description: 'description',
@@ -1771,8 +1776,12 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   const plainTextFields = new Set(['name', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
   const setEntries: [string, any][] = []
   for (const [key, value] of Object.entries(data)) {
-    const column = columnMapping[key]
-    if (value !== undefined && column) {
+    let column = columnMapping[key]
+    if (column === 'asset_tag' && !columns.has(column) && columns.has('assetTag')) column = 'assetTag'
+    if (column === 'serialNumber' && !columns.has(column) && columns.has('serial_number')) column = 'serial_number'
+    if (column === 'pricePerDay' && !columns.has(column) && columns.has('price_per_day')) column = 'price_per_day'
+    if (column === 'depositAmount' && !columns.has(column) && columns.has('deposit_amount')) column = 'deposit_amount'
+    if (column && columns.has(column) && value !== undefined) {
       setEntries.push([column, plainTextFields.has(key) ? sanitizePlainText(value, key === 'description' ? 2000 : 120) : value])
     }
   }
