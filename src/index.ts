@@ -1306,6 +1306,19 @@ app.get('/staff/orders/:id', async (c) => {
   return c.html(await pages.renderStaffOrderDetail(c, user, c.req.param('id')))
 })
 
+// 绑定员工可暂停自己负责客户的租赁；其他员工不能越权操作。
+app.post('/staff/orders/:orderId/suspend', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('orderId'))
+  const customer = order ? await getUserById(c, order.userId) : null
+  if (!order || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
+  if (!['active', 'extended', 'overdue'].includes(String(order.status)) || !canTransitionOrder(order.status, 'suspended')) return c.text('当前订单状态不能暂停', 409)
+  await updateOrderStatus(c, order.id, 'suspended')
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}暂停。`, orderId: order.id })
+  return c.redirect(`/staff/orders/${order.id}`)
+})
+
 // 员工操作 - 已付款订单完成取货后进入租赁中
 app.post('/staff/orders/:orderId/pickup', async (c) => {
   const user = c.get('user')

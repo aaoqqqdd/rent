@@ -56,6 +56,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
             </form>
           ` : ''}
           ${order.status === 'active' && order.early_return_requested_at ? `<div class="alert">客户已申请提前归还，等待审批。<form method="post" action="/staff/orders/${order.id}/early-return/approve" style="display:inline;margin-left:12px" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-sm button-warning" type="submit">批准提前归还</button></form></div>` : ''}
+          ${['active', 'extended', 'overdue'].includes(String(order.status)) ? `<form method="POST" action="/staff/orders/${order.id}/suspend" data-site-confirm="确认暂停这笔租赁吗？"><button class="button button-warning" type="submit">暂停租赁</button><small class="form-text">仅绑定该客户的员工或管理员可以操作。</small></form>` : ''}
           ${['active', 'pending_return'].includes(String(order.status)) ? `
             <a class="button button-success" href="/staff/orders/${order.id}/inspection">设备归还 / 归还验机</a>
           ` : ''}
