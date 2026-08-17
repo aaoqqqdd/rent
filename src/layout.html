@@ -37,8 +37,8 @@
     <aside class="notification-drawer" id="notification-drawer" aria-hidden="true"><div class="notification-drawer__head"><div><span class="section-code">INBOX</span><h2>通知中心</h2></div><button type="button" class="notification-drawer__close" aria-label="关闭通知">×</button></div><div class="notification-drawer__body" id="notification-drawer-body"><p class="empty-state">正在加载通知…</p></div><a class="button button-primary notification-drawer__all" href="/notifications">查看全部通知</a></aside>
     {{FOOTER}}
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
   <script>
     window.createRichTextEditor = function (selector, options) {
       if (window.Quill) {
@@ -381,6 +381,14 @@
           oldScript.replaceWith(script);
         });
       };
+      const pageCache = new Map();
+      const prefetch = function (url) {
+        if (pageCache.has(url.href)) return;
+        pageCache.set(url.href, fetch(url.href, { headers: { 'X-Site-Navigation': 'partial', Accept: 'text/html' }, credentials: 'same-origin' }).then(function (response) {
+          if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('prefetch failed');
+          return response.text();
+        }).catch(function () { pageCache.delete(url.href); return null; }));
+      };
       const setActiveLink = function (nextPath) {
         const path = String(nextPath || window.location.pathname).split('?')[0].replace(/\/$/, '') || '/';
         document.querySelectorAll('.sidebar-section a').forEach(function (link) { link.classList.remove('active'); link.removeAttribute('aria-current'); });
@@ -390,9 +398,9 @@
       const navigate = async function (url, addHistory) {
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
         try {
-          const response = await fetch(url.href, { headers: { 'X-Site-Navigation': 'partial', Accept: 'text/html' }, credentials: 'same-origin' });
-          if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('navigation failed');
-          const html = await response.text();
+          prefetch(url);
+          const html = await pageCache.get(url.href);
+          if (!html) throw new Error('navigation failed');
           const parsed = new DOMParser().parseFromString(html, 'text/html');
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
@@ -429,6 +437,13 @@
         event.stopImmediatePropagation();
         navigate(new URL(link.href), true);
       }, true);
+      document.addEventListener('pointerover', function (event) {
+        const target = event.target instanceof Element ? event.target : null;
+        const link = target?.closest('a');
+        if (!link || link.dataset.fullNavigation === 'true' || link.target === '_blank') return;
+        const url = new URL(link.href, window.location.href);
+        if (url.origin === window.location.origin && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/webhooks/')) prefetch(url);
+      }, { passive: true });
       window.addEventListener('popstate', function () {
         if (window.hasUnsavedChanges && window.hasUnsavedChanges()) {
           if (!window.confirm('当前内容尚未保存，确定要离开吗？')) { window.history.pushState({}, '', window.location.href); return; }

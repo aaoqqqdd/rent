@@ -2438,7 +2438,8 @@ app.get('/admin/devices/:id/edit', async (c) => {
     return c.redirect('/admin/devices')
   }
   const unavailableDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(device.id).all()).results || []).map((row: any) => row.unavailable_date)
-  return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates }))
+  const commandHistory = (await c.env.RENT.prepare(`SELECT dc.created_at, dc.command_type, dc.status, dc.payload, dcr.result_message FROM device_commands dc LEFT JOIN device_command_results dcr ON dcr.command_id = dc.id WHERE dc.device_id = ? ORDER BY dc.created_at DESC LIMIT 20`).bind(device.id).all()).results || []
+  return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates }, commandHistory))
 })
 
 app.get('/admin/devices/:id/agent-binding-status', async (c) => {
