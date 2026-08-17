@@ -233,6 +233,10 @@ export interface Order {
   handover_by?: string | null
   return_received_at?: string | null
   return_received_by?: string | null
+  early_return_requested_at?: string | null
+  early_return_requested_by?: string | null
+  early_return_approved_at?: string | null
+  early_return_approved_by?: string | null
   paymentMethod: 'card' | 'bank_transfer' | 'alipay' | 'wechat' | 'balance'
   totalAmount: number
   depositAmount: number

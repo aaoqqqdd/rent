@@ -789,10 +789,29 @@ app.post('/customer/orders/:id/early-return', async (c) => {
   const order = await getOrderById(c, c.req.param('id'))
   if (!order || order.userId !== user.id) return c.html(renderForbidden(), 403)
   if (order.status !== 'active') return c.redirect(`/customer/orders/${order.id}?error=${encodeURIComponent('当前订单不能申请提前归还')}`)
-  await updateOrderStatus(c, order.id, 'pending_return')
   const customer = await getUserById(c, user.id)
-  if (customer?.staffId) await createNotification(c, { recipientId: customer.staffId, type: 'early_return', title: '客户申请提前归还', message: `${customer.name || '客户'} 已申请订单 ${order.orderNo || order.id} 提前归还，请安排验机。`, orderId: order.id })
-  return c.redirect(`/customer/orders/${order.id}?success=${encodeURIComponent('已提交提前归还申请，请等待工作人员验机')}`)
+  if (order.early_return_requested_at) return c.redirect(`/customer/orders/${order.id}?error=${encodeURIComponent('提前归还申请已提交，请等待工作人员或管理员审批')}`)
+  await c.env.RENT.prepare('UPDATE orders SET early_return_requested_at = CURRENT_TIMESTAMP, early_return_requested_by = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = ?').bind(user.id, order.id, 'active').run()
+  const admins = (await getUsers(c)).filter((account: any) => account.role === 'ADMIN' && account.status !== 'inactive')
+  const recipients = [...(customer?.staffId ? [customer.staffId] : []), ...admins.map((admin: any) => admin.id)].filter((id, index, all) => all.indexOf(id) === index)
+  await Promise.all(recipients.map(recipientId => createNotification(c, { recipientId, type: 'early_return_request', title: '客户申请提前归还', message: `${customer?.name || '客户'} 已申请订单 ${order.orderNo || order.id} 提前归还，请审批。`, orderId: order.id })))
+  return c.redirect(`/customer/orders/${order.id}?success=${encodeURIComponent('已提交提前归还申请，等待绑定员工或管理员审批')}`)
+})
+
+app.post('/staff/orders/:orderId/early-return/approve', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('orderId')) as any
+  if (!order || order.status !== 'active' || !order.early_return_requested_at) return c.text('没有待审批的提前归还申请', 409)
+  const customer = await getUserById(c, order.userId)
+  if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
+  await c.env.RENT.batch([
+    c.env.RENT.prepare("UPDATE orders SET early_return_approved_at = CURRENT_TIMESTAMP, early_return_approved_by = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active' AND early_return_requested_at IS NOT NULL").bind(user.id, order.id),
+    c.env.RENT.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, order.id, order.rental_status || 'ACTIVE', 'RETURN_PENDING', 'MANUAL', user.id, '提前归还申请已批准')
+  ])
+  await updateOrderStatus(c, order.id, 'pending_return')
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'early_return_approved', title: '提前归还申请已批准', message: `订单 ${order.orderNo || order.id} 的提前归还申请已批准，请按通知安排归还设备。`, orderId: order.id })
+  return c.redirect(`/staff/orders/${order.id}`)
 })
 
 app.post('/customer/orders/:id/returned', async (c) => {
