@@ -5387,6 +5387,51 @@ tr:hover td {
 .brand-suggestions button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 42px; padding: 9px 11px; color: #243241; background: transparent; border: 0; border-radius: 7px; font: 600 .88rem/1.2 var(--font-body); text-align: left; cursor: pointer; }
 .brand-suggestions button:hover, .brand-suggestions button:focus-visible { color: #172033; background: #fff4d7; outline: 0; }
 .brand-suggestions small { display: grid; place-items: center; width: 24px; height: 24px; color: #956300; background: #fff1c2; border-radius: 6px; font: 700 .62rem/1 var(--font-mono); }
+
+/* Receipt redesign: a fixed rental-archive masthead keeps the document identity visible while reading. */
+.official-document-page { max-width: 1060px; margin: 0 auto; }
+.official-document { overflow: visible !important; border-radius: 0 !important; }
+.official-document__archive {
+  position: sticky !important;
+  top: 0;
+  z-index: 20;
+  min-height: 220px !important;
+  margin: -72px -64px 42px !important;
+  padding: 40px 48px 34px !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, .72fr);
+  gap: 36px;
+  align-items: start !important;
+  background: #172331 !important;
+  box-shadow: 0 16px 34px rgba(15, 35, 49, .24);
+}
+.official-document__archive > div { min-width: 0; }
+.official-document__archive .official-document__eyebrow { margin: 0 0 20px !important; color: #ffad5c !important; font: 700 12px/1.2 var(--font-mono); letter-spacing: .2em; }
+.official-document__archive h1 { margin: 0 0 14px !important; color: #fff !important; font: 700 clamp(42px, 6vw, 76px)/.95 var(--font-display); letter-spacing: -.06em; }
+.official-document__archive .official-document__company { margin: 0 0 7px !important; color: #dce7ef !important; font-size: 15px; }
+.official-document__archive .official-document__number { margin: 0 !important; color: #9fb3c2 !important; font: 600 14px/1.4 var(--font-mono); letter-spacing: .04em; }
+.official-document__archive .official-document__title { max-width: none !important; display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
+.official-document__archive .official-document__status { order: 0; padding: 11px 22px; color: #172331 !important; background: #ffad5c !important; border-radius: 999px; font: 700 13px/1 var(--font-mono); }
+.official-document__archive .official-document__title h2 { order: 1; margin: 32px 0 8px !important; color: #fff !important; font: 600 clamp(20px, 2.8vw, 32px)/1.1 var(--font-display); letter-spacing: -.03em; }
+.official-document__archive .official-document__title p { order: 2; margin: 0 !important; color: #aebdca !important; font: 500 13px/1.4 var(--font-mono); }
+.official-document__rule { height: 4px !important; margin: 0 0 34px !important; background: #ffad5c !important; }
+.official-document__meta { gap: 0 !important; margin-bottom: 36px !important; border: 1px solid #dbe2ea; }
+.official-document__meta > div { min-width: 0; padding: 20px 18px; border-right: 1px solid #dbe2ea; }
+.official-document__meta > div:last-child { border-right: 0; }
+.official-document__meta span { color: #2457d6 !important; font: 700 10px/1.2 var(--font-mono); }
+.official-document__meta strong { font-size: 15px; }
+.official-document__table th { background: #172331 !important; color: #fff !important; }
+.official-document__grand-total { border-top-color: #ffad5c !important; }
+@media (max-width: 700px) {
+  .official-document__archive { grid-template-columns: 1fr; gap: 18px; min-height: 0 !important; padding: 28px 20px 26px !important; margin: -28px -20px 28px !important; }
+  .official-document__archive .official-document__title { align-items: flex-start; text-align: left; }
+  .official-document__archive .official-document__title h2 { margin-top: 18px !important; }
+  .official-document__meta > div { border-right: 0; border-bottom: 1px solid #dbe2ea; }
+  .official-document__meta > div:last-child { border-bottom: 0; }
+}
+@media print {
+  .official-document__archive { position: relative !important; top: auto !important; box-shadow: none !important; }
+}
 .bsb-entry { position: relative; display: block; }
 .bsb-entry .form-control { width: 100%; padding-right: 58px; }
 .bsb-logo { position: absolute; z-index: 1; top: 50%; right: 10px; width: 32px; height: 32px; display: block !important; transform: translateY(-50%); border: 1px solid #d7e0e6; border-radius: 6px; background-color: #fff; background-position: center; background-repeat: no-repeat; background-size: 26px 26px; pointer-events: none; }
