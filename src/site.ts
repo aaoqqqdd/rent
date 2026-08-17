@@ -2509,8 +2509,74 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const gstAmount = systemSettings.companyDetails.gstIncluded ? taxableGross / 11 : 0
   const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
+  const invoiceId = `inv-${order.id}`
   await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, receipt_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET receipt_number = COALESCE(invoices.receipt_number, excluded.receipt_number), subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
-    .bind(`inv-${order.id}`, String(data.invoice_number || generateReferenceNumber('INV')), String(data.receipt_number || generateReferenceNumber('RCP')), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
+    .bind(invoiceId, String(data.invoice_number || generateReferenceNumber('INV')), String(data.receipt_number || generateReferenceNumber('RCP')), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
+  await ensureReceiptAndTransactions(c, order, invoiceId)
+}
+
+async function ensureFinanceTables(c: Context): Promise<void> {
+  await c.env.RENT.batch([
+    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS transactions (
+      id TEXT PRIMARY KEY NOT NULL, transaction_number TEXT NOT NULL UNIQUE,
+      order_id TEXT, customer_id TEXT, invoice_id TEXT, transaction_type TEXT NOT NULL,
+      payment_method TEXT NOT NULL, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'AUD',
+      status TEXT NOT NULL DEFAULT 'PENDING', provider TEXT, provider_transaction_id TEXT,
+      provider_reference TEXT, description TEXT, metadata TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, created_by TEXT
+    )`),
+    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS receipts (
+      id TEXT PRIMARY KEY NOT NULL, receipt_number TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL,
+      invoice_id TEXT, customer_id TEXT NOT NULL, currency TEXT NOT NULL DEFAULT 'AUD',
+      subtotal REAL NOT NULL DEFAULT 0, gst_amount REAL NOT NULL DEFAULT 0,
+      deposit_amount REAL NOT NULL DEFAULT 0, discount_amount REAL NOT NULL DEFAULT 0,
+      total_paid REAL NOT NULL DEFAULT 0, issued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'issued', document_url TEXT, document_hash TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS receipt_transactions (
+      receipt_id TEXT NOT NULL, transaction_id TEXT NOT NULL,
+      PRIMARY KEY (receipt_id, transaction_id)
+    )`),
+  ])
+}
+
+function financePaymentMethod(method: unknown): string {
+  if (method === 'card') return 'CARD'
+  if (method === 'bank_transfer') return 'BANK_TRANSFER'
+  if (method === 'balance') return 'ACCOUNT_BALANCE'
+  return String(method || 'OTHER').toUpperCase()
+}
+
+async function ensureReceiptAndTransactions(c: Context, order: any, invoiceId: string): Promise<void> {
+  await ensureFinanceTables(c)
+  const invoice = await c.env.RENT.prepare('SELECT * FROM invoices WHERE id = ?').bind(invoiceId).first() as any
+  if (!invoice) return
+  const payments = (await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at ASC, created_at ASC").bind(order.id).all()).results as any[]
+  if (!payments.length) return
+  const receiptId = `rcpt-${order.id}`
+  const paidTotal = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+  await c.env.RENT.prepare(`INSERT INTO receipts (id, receipt_number, order_id, invoice_id, customer_id, currency, subtotal, gst_amount, deposit_amount, discount_amount, total_paid, status, document_url)
+    VALUES (?, ?, ?, ?, ?, 'AUD', ?, ?, ?, ?, ?, 'issued', ?)
+    ON CONFLICT(id) DO UPDATE SET receipt_number = excluded.receipt_number, invoice_id = excluded.invoice_id,
+      subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount,
+      discount_amount = excluded.discount_amount, total_paid = excluded.total_paid, status = 'issued', document_url = excluded.document_url`)
+    .bind(receiptId, String(invoice.receipt_number), order.id, invoiceId, order.userId, Number(invoice.subtotal || 0), Number(invoice.gst_amount || 0), Number(invoice.deposit_amount || 0), Math.max(0, Number(order.discountAmount || order.discount_amount || 0)), paidTotal, `/orders/${order.id}/invoice`).run()
+
+  for (const payment of payments) {
+    const transactionNumber = /^TXN-[0-9]{8}-[A-Z0-9]{6}$/.test(String(payment.transaction_id || ''))
+      ? String(payment.transaction_id)
+      : generateReferenceNumber('TXN')
+    if (payment.transaction_id !== transactionNumber) {
+      await c.env.RENT.prepare('UPDATE payments SET transaction_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(transactionNumber, payment.id).run()
+    }
+    const transactionId = `txn-${payment.id}`
+    await c.env.RENT.prepare(`INSERT OR IGNORE INTO transactions
+      (id, transaction_number, order_id, customer_id, invoice_id, transaction_type, payment_method, amount, currency, status, provider, provider_transaction_id, description, completed_at)
+      VALUES (?, ?, ?, ?, ?, 'RENTAL_PAYMENT', ?, ?, ?, 'SUCCESS', ?, ?, ?, '租赁订单付款', CURRENT_TIMESTAMP)`)
+      .bind(transactionId, transactionNumber, order.id, order.userId, invoiceId, financePaymentMethod(payment.payment_method), Number(payment.amount || 0), String(payment.currency || 'AUD').toUpperCase(), payment.payment_method === 'card' ? 'STRIPE' : null, payment.stripe_payment_intent_id || null).run()
+    await c.env.RENT.prepare('INSERT OR IGNORE INTO receipt_transactions (receipt_id, transaction_id) VALUES (?, ?)').bind(receiptId, transactionId).run()
+  }
 }
 
 export async function issueCreditNote(c: Context, orderId: string, amount: number, refundedProcessingFee = 0, refundKey = orderId): Promise<void> {
@@ -2915,7 +2981,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const navIcons: Record<string, string> = {
     '/customer/dashboard': '⌂', '/customer/rentals': '▤', '/customer/orders': '▦',
-    '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣',
+    '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣', '/customer/balance': '◌', '/customer/guest': '▰', '/customer/guest/upgrade': '↥',
     '/staff/dashboard': '◍', '/staff/orders': '▰', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
     '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭',
     '/notifications': 'N', '/admin/notifications': '☷', '/admin/dashboard': '◉', '/admin/users': '♙', '/admin/orders': '▥',
@@ -2948,6 +3014,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       '%': '<circle cx="8" cy="8" r="2"></circle><circle cx="16" cy="16" r="2"></circle><path d="m17 7-10 10"></path>',
       '◇': '<path d="m12 3 8 9-8 9-8-9 8-9Z"></path><path d="M9 12h6"></path>',
       '✉': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="m5 8 7 5 7-5"></path>'
+      ,'◌': '<circle cx="12" cy="12" r="8"></circle><path d="M12 7v5l3 2"></path><path d="M7 5 5 3M17 5l2-2"></path>'
+      ,'↥': '<path d="M12 19V5"></path><path d="m7 10 5-5 5 5"></path><path d="M5 19h14"></path>'
       ,'⌂': '<path d="m4 11 8-7 8 7"></path><path d="M6 10v10h12V10M10 20v-6h4v6"></path>'
       ,'◍': '<circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle><path d="M12 4v5M20 12h-5"></path>'
       ,'▰': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="M4 10h16M8 14h3M8 16h6"></path>'

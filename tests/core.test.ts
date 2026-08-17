@@ -122,7 +122,7 @@ test('contract links resolve the database orderId field', async () => {
   assert.equal(contract?.rental_id, 'o1')
 })
 
-test('order numbers are created once after payment and can include Stripe reference', async () => {
+test('order numbers are created once after payment with the public reference format', async () => {
   let orderNo: string | null = null
   const db = {
     prepare(sql: string) {
@@ -136,7 +136,7 @@ test('order numbers are created once after payment and can include Stripe refere
   }
   const context = { env: { RENT: db } } as any
   const generated = await ensureOrderNumber(context, 'o1', 'pi_123abc')
-  assert.match(generated, /^OD\d{8}PI123ABC$/)
+  assert.match(generated, /^ORD-\d{8}-[A-Z0-9]{6}$/)
   assert.equal(await ensureOrderNumber(context, 'o1', 'pi_different'), generated)
 })
 
