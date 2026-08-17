@@ -2895,12 +2895,11 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
-            ${renderNavLink('/admin/notifications', '通知中心')}
-            ${renderNavLink('/notifications', '发布通知')}
+            ${renderNavGroup('通知管理', [['/admin/notifications', '通知中心'], ['/notifications', '发布通知']])}
             ${renderNavGroup('客户与用户', [['/admin/users', '用户管理']])}
             ${renderNavGroup('订单与合同', [['/admin/orders', '订单管理'], ['/admin/contracts', '合同管理']])}
             ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/calendar', '租赁日历']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/payment-reviews', '充值与转账审核'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/revenue-stats', '收入统计'], ['/admin/payment-reviews', '充值与转账审核'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('协议与设置', [['/admin/templates', '协议与模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}
         </div>

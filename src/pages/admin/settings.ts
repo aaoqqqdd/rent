@@ -154,8 +154,11 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
     </div>
 
     <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        document.getElementById('systemSettingsForm').addEventListener('submit', function(event) {
+      (function() {
+        const form = document.getElementById('systemSettingsForm');
+        if (!form || form.dataset.settingsReady === 'true') return;
+        form.dataset.settingsReady = 'true';
+        form.addEventListener('submit', function(event) {
         event.preventDefault();
 
         const formData = new FormData(this);
@@ -253,8 +256,8 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           console.error('Error saving settings:', error);
           alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。'));
         });
-      });
-      });
+        });
+      })();
     </script>
   `;
 

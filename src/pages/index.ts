@@ -48,6 +48,7 @@ export * from './staff/inspectionRecords';
 
 export * from './admin/dashboard';
 export * from './admin/finance';
+export * from './admin/revenueStats';
 export * from './admin/coupons';
 export * from './admin/devices';
 export * from './admin/deviceNew';

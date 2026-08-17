@@ -5009,14 +5009,14 @@ tr:hover td {
   .contract-viewer > .a4-document .contract-content h3:first-child { margin-block-start: 0 !important; }
   .a4-document { page-break-after: auto; break-after: auto; }
   .contract-print-page .a4-document.contract-content { width: auto !important; max-width: none !important; }
-  .contract-print-page .a4-document.contract-content > * { break-inside: avoid; }
-  .contract-print-page table { break-inside: auto; }
+  .contract-print-page .a4-document.contract-content > * { break-inside: auto; }
+  .contract-print-page table { break-inside: auto; page-break-inside: auto; }
   .contract-print-page .contract-content table {
     width: 100% !important;
     table-layout: fixed;
     border-collapse: collapse;
-    break-inside: avoid;
-    page-break-inside: avoid;
+    break-inside: auto;
+    page-break-inside: auto;
   }
   .contract-print-page .contract-content tr,
   .contract-print-page .contract-content td,
@@ -5024,7 +5024,10 @@ tr:hover td {
     break-inside: avoid;
     page-break-inside: avoid;
   }
-  .contract-print-page tr, .contract-print-page img { break-inside: avoid; }
+  .contract-print-page tr, .contract-print-page img { break-inside: avoid; page-break-inside: avoid; }
+  .contract-print-page h1, .contract-print-page h2, .contract-print-page h3,
+  .contract-print-page h4, .contract-print-page h5, .contract-print-page h6,
+  .contract-print-page .signature-block { break-after: avoid; page-break-after: avoid; }
   .contract-print-page .page-break { height: 0; margin: 0; border: 0; page-break-after: always; break-after: page; }
   .contract-print-page .page-break::before { display: none; }
   .contract-print-page .page-break + p:has(> br:only-child) { display: none; }

@@ -376,15 +376,13 @@
           const parsed = new DOMParser().parseFromString(html, 'text/html');
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
-          const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-          const swap = function () { document.body.classList.add('has-navigated'); content.replaceChildren(...Array.from(nextContent.childNodes)); document.title = parsed.title; runScripts(content); setActiveLink(url.pathname); if (window.runFilterTabMotion) window.runFilterTabMotion(); if (window.runNavigationMotion) window.runNavigationMotion(); };
-          if (!reduceMotion && window.gsap) {
-            await new Promise(function (resolve) { window.gsap.to(content, { autoAlpha: 0, y: -8, duration: .18, ease: 'power2.in', onComplete: resolve }); });
-            swap();
-            window.gsap.fromTo(content, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: .48, ease: 'power3.out' });
-          } else {
-            swap();
-          }
+          // 侧边栏切换只替换内容区，不做整页淡出/淡入，避免看起来像刷新网页。
+          document.body.classList.add('has-navigated');
+          content.replaceChildren(...Array.from(nextContent.childNodes));
+          document.title = parsed.title;
+          runScripts(content);
+          setActiveLink(url.pathname);
+          if (window.runFilterTabMotion) window.runFilterTabMotion();
           if (addHistory) window.history.pushState({}, '', url.href);
         } catch (error) {
           // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。

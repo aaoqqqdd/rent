@@ -2311,9 +2311,14 @@ app.get('/admin/finance', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  const { getOrdersAsync } = await import('./site')
-  const orders = await getOrdersAsync(c)
-  return c.html(pages.renderAdminFinance(user, orders))
+  const revenueData = await pages.getRevenueData(c)
+  return c.html(pages.renderAdminFinance(user, revenueData.orders, revenueData.refunds, revenueData.withdrawals))
+})
+
+app.get('/admin/revenue-stats', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(pages.renderAdminRevenueStats(user, await pages.getRevenueData(c)))
 })
 
 app.get('/admin/coupons', async (c) => {
@@ -2530,16 +2535,21 @@ app.post('/admin/coupons', async (c) => {
   const deviceId = String(form.deviceId || '').trim() || null
   const brand = String(form.brand || '').trim().slice(0, 120) || null
   const configKeyword = String(form.configKeyword || '').trim().slice(0, 120) || null
-  if (!code || !['percent', 'fixed'].includes(discountType) || !Number.isFinite(discountValue) || discountValue <= 0 || (discountType === 'percent' && discountValue > 100) || (maxUses !== null && (!Number.isInteger(maxUses) || maxUses < 1))) return c.redirect('/admin/settings')
-  await c.env.RENT.prepare('INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(`cp-${nanoid(10)}`, code, discountType, discountValue, maxUses, String(form.startsAt || '').replace('T', ' ') || null, String(form.expiresAt || '').replace('T', ' ') || null, admin.id, deviceId, brand, configKeyword).run()
-  return c.redirect('/admin/settings')
+  if (!code || !['percent', 'fixed'].includes(discountType) || !Number.isFinite(discountValue) || discountValue <= 0 || (discountType === 'percent' && discountValue > 100) || (maxUses !== null && (!Number.isInteger(maxUses) || maxUses < 1))) return c.redirect('/admin/coupons?error=' + encodeURIComponent('请检查优惠码、折扣值和最多使用次数'))
+  try {
+    await c.env.RENT.prepare('INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(`cp-${nanoid(10)}`, code, discountType, discountValue, maxUses, String(form.startsAt || '').replace('T', ' ') || null, String(form.expiresAt || '').replace('T', ' ') || null, admin.id, deviceId, brand, configKeyword).run()
+  } catch (error: any) {
+    if (String(error?.message || '').toLowerCase().includes('unique')) return c.redirect('/admin/coupons?error=' + encodeURIComponent('优惠码已存在，请换一个代码'))
+    throw error
+  }
+  return c.redirect('/admin/coupons?success=' + encodeURIComponent('优惠码创建成功'))
 })
 
 app.post('/admin/coupons/:id/delete', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
   await c.env.RENT.prepare('DELETE FROM coupons WHERE id = ?').bind(c.req.param('id')).run()
-  return c.redirect('/admin/settings')
+  return c.redirect('/admin/coupons?success=' + encodeURIComponent('优惠码已删除'))
 })
 
 app.post('/admin/coupons/:id/toggle', async (c) => {

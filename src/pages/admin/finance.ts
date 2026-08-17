@@ -5,14 +5,12 @@
 
 import { buildLayout, formatCurrency } from '../../site';
 
-export function renderAdminFinance(user: any, orders: any[] = []) {
-  // 计算真实财务数据
+export function renderAdminFinance(user: any, orders: any[] = [], refunds: any[] = [], withdrawals: any[] = []) {
   const totalRevenue = orders
     .filter(o => o.status === 'completed' || o.status === 'paid' || o.status === 'active')
     .reduce((sum, order) => sum + (order.totalAmount || order.total_amount || 0), 0)
 
-  // 估算支出（押金退还等，暂时按收入的15%估算）
-  const totalExpense = Math.round(totalRevenue * 0.15 * 100) / 100
+  const totalExpense = refunds.reduce((sum, item) => sum + Number(item.refund_amount || 0), 0) + withdrawals.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   const netProfit = Math.round((totalRevenue - totalExpense) * 100) / 100
 
   const body = `
@@ -79,7 +77,7 @@ export function renderAdminFinance(user: any, orders: any[] = []) {
           <p class="amount">${formatCurrency(totalExpense)}</p>
         </div>
         <div class="finance-card">
-          <h3>净利润</h3>
+          <h3>净收入</h3>
           <p class="amount">${formatCurrency(netProfit)}</p>
         </div>
       </div>
@@ -88,7 +86,7 @@ export function renderAdminFinance(user: any, orders: any[] = []) {
         <div class="finance-section">
           <h4>📊 收入统计</h4>
           <p>查看订单收入和租赁交易明细。</p>
-          <a href="/admin/orders" class="button button-sm">查看订单</a>
+          <a href="/admin/revenue-stats" class="button button-sm">查看收入统计</a>
         </div>
         <div class="finance-section">
           <h4>💸 退款处理</h4>
