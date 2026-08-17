@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -426,6 +426,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               const deducted = Number((deduction as any).meta?.changes ?? (deduction as any).changes ?? 0)
               if (deducted < 1) throw new Error('账户余额已发生变化，当前余额不足，请刷新后重试')
               orderStatus = 'paid'; // 余额支付成功，直接标记为已支付
+              await recordBalanceTransaction(c, userId, -Number(totalAmount), 'rental_payment_debit', '账户余额支付租赁订单', null, Number((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0));
               await logError(c, 'INFO', `Balance payment processed successfully`, undefined, { token, userId, amount: totalAmount, remainingBalance: currentBalance - totalAmount });
             } else {
               await logError(c, 'WARNING', `Insufficient balance for payment`, undefined, { token, userId, balance: currentBalance, required: totalAmount });

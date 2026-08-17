@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 
 function cents(value: number): number {
@@ -176,6 +176,8 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
   const response = c.json({ received: true })
   if (paidOrderId) {
     try {
+      const paidOrder = await getOrderById(c, paidOrderId)
+      if (paidOrder) await recordExternalRentalFlow(c, paidOrder.userId, Number(paidOrder.totalAmount), '信用卡', null)
       await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
       await issueInvoice(c, paidOrderId)
       await enqueueRentalUserCreation(c, await getOrderById(c, paidOrderId))
@@ -254,6 +256,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
+  if (totalRefundAmount > 0 && channel === 'balance') await recordBalanceTransaction(c, order.userId, totalRefundAmount, 'refund_credit', `${refundItemLabel}退回账户余额`, admin.id)
   if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount, refundedProcessingFee, `deposit-${nanoid(12)}`)
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
@@ -286,6 +289,7 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
       .bind(`rf-${nanoid(12)}`, order.id, payment.id, amount, amount, stripeRefundId, admin.id, channel),
     ...(channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(amount, order.userId)] : []),
   ])
+  if (channel === 'balance') await recordBalanceTransaction(c, order.userId, amount, 'refund_credit', `提前归还未使用租金退款`, admin.id)
   await issueCreditNote(c, order.id, amount, 0, `early-${nanoid(12)}`)
 }
 

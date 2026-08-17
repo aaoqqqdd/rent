@@ -271,6 +271,20 @@ export async function createNotification(c: Context, notification: { recipientId
     .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null).run()
 }
 
+export async function recordBalanceTransaction(c: Context, userId: string, amount: number, type: string, reason: string, createdBy?: string | null, balanceAfter?: number): Promise<void> {
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount REAL NOT NULL, balance_after REAL NOT NULL, type TEXT NOT NULL, reason TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
+  const current = balanceAfter ?? Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
+  await c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`bt-${crypto.randomUUID()}`, userId, Number(amount.toFixed(2)), Number(current.toFixed(2)), type, reason, createdBy || null).run()
+}
+
+export async function recordExternalRentalFlow(c: Context, userId: string, amount: number, method: string, createdBy?: string | null): Promise<void> {
+  const value = Number(amount || 0)
+  if (value <= 0) return
+  const balance = Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
+  await recordBalanceTransaction(c, userId, value, 'rental_payment_credit', `${method}租赁付款入账`, createdBy, balance)
+  await recordBalanceTransaction(c, userId, -value, 'rental_payment_debit', `${method}租赁付款扣款`, createdBy, balance)
+}
+
 export async function enqueueRentalUserCreation(c: Context, order: any): Promise<void> {
   const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
   if (!contract?.contract_data) return

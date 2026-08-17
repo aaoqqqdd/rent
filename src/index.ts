@@ -74,6 +74,7 @@ import {
   , ensureNotificationsTable
   , getContractBySignToken
   , enqueueRentalUserDeletion
+  , recordExternalRentalFlow
 } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -2312,6 +2313,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
     c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
   ])
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
+  await recordExternalRentalFlow(c, order.userId, Number(order.totalAmount), '银行转账', user.id)
   await issueInvoice(c, order.id)
   // Bank-transfer approval is a completed payment event too: enqueue the
   // Windows rental-user creation immediately instead of waiting for the cron.
