@@ -101,7 +101,7 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
           const currentOrder = orders.find(o => (o.device_id || o.deviceId) === device.id && (o.status === 'active' || o.status === 'paid'))
           const customer = currentOrder ? users.find(u => u.id === (currentOrder.userId)) : null
           const deviceStatus = deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
-          return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${customer?.name ?? '无'}</td><td><a class="link-button" href="/admin/devices/${device.id}/edit">编辑</a></td></tr>`
+          return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${customer?.name ?? '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">EXE管理</a></td></tr>`
         }).join('')}
       </tbody></table>
       `}
