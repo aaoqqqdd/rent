@@ -45,6 +45,8 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
       </div>
     `;
     cardClass = 'success';
+    buttonText = '返回客户中心';
+    buttonLink = user?.role === 'CUSTOMER' ? (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard') : `/login?redirect=${encodeURIComponent('/customer/dashboard')}`;
   } else if (status === 'cancelled') {
     title = '已取消 Stripe 支付';
     message = '本次没有扣款，订单仍等待付款。您可以手动返回选择其他支付方式；页面将在 <strong id="cancelled-payment-countdown">5</strong> 秒后自动返回。';
