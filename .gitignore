@@ -4,6 +4,7 @@ windows-agent/bin/
 windows-agent/obj/
 windows-agent/dist/
 
+
 # dev
 .yarn/
 !.yarn/releases
@@ -34,3 +35,5 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+
+设计文档/付款
