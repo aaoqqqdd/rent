@@ -10,21 +10,21 @@ export async function renderCustomerRentals(c: Context, user: any) {
   const rentals = await getOrdersForUser(c, user.id);
 
   const statusMap: Record<string, string> = {
-    'pending_approval': 'PENDING: 待处理',
-    'pending': 'PENDING: 待处理',
-    'approved': 'CONFIRMED: 租赁已确认，等待开始',
-    'pending_payment': 'PENDING: 待处理',
-    'awaiting_signature': 'AWAITING_SIGNATURE: 待签合同',
-    'pending_pickup': 'READY_FOR_PICKUP: 待取货',
-    'pending_return': 'RETURN_PENDING: 待归还',
-    'paid': 'CONFIRMED: 租赁已确认，等待开始',
-    'active': 'ACTIVE: 租赁中',
-    'extended': 'EXTENDED: 已延期 / 租赁中',
-    'overdue': 'OVERDUE: 已逾期',
-    'suspended': 'SUSPENDED: 已暂停',
-    'returned': 'RETURNED: 已归还',
-    'completed': 'COMPLETED: 已完成',
-    'cancelled': 'CANCELLED: 已取消'
+    'pending_approval': '待处理',
+    'pending': '待处理',
+    'approved': '租赁已确认，等待开始',
+    'pending_payment': '待处理',
+    'awaiting_signature': '待签合同',
+    'pending_pickup': '待取货',
+    'pending_return': '待归还',
+    'paid': '租赁已确认，等待开始',
+    'active': '租赁中',
+    'extended': '已延期 / 租赁中',
+    'overdue': '已逾期',
+    'suspended': '已暂停',
+    'returned': '已归还',
+    'completed': '已完成',
+    'cancelled': '已取消'
   };
 
   const body = `

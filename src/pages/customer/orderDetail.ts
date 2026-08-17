@@ -27,10 +27,10 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   }
   const report = (data: any, keys: string[]) => `<dl class="data-list">${keys.map(key => `<div><dt>${esc(key)}</dt><dd>${esc(data[key])}</dd></div>`).join('')}</dl>`
   const deducted = Number(depositRefund?.deduction_amount || 0) > 0
-  const refundLabel = refundStatus?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : ''
+  const refundLabel = refundStatus?.status === 'pending' ? '退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? '部分退款' : '已退款') : ''
   const windowsData = typeof contract?.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })() : (contract?.contract_data || {})
   const windowsPassword = String(windowsData.windows_password || '')
-  const rentalStatusLabels: Record<string, string> = { pending: 'PENDING: 待处理', pending_payment: 'PENDING: 待处理', awaiting_signature: 'AWAITING_SIGNATURE: 待签合同', paid: 'CONFIRMED: 租赁已确认，等待开始', approved: 'CONFIRMED: 租赁已确认，等待开始', pending_pickup: 'READY_FOR_PICKUP: 待取货', active: 'ACTIVE: 租赁中', extended: 'EXTENDED: 已延期 / 租赁中', overdue: 'OVERDUE: 已逾期', suspended: 'SUSPENDED: 已暂停', pending_return: 'RETURN_PENDING: 待归还', returned: 'RETURNED: 已归还', completed: 'COMPLETED: 已完成', cancelled: 'CANCELLED: 已取消' }
+  const rentalStatusLabels: Record<string, string> = { pending: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', paid: '租赁已确认，等待开始', approved: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
 
   const body = `
     <div class="panel order-detail-shell customer-order-detail">
