@@ -56,6 +56,8 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
   `;
   referredUsersQuery += 'GROUP BY u.id';
   const referredUsers = await c.env.RENT.prepare(referredUsersQuery).bind(user.id).all();
+  const referralLink = currentUser.referralCode ? new URL(`/register?ref=${encodeURIComponent(currentUser.referralCode)}`, c.req?.url || 'https://example.com/').toString() : ''
+  const referralShareText = referralLink ? `邀请你使用 PC Rental 租赁电脑，注册时可通过我的推荐链接加入：\n${referralLink}` : ''
 
   const body = `
     <div class="panel">
@@ -80,7 +82,8 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
             </div>
             <p class="form-text">分享推荐码或推荐链接给朋友。推荐关系会在对方注册时锁定，符合条件的订单完成后发放推荐奖励。</p>
             <label class="form-label" for="referralLinkInput">我的推荐链接</label>
-            <div class="input-group"><input type="text" class="form-control" value="${`/register?ref=${encodeURIComponent(currentUser.referralCode)}`}" readonly id="referralLinkInput" /><button class="button button-secondary" onclick="copyReferralLink()">复制链接</button></div>
+            <div class="input-group"><input type="text" class="form-control" value="${referralLink}" readonly id="referralLinkInput" /><button class="button button-secondary" onclick="copyReferralLink()">复制分享内容</button></div>
+            <textarea class="form-control referral-share-text" id="referralShareText" readonly rows="3" aria-label="推荐分享内容">${referralShareText}</textarea>
           </div>
           
           <form method="POST" action="/customer/referral/leave" style="margin-top: 16px;">
@@ -247,10 +250,10 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
         alert('推荐码已复制到剪贴板！');
       }
       function copyReferralLink() {
-        const input = document.getElementById('referralLinkInput');
+        const input = document.getElementById('referralShareText');
         input.select();
         document.execCommand('copy');
-        alert('推荐链接已复制到剪贴板！');
+        alert('推荐语和完整链接已复制到剪贴板！');
       }
     </script>
   `;

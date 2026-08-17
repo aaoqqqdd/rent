@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -546,51 +546,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await logError(c, 'INFO', `Contract signed successfully`, undefined, { token, contractId: contract.id });
 
 
-        // 4. 如果有推荐人，计算并记录佣金
+        // 推荐关系在注册时锁定；签约不再把旧“佣金”直接入账。
         const referrerId = signSession.referrerId as string | null;
         const newUserId = userId;
 
-        if (referrerId) {
-          await logError(c, 'DEBUG', `Processing referral commission`, undefined, { token, referrerId, newUserId });
-          // 获取租赁订单的总金额
-          const rental = await c.env.RENT.prepare('SELECT totalAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
-          if (rental) {
-            // 获取推荐人的分成比例
-            const referrer = await c.env.RENT.prepare('SELECT commission_rate FROM users WHERE id = ?').bind(referrerId).first() as any;
-            const commissionRate = referrer?.commission_rate || 25.0; // 默认25%
-            const commissionAmount = (rental.totalAmount * commissionRate) / 100;
-
-            await logError(c, 'INFO', `Calculated commission for referrer`, undefined, {
-              token,
-              referrerId,
-              commissionAmount,
-              commissionRate,
-              rentalTotal: rental.totalAmount
-            });
-
-            // 创建佣金记录 - 使用snake_case列名匹配数据库schema
-            const commissionId = `c-${contract.id}`;
-            const commissionInsert = await c.env.RENT.prepare(`
-              INSERT OR IGNORE INTO commission_records (id, referrer_id, rental_id, customer_id, amount, rate, status)
-              VALUES (?, ?, ?, ?, ?, ?, 'pending')
-            `).bind(commissionId, referrerId, contract.rentalId, newUserId, commissionAmount, commissionRate).run();
-
-            // 仅首次创建佣金记录时增加余额，付款重试不会重复计佣。
-            if (Number((commissionInsert as any).meta?.changes ?? (commissionInsert as any).changes ?? 0) > 0) {
-              await c.env.RENT.prepare(`
-                UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-              `).bind(commissionAmount, referrerId).run();
-            }
-
-            await logError(c, 'INFO', `Commission recorded and referrer balance updated`, undefined, {
-              token,
-              commissionId,
-              referrerId,
-              commissionAmount
-            });
-          }
-        }
+        await lockReferralRelationship(c, referrerId, newUserId, String(userInfo.referrer || ''))
 
         // 5. 清理会话
         await deleteSignSession(c, token);

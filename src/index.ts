@@ -76,6 +76,7 @@ import {
   , getContractBySignToken
   , enqueueRentalUserDeletion
   , recordExternalRentalFlow
+  , lockReferralRelationship
 } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -406,7 +407,16 @@ app.get('/register', async (c) => {
   if (user) {
     return c.redirect('/')
   }
-  return c.html(pages.renderRegister(undefined, String((c.env as any).TURNSTILE_SITE_KEY || '')))
+  const referralCode = String(c.req.query('ref') || '').trim().toUpperCase().slice(0, 10)
+  return c.html(pages.renderRegister(undefined, String((c.env as any).TURNSTILE_SITE_KEY || ''), referralCode))
+})
+
+app.get('/ref/:code', async (c) => {
+  const code = String(c.req.param('code') || '').trim().toUpperCase()
+  if (!code || !await findUserByReferralCode(c, code)) return c.redirect('/register?error=invalid_referral')
+  const response = c.redirect(`/register?ref=${encodeURIComponent(code)}`)
+  response.headers.append('Set-Cookie', `referral_code=${encodeURIComponent(code)}; Path=/; SameSite=Lax; Max-Age=${30 * 24 * 60 * 60}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
+  return response
 })
 
 async function ensureEmailVerificationSchema(c: any) {
@@ -461,7 +471,9 @@ for (const [path, title, key, code] of [
 app.post('/register', async (c) => {
   const form = await c.req.parseBody()
   const { firstName, lastName, email, password, passwordConfirm, referrer, countryCode, phone } = form
-  const renderRegistrationError = (message: string) => pages.renderRegister(message, String((c.env as any).TURNSTILE_SITE_KEY || ''))
+  const cookieReferral = (c.req.header('cookie') || '').match(/(?:^|;\s*)referral_code=([^;]+)/)?.[1] || ''
+  const suppliedReferral = decodeURIComponent(String(referrer || cookieReferral || '')).trim().toUpperCase().slice(0, 10)
+  const renderRegistrationError = (message: string) => pages.renderRegister(message, String((c.env as any).TURNSTILE_SITE_KEY || ''), suppliedReferral)
   const turnstileToken = String(form['cf-turnstile-response'] || '')
   const turnstileSecret = String((c.env as any).TURNSTILE_SECRET_KEY || '')
   if (!turnstileSecret || !turnstileToken) return c.html(renderRegistrationError('请先完成人机验证。'), 400)
@@ -485,8 +497,8 @@ app.post('/register', async (c) => {
 
   // 处理推荐人
   let referrerId = null;
-  if (referrer && referrer.trim()) {
-    const referrerUser = await findUserByReferralCode(c, referrer)
+  if (suppliedReferral) {
+    const referrerUser = await findUserByReferralCode(c, suppliedReferral)
     if (referrerUser) {
       referrerId = referrerUser.id;
     } else {
@@ -511,6 +523,7 @@ app.post('/register', async (c) => {
   }
 
   await insertUser(c, newUser)
+  await lockReferralRelationship(c, referrerId, newUserId, suppliedReferral)
   // 协议确认记录独立保存，不写入协议正文或合同内容。
   for (const [column, definition] of [
     ['user_agreement_accepted', 'INTEGER NOT NULL DEFAULT 0'],

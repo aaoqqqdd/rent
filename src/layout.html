@@ -4,6 +4,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#172331" />
+  <meta name="color-scheme" content="light" />
   <title>{{TITLE}}</title>
   <link rel="stylesheet" href="/styles.css">
 
@@ -11,6 +13,7 @@
 
 <body class="{{BODY_CLASS}}">
   <div class="page">
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div class="page-transition-curtain initial-load-curtain" aria-hidden="false" role="status" aria-label="正在加载工作台"><div class="initial-load-screen"><div class="initial-load-mark">PR</div><div class="initial-load-brand">PC RENTAL<span>ASSET OPS / MEL</span></div><div class="initial-load-progress"><i></i></div><div class="initial-load-status">正在载入工作台 <b>01</b></div></div></div>
     <header class="desktop-header">
       <a href="/" class="logo"><span class="logo-mark">PR</span><span class="logo-copy">PC
@@ -26,7 +29,7 @@
     </header>
     <div class="container">
       {{SIDEBAR}}
-      <main class="content">{{CONTENT}}</main>
+      <main class="content" id="main-content" tabindex="-1">{{CONTENT}}</main>
     </div>
     <nav class="mobile-bottom-nav" aria-label="移动端导航">{{MOBILE_NAV}}</nav>
     <aside class="notification-drawer" id="notification-drawer" aria-hidden="true"><div class="notification-drawer__head"><div><span class="section-code">INBOX</span><h2>通知中心</h2></div><button type="button" class="notification-drawer__close" aria-label="关闭通知">×</button></div><div class="notification-drawer__body" id="notification-drawer-body"><p class="empty-state">正在加载通知…</p></div><a class="button button-primary notification-drawer__all" href="/notifications">查看全部通知</a></aside>
@@ -505,7 +508,7 @@
     // 局部导航后的页面不重复播放整页入场动画。
     if (document.body.classList.contains('has-navigated')) return;
     if (window.ScrollTrigger) window.ScrollTrigger.getAll().forEach(function (trigger) { trigger.kill(); });
-    const motionItems = '.page-header, .entity-header, .panel, .card, .error-page, .signing-shell, .payment-result-card, .contract-viewer, .legal-document';
+    const motionItems = '.page-header, .entity-header, .panel, .card, .stat-card, .review-stat, .error-page, .signing-shell, .payment-result-card, .contract-viewer, .legal-document';
     if (reduceMotion) { window.gsap.set(content.querySelectorAll(motionItems), { clearProps: 'all' }); return; }
     const items = content.querySelectorAll(motionItems);
     window.gsap.fromTo(items, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.42, ease: 'power2.out', stagger: 0.055, overwrite: 'auto' });

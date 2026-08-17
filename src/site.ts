@@ -6,7 +6,7 @@
 import { Context } from 'hono'
 import sanitizeHtml from 'sanitize-html'
 import layoutTemplate from './layout.html'
-import { customAlphabet } from 'nanoid'
+import { customAlphabet, nanoid } from 'nanoid'
 
 const referenceCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
 export function generateReferenceNumber(prefix: 'ORD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD' | 'CN', at = new Date()): string {
@@ -211,6 +211,14 @@ export interface Device {
   description: string
   deviceMode?: 'normal' | 'return' | 'maintenance' | 'lost'
   device_mode?: 'normal' | 'return' | 'maintenance' | 'lost'
+  agent_status?: string
+  agent_hostname?: string
+  agent_os_version?: string
+  agent_cpu?: string
+  agent_memory_mb?: number
+  agent_storage_free_bytes?: number
+  agent_version?: string
+  agent_detected_serial?: string
 }
 
 export interface Order {
@@ -286,6 +294,53 @@ export async function recordBalanceTransaction(c: Context, userId: string, amoun
   await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount REAL NOT NULL, balance_after REAL NOT NULL, type TEXT NOT NULL, reason TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
   const current = balanceAfter ?? Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
   await c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`bt-${crypto.randomUUID()}`, userId, Number(amount.toFixed(2)), Number(current.toFixed(2)), type, reason, createdBy || null).run()
+}
+
+export async function ensureReferralProgram(c: Context): Promise<void> {
+  await c.env.RENT.batch([
+    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_codes (id TEXT PRIMARY KEY NOT NULL, customer_id TEXT NOT NULL, code TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'ACTIVE', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, disabled_at TEXT)`),
+    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referrals (id TEXT PRIMARY KEY NOT NULL, referral_number TEXT NOT NULL UNIQUE, referrer_customer_id TEXT NOT NULL, referee_customer_id TEXT NOT NULL UNIQUE, referral_code_id TEXT, status TEXT NOT NULL DEFAULT 'REGISTERED', attributed_at TEXT, registered_at TEXT, qualifying_order_id TEXT, qualified_at TEXT, rewarded_at TEXT, invalidated_at TEXT, invalid_reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
+    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_rewards (id TEXT PRIMARY KEY NOT NULL, reward_number TEXT NOT NULL UNIQUE, referral_id TEXT NOT NULL, customer_id TEXT NOT NULL, order_id TEXT, reward_type TEXT NOT NULL DEFAULT 'ACCOUNT_BALANCE', reward_amount REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'AUD', status TEXT NOT NULL DEFAULT 'PENDING', available_at TEXT, issued_at TEXT, cancelled_at TEXT, balance_transaction_id TEXT, reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
+    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_audit_logs (id TEXT PRIMARY KEY NOT NULL, referral_id TEXT NOT NULL, action TEXT NOT NULL, actor_id TEXT, reason TEXT, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
+  ])
+}
+
+export async function lockReferralRelationship(c: Context, referrerId: string | null | undefined, refereeId: string, code?: string | null): Promise<void> {
+  if (!referrerId || referrerId === refereeId) return
+  await ensureReferralProgram(c)
+  const referrer = await c.env.RENT.prepare('SELECT referral_code FROM users WHERE id = ?').bind(referrerId).first() as any
+  if (!referrer) return
+  const referralCode = String(code || referrer.referral_code || '').trim().toUpperCase()
+  let codeRow: any = null
+  if (referralCode) {
+    await c.env.RENT.prepare("INSERT OR IGNORE INTO referral_codes (id, customer_id, code, status) VALUES (?, ?, ?, 'ACTIVE')").bind(`rfc-${nanoid(16)}`, referrerId, referralCode).run()
+    codeRow = await c.env.RENT.prepare("SELECT id FROM referral_codes WHERE code = ? AND status = 'ACTIVE'").bind(referralCode).first()
+  }
+  if (await c.env.RENT.prepare('SELECT id FROM referrals WHERE referee_customer_id = ?').bind(refereeId).first()) return
+  const id = `ref-${nanoid(16)}`
+  await c.env.RENT.batch([
+    c.env.RENT.prepare("INSERT INTO referrals (id, referral_number, referrer_customer_id, referee_customer_id, referral_code_id, status, attributed_at, registered_at) VALUES (?, ?, ?, ?, ?, 'REGISTERED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").bind(id, generateReferenceNumber('RFD').replace(/^RFD-/, 'REF-'), referrerId, refereeId, codeRow?.id || null),
+    c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, metadata) VALUES (?, ?, 'REGISTERED', ?)").bind(`rfa-${nanoid(16)}`, id, JSON.stringify({ source: 'registration' })),
+  ])
+}
+
+async function syncReferralOrderState(c: Context, orderId: string, rentalStatus: string): Promise<void> {
+  if (!['ACTIVE', 'COMPLETED', 'CANCELLED'].includes(rentalStatus)) return
+  await ensureReferralProgram(c)
+  const order = await c.env.RENT.prepare('SELECT id, userId, payment_status FROM orders WHERE id = ?').bind(orderId).first() as any
+  if (!order) return
+  const referral = await c.env.RENT.prepare("SELECT id FROM referrals WHERE referee_customer_id = ? AND status IN ('REGISTERED','QUALIFYING','QUALIFIED')").bind(order.userId).first() as any
+  if (!referral) return
+  if (rentalStatus === 'CANCELLED') {
+    await c.env.RENT.prepare("UPDATE referrals SET status = 'CANCELLED', invalid_reason = 'ORDER_CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(referral.id).run()
+  } else if (order.payment_status === 'PAID' && rentalStatus === 'ACTIVE') {
+    await c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFYING', qualifying_order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id).run()
+  } else if (order.payment_status === 'PAID' && rentalStatus === 'COMPLETED') {
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFIED', qualifying_order_id = ?, qualified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id),
+      c.env.RENT.prepare("INSERT OR IGNORE INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, status, reason) SELECT ?, ?, r.id, r.referrer_customer_id, ?, 'PENDING', '订单已完成，等待奖励审核' FROM referrals r WHERE r.id = ?").bind(`rrw-${nanoid(16)}`, generateReferenceNumber('RFD').replace(/^RFD-/, 'RRW-'), orderId, referral.id),
+    ])
+  }
 }
 
 export async function recordExternalRentalFlow(c: Context, userId: string, amount: number, method: string, createdBy?: string | null): Promise<void> {
@@ -1005,6 +1060,7 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   if (previous && previous.rental_status !== next.rental) {
     await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'SYSTEM', '订单状态同步').run()
   }
+  await syncReferralOrderState(c, orderId, next.rental)
 }
 
 export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string, bufferDays = 0): Promise<boolean> {
@@ -2475,7 +2531,7 @@ export async function getContractVariableData(c: Context, contract: Contract, or
   const returnStatus = stored.damage_description ? 'Damaged' : stored.return_date ? (lateDays > 0 ? 'Overdue' : 'Returned') : (order.status === 'completed' ? 'Returned' : '')
   return {
     ...stored,
-    invoice_number: invoice?.invoice_number || stored.invoice_number || (order.orderNo ? `INV-${order.orderNo}` : ''),
+    invoice_number: invoice?.invoice_number || stored.invoice_number || generateReferenceNumber('INV'),
     currency: payments?.currency || 'AUD',
     deposit_paid: Number(payments?.deposit_paid || 0).toFixed(2),
     rent_paid: Number(payments?.rent_paid || 0).toFixed(2),
@@ -2510,8 +2566,10 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
   const invoiceId = `inv-${order.id}`
-  await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, receipt_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET receipt_number = COALESCE(invoices.receipt_number, excluded.receipt_number), subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
-    .bind(invoiceId, String(data.invoice_number || generateReferenceNumber('INV')), String(data.receipt_number || generateReferenceNumber('RCP')), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
+  const invoiceNumber = /^INV-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.invoice_number || '')) ? String(data.invoice_number) : generateReferenceNumber('INV')
+  const receiptNumber = /^RCP-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.receipt_number || '')) ? String(data.receipt_number) : generateReferenceNumber('RCP')
+  await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, receipt_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET invoice_number = excluded.invoice_number, receipt_number = excluded.receipt_number, subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
+    .bind(invoiceId, invoiceNumber, receiptNumber, order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
   await ensureReceiptAndTransactions(c, order, invoiceId)
 }
 
@@ -2582,8 +2640,11 @@ async function ensureReceiptAndTransactions(c: Context, order: any, invoiceId: s
 export async function issueCreditNote(c: Context, orderId: string, amount: number, refundedProcessingFee = 0, refundKey = orderId): Promise<void> {
   const invoice = await c.env.RENT.prepare("SELECT id, invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice'").bind(orderId).first() as any
   if (!invoice) return
+  const creditNoteNumber = generateReferenceNumber('CN')
   await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status, related_invoice_id) VALUES (?, ?, ?, 'credit_note', ?, 0, 0, ?, ?, 'AUD', 'issued', ?)`)
-    .bind(`cn-${refundKey}`, generateReferenceNumber('CN'), orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
+    .bind(`cn-${refundKey}`, creditNoteNumber, orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
+  await c.env.RENT.prepare("UPDATE invoices SET invoice_number = ? WHERE id = ? AND type = 'credit_note' AND invoice_number LIKE 'CN-INV-%'")
+    .bind(creditNoteNumber, `cn-${refundKey}`).run()
 }
 
 export const contractTemplate = {

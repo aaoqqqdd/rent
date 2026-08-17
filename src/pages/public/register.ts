@@ -5,7 +5,7 @@
 
 import { buildLayout } from '../../site';
 
-export function renderRegister(errorMessage?: string, turnstileSiteKey = '') {
+export function renderRegister(errorMessage?: string, turnstileSiteKey = '', referralCode = '') {
   const countryCodes = [
     { code: '+61', name: 'AU' },
     { code: '+86', name: 'CN' },
@@ -42,7 +42,7 @@ export function renderRegister(errorMessage?: string, turnstileSiteKey = '') {
             <input class="form-control" type="password" name="passwordConfirm" minlength="8" placeholder="请再次输入密码" autocomplete="new-password" required />
             <div class="form-group turnstile-box"><div class="cf-turnstile" data-sitekey="${turnstileSiteKey}"></div><small class="form-text">请完成安全验证后注册。</small></div>
             <label class="form-label">推荐码 (选填)</label>
-            <input class="form-control" name="referrer" placeholder="来自朋友的推荐码" />
+            <input class="form-control" name="referrer" value="${String(referralCode).replace(/[&<>"']/g, '')}" placeholder="来自朋友的推荐码" ${referralCode ? 'readonly' : ''} />
             <div class="form-row">
               <label class="form-check">
                 <input type="checkbox" name="terms" required /> 我已阅读并同意 <a href="/terms" class="link-button">用户协议</a>、<a href="/service-terms" class="link-button">服务条款</a>、<a href="/privacy" class="link-button">隐私政策</a>和<a href="/refund-policy" class="link-button">退款政策</a>
