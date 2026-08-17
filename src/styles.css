@@ -152,7 +152,10 @@
 .official-document {
   background: #fff !important;
   color: #172033 !important;
-  margin-top: 56px !important;
+  margin-top: 0 !important;
+}
+.official-document-page {
+  padding-top: 96px;
 }
 .official-document__header,
 .official-document__header > div,
@@ -188,6 +191,7 @@
 }
 
 @media print {
+  .official-document-page { padding-top: 0 !important; }
   body * { visibility: hidden !important; }
   .official-document,
   .official-document * {
