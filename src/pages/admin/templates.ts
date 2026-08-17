@@ -9,10 +9,9 @@ type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'c
 
 export function renderAdminTemplateHub(user: any) {
   const body = `
-    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>DOCUMENT CONTROL</span><span>6 ACTIVE TEMPLATES</span></div><div class="entity-heading"><div><p class="section-code">LEGAL & CONTRACTS</p><h2>协议与合同模板</h2><p>管理注册、租赁签署、网站法律信息和正式合同文本。</p></div></div></div>
+    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>AGREEMENT CONTROL</span><span>6 ACTIVE AGREEMENTS</span></div><div class="entity-heading"><div><p class="section-code">LEGAL AGREEMENTS</p><h2>协议模板</h2><p>独立管理用户协议、租赁协议、服务条款、隐私政策、软件协议和退款政策。</p></div><a class="button button-primary" href="/admin/contracts">合同模板</a></div></div>
     <div class="panel template-register">
       <div class="template-register__labels mono"><span>文档</span><span>显示位置</span><span>类型</span><span>操作</span></div>
-      <div class="form-actions" style="margin-bottom:18px"><a class="button button-primary" href="/admin/templates/preview">预览租赁协议与正式合同</a></div>
       <article class="template-register__row">
         <div class="template-register__document"><span class="document-mark">UA</span><div><h3>用户协议</h3><p>账户注册与正式账户升级时确认。</p></div></div>
         <p>注册页面</p><span class="badge badge-neutral">法律文本</span><a class="button button-sm button-secondary" href="/admin/templates/user">编辑协议</a>
@@ -21,16 +20,9 @@ export function renderAdminTemplateHub(user: any) {
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">PP</span><div><h3>隐私政策</h3><p>说明个人资料、付款信息和保存方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/privacy">编辑政策</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">SW</span><div><h3>软件使用协议</h3><p>说明 Windows 客户端的授权、更新和设备数据使用规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">软件法务</span><a class="button button-sm button-secondary" href="/admin/templates/software">编辑协议</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">RF</span><div><h3>退款政策</h3><p>说明订单取消、押金退还和退款方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">退款规则</span><a class="button button-sm button-secondary" href="/admin/templates/copyright">编辑政策</a></article>
-      <article class="template-register__row">
-        <div class="template-register__document"><span class="document-mark">RA</span><div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意。</p></div></div>
-        <p>签署步骤 1</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a>
-      </article>
-      <article class="template-register__row">
-        <div class="template-register__document"><span class="document-mark">CT</span><div><h3>正式合同</h3><p>签署完成后冻结并生成可下载合同。</p></div></div>
-        <p>正式合同</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/contract">编辑模板</a>
-      </article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">RA</span><div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意。</p></div></div><p>签署步骤 1</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a></article>
     </div>`
-  return buildLayout('协议与合同模板 - 电脑租赁管理系统', body, user)
+  return buildLayout('协议模板 - 电脑租赁管理系统', body, user)
 }
 
 export async function renderAdminTemplatePreview(user: any, c: any) {
