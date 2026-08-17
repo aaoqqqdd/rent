@@ -991,10 +991,15 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
     pending_approval: { order: 'PENDING', payment: 'UNPAID', rental: 'PENDING' },
     approved: { order: 'AWAITING_PAYMENT', payment: 'UNPAID', rental: 'AWAITING_PAYMENT' },
     pending_payment: { order: 'AWAITING_PAYMENT', payment: 'UNPAID', rental: 'PENDING' },
+    awaiting_signature: { order: 'AWAITING_SIGNATURE', payment: 'UNPAID', rental: 'AWAITING_SIGNATURE' },
     paid: { order: 'CONFIRMED', payment: 'PAID', rental: 'READY_FOR_PICKUP' },
     pending_pickup: { order: 'READY_FOR_PICKUP', payment: 'PAID', rental: 'READY_FOR_PICKUP' },
     active: { order: 'ACTIVE', payment: 'PAID', rental: 'ACTIVE' },
+    extended: { order: 'EXTENDED', payment: 'PAID', rental: 'EXTENDED' },
+    overdue: { order: 'OVERDUE', payment: 'PAID', rental: 'OVERDUE' },
+    suspended: { order: 'SUSPENDED', payment: 'PAID', rental: 'SUSPENDED' },
     pending_return: { order: 'RETURN_PENDING', payment: 'PAID', rental: 'RETURN_PENDING' },
+    returned: { order: 'RETURNED', payment: 'PAID', rental: 'RETURNED' },
     completed: { order: 'COMPLETED', payment: 'PAID', rental: 'COMPLETED' },
     cancelled: { order: 'CANCELLED', payment: 'PAYMENT_FAILED', rental: 'CANCELLED' },
   }
@@ -1024,14 +1029,19 @@ export async function hasDeviceBookingConflict(c: Context, deviceId: string, sta
 }
 
 const ORDER_TRANSITIONS: Record<string, string[]> = {
-  pending_approval: ['approved', 'cancelled'],
-  approved: ['pending_payment', 'cancelled'],
+  pending_approval: ['approved', 'awaiting_signature', 'cancelled'],
+  approved: ['pending_payment', 'paid', 'cancelled'],
   draft: ['pending_payment', 'cancelled'],
   pending_payment: ['paid', 'cancelled'],
-  paid: ['active', 'cancelled'],
-  active: ['completed'],
-  pending_pickup: ['pending_return', 'cancelled'],
-  pending_return: ['completed'],
+  paid: ['pending_pickup', 'active', 'cancelled'],
+  pending_pickup: ['active', 'pending_return', 'cancelled'],
+  awaiting_signature: ['paid', 'pending_payment', 'cancelled'],
+  active: ['extended', 'overdue', 'suspended', 'pending_return', 'completed'],
+  extended: ['active', 'overdue', 'suspended', 'pending_return', 'completed'],
+  overdue: ['active', 'suspended', 'pending_return', 'completed'],
+  suspended: ['active', 'pending_return', 'cancelled'],
+  pending_return: ['returned', 'completed'],
+  returned: ['completed'],
   completed: [], cancelled: [],
 }
 

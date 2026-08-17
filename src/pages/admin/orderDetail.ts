@@ -140,11 +140,18 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             <div>
               <label for="status" style="display: block; margin-bottom: 8px; font-weight: 500; color: #374151;">选择新状态</label>
               <select id="status" name="status" style="width: 100%; padding: 14px 16px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 1rem; transition: all 0.2s; outline: none; background: white;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'">
-                <option value="pending_payment" ${order.status === 'pending_payment' ? 'selected' : ''}>⏳ 待付款</option>
-                <option value="paid" ${order.status === 'paid' ? 'selected' : ''}>💳 已付款</option>
-                <option value="active" ${order.status === 'active' ? 'selected' : ''}>📦 租赁中</option>
-                <option value="completed" ${order.status === 'completed' ? 'selected' : ''}>✅ 已完成</option>
-                <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>❌ 已取消</option>
+                <option value="pending_payment" ${order.status === 'pending_payment' ? 'selected' : ''}>PENDING: 待处理</option>
+                <option value="awaiting_signature" ${order.status === 'awaiting_signature' ? 'selected' : ''}>AWAITING_SIGNATURE: 待签合同</option>
+                <option value="paid" ${order.status === 'paid' ? 'selected' : ''}>CONFIRMED: 租赁已确认，等待开始</option>
+                <option value="pending_pickup" ${order.status === 'pending_pickup' ? 'selected' : ''}>READY_FOR_PICKUP: 待取货</option>
+                <option value="active" ${order.status === 'active' ? 'selected' : ''}>ACTIVE: 租赁中</option>
+                <option value="extended" ${order.status === 'extended' ? 'selected' : ''}>EXTENDED: 已延期 / 租赁中</option>
+                <option value="overdue" ${order.status === 'overdue' ? 'selected' : ''}>OVERDUE: 已逾期</option>
+                <option value="suspended" ${order.status === 'suspended' ? 'selected' : ''}>SUSPENDED: 已暂停</option>
+                <option value="pending_return" ${order.status === 'pending_return' ? 'selected' : ''}>RETURN_PENDING: 待归还</option>
+                <option value="returned" ${order.status === 'returned' ? 'selected' : ''}>RETURNED: 已归还</option>
+                <option value="completed" ${order.status === 'completed' ? 'selected' : ''}>COMPLETED: 已完成</option>
+                <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>CANCELLED: 已取消</option>
               </select>
             </div>
             <button type="submit" class="button button-primary" style="padding: 14px; border-radius: 12px; font-weight: 600; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 4px 14px 0 rgba(59,130,246,0.4);">💾 更新状态</button>
