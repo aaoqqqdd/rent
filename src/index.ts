@@ -2541,7 +2541,9 @@ app.post('/admin/devices/:id/commands', async (c) => {
   if (!allowed.includes(type)) return c.text('命令类型无效', 400)
   const payload = type === 'SHOW_MESSAGE' ? JSON.stringify({ title: String(form.title || '租赁通知').slice(0, 120), message: String(form.message || '').slice(0, 500) }) : '{}'
   if (type === 'SHOW_MESSAGE' && !JSON.parse(payload).message) return c.text('通知内容不能为空', 400)
-  const expiryHours = ['PAUSE_RENTAL', 'RESUME_RENTAL'].includes(type) ? 1 : 24
+  // Commands must remain available while a device is briefly offline. The
+  // client will claim and complete them as soon as its next poll succeeds.
+  const expiryHours = 24
   await c.env.RENT.prepare('INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\', ?))').bind(`cmd-${nanoid(12)}`, c.req.param('id'), type, payload, user.id, `+${expiryHours} hours`).run()
   return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/control?success=命令已发送，设备下次同步时执行`)
 })
