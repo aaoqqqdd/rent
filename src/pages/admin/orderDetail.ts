@@ -64,7 +64,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     <div class="order-detail-actions">
       ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
       ${['paid', 'pending_pickup'].includes(String(order.status)) ? `<form method="post" action="/staff/orders/${order.id}/pickup" style="display:inline" data-site-confirm="确认设备已经实际交付给客户吗？确认后订单将进入租赁中。"><button class="button button-primary" type="submit">确认设备已交付</button></form>` : ''}
-      ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order" target="_blank">查看合同</a>` : ''}
+      ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order">查看合同</a>` : ''}
     </div>
     ${statusHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>租赁状态历史</h3><span class="section-note">最近 ${statusHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>状态变化</th><th>触发方式</th><th>原因</th></tr></thead><tbody>${statusHistory.results.map((item: any) => `<tr><td class="mono">${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.old_status || '—')} → <strong>${escapeHtml(item.new_status)}</strong></td><td>${escapeHtml(item.trigger_type)}${item.triggered_by ? ` · ${escapeHtml(item.triggered_by)}` : ''}</td><td>${escapeHtml(item.reason || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
