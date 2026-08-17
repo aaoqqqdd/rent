@@ -1127,6 +1127,22 @@ app.post('/customer/rent/:id', async (c) => {
   return c.redirect(`/customer/orders/${orderId}`)
 })
 
+app.post('/customer/orders/:id/windows-password', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || order.userId !== user.id) return c.text('订单不存在', 404)
+  const password = String((await c.req.parseBody()).windowsPassword || '')
+  if (!isStrongPassword(password)) return c.redirect(`/customer/orders/${encodeURIComponent(order.id)}?error=Windows密码格式无效`)
+  const contract = await getContractByOrderId(c, order.id)
+  if (!contract) return c.text('合同不存在', 409)
+  const data = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : { ...(contract.contract_data || {}) }
+  data.windows_password = password
+  await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
+  if (['paid', 'active'].includes(String(order.status))) await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'UPDATE_RENTAL_USER', ?, ?, datetime('now', '+24 hours'))").bind(`cmd-${nanoid(12)}`, order.deviceId, JSON.stringify({ username: data.windows_username || user.name, password }), user.id).run()
+  return c.redirect(`/customer/orders/${encodeURIComponent(order.id)}?success=Windows密码已更新`)
+})
+
 app.get('/staff/dashboard', async (c) => {
   const user = c.get('user')
   if (!user) {
@@ -2494,7 +2510,7 @@ app.post('/admin/devices/:id/commands', async (c) => {
   if (!device) return c.text('设备不存在', 404)
   const form = await c.req.parseBody()
   const type = String(form.commandType || '')
-  const allowed = ['SYNC', 'SHOW_MESSAGE', 'PAUSE_RENTAL', 'RESUME_RENTAL', 'REFRESH_DEVICE_INFO', 'CHECK_UPDATE']
+  const allowed = ['SYNC', 'SHOW_MESSAGE', 'PAUSE_RENTAL', 'RESUME_RENTAL', 'REFRESH_DEVICE_INFO', 'CHECK_UPDATE', 'CREATE_RENTAL_USER', 'UPDATE_RENTAL_USER', 'DELETE_RENTAL_USER']
   if (!allowed.includes(type)) return c.text('命令类型无效', 400)
   const payload = type === 'SHOW_MESSAGE' ? JSON.stringify({ title: String(form.title || '租赁通知').slice(0, 120), message: String(form.message || '').slice(0, 500) }) : '{}'
   if (type === 'SHOW_MESSAGE' && !JSON.parse(payload).message) return c.text('通知内容不能为空', 400)
@@ -3006,6 +3022,24 @@ export default {
     ctx.waitUntil(
       (async () => {
         try {
+          const lifecycleRows = (await env.RENT.prepare(`SELECT o.id, o.deviceId, o.status, o.startDate, o.endDate, c.id AS contract_id, c.contract_data, u.name AS customer_name FROM orders o JOIN contracts c ON c.orderId = o.id LEFT JOIN users u ON u.id = o.userId WHERE o.status IN ('paid', 'active', 'completed') AND c.status IN ('signed', 'completed')`).all()).results || []
+          const today = new Date().toISOString().slice(0, 10)
+          for (const row of lifecycleRows as any[]) {
+            let data: any = {}
+            try { data = JSON.parse(row.contract_data || '{}') } catch (_) {}
+            if (!data.windows_password) continue
+            const username = data.windows_username || row.customer_name || 'RentalUser'
+            if (['paid', 'active'].includes(String(row.status)) && String(row.startDate) <= today && !data.windows_account_created) {
+              await env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CREATE_RENTAL_USER', ?, NULL, datetime('now', '+7 days'))").bind(`cmd-${crypto.randomUUID()}`, row.deviceId, JSON.stringify({ username, password: data.windows_password })).run()
+              data.windows_account_created = true
+              await env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), row.contract_id).run()
+            }
+            if (String(row.endDate) < today && !data.windows_account_deleted) {
+              await env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'DELETE_RENTAL_USER', ?, NULL, datetime('now', '+30 days'))").bind(`cmd-${crypto.randomUUID()}`, row.deviceId, JSON.stringify({ username })).run()
+              data.windows_account_deleted = true
+              await env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), row.contract_id).run()
+            }
+          }
           for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
             try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) {}
           }

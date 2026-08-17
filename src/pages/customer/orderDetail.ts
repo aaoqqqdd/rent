@@ -21,6 +21,8 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const report = (data: any, keys: string[]) => `<dl class="data-list">${keys.map(key => `<div><dt>${esc(key)}</dt><dd>${esc(data[key])}</dd></div>`).join('')}</dl>`
   const deducted = Number(depositRefund?.deduction_amount || 0) > 0
+  const windowsData = typeof contract?.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })() : (contract?.contract_data || {})
+  const windowsPassword = String(windowsData.windows_password || '')
 
   const body = `
     <div class="panel order-detail-shell customer-order-detail">
@@ -61,6 +63,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}?from=order" target="_blank">查看/下载合同</a>` : `<span class="section-note">正式合同将在签署完成后开放下载。</span>`}
           ${contract.status === 'pending_sign' ? `<a class="button button-primary" href="/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1">签署租赁协议</a>` : ''}
         </div>
+        ${['signed', 'completed'].includes(String(contract.status)) ? `<section class="panel" style="margin-top:16px"><h3>Windows 登录账户</h3><p class="form-text">这是租赁设备上的独立 Windows 账户密码，不是网站登录密码。</p><form method="post" action="/customer/orders/${order.id}/windows-password"><div class="grid grid-2"><div><label class="form-label" for="windowsPassword">Windows 登录密码</label><input class="form-control" id="windowsPassword" name="windowsPassword" type="password" value="${esc(windowsPassword)}" minlength="8" required></div><div style="display:flex;align-items:end"><button class="button button-primary" type="submit">保存密码</button></div></div></form></section>` : ''}
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}
 
       ${order.status === 'pending_payment' ? `
