@@ -152,6 +152,7 @@
 .official-document {
   background: #fff !important;
   color: #172033 !important;
+  margin-top: 56px !important;
 }
 .official-document__header,
 .official-document__header > div,
@@ -194,6 +195,7 @@
   }
   .official-document {
     display: block !important;
+    margin-top: 0 !important;
     position: relative !important;
     width: auto !important;
     max-width: none !important;
