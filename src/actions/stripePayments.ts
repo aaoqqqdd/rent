@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 
 function cents(value: number): number {
@@ -178,6 +178,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     try {
       await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
       await issueInvoice(c, paidOrderId)
+      await enqueueRentalUserCreation(c, await getOrderById(c, paidOrderId))
     } catch (error: any) {
       console.error('Stripe webhook post-processing failed:', error?.message || error)
     }
