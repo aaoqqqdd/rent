@@ -425,7 +425,7 @@ async function sendEmailVerification(c: any, user: any) {
   await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [user.email], subject: '验证您的邮箱 - PC Rental', text: `您好 ${user.name}，请在 24 小时内打开以下链接验证邮箱：\n${verifyUrl}` }) })
 }
 
-app.get('/terms', async (c) => {
+app.get(['/terms', '/user-terms'], async (c) => {
   const settings = await loadSystemSettingsFromDB(c)
   const currentUser = c.get('user')
   const content = renderSiteVariables(settings.userTerms, currentUser)
@@ -442,7 +442,7 @@ for (const [path, title, key, code] of [
   app.get(path, async (c) => {
     const settings = await loadSystemSettingsFromDB(c)
     const currentUser = c.get('user')
-    const metadataKey = key === 'copyrightNotice' ? 'copyright' : key === 'softwareTerms' ? 'software' : path === '/terms' ? 'user' : path === '/service-terms' ? 'service' : 'privacy'
+    const metadataKey = key === 'copyrightNotice' ? 'copyright' : key === 'softwareTerms' ? 'software' : path === '/terms' || path === '/user-terms' ? 'user' : path === '/service-terms' ? 'service' : 'privacy'
     const metadata = settings.legalMetadata[metadataKey]
     const content = renderSiteVariables(settings[key], currentUser, {
       ...(metadataKey === 'user' ? { user_agreement_version: metadata.version, user_agreement_last_updated_date: metadata.lastUpdatedDate } : {}),
