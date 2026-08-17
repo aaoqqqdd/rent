@@ -6,6 +6,14 @@
 import { Context } from 'hono'
 import sanitizeHtml from 'sanitize-html'
 import layoutTemplate from './layout.html'
+import { customAlphabet } from 'nanoid'
+
+const contractCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 4)
+export function generateContractNumber(at = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(at)
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return `OD${values.year}${values.month}${values.day}${values.hour}${values.minute}${values.second}${contractCode()}`
+}
 
 function renderLayoutTemplate(values: Record<string, string>): string {
   return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>

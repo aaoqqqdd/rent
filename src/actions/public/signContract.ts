@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -528,6 +528,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await c.env.RENT.prepare(`UPDATE contracts SET esign_ip = ?, esign_device = ?, contract_data = ? WHERE id = ?`)
           .bind(esignIp || null, esignDevice || null, JSON.stringify(signedData), contract.id).run()
         const signedAt = new Date().toISOString()
+        const signedContractNumber = generateContractNumber(new Date(signedAt))
         const signedOrder = await getOrderById(c, contract.rentalId)
         const signedDevice = signedOrder ? await getDeviceById(c, signedOrder.deviceId) : null
         const signedCustomer = await getUserById(c, userId)
@@ -541,6 +542,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signedContent))), byte => byte.toString(16).padStart(2, '0')).join('')
         await c.env.RENT.prepare('UPDATE contracts SET signed_content = ?, content_hash = ? WHERE id = ?').bind(signedContent, contentHash, contract.id).run()
         await updateContractStatusInDB(c, contract.id, 'signed', signedAt);
+        await c.env.RENT.prepare('UPDATE contracts SET contractNumber = ? WHERE id = ? AND status = \'signed\'').bind(signedContractNumber, contract.id).run()
         await logError(c, 'INFO', `Contract signed successfully`, undefined, { token, contractId: contract.id });
 
 

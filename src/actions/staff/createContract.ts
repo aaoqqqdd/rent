@@ -4,11 +4,8 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono';
-import { User, getDeviceById, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract } from '../../site';
-import { nanoid, customAlphabet } from 'nanoid';
-
-// 自定义nanoid，只使用大写字母和数字，确保合同编号只包含大写字母和数字
-const uppercaseAlphanumericNanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 16);
+import { User, getDeviceById, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, generateContractNumber } from '../../site';
+import { nanoid } from 'nanoid';
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
   const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, returnLocation } = body;
@@ -139,9 +136,8 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const expiryDays = parseInt(expiryDuration) || 7;
   signExpiresDate.setDate(signExpiresDate.getDate() + expiryDays);
 
-  // 生成合同编号：CN + 随机10位大写字母和数字，确保高唯一性
-  const contractRandomSuffix = uppercaseAlphanumericNanoid().slice(0, 10);
-  const contractNumber = `CN${contractRandomSuffix}`;
+  // 签署前先生成符合正式格式的可读编号；完成签署时会用签署时间重新生成一次。
+  const contractNumber = generateContractNumber();
 
   const template = await getContractTemplate(c)
   const newContract: Contract = {
