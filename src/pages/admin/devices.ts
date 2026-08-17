@@ -87,6 +87,7 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
                 <td><span class="badge ${statusClass}">${statusText}</span></td>
                 <td>
                   <a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a>
+                  <a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/control">远程控制</a>
                   <form method="post" action="/admin/devices/${device.id}/delete" style="display:inline" onsubmit="return confirm('确定要删除此设备吗？此操作不可恢复。')"><button class="link-button-danger" type="submit">删除</button></form>
                 </td>
               </tr>

@@ -2474,6 +2474,16 @@ app.get('/admin/devices/:id/edit', async (c) => {
   return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates }, commandHistory))
 })
 
+app.get('/admin/devices/:id/control', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureDeviceCommandTables(c.env.RENT)
+  const device = await getDeviceById(c, c.req.param('id'))
+  if (!device) return c.redirect('/admin/devices')
+  const commands = (await c.env.RENT.prepare(`SELECT dc.created_at, dc.command_type, dc.status, dcr.result_message FROM device_commands dc LEFT JOIN device_command_results dcr ON dcr.command_id = dc.id WHERE dc.device_id = ? ORDER BY dc.created_at DESC LIMIT 20`).bind(device.id).all()).results || []
+  return c.html(pages.renderAdminDeviceControl(user, device, commands as any[]))
+})
+
 app.get('/admin/devices/:id/agent-binding-status', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.json({ ok: false }, 401)
