@@ -8,11 +8,14 @@ import sanitizeHtml from 'sanitize-html'
 import layoutTemplate from './layout.html'
 import { customAlphabet } from 'nanoid'
 
-const contractCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 4)
-export function generateContractNumber(at = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(at)
+const referenceCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
+export function generateReferenceNumber(prefix: 'ORD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD', at = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(at)
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
-  return `OD${values.year}${values.month}${values.day}${values.hour}${values.minute}${values.second}${contractCode()}`
+  return `${prefix}-${values.year}${values.month}${values.day}-${referenceCode()}`
+}
+export function generateContractNumber(at = new Date()): string {
+  return generateReferenceNumber('CTR', at)
 }
 
 function renderLayoutTemplate(values: Record<string, string>): string {
@@ -923,14 +926,7 @@ export async function ensureOrderNumber(c: Context, orderId: string, externalRef
   if (!existing) throw new Error('订单不存在，无法生成订单编号')
   if (existing.orderNo) return String(existing.orderNo)
 
-  const dateParts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' })
-    .formatToParts(new Date())
-  const date = Object.fromEntries(dateParts.map(part => [part.type, part.value]))
-  const externalSuffix = externalReference.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(-10)
-  const randomBytes = new Uint8Array(5)
-  crypto.getRandomValues(randomBytes)
-  const randomSuffix = Array.from(randomBytes, byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()
-  const orderNo = `OD${date.year}${date.month}${date.day}${externalSuffix || randomSuffix}`
+  const orderNo = generateReferenceNumber('ORD')
   await c.env.RENT.prepare('UPDATE orders SET orderNo = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND (orderNo IS NULL OR orderNo = ?)')
     .bind(orderNo, orderId, '').run()
   const saved = await c.env.RENT.prepare('SELECT orderNo FROM orders WHERE id = ?').bind(orderId).first() as any
@@ -2511,8 +2507,8 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const gstAmount = systemSettings.companyDetails.gstIncluded ? taxableGross / 11 : 0
   const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
-  await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
-    .bind(`inv-${order.id}`, String(data.invoice_number || `INV-${order.orderNo || order.id}`), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
+  await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, receipt_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET receipt_number = COALESCE(invoices.receipt_number, excluded.receipt_number), subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
+    .bind(`inv-${order.id}`, String(data.invoice_number || generateReferenceNumber('INV')), String(data.receipt_number || generateReferenceNumber('RCP')), order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
 }
 
 export async function issueCreditNote(c: Context, orderId: string, amount: number, refundedProcessingFee = 0, refundKey = orderId): Promise<void> {

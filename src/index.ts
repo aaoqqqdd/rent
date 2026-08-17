@@ -53,6 +53,7 @@ import {
   CONTRACT_SIGNED_FIELDS,
   issueInvoice,
   ensureOrderNumber,
+  generateReferenceNumber,
   createAuthSession,
   deleteAuthSession,
   buildLayout,
@@ -1156,7 +1157,7 @@ app.post('/customer/rent/:id', async (c) => {
   }
   const orderId = `o-${nanoid(8)}`
   await insertOrder(c, {
-    id: orderId, orderNo: `OD${Date.now()}${nanoid(4).toUpperCase()}`, userId: user.id,
+    id: orderId, orderNo: null, userId: user.id,
     deviceId: device.id, startDate, endDate, rentalPeriod, status: 'pending_approval',
     paymentMethod: 'bank_transfer', totalAmount: rentAmount + device.depositAmount - discountAmount,
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
@@ -2324,7 +2325,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   if (!proof) return c.text('没有待审核的转账信息', 409)
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
-    c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.payment_id),
+    c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
     c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
   ])
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))

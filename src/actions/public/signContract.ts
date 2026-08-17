@@ -456,12 +456,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           const paymentId = existingPayment?.id || `p-${nanoid(12)}`
           if (!existingPayment) {
             await c.env.RENT.prepare(`
-              INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, paid_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?)
+              INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, transaction_id, paid_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?, ?)
             `).bind(
               paymentId, contract.rentalId, userId, paymentMethod,
               paymentTotal, paymentDeposit, paymentTotal - paymentDeposit,
-              paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? new Date().toISOString() : null
+              paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? generateReferenceNumber('TXN') : null, paymentMethod === 'balance' ? new Date().toISOString() : null
             ).run()
           }
           if (['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {

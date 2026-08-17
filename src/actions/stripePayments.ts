@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, generateReferenceNumber } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 
 function cents(value: number): number {
@@ -154,8 +154,8 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       return c.text('Stripe 支付数据与订单不匹配', 400)
     }
     statements.push(
-      c.env.RENT.prepare(`UPDATE payments SET status = 'paid', stripe_payment_intent_id = ?, transaction_id = ?, paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE stripe_checkout_session_id = ?`)
-        .bind(String(session.payment_intent || ''), String(session.payment_intent || ''), session.id),
+      c.env.RENT.prepare(`UPDATE payments SET status = 'paid', stripe_payment_intent_id = ?, transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE stripe_checkout_session_id = ?`)
+        .bind(String(session.payment_intent || ''), generateReferenceNumber('TXN'), session.id),
       c.env.RENT.prepare("UPDATE orders SET status = 'paid', paymentMethod = 'card', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
     )
     }
@@ -195,9 +195,9 @@ async function paidPayment(c: Context, order: any): Promise<any> {
   const method = ['card', 'bank_transfer', 'balance'].includes(order.paymentMethod) ? order.paymentMethod : 'bank_transfer'
   const paymentId = `p-${nanoid(12)}`
   await c.env.RENT.prepare(`
-    INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, paid_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', 'paid', CURRENT_TIMESTAMP)
-  `).bind(paymentId, order.id, order.userId, method, order.totalAmount, order.depositAmount, order.totalAmount - order.depositAmount).run()
+    INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, transaction_id, paid_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', 'paid', ?, CURRENT_TIMESTAMP)
+  `).bind(paymentId, order.id, order.userId, method, order.totalAmount, order.depositAmount, order.totalAmount - order.depositAmount, generateReferenceNumber('TXN')).run()
   return c.env.RENT.prepare('SELECT * FROM payments WHERE id = ?').bind(paymentId).first()
 }
 
@@ -262,8 +262,8 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   }
 
   await c.env.RENT.batch([
-    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, order.id, payment.id, depositAmount, refundAmount, refundedProcessingFee, deductionAmount, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, depositAmount, refundAmount, refundedProcessingFee, deductionAmount, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
@@ -284,8 +284,8 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
   let channel = refundChannel(order, payment)
   if (channel === 'unavailable') channel = 'balance'
   if (channel === 'bank_transfer') {
-    await c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, 'early_return', ?, ?, 0, 'pending', ?, 'bank_transfer', ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, order.id, payment.id, amount, amount, admin.id, order.refundBsb || null, order.refundAccountNumber || null, order.refundAccountName || null, `提前归还，未使用 ${unusedDays} 天租金`)
+    await c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, ?, 'early_return', ?, ?, 0, 'pending', ?, 'bank_transfer', ?, ?, ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, amount, amount, admin.id, order.refundBsb || null, order.refundAccountNumber || null, order.refundAccountName || null, `提前归还，未使用 ${unusedDays} 天租金`)
       .run()
     return
   }
@@ -296,8 +296,8 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
     stripeRefundId = refund.id
   }
   await c.env.RENT.batch([
-    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, stripe_refund_id, status, processed_by, refund_method) VALUES (?, ?, ?, 'early_return', ?, ?, 0, ?, 'succeeded', ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, order.id, payment.id, amount, amount, stripeRefundId, admin.id, channel),
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, stripe_refund_id, status, processed_by, refund_method) VALUES (?, ?, ?, ?, 'early_return', ?, ?, 0, ?, 'succeeded', ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, amount, amount, stripeRefundId, admin.id, channel),
     ...(channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(amount, order.userId)] : []),
   ])
   if (channel === 'balance') await recordBalanceTransaction(c, order.userId, amount, 'refund_credit', `提前归还未使用租金退款`, admin.id)
@@ -318,8 +318,8 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
 
   if (channel === 'bank_transfer') {
     await c.env.RENT.batch([
-      c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, 'cancellation', ?, ?, 0, 'pending', ?, 'bank_transfer', ?, ?, ?, '租前取消，等待管理员银行转账')`)
-        .bind(`rf-${nanoid(12)}`, order.id, payment.id, order.totalAmount, order.totalAmount, admin.id, order.refundBsb, order.refundAccountNumber, order.refundAccountName),
+      c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, ?, 'cancellation', ?, ?, 0, 'pending', ?, 'bank_transfer', ?, ?, ?, '租前取消，等待管理员银行转账')`)
+        .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, order.totalAmount, order.totalAmount, admin.id, order.refundBsb, order.refundAccountNumber, order.refundAccountName),
       c.env.RENT.prepare("UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(payment.id),
       c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
       c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
@@ -336,8 +336,8 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
   }
 
   await c.env.RENT.batch([
-    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, 'cancellation', ?, ?, 0, ?, 'succeeded', ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, order.id, payment.id, order.totalAmount, order.totalAmount, stripeRefundId, admin.id, channel, null, null, null),
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'cancellation', ?, ?, 0, ?, 'succeeded', ?, ?, ?, ?, ?)`) 
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, order.totalAmount, order.totalAmount, stripeRefundId, admin.id, channel, null, null, null),
     ...(channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(order.totalAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(payment.id),
     c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
