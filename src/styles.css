@@ -2697,6 +2697,19 @@ table {
 .review-search { display: grid; gap: 5px; flex: 1; color: var(--text-secondary); font: 600 .68rem var(--font-mono); letter-spacing: .04em; }
 .review-search .form-control { min-height: 38px; background: #fff; }
 .review-panel { margin-bottom: 18px; }
+.payment-review-page .review-stat { transition: transform .22s ease, box-shadow .22s ease; }
+@keyframes review-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+body:not(.has-navigated) .payment-review-page .review-stat { animation: review-rise .42s cubic-bezier(.22, 1, .36, 1) both; }
+body:not(.has-navigated) .payment-review-page .review-stat:nth-child(2) { animation-delay: .06s; }
+body:not(.has-navigated) .payment-review-page .review-stat:nth-child(3) { animation-delay: .12s; }
+.payment-review-page .review-stat:hover { transform: translateY(-3px); box-shadow: 0 14px 28px rgb(26 42 51 / .11); }
+.payment-review-page .review-panel { overflow: hidden; }
+.payment-review-page .review-table tbody tr { transition: background-color .18s ease, transform .18s ease; }
+.payment-review-page .review-table tbody tr:hover { background: #f7fafb; }
+.payment-review-page .proof-link img { transition: transform .2s ease, box-shadow .2s ease; }
+.payment-review-page .proof-link:hover img { transform: scale(1.08); box-shadow: 0 5px 14px rgb(26 42 51 / .16); }
+.payment-review-page .review-toolbar { transition: border-color .2s ease, box-shadow .2s ease; }
+.payment-review-page .review-toolbar:focus-within { border-color: var(--accent); box-shadow: 0 8px 22px rgb(26 42 51 / .08); }
 .review-table { overflow-x: auto; }
 .review-table table { min-width: 920px; }
 .review-table td small { display: block; margin-top: 5px; color: var(--text-secondary); font-size: .72rem; }
