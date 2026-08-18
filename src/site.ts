@@ -392,7 +392,7 @@ export async function enqueueRentalUserCreation(c: Context, order: any): Promise
   const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
   if (!contract?.contract_data) return
   let data: any = {}
-  try { data = JSON.parse(contract.contract_data) } catch (_) {}
+  try { data = JSON.parse(contract.contract_data) } catch (_) { }
   const password = String(data.windows_password || '')
   if (!password || data.windows_account_created) return
   await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, command_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, claimed_at TEXT, completed_at TEXT, expires_at TEXT NOT NULL)`).run()
@@ -406,7 +406,7 @@ export async function enqueueRentalUserDeletion(c: Context, order: any): Promise
   const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
   if (!contract?.contract_data) return
   let data: any = {}
-  try { data = JSON.parse(contract.contract_data) } catch (_) {}
+  try { data = JSON.parse(contract.contract_data) } catch (_) { }
   if (data.windows_account_deleted) return
   const username = String(data.windows_username || order.customer?.name || 'RentalUser')
   await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, command_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, claimed_at TEXT, completed_at TEXT, expires_at TEXT NOT NULL)`).run()
@@ -1534,17 +1534,17 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const registrationSettingsValue = values.get('registrationSettings')
   const legalMetadataValue = values.get('legalMetadata')
 
-  // Only update values that actually exist in the database
-  // to prevent overwriting database-backed content with empty defaults
-  if (userTermsValue !== undefined) systemSettings.userTerms = sanitizeRichHtml(userTermsValue)
-  if (rentalTermsValue !== undefined) systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue)
-  if (serviceTermsValue !== undefined) systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue)
-  if (privacyPolicyValue !== undefined) systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue)
-  if (softwareTermsValue !== undefined) systemSettings.softwareTerms = sanitizeRichHtml(softwareTermsValue)
-  if (copyrightNoticeValue !== undefined) systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue)
+  // Only update values that actually exist in the database AND are non-empty
+  // to prevent overwriting database-backed content with empty defaults or null values
+  if (String(userTermsValue || '').trim()) systemSettings.userTerms = sanitizeRichHtml(userTermsValue)
+  if (String(rentalTermsValue || '').trim()) systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue)
+  if (String(serviceTermsValue || '').trim()) systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue)
+  if (String(privacyPolicyValue || '').trim()) systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue)
+  if (String(softwareTermsValue || '').trim()) systemSettings.softwareTerms = sanitizeRichHtml(softwareTermsValue)
+  if (String(copyrightNoticeValue || '').trim()) systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue)
   const parsedLegalMetadata = safeJsonParse<any>(legalMetadataValue)
   if (parsedLegalMetadata) systemSettings.legalMetadata = { ...systemSettings.legalMetadata, ...parsedLegalMetadata }
-  if (priceStrategyValue !== undefined) systemSettings.priceStrategy = priceStrategyValue
+  if (String(priceStrategyValue || '').trim()) systemSettings.priceStrategy = priceStrategyValue
 
   const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
@@ -1616,6 +1616,12 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
 
   for (const [key, value] of fieldsToWrite) {
     if (key in updates) {
+      // Prevent writing empty content for text fields that must have content
+      const textContentFields = new Set(['userTerms', 'rentalTerms', 'serviceTerms', 'privacyPolicy', 'softwareTerms', 'copyrightNotice', 'priceStrategy'])
+      if (textContentFields.has(key) && typeof value === 'string' && !String(value).trim()) {
+        console.warn(`Skipping empty content for field: ${key}`)
+        continue
+      }
       await write(key, value)
     }
   }
@@ -3174,19 +3180,19 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       '%': '<circle cx="8" cy="8" r="2"></circle><circle cx="16" cy="16" r="2"></circle><path d="m17 7-10 10"></path>',
       '◇': '<path d="m12 3 8 9-8 9-8-9 8-9Z"></path><path d="M9 12h6"></path>',
       '✉': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="m5 8 7 5 7-5"></path>'
-      ,'◌': '<circle cx="12" cy="12" r="8"></circle><path d="M12 7v5l3 2"></path><path d="M7 5 5 3M17 5l2-2"></path>'
-      ,'↥': '<path d="M12 19V5"></path><path d="m7 10 5-5 5 5"></path><path d="M5 19h14"></path>'
-      ,'⌂': '<path d="m4 11 8-7 8 7"></path><path d="M6 10v10h12V10M10 20v-6h4v6"></path>'
-      ,'◍': '<circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle><path d="M12 4v5M20 12h-5"></path>'
-      ,'▰': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="M4 10h16M8 14h3M8 16h6"></path>'
-      ,'♧': '<path d="M8 10a3 3 0 1 1 4-3 3 3 0 1 1 4 3 3 3 0 1 1-4 3 3 3 0 1 1-4-3Z"></path><path d="M12 13v7"></path>'
-      ,'▱': '<path d="M6 4h9l3 3v13H6z"></path><path d="M15 4v4h4M9 12h6M9 16h4"></path>'
-      ,'⌖': '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle><path d="M12 3v2M12 19v2M3 12h2M19 12h2"></path>'
-      ,'▭': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 9h8M8 13h8M8 16h4"></path>'
-      ,'☷': '<path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="8" cy="6" r="1"></circle><circle cx="16" cy="12" r="1"></circle><circle cx="10" cy="18" r="1"></circle>'
-      ,'◓': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4v16a8 8 0 0 0 0-16Z"></path>'
-      ,'◒': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4a8 8 0 0 0 0 16Z"></path>'
-      ,'⌘': '<path d="M7 5a3 3 0 1 0 0 6h10a3 3 0 1 0 0-6 3 3 0 1 0-5 2 3 3 0 1 0-5-2Z"></path><path d="M7 13a3 3 0 1 0 0 6 3 3 0 1 0 5-2 3 3 0 1 0 5 2 3 3 0 1 0 0-6Z"></path>'
+      , '◌': '<circle cx="12" cy="12" r="8"></circle><path d="M12 7v5l3 2"></path><path d="M7 5 5 3M17 5l2-2"></path>'
+      , '↥': '<path d="M12 19V5"></path><path d="m7 10 5-5 5 5"></path><path d="M5 19h14"></path>'
+      , '⌂': '<path d="m4 11 8-7 8 7"></path><path d="M6 10v10h12V10M10 20v-6h4v6"></path>'
+      , '◍': '<circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle><path d="M12 4v5M20 12h-5"></path>'
+      , '▰': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="M4 10h16M8 14h3M8 16h6"></path>'
+      , '♧': '<path d="M8 10a3 3 0 1 1 4-3 3 3 0 1 1 4 3 3 3 0 1 1-4 3 3 3 0 1 1-4-3Z"></path><path d="M12 13v7"></path>'
+      , '▱': '<path d="M6 4h9l3 3v13H6z"></path><path d="M15 4v4h4M9 12h6M9 16h4"></path>'
+      , '⌖': '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle><path d="M12 3v2M12 19v2M3 12h2M19 12h2"></path>'
+      , '▭': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 9h8M8 13h8M8 16h4"></path>'
+      , '☷': '<path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="8" cy="6" r="1"></circle><circle cx="16" cy="12" r="1"></circle><circle cx="10" cy="18" r="1"></circle>'
+      , '◓': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4v16a8 8 0 0 0 0-16Z"></path>'
+      , '◒': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4a8 8 0 0 0 0 16Z"></path>'
+      , '⌘': '<path d="M7 5a3 3 0 1 0 0 6h10a3 3 0 1 0 0-6 3 3 0 1 0-5 2 3 3 0 1 0-5-2Z"></path><path d="M7 13a3 3 0 1 0 0 6 3 3 0 1 0 5-2 3 3 0 1 0 5 2 3 3 0 1 0 0-6Z"></path>'
     }
     return `<svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || paths['▣']}</svg>`
   }

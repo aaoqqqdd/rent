@@ -3373,12 +3373,28 @@ app.get('/api/device-agent/commands', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
   await ensureDeviceCommandTables(c.env.RENT)
-  await c.env.RENT.prepare("UPDATE device_commands SET status = 'EXPIRED', completed_at = CURRENT_TIMESTAMP WHERE device_id = ? AND status IN ('PENDING', 'DELIVERED') AND datetime(expires_at) <= CURRENT_TIMESTAMP").bind(device.id).run()
+  await c.env.RENT.prepare("UPDATE device_commands SET status = 'EXPIRED', completed_at = CURRENT_TIMESTAMP WHERE device_id = ? AND status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP").bind(device.id).run()
   // Return the camelCase contract expected by the Windows client. SQLite column
   // names use snake_case, and System.Text.Json does not translate underscores.
-  const commands = (await c.env.RENT.prepare("SELECT id, device_id AS deviceId, command_type AS commandType, payload, status, created_at AS createdAt, expires_at AS expiresAt FROM device_commands WHERE device_id = ? AND status = 'PENDING' AND datetime(expires_at) > CURRENT_TIMESTAMP ORDER BY created_at ASC LIMIT 10").bind(device.id).all()).results || []
-  if (commands.length) await c.env.RENT.prepare(`UPDATE device_commands SET status = 'DELIVERED', claimed_at = COALESCE(claimed_at, CURRENT_TIMESTAMP) WHERE device_id = ? AND status = 'PENDING' AND id IN (${commands.map(() => '?').join(',')})`).bind(device.id, ...commands.map((item: any) => item.id)).run()
+  const commands = (await c.env.RENT.prepare("SELECT id, device_id AS deviceId, command_type AS commandType, payload, status, created_at AS createdAt, expires_at AS expiresAt FROM device_commands WHERE device_id = ? AND status = 'QUEUED' AND datetime(expires_at) > CURRENT_TIMESTAMP ORDER BY created_at ASC LIMIT 10").bind(device.id).all()).results || []
+  if (commands.length) await c.env.RENT.prepare(`UPDATE device_commands SET status = 'SENT', sent_at = COALESCE(sent_at, CURRENT_TIMESTAMP), claimed_at = COALESCE(claimed_at, CURRENT_TIMESTAMP) WHERE device_id = ? AND status = 'QUEUED' AND id IN (${commands.map(() => '?').join(',')})`).bind(device.id, ...commands.map((item: any) => item.id)).run()
   return c.json({ ok: true, commands })
+})
+
+app.post('/api/device-agent/commands/:id/ack', async (c) => {
+  const device = await getAgentDevice(c)
+  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  const result = await c.env.RENT.prepare("UPDATE device_commands SET status = 'ACKNOWLEDGED', acknowledged_at = CURRENT_TIMESTAMP WHERE id = ? AND device_id = ? AND status = 'SENT'").bind(c.req.param('id'), device.id).run() as any
+  if (!result.meta?.changes) return c.json({ ok: false, error: 'Command is not awaiting acknowledgement' }, 409)
+  return c.json({ ok: true })
+})
+
+app.post('/api/device-agent/commands/:id/start', async (c) => {
+  const device = await getAgentDevice(c)
+  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
+  const result = await c.env.RENT.prepare("UPDATE device_commands SET status = 'RUNNING', started_at = CURRENT_TIMESTAMP WHERE id = ? AND device_id = ? AND status IN ('SENT', 'ACKNOWLEDGED')").bind(c.req.param('id'), device.id).run() as any
+  if (!result.meta?.changes) return c.json({ ok: false, error: 'Command is not runnable' }, 409)
+  return c.json({ ok: true })
 })
 
 app.post('/api/device-agent/command-results', async (c) => {
@@ -3394,7 +3410,7 @@ app.post('/api/device-agent/command-results', async (c) => {
   const success = Boolean(payload.success)
   const executedAt = String(payload.executedAt || new Date().toISOString()).slice(0, 40)
   await c.env.RENT.batch([
-    c.env.RENT.prepare("UPDATE device_commands SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ? AND device_id = ? AND status NOT IN ('SUCCEEDED', 'FAILED', 'EXPIRED', 'CANCELLED')").bind(success ? 'SUCCEEDED' : 'FAILED', commandId, device.id),
+    c.env.RENT.prepare("UPDATE device_commands SET status = ?, completed_at = CURRENT_TIMESTAMP, error_message = ? WHERE id = ? AND device_id = ? AND status IN ('SENT', 'ACKNOWLEDGED', 'RUNNING')").bind(success ? 'SUCCESS' : 'FAILED', success ? null : String(payload.message || '').slice(0, 500), commandId, device.id),
     c.env.RENT.prepare('INSERT OR IGNORE INTO device_command_results (id, command_id, device_id, success, result_code, result_message, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`result-${nanoid(12)}`, commandId, device.id, success ? 1 : 0, resultCode, String(payload.message || '').slice(0, 500), executedAt),
   ])
   return c.json({ ok: true })
