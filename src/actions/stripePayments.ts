@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, generateReferenceNumber, recordDeviceLifecycle } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 
 function cents(value: number): number {
@@ -178,7 +178,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     try {
       const paidOrder = await getOrderById(c, paidOrderId)
       if (paidOrder) {
-        await recordExternalRentalFlow(c, paidOrder.userId, Number(paidOrder.totalAmount), '信用卡', null)
+        await recordExternalRentalFlow(c, paidOrder.userId, Number(paidOrder.totalAmount), '信用卡', null, paidOrder.id)
         await recordDeviceLifecycle(c, paidOrder.deviceId, 'RESERVED', { orderId: paidOrder.id, reason: '信用卡付款成功' })
       }
       await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
@@ -275,6 +275,8 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
   if (totalRefundAmount > 0 && channel === 'balance') await recordBalanceTransaction(c, order.userId, totalRefundAmount, 'refund_credit', `${refundItemLabel}退回账户余额`, admin.id)
+  const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -totalRefundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: refundItemLabel, createdBy: admin.id, metadata: { channel, principal: refundAmount, processingFee: refundedProcessingFee } })
   if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount, refundedProcessingFee, `deposit-${nanoid(12)}`)
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
@@ -308,6 +310,8 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
     ...(channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(amount, order.userId)] : []),
   ])
   if (channel === 'balance') await recordBalanceTransaction(c, order.userId, amount, 'refund_credit', `提前归还未使用租金退款`, admin.id)
+  const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'early_return' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -amount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '提前归还未使用租金退款', createdBy: admin.id, metadata: { channel } })
   await issueCreditNote(c, order.id, amount, 0, `early-${nanoid(12)}`)
 }
 
@@ -351,6 +355,8 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
   await issueCreditNote(c, order.id, order.totalAmount, 0, `cancellation-${nanoid(12)}`)
+  const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -Number(order.totalAmount), customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '取消订单退款', createdBy: admin.id, metadata: { channel } })
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 

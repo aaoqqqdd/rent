@@ -80,6 +80,7 @@ import {
   , recordExternalRentalFlow
   , lockReferralRelationship
   , createAuditLog
+  , recordFinancialLedgerEntry
 } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
@@ -1247,8 +1248,10 @@ app.post('/customer/rent/:id', async (c) => {
       await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(orderId).run()
       return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '优惠码刚刚达到使用上限，请重新提交订单'), 409)
     }
-    await c.env.RENT.prepare("INSERT INTO coupon_redemptions (id, coupon_id, coupon_code, customer_id, order_id, discount_amount, status) VALUES (?, ?, ?, ?, ?, ?, 'RESERVED')").bind(`cr-${nanoid(12)}`, couponId, appliedCouponCode, user.id, orderId, discountAmount).run()
+    const redemptionId = `cr-${nanoid(12)}`
+    await c.env.RENT.prepare("INSERT INTO coupon_redemptions (id, coupon_id, coupon_code, customer_id, order_id, discount_amount, status) VALUES (?, ?, ?, ?, ?, ?, 'RESERVED')").bind(redemptionId, couponId, appliedCouponCode, user.id, orderId, discountAmount).run()
     await c.env.RENT.prepare('UPDATE orders SET coupon_id = ?, coupon_snapshot = ? WHERE id = ?').bind(couponId, JSON.stringify({ code: appliedCouponCode, discountAmount }), orderId).run()
+    await recordFinancialLedgerEntry(c, { entryType: 'COUPON_DISCOUNT', amount: -discountAmount, customerId: user.id, orderId, sourceType: 'COUPON_REDEMPTION', sourceId: redemptionId, description: `优惠码 ${appliedCouponCode} 折扣`, createdBy: user.id, metadata: { couponId, status: 'RESERVED' } })
   }
   const customer = await getUserById(c, user.id)
   const recipients = customer?.staffId ? [customer.staffId] : (await getUsers(c)).filter((account: any) => account.role === 'ADMIN' && account.status !== 'inactive').map((account: any) => account.id)
@@ -2517,7 +2520,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   ])
   await recordDeviceLifecycle(c, order.deviceId, 'RESERVED', { orderId: order.id, reason: '付款凭证审核通过', changedBy: user.id })
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
-  await recordExternalRentalFlow(c, order.userId, Number(order.totalAmount), '银行转账', user.id)
+  await recordExternalRentalFlow(c, order.userId, Number(order.totalAmount), '银行转账', user.id, order.id)
   await issueInvoice(c, order.id)
   // Bank-transfer approval is a completed payment event too: enqueue the
   // Windows rental-user creation immediately instead of waiting for the cron.

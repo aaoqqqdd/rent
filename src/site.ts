@@ -320,7 +320,16 @@ export async function createNotification(c: Context, notification: { recipientId
 export async function recordBalanceTransaction(c: Context, userId: string, amount: number, type: string, reason: string, createdBy?: string | null, balanceAfter?: number): Promise<void> {
   await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount REAL NOT NULL, balance_after REAL NOT NULL, type TEXT NOT NULL, reason TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
   const current = balanceAfter ?? Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
-  await c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`bt-${crypto.randomUUID()}`, userId, Number(amount.toFixed(2)), Number(current.toFixed(2)), type, reason, createdBy || null).run()
+  const id = `bt-${crypto.randomUUID()}`
+  const value = Number(amount.toFixed(2))
+  await c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, userId, value, Number(current.toFixed(2)), type, reason, createdBy || null).run()
+  await recordFinancialLedgerEntry(c, { entryType: 'BALANCE', amount: value, customerId: userId, sourceType: 'BALANCE_TRANSACTION', sourceId: id, description: reason, createdBy, metadata: { type, balanceAfter: Number(current.toFixed(2)) } })
+}
+
+export async function recordFinancialLedgerEntry(c: Context, input: { entryType: 'PAYMENT' | 'REFUND' | 'BALANCE' | 'REFERRAL_REWARD' | 'COUPON_DISCOUNT'; amount: number; customerId?: string | null; orderId?: string | null; sourceType: string; sourceId: string; description: string; createdBy?: string | null; metadata?: unknown }): Promise<void> {
+  if (!Number.isFinite(input.amount)) throw new Error('财务流水金额无效')
+  await c.env.RENT.prepare(`INSERT OR IGNORE INTO financial_ledger_entries (id, entry_number, entry_type, amount, customer_id, order_id, source_type, source_id, description, metadata, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(`fle-${nanoid(16)}`, `FLE-${nanoid(12).toUpperCase()}`, input.entryType, Number(input.amount.toFixed(2)), input.customerId || null, input.orderId || null, input.sourceType, input.sourceId, input.description, JSON.stringify(input.metadata || {}), input.createdBy || null).run()
 }
 
 export async function ensureReferralProgram(c: Context): Promise<void> {
@@ -370,12 +379,13 @@ async function syncReferralOrderState(c: Context, orderId: string, rentalStatus:
   }
 }
 
-export async function recordExternalRentalFlow(c: Context, userId: string, amount: number, method: string, createdBy?: string | null): Promise<void> {
+export async function recordExternalRentalFlow(c: Context, userId: string, amount: number, method: string, createdBy?: string | null, orderId?: string): Promise<void> {
   const value = Number(amount || 0)
   if (value <= 0) return
   const balance = Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
   await recordBalanceTransaction(c, userId, value, 'rental_payment_credit', `${method}租赁付款入账`, createdBy, balance)
   await recordBalanceTransaction(c, userId, -value, 'rental_payment_debit', `${method}租赁付款扣款`, createdBy, balance)
+  if (orderId) await recordFinancialLedgerEntry(c, { entryType: 'PAYMENT', amount: value, customerId: userId, orderId, sourceType: 'ORDER_PAYMENT', sourceId: orderId, description: `${method}租赁付款`, createdBy, metadata: { method } })
 }
 
 export async function enqueueRentalUserCreation(c: Context, order: any): Promise<void> {
@@ -1524,15 +1534,17 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const registrationSettingsValue = values.get('registrationSettings')
   const legalMetadataValue = values.get('legalMetadata')
 
-  systemSettings.userTerms = sanitizeRichHtml(userTermsValue ?? '')
-  systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue ?? '')
-  systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue ?? '')
-  systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue ?? '')
-  systemSettings.softwareTerms = sanitizeRichHtml(softwareTermsValue ?? '')
+  // Only update values that actually exist in the database
+  // to prevent overwriting database-backed content with empty defaults
+  if (userTermsValue !== undefined) systemSettings.userTerms = sanitizeRichHtml(userTermsValue)
+  if (rentalTermsValue !== undefined) systemSettings.rentalTerms = sanitizeRichHtml(rentalTermsValue)
+  if (serviceTermsValue !== undefined) systemSettings.serviceTerms = sanitizeRichHtml(serviceTermsValue)
+  if (privacyPolicyValue !== undefined) systemSettings.privacyPolicy = sanitizeRichHtml(privacyPolicyValue)
+  if (softwareTermsValue !== undefined) systemSettings.softwareTerms = sanitizeRichHtml(softwareTermsValue)
+  if (copyrightNoticeValue !== undefined) systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue)
   const parsedLegalMetadata = safeJsonParse<any>(legalMetadataValue)
   if (parsedLegalMetadata) systemSettings.legalMetadata = { ...systemSettings.legalMetadata, ...parsedLegalMetadata }
-  systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue ?? '')
-  systemSettings.priceStrategy = priceStrategyValue ?? systemSettings.priceStrategy
+  if (priceStrategyValue !== undefined) systemSettings.priceStrategy = priceStrategyValue
 
   const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
@@ -1582,21 +1594,31 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     if (String(saved?.value ?? '') !== serialized) throw new Error(`系统设置保存校验失败：${key}`)
   }
 
-  await write('userTerms', systemSettings.userTerms)
-  await write('rentalTerms', systemSettings.rentalTerms)
-  await write('serviceTerms', systemSettings.serviceTerms)
-  await write('privacyPolicy', systemSettings.privacyPolicy)
-  await write('softwareTerms', systemSettings.softwareTerms)
-  await write('copyrightNotice', systemSettings.copyrightNotice)
-  await write('priceStrategy', systemSettings.priceStrategy)
-  await write('paymentMethods', systemSettings.paymentMethods)
-  await write('bankDetails', systemSettings.bankDetails)
-  await write('rmbPayment', systemSettings.rmbPayment)
-  await write('referralSettings', systemSettings.referralSettings)
-  await write('companyDetails', systemSettings.companyDetails)
-  await write('rentalRules', systemSettings.rentalRules)
-  await write('legalMetadata', systemSettings.legalMetadata)
-  await write('registrationSettings', systemSettings.registrationSettings)
+  // Only write fields that were explicitly provided in the updates object
+  // to prevent accidentally overwriting other fields with stale or default values
+  const fieldsToWrite: Array<[SystemSettingsKey, any]> = [
+    ['userTerms', systemSettings.userTerms],
+    ['rentalTerms', systemSettings.rentalTerms],
+    ['serviceTerms', systemSettings.serviceTerms],
+    ['privacyPolicy', systemSettings.privacyPolicy],
+    ['softwareTerms', systemSettings.softwareTerms],
+    ['copyrightNotice', systemSettings.copyrightNotice],
+    ['priceStrategy', systemSettings.priceStrategy],
+    ['paymentMethods', systemSettings.paymentMethods],
+    ['bankDetails', systemSettings.bankDetails],
+    ['rmbPayment', systemSettings.rmbPayment],
+    ['referralSettings', systemSettings.referralSettings],
+    ['companyDetails', systemSettings.companyDetails],
+    ['rentalRules', systemSettings.rentalRules],
+    ['legalMetadata', systemSettings.legalMetadata],
+    ['registrationSettings', systemSettings.registrationSettings],
+  ]
+
+  for (const [key, value] of fieldsToWrite) {
+    if (key in updates) {
+      await write(key, value)
+    }
+  }
 
   return systemSettings
 }
