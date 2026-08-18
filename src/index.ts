@@ -2638,10 +2638,10 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
   const settlementId = `dst-${nanoid(12)}`
   await c.env.RENT.batch([
-    c.env.RENT.prepare('INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, requested_by, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(settlementId, order.id, depositAmount, refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),
+    c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),
     c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING' WHERE id = ?").bind(order.id),
   ])
-  await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_REQUESTED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, after: snapshot, reason: deductionReason || '全额退还押金' })
+  await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_AUTO_APPROVED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, after: { ...snapshot, status: 'APPROVED' }, reason: deductionReason || '管理员提交，自动审批通过' })
   return c.redirect(`/admin/orders/${order.id}`, 303)
 })
 
