@@ -54,9 +54,39 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
         <div class="form-group"><label class="form-label" for="deliveryMethod">设备交付方式</label><select id="deliveryMethod" name="deliveryMethod" class="form-control"><option value="Pickup">到店自取</option><option value="Delivery">送货上门（运费由管理员/员工确认）</option></select></div>
         <div class="form-group" id="deliveryAddressGroup" hidden><label class="form-label" for="deliveryAddress">送货地址</label><textarea id="deliveryAddress" name="deliveryAddress" class="form-control" rows="3" placeholder="请填写完整的街道、Suburb、州和邮编"></textarea><small class="form-text">提交后由绑定员工或管理员确认配送范围和运费，暂不在此页面收取。</small></div>
         <div class="form-group"><label class="form-label" for="rentalNote">申请备注（选填）</label><textarea id="rentalNote" name="rentalNote" class="form-control" rows="2" maxlength="500" placeholder="例如配送时间、设备使用要求等"></textarea></div>
-        <div class="form-group"><label class="form-label" for="couponCode">优惠码（选填）</label><input id="couponCode" name="couponCode" class="form-control" maxlength="40" placeholder="输入优惠码"></div>
+        <div class="form-group"><label class="form-label" for="couponCode">优惠码（选填）</label><input id="couponCode" name="couponCode" class="form-control" maxlength="40" placeholder="输入优惠码"><small class="form-text" id="couponQuotePreview" aria-live="polite"></small></div>
         <div class="alert" id="rentalRuleMessage">最短租赁时间：${rentalRules.minimumRentalDays} 天。不可用日期：${rentalRules.unavailableDates.length ? rentalRules.unavailableDates.join('、') : '无'}。</div>
         <div class="card" id="quotePreview"><strong>租赁报价</strong><p>请选择租期后查看租金、押金和配送费用。</p></div>
+
+        <script>
+          (() => {
+            const code = document.getElementById('couponCode');
+            const start = document.getElementById('startDate');
+            const end = document.getElementById('endDate');
+            const quote = document.getElementById('quotePreview');
+            const message = document.getElementById('couponQuotePreview');
+            let timer;
+            const preview = () => {
+              clearTimeout(timer);
+              const value = code.value.trim();
+              const days = Math.ceil((new Date(end.value + 'T00:00:00Z') - new Date(start.value + 'T00:00:00Z')) / 86400000);
+              if (!value || !start.value || !end.value || !Number.isInteger(days) || days < 1) { message.textContent = ''; return; }
+              timer = setTimeout(async () => {
+                try {
+                  const response = await fetch('/api/coupons/rental-preview?deviceId=${encodeURIComponent(device.id)}&days=' + days + '&code=' + encodeURIComponent(value));
+                  const data = await response.json();
+                  message.textContent = data.message || '';
+                  message.style.color = data.ok ? '#16794f' : '#b42318';
+                  if (data.ok) quote.innerHTML = '<strong>优惠后报价</strong><p>原租金：AUD$ ' + Number(data.rent).toFixed(2) + '；优惠：-AUD$ ' + Number(data.discount).toFixed(2) + '；押金：AUD$ ' + Number(data.deposit).toFixed(2) + '；<strong>最终应付：AUD$ ' + Number(data.total).toFixed(2) + '</strong>。</p>';
+                  else { const rent = Number(days * ${Number(device.pricePerDay || 0)}).toFixed(2); const deposit = Number(${Number(device.depositAmount || 0)}).toFixed(2); quote.innerHTML = '<strong>租赁报价</strong><p>租金：AUD$ ' + rent + '；押金：AUD$ ' + deposit + '；<strong>最终应付：AUD$ ' + Number(Number(rent) + Number(deposit)).toFixed(2) + '</strong>。</p>'; }
+                } catch { message.textContent = '暂时无法验证优惠码，请稍后重试。'; message.style.color = '#b42318'; }
+              }, 250);
+            };
+            code.addEventListener('input', preview);
+            start.addEventListener('change', preview);
+            end.addEventListener('change', preview);
+          })();
+        </script>
 
         <button type="submit" class="button button-primary" style="margin-top: 20px;">确认租赁</button>
       </form>

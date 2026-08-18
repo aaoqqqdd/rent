@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, generateReferenceNumber } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, generateReferenceNumber, recordDeviceLifecycle } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 
 function cents(value: number): number {
@@ -177,7 +177,10 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
   if (paidOrderId) {
     try {
       const paidOrder = await getOrderById(c, paidOrderId)
-      if (paidOrder) await recordExternalRentalFlow(c, paidOrder.userId, Number(paidOrder.totalAmount), '信用卡', null)
+      if (paidOrder) {
+        await recordExternalRentalFlow(c, paidOrder.userId, Number(paidOrder.totalAmount), '信用卡', null)
+        await recordDeviceLifecycle(c, paidOrder.deviceId, 'RESERVED', { orderId: paidOrder.id, reason: '信用卡付款成功' })
+      }
       await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
       await issueInvoice(c, paidOrderId)
       await enqueueRentalUserCreation(c, await getOrderById(c, paidOrderId))
@@ -241,6 +244,9 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (refundItem === 'other' && !customRefundItem) return c.text('请输入其他退款项目名称', 400)
   const refundItemLabel = refundItem === 'other' ? customRefundItem : '押金退款'
   const reason = String(form.deductionReason || '').trim()
+  const deductionCategory = String(form.deductionCategory || '').trim()
+  const validDeductionCategories = new Set(['DAMAGE', 'MISSING_ACCESSORY', 'LATE_FEE', 'DEVICE_NOT_RETURNED', 'OTHER'])
+  if (deductionAmount > 0 && !validDeductionCategories.has(deductionCategory)) return c.text('请选择有效的押金扣款类别', 400)
   const recordedReason = reason ? `${refundItemLabel}；${reason}` : refundItemLabel
   if (deductionAmount > 0 && !reason) return c.text('扣除押金时必须填写原因', 400)
 
@@ -262,9 +268,10 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   }
 
   await c.env.RENT.batch([
-    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, depositAmount, refundAmount, refundedProcessingFee, deductionAmount, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, depositAmount, refundAmount, refundedProcessingFee, deductionAmount, deductionAmount > 0 ? deductionCategory : null, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
+    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(refundAmount >= depositAmount ? 'REFUNDED' : refundAmount <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED', deductionAmount, refundAmount, order.id),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
   if (totalRefundAmount > 0 && channel === 'balance') await recordBalanceTransaction(c, order.userId, totalRefundAmount, 'refund_credit', `${refundItemLabel}退回账户余额`, admin.id)

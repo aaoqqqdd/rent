@@ -83,7 +83,7 @@ export async function renderCustomerRentals(c: Context, user: any) {
                   <td><strong>${device?.name ?? '未知设备'}</strong></td>
                   <td>${rental.startDate ?? rental.start_date ?? '—'} 至 ${rental.endDate ?? rental.end_date ?? '—'}</td>
                   <td>${formatCurrency(rental.totalAmount ?? rental.total_amount ?? 0)}</td>
-                  <td><span class="badge badge-info">${statusMap[rental.status] || rental.status}</span></td>
+                  <td><span class="badge ${rental.status === 'cancelled' ? 'badge-danger' : 'badge-info'}">${statusMap[rental.status] || rental.status}</span></td>
                   <td><a class="link-button" href="/customer/orders/${rental.id}">查看详情</a></td>
                 </tr>
               `;

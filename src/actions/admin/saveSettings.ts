@@ -16,15 +16,17 @@ export async function notifyAgreementUpdate(c: Context, changedAgreements: Array
   const fill = (value: unknown, customer: any) => String(value || '').replace(/\{customer_name\}/g, String(customer.name || '')).replace(/\{customer_email\}/g, String(customer.email || '')).replace(/\{changed_agreements\}/g, names).replace(/\{company_name\}/g, String(companyDetails.name || '')).replace(/\{company_email\}/g, String(companyDetails.email || ''))
   const title = template?.enabled === 0 ? '协议内容已更新' : String(template?.subject || '协议内容已更新')
   const defaultMessage = `我们已更新以下协议内容：${names}。请打开通知详情查看最新版本。`
-  const customers = await c.env.RENT.prepare("SELECT id, name, email FROM users WHERE role = 'CUSTOMER' AND status = 'active' AND email NOT LIKE '%@invalid.local'").all() as any
-  const recipients = (customers.results || []).filter((customer: any) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(customer.email || '')))
+  // 站内信不能依赖邮件是否配置成功；访客和暂未填写有效邮箱的正式客户
+  // 仍应在通知中心看到协议变更。邮件只是额外的发送通道。
+  const customers = await c.env.RENT.prepare("SELECT id, name, email FROM users WHERE role = 'CUSTOMER' AND status = 'active'").all() as any
+  const recipients = customers.results || []
   await Promise.allSettled(recipients.map(async (customer: any) => {
     const subject = fill(title, customer)
     const message = template?.enabled === 0 ? defaultMessage : fill(template?.body || defaultMessage, customer)
     await createNotification(c, { recipientId: customer.id, type: 'agreement_update', title: subject, message })
     const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
     const from = String((c.env as any).EMAIL_FROM || companyDetails.email || '').trim()
-    if (!apiKey || !from) return
+    if (!apiKey || !from || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(customer.email || '')) || String(customer.email).endsWith('@invalid.local')) return
     const html = renderEmailNotificationHtml(subject, message, companyDetails.name)
     const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [customer.email], subject, text: message.replace(/<[^>]+>/g, ''), html }) })
     if (!response.ok) throw new Error(`协议更新邮件发送失败: ${response.status}`)
@@ -45,7 +47,6 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   const shouldSaveStripeConfig = Boolean(
     stripeConfigInput &&
     (
-      stripeConfigInput.publishableKey ||
       stripeConfigInput.secretKey ||
       stripeConfigInput.webhookSecret ||
       stripeConfigInput.clear === true
@@ -140,7 +141,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   const changedAgreements = [
     ['userTerms', '用户协议'],
     ['rentalTerms', '租赁协议'],
-    ['serviceTerms', '网站服务条款'],
+    ['serviceTerms', '服务条款'],
     ['privacyPolicy', '隐私政策'],
     ['copyrightNotice', '退款政策'],
   ].filter(([key]) => Object.prototype.hasOwnProperty.call(next, key) && String((current as any)[key] || '') !== String((next as any)[key] || ''))

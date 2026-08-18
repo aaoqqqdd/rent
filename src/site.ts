@@ -127,6 +127,18 @@ export function getAvatarInitials(name: unknown): string {
 }
 
 export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
+export type AccessLevel = 'CUSTOMER' | 'STAFF' | 'MANAGER' | 'ADMIN'
+
+export function getAccessLevel(user: any): AccessLevel {
+  const value = String(user?.accessLevel ?? user?.access_level ?? user?.role ?? 'CUSTOMER').toUpperCase()
+  return ['CUSTOMER', 'STAFF', 'MANAGER', 'ADMIN'].includes(value) ? value as AccessLevel : 'CUSTOMER'
+}
+
+export function canManageUser(actor: any, target: any): boolean {
+  const actorLevel = getAccessLevel(actor)
+  const targetLevel = getAccessLevel(target)
+  return actorLevel === 'ADMIN' || (actorLevel === 'MANAGER' && targetLevel === 'STAFF')
+}
 
 export function canUseAccountBalance(user: any): boolean {
   const role = String(user?.role || '').trim().toUpperCase()
@@ -142,6 +154,8 @@ export interface User {
   password_salt?: string // 添加 password_salt 字段
   password?: string // 添加password属性以兼容旧代码
   role: Role
+  accessLevel?: AccessLevel
+  access_level?: AccessLevel
   phone?: string
   bsb?: string
   account?: string
@@ -208,6 +222,8 @@ export interface Device {
   deposit_amount?: number
 
   status: 'available' | 'rented' | 'maintenance' | 'retired'
+  lifecycleStatus?: DeviceLifecycleStatus
+  lifecycle_status?: DeviceLifecycleStatus
   description: string
   deviceMode?: 'normal' | 'return' | 'maintenance' | 'lost'
   device_mode?: 'normal' | 'return' | 'maintenance' | 'lost'
@@ -219,6 +235,17 @@ export interface Device {
   agent_storage_free_bytes?: number
   agent_version?: string
   agent_detected_serial?: string
+}
+
+export type DeviceLifecycleStatus = 'RESERVED' | 'READY' | 'RENTED' | 'RETURNED' | 'INSPECTION' | 'MAINTENANCE' | 'DAMAGED' | 'RETIRED'
+
+const DEVICE_LIFECYCLE_STATES = new Set<DeviceLifecycleStatus>(['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'])
+
+function legacyDeviceStatusForLifecycle(status: DeviceLifecycleStatus): Device['status'] {
+  if (status === 'READY') return 'available'
+  if (status === 'MAINTENANCE' || status === 'DAMAGED') return 'maintenance'
+  if (status === 'RETIRED') return 'retired'
+  return 'rented'
 }
 
 export interface Order {
@@ -665,6 +692,7 @@ function normalizeUserRow(row: any): User {
   const referrerId = row.referrerId ?? row.referrer_id ?? row.referrerId
   const staffId = row.staffId ?? row.staff_id
   const accountType = row.accountType ?? row.account_type ?? 'formal'
+  const accessLevel = getAccessLevel(row)
   const accountStatus = row.accountStatus ?? row.account_status ?? (row.status === 'inactive' ? 'inactive' : 'active')
   const guestOrderId = row.guestOrderId ?? row.guest_order_id ?? null
   const guestExpiresAt = row.guestExpiresAt ?? row.guest_expires_at ?? null
@@ -688,6 +716,8 @@ function normalizeUserRow(row: any): User {
     staffId,
     staff_id: staffId,
     accountType,
+    accessLevel,
+    access_level: accessLevel,
     account_type: accountType,
     accountStatus,
     account_status: accountStatus,
@@ -1005,6 +1035,19 @@ export async function updateDeviceStatus(c: Context, deviceId: string, status: s
   await db.prepare('UPDATE devices SET status = ? WHERE id = ?').bind(status, deviceId).run();
 }
 
+export async function recordDeviceLifecycle(c: Context, deviceId: string, nextStatus: DeviceLifecycleStatus, options: { orderId?: string, reason?: string, changedBy?: string } = {}): Promise<void> {
+  if (!DEVICE_LIFECYCLE_STATES.has(nextStatus)) throw new Error('设备生命周期状态无效')
+  const db = getDB(c)
+  const device = await db.prepare('SELECT lifecycle_status FROM devices WHERE id = ?').bind(deviceId).first() as any
+  if (!device) throw new Error('设备不存在')
+  const previousStatus = String(device.lifecycle_status || 'READY')
+  if (previousStatus === nextStatus) return
+  await db.batch([
+    db.prepare('UPDATE devices SET lifecycle_status = ?, status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(nextStatus, legacyDeviceStatusForLifecycle(nextStatus), deviceId),
+    db.prepare('INSERT INTO device_lifecycle_events (id, device_id, order_id, previous_status, next_status, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`dle-${nanoid(16)}`, deviceId, options.orderId || null, previousStatus, nextStatus, options.reason || null, options.changedBy || null),
+  ])
+}
+
 export async function releaseDeviceIfUnbooked(c: Context, deviceId: string): Promise<void> {
   const activeOrder = await c.env.RENT.prepare(`
     SELECT id FROM orders
@@ -1055,11 +1098,17 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
     cancelled: { order: 'CANCELLED', payment: 'PAYMENT_FAILED', rental: 'CANCELLED' },
   }
   const next = mapping[status] || { order: status.toUpperCase(), payment: 'UNPAID', rental: status.toUpperCase() }
-  const previous = await db.prepare('SELECT rental_status FROM orders WHERE id = ?').bind(orderId).first() as any
+  const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount FROM orders WHERE id = ?').bind(orderId).first() as any
   await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
+  if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
+    await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
+  }
   if (previous && previous.rental_status !== next.rental) {
     await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'SYSTEM', '订单状态同步').run()
   }
+  const lifecycleByOrderStatus: Partial<Record<string, DeviceLifecycleStatus>> = { paid: 'RESERVED', pending_pickup: 'RESERVED', active: 'RENTED', extended: 'RENTED', overdue: 'RENTED', suspended: 'RENTED', pending_return: 'INSPECTION' }
+  const lifecycleStatus = lifecycleByOrderStatus[status]
+  if (previous?.deviceId && lifecycleStatus) await recordDeviceLifecycle(c, previous.deviceId, lifecycleStatus, { orderId, reason: `订单状态：${status}` })
   await syncReferralOrderState(c, orderId, next.rental)
 }
 
@@ -1505,7 +1554,9 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
       wechat: Boolean((parsedPaymentMethods as any).wechat),
     }
   }
-  if (parsedBankDetails) systemSettings.bankDetails = parsedBankDetails
+  // Older deployments stored bank details without bankName. Keep the current
+  // shape when loading those rows so all bank fields remain available to the UI.
+  if (parsedBankDetails) systemSettings.bankDetails = { ...systemSettings.bankDetails, ...parsedBankDetails }
   if (parsedRmbPayment) systemSettings.rmbPayment = { ...systemSettings.rmbPayment, ...parsedRmbPayment }
   if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
   if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
@@ -1582,6 +1633,7 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   const hasAccountStatus = await userHasColumn(c, 'account_status')
   const hasGuestOrderId = await userHasColumn(c, 'guest_order_id')
   const hasGuestExpiresAt = await userHasColumn(c, 'guest_expires_at')
+  const hasAccessLevel = await userHasColumn(c, 'access_level')
 
   let passwordHashToStore = user.passwordHash ?? null;
   let passwordSaltToStore = user.passwordSalt ?? null;
@@ -1604,6 +1656,7 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   // 构建INSERT字段和值
   const insertFields = ['id', 'name', 'email', 'phone', 'role', 'status', 'balance'];
   const insertValues = [user.id, user.name, user.email, user.phone || null, user.role, user.status ?? 'active', user.balance ?? 0];
+  if (hasAccessLevel) { insertFields.push('access_level'); insertValues.push(user.accessLevel ?? user.access_level ?? user.role) }
 
   // 处理commission_balance / commissionBalance
   if (hasCommissionBalanceSnake) {
@@ -1755,13 +1808,14 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     deletionRequestedAt: 'deletion_requested_at',
     deletionScheduledAt: 'deletion_scheduled_at',
     accountNumber: 'account_number'
+    , accessLevel: 'access_level'
   }
 
   const allowedFields = new Set([
     'name', 'email', 'role', 'status', 'balance', 'phone', 'bsb', 'account', 'accountNumber',
     'referralCode', 'referrerId', 'passwordHash', 'passwordSalt', 'commissionBalance',
     'createdAt', 'updatedAt', 'commissionRate', 'staffId', 'accountType', 'accountStatus',
-    'guestOrderId', 'guestExpiresAt', 'deletedAt', 'deletionRequestedAt', 'deletionScheduledAt',
+    'guestOrderId', 'guestExpiresAt', 'deletedAt', 'deletionRequestedAt', 'deletionScheduledAt', 'accessLevel',
   ])
   for (const key of Object.keys(fields)) {
     if (!allowedFields.has(key)) delete fields[key]
@@ -1829,6 +1883,11 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     device.status || 'available',
     sanitizePlainText(device.description, 2000),
   ];
+  if (deviceColumns.includes('lifecycle_status')) {
+    const initialLifecycle: DeviceLifecycleStatus = device.status === 'maintenance' ? 'MAINTENANCE' : device.status === 'retired' ? 'RETIRED' : device.status === 'rented' ? 'RENTED' : 'READY'
+    insertFields.push('lifecycle_status')
+    insertValues.push(initialLifecycle)
+  }
 
   for (const field of ['brand', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os']) {
     if (!deviceColumns.includes(field)) continue
@@ -1911,6 +1970,7 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
     depositAmount: 'depositAmount', deposit_amount: 'deposit_amount',
     agentStatus: 'agent_status', agent_status: 'agent_status',
     deviceMode: 'device_mode', device_mode: 'device_mode',
+    lifecycleStatus: 'lifecycle_status', lifecycle_status: 'lifecycle_status',
   }
   const plainTextFields = new Set(['name', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
   const setEntries: [string, any][] = []
@@ -2336,6 +2396,15 @@ PC Rental电脑租赁团队
   },
 }
 
+// Legal documents must come from D1. Empty defaults prevent an unsaved edit
+// from being mistaken for a persisted document after a Worker restart.
+systemSettings.userTerms = ''
+systemSettings.rentalTerms = ''
+systemSettings.serviceTerms = ''
+systemSettings.privacyPolicy = ''
+systemSettings.softwareTerms = ''
+systemSettings.copyrightNotice = ''
+
 function escapeContractValue(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
 }
@@ -2449,7 +2518,7 @@ export function renderContractVariables(content: string, contract: Contract, ord
     gst_included: systemSettings.companyDetails.gstIncluded ? '是' : '否',
     company_signature: creatorName,
     signer_name: stored.signer_name || customer?.name,
-    sign_time: contract.signedAt ? new Date(contract.signedAt).toLocaleString('en-AU') : '',
+    sign_time: formatMelbourneDateTime(contract.signedAt),
     esign_ip: contract.esign_ip,
     esign_device: contract.esign_device,
     device_id: device?.id ?? order?.deviceId ?? order?.device_id,
@@ -2779,6 +2848,14 @@ export function formatCurrency(value: number | undefined | null): string {
   return `AUD$${value.toFixed(2)}`
 }
 
+export function formatMelbourneDateTime(value: string | Date | null | undefined): string {
+  if (!value) return ''
+  const raw = value instanceof Date ? value.toISOString() : String(value)
+  const timestamp = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? `${raw.replace(' ', 'T')}Z` : raw)
+  if (Number.isNaN(timestamp.getTime())) return raw
+  return new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', dateStyle: 'medium', timeStyle: 'medium', hour12: false }).format(timestamp)
+}
+
 export function formatDate(value: string): string {
   return value
 }
@@ -3044,10 +3121,10 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/customer/dashboard': '⌂', '/customer/rentals': '▤', '/customer/orders': '▦',
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣', '/customer/balance': '◌', '/customer/guest': '▰', '/customer/guest/upgrade': '↥',
     '/staff/dashboard': '◍', '/staff/orders': '◓', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
-    '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭',
+    '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
     '/notifications': 'N', '/admin/notifications': '☷', '/admin/dashboard': '⌘', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/payment-reviews': '✓', '/admin/devices': '◒', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
+    '/admin/withdrawals': '↗', '/admin/payment-reviews': '✓', '/admin/exceptions': '⚿', '/admin/devices': '◒', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
   }
 
   const navIconSvg = (kind: string) => {
@@ -3126,6 +3203,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('租赁管理', [['/staff/orders', '租赁订单'], ['/staff/orders/ongoing', '进行中的租赁'], ['/staff/inspections', '验机记录']])}
             ${renderNavGroup('合同管理', [['/staff/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/staff/contracts?status=pending_sign', '待签署合同']])}
             ${renderNavGroup('设备运营', [['/staff/devices', '设备管理'], ['/staff/rentals/tracking', '租赁追踪']])}
+            ${getAccessLevel(currentUser) === 'MANAGER' ? renderNavGroup('人员管理', [['/manager/staff', 'Staff 员工']]) : ''}
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
@@ -3134,7 +3212,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/calendar', '租赁日历']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/payment-reviews', '充值与转账审核'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/payment-reviews', '充值与转账审核'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('协议与设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}
         </div>
@@ -3163,6 +3241,17 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
 // ==================== 错误日志记录系统 ====================
 export type ErrorLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
+
+export async function createAuditLog(c: Context, input: { actor?: any, action: string, targetType: string, targetId: string, before?: unknown, after?: unknown, reason?: string }) {
+  const actor = input.actor || c.get('user') as any
+  const redact = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(redact)
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, /password|token|secret|signature|authorization/i.test(key) ? '[REDACTED]' : redact(item)]))
+    return value
+  }
+  await getDB(c).prepare('INSERT INTO audit_logs (id, actor_id, actor_role, action, target_type, target_id, before_json, after_json, reason, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(`audit-${nanoid(16)}`, actor?.id || null, actor?.role || null, input.action, input.targetType, input.targetId, input.before === undefined ? null : JSON.stringify(redact(input.before)), input.after === undefined ? null : JSON.stringify(redact(input.after)), input.reason || null, c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0].trim() || null, String(c.req.header('User-Agent') || '').slice(0, 500) || null).run()
+}
 
 /**
  * 记录错误到数据库和控制台

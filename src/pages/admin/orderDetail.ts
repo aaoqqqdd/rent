@@ -18,11 +18,12 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user);
   }
 
-  const [customer, device, contract, completedRefund, transferProof, statusHistory] = await Promise.all([
+  const [customer, device, contract, completedRefund, transferProof, statusHistory, depositSettlement] = await Promise.all([
     getUserById(c, order.userId), getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id),
     c.env.RENT.prepare("SELECT type, status, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
     c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first(),
-    c.env.RENT.prepare('SELECT old_status, new_status, trigger_type, triggered_by, reason, created_at FROM rental_status_history WHERE rental_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all()
+    c.env.RENT.prepare('SELECT old_status, new_status, trigger_type, triggered_by, reason, created_at FROM rental_status_history WHERE rental_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all(),
+    c.env.RENT.prepare('SELECT * FROM deposit_settlements WHERE order_id = ? ORDER BY requested_at DESC LIMIT 1').bind(order.id).first()
   ]) as any[];
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
@@ -158,7 +159,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           <h4 style="margin: 0 0 16px 0; color: #c2410c;">💸 退款处理</h4>
           <p class="section-note">管理员可选择本次退款方式，提交后按所选方式处理。</p>
           ${completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
-          ${order.status === 'completed' && completedRefund?.status !== 'succeeded' ? `<form method="POST" action="/admin/orders/${order.id}/deposit-refund" onsubmit="return confirm('确定提交本次押金处理吗？每笔订单只能处理一次。');">
+          ${depositSettlement && completedRefund?.status !== 'succeeded' ? `<div class="alert">结算单 ${escapeHtml(depositSettlement.settlement_number)}：${escapeHtml(depositSettlement.status)}${depositSettlement.review_note ? ` · ${escapeHtml(depositSettlement.review_note)}` : ''}</div>` : ''}
+          ${order.status === 'completed' && completedRefund?.status !== 'succeeded' && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED') ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" onsubmit="return confirm('${depositSettlement?.status === 'APPROVED' ? '确认按已批准结算单执行本次押金退款吗？' : '确认提交本次押金结算供 Manager 审批吗？'}');">
             <label class="form-label" for="refundMethod">退款方式</label>
             <select class="form-control" id="refundMethod" name="refundMethod" required>
               <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额</option>
@@ -174,10 +176,13 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             </select>
             <input class="form-control" id="customRefundItem" name="customRefundItem" maxlength="100" placeholder="请输入退款项目名称" hidden>
             <label class="form-label" for="refundAmount">退款金额（最多 ${formatCurrency(order.totalAmount)}）</label>
-            <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${order.totalAmount}" step="0.01" value="${order.depositAmount}" required>
+            <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${order.depositAmount}" step="0.01" value="${depositSettlement?.status === 'APPROVED' ? depositSettlement.refund_amount : order.depositAmount}" required>
             <label class="form-label" for="deductionReason">扣款原因（未全额退还时必填）</label>
-            <textarea class="form-control" id="deductionReason" name="deductionReason"></textarea>
-            <button type="submit" class="button button-warning" style="margin-top:12px;">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '确认已转账并处理押金' : '处理押金'}</button>
+            <select class="form-control" id="deductionCategory" name="deductionCategory">
+              <option value="">无扣款</option><option value="DAMAGE" ${depositSettlement?.deduction_category === 'DAMAGE' ? 'selected' : ''}>设备损坏</option><option value="MISSING_ACCESSORY" ${depositSettlement?.deduction_category === 'MISSING_ACCESSORY' ? 'selected' : ''}>配件遗失</option><option value="LATE_FEE" ${depositSettlement?.deduction_category === 'LATE_FEE' ? 'selected' : ''}>逾期费用</option><option value="DEVICE_NOT_RETURNED" ${depositSettlement?.deduction_category === 'DEVICE_NOT_RETURNED' ? 'selected' : ''}>设备未归还</option><option value="OTHER" ${depositSettlement?.deduction_category === 'OTHER' ? 'selected' : ''}>其他</option>
+            </select>
+            <textarea class="form-control" id="deductionReason" name="deductionReason">${escapeHtml(depositSettlement?.status === 'APPROVED' ? depositSettlement.deduction_reason || '' : '')}</textarea>
+            <button type="submit" class="button button-warning" style="margin-top:12px;">${depositSettlement?.status === 'APPROVED' ? '执行已批准结算' : '提交结算审批'}</button>
           </form>` : ''}
           ${order.status === 'paid' && order.startDate > today && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/cancel-and-refund" onsubmit="return confirm('确定取消订单并全额退还 ${formatCurrency(order.totalAmount)} 吗？');">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先完成银行转账，再确认取消订单。</div>' : ''}<button type="submit" class="button button-danger">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '确认已转账并取消订单' : '取消并全额退款'}</button></form>` : ''}
         </div>

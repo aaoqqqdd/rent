@@ -313,7 +313,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             <div class="card" style="margin-top:20px; padding:16px;">
               <h3 style="margin-top:0;">退款接收方式</h3>
               ${canUseBalance ? `
-              <label style="display:block; margin-bottom:10px;"><input type="radio" name="refundMethod" value="balance" checked> 退回账户余额（默认，到账更快）</label>
+              <label style="display:block; margin-bottom:10px;"><input type="radio" name="refundMethod" value="balance" checked> 退回账户余额（推荐，到账更快）</label>
               <label style="display:block;"><input type="radio" name="refundMethod" value="original"> 原路退回</label>
               ` : `<input type="hidden" name="refundMethod" value="original"><div class="alert"><strong>退款将原路退回</strong><p>只有已登录的正式客户账户可以选择退款到账户余额；访客及未登录签署者不能退回余额。</p></div>`}
               <p class="text-muted">信用卡原路退回 Stripe；银行转账原路退回您填写的银行账户；余额付款仍退回余额。</p>

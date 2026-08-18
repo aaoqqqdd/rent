@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getUserById } from '../../site';
+import { buildLayout, formatMelbourneDateTime, getUserById } from '../../site';
 import { Context } from 'hono';
 
 export async function renderCustomerSecurity(c: Context, user: any, errorMessage?: string, successMessage?: string, loginRecords: any[] = []) {
@@ -87,7 +87,7 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
           </tr>
         </thead>
         <tbody>
-          ${loginRecords.length ? loginRecords.map((record: any) => `<tr><td>${esc(record.created_at)}</td><td title="${esc(record.user_agent)}">${esc(String(record.user_agent || '未知设备').slice(0, 80))}</td><td>${esc(record.ip_address)}</td><td><span class="badge ${record.status === 'success' ? 'badge-success' : 'badge-danger'}">${record.status === 'success' ? '成功' : '失败'}</span></td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无登录记录</td></tr>'}
+          ${loginRecords.length ? loginRecords.map((record: any) => `<tr><td>${esc(formatMelbourneDateTime(record.created_at))}</td><td title="${esc(record.user_agent)}">${esc(String(record.user_agent || '未知设备').slice(0, 80))}</td><td>${esc(record.ip_address)}</td><td><span class="badge ${record.status === 'success' ? 'badge-success' : 'badge-danger'}">${record.status === 'success' ? '成功' : '失败'}</span></td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无登录记录</td></tr>'}
         </tbody>
       </table>
     </div>

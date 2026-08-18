@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -562,7 +562,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${stripeResponse ? '继续前往 Stripe 支付' : '查看付款结果'}</a></div></div>`
           const response = c.html(buildLayout('保存访客登录资料', guestPage))
           response.headers.append('Set-Cookie', 'contract_sign_draft=; Path=/contract/sign; Max-Age=0; SameSite=Lax')
-          response.headers.append('Set-Cookie', `guest_payment_credentials=${encodeURIComponent(JSON.stringify({ orderId: contract.rentalId, email: userInfo.email, password: guestPassword }))}; Path=/payment/result; Max-Age=86400; HttpOnly; Secure; SameSite=Lax`)
+          const session = await createAuthSession(c, userId)
+          response.headers.append('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
           return response
         }
         if (stripeResponse) {

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, splitPersonName } from '../../site';
+import { buildLayout, getAccessLevel, splitPersonName } from '../../site';
 
 export async function renderAdminUsers(user: any, c: any) {
   const { getUsersAsync } = await import('../../site')
@@ -13,6 +13,7 @@ export async function renderAdminUsers(user: any, c: any) {
   const roleMap: Record<string, { text: string; class: string }> = {
     'ADMIN': { text: '管理员', class: 'badge-danger' },
     'STAFF': { text: '员工', class: 'badge-warning' },
+    'MANAGER': { text: '经理', class: 'badge-primary' },
     'CUSTOMER': { text: '客户', class: 'badge-info' }
   };
 
@@ -57,7 +58,8 @@ export async function renderAdminUsers(user: any, c: any) {
         </thead>
         <tbody>
           ${allUsers.map(u => {
-            const role = roleMap[u.role] || { text: u.role, class: 'badge-info' };
+            const accessLevel = getAccessLevel(u)
+            const role = roleMap[accessLevel] || { text: accessLevel, class: 'badge-info' };
             const managementStatus = u.accountStatus ?? u.account_status ?? (u.status === 'active' ? 'active' : 'inactive')
             const status = statusMap[managementStatus] || { text: managementStatus, class: 'badge-info' };
             const personName = splitPersonName(u.name)

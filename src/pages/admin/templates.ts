@@ -16,7 +16,7 @@ export function renderAdminTemplateHub(user: any) {
         <div class="template-register__document"><span class="document-mark">UA</span><div><h3>用户协议</h3><p>账户注册与正式账户升级时确认。</p></div></div>
         <p>注册页面</p><span class="badge badge-neutral">法律文本</span><a class="button button-sm button-secondary" href="/admin/templates/user">编辑协议</a>
       </article>
-      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">ST</span><div><h3>网站服务条款</h3><p>说明网站功能、合理使用和服务规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/service">编辑条款</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">ST</span><div><h3>服务条款</h3><p>说明网站功能、合理使用和服务规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/service">编辑条款</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">PP</span><div><h3>隐私政策</h3><p>说明个人资料、付款信息和保存方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/privacy">编辑政策</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">SW</span><div><h3>软件使用协议</h3><p>说明 Windows 客户端的授权、更新和设备数据使用规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">软件法务</span><a class="button button-sm button-secondary" href="/admin/templates/software">编辑协议</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">RF</span><div><h3>退款政策</h3><p>说明订单取消、押金退还和退款方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">退款规则</span><a class="button button-sm button-secondary" href="/admin/templates/copyright">编辑政策</a></article>
@@ -56,7 +56,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind, datab
   const documentMetaMap = {
     user: ['编辑用户协议', '用于注册和正式账户创建流程。', settings.userTerms],
     rental: ['编辑租赁协议', '用于合同签署流程第一步。变量会在展示时替换为对应合同数据。', settings.rentalTerms],
-    service: ['编辑网站服务条款', '显示在全站右下角的服务条款页面。', settings.serviceTerms],
+    service: ['编辑服务条款', '显示在全站右下角的服务条款页面。', settings.serviceTerms],
     privacy: ['编辑隐私政策', '显示在全站右下角的隐私政策页面。', settings.privacyPolicy],
     software: ['编辑软件使用协议', '显示在管理软件的软件协议页面。', settings.softwareTerms],
     copyright: ['编辑退款政策', '显示在全站右下角的退款政策页面。', settings.copyrightNotice],

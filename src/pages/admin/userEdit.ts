@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getUserById, getUsers, sanitizePlainText, splitPersonName } from '../../site';
+import { buildLayout, getAccessLevel, getUserById, getUsers, sanitizePlainText, splitPersonName } from '../../site';
 import { Context } from 'hono';
 
 export async function renderAdminUserEdit(c: Context, user: any, targetUserId: string, errorMessage?: string) {
@@ -16,6 +16,7 @@ export async function renderAdminUserEdit(c: Context, user: any, targetUserId: s
   const activeStaff = allUsers.filter(account => account.role === 'STAFF' && account.status === 'active' && (account.accountStatus ?? account.account_status ?? 'active') === 'active')
   const accountStatus = targetUser.accountStatus ?? targetUser.account_status ?? (targetUser.status === 'active' ? 'active' : 'inactive')
   const isCurrentAdmin = user.id === targetUser.id && targetUser.role === 'ADMIN'
+  const accessLevel = getAccessLevel(targetUser)
   const escape = (value: unknown) => sanitizePlainText(value, 200).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
   const body = `
@@ -61,6 +62,7 @@ export async function renderAdminUserEdit(c: Context, user: any, targetUserId: s
             <select class="form-control" id="user-role" name="role" ${isCurrentAdmin ? 'disabled' : ''}>
               <option value="CUSTOMER" ${targetUser.role === 'CUSTOMER' ? 'selected' : ''}>客户</option>
               <option value="STAFF" ${targetUser.role === 'STAFF' ? 'selected' : ''}>员工</option>
+              <option value="MANAGER" ${accessLevel === 'MANAGER' ? 'selected' : ''}>经理</option>
               <option value="ADMIN" ${targetUser.role === 'ADMIN' ? 'selected' : ''}>管理员</option>
             </select>
             ${isCurrentAdmin ? '<small class="form-text">当前正在使用的管理员账号不能更改角色。</small>' : ''}

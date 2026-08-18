@@ -3,8 +3,7 @@
 -- reference users_old, so every current account needs a compatible mirror.
 INSERT OR IGNORE INTO users_old (
   id, name, email, phone, passwordHash, role, status, bsb, accountNumber,
-  referrerId, commissionRate, commissionBalance, balance, createdAt, updatedAt,
-  password_hash, account_number, commission_balance, commission_rate
+  referrerId, commissionRate, commissionBalance, balance, createdAt, updatedAt
 )
 SELECT
   id,
@@ -21,9 +20,5 @@ SELECT
   commission_balance,
   balance,
   COALESCE(created_at, CURRENT_TIMESTAMP),
-  COALESCE(updated_at, CURRENT_TIMESTAMP),
-  password_hash,
-  account_number,
-  commission_balance,
-  commission_rate
+  COALESCE(updated_at, CURRENT_TIMESTAMP)
 FROM users;

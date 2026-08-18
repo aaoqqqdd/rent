@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency } from '../../site';
+import { buildLayout, formatCurrency, formatDate, sanitizePlainText } from '../../site';
 
 export function renderCustomerDashboard(user: any, allOrders: any[], devices: any[], announcementData: { items: any[], page: number, pageCount: number } = { items: [], page: 1, pageCount: 1 }) {
   const announcements = announcementData.items || []
@@ -11,10 +11,27 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
   const currentRentals = orders.filter((order) => order.status === 'active' || order.status === 'paid')
   const pendingPayment = orders.filter((order) => order.status === 'pending_payment').length
   const completedOrders = orders.filter((order) => order.status === 'completed').length
+  const statusLabels: Record<string, string> = {
+    active: '租赁中', paid: '已付款', pending_payment: '待付款',
+    pending_approval: '待审核', completed: '已完成', cancelled: '已取消'
+  }
+  const getDaysUntil = (dateValue: unknown) => {
+    const date = new Date(String(dateValue || ''))
+    if (Number.isNaN(date.getTime())) return null
+    return Math.ceil((date.getTime() - Date.now()) / 86400000)
+  }
+  const getDueText = (dateValue: unknown) => {
+    const days = getDaysUntil(dateValue)
+    if (days === null) return '请确认归还日期'
+    if (days < 0) return `已逾期 ${Math.abs(days)} 天`
+    if (days === 0) return '今天到期'
+    if (days === 1) return '明天到期'
+    return `${days} 天后到期`
+  }
 
   const body = `
     <div class="hero">
-      <h2>欢迎回来，${user.name}</h2>
+      <h2>欢迎回来，${sanitizePlainText(user.name, 80)}</h2>
       <p>管理您的设备租赁、查看订单状态、完成支付。</p>
     </div>
     <div class="stats-grid">
@@ -43,7 +60,8 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
       ${currentRentals.length > 0 ? `
       <div class="card upcoming-rental">
         <h3>即将到期提醒</h3>
-        <p><span class="mono">${currentRentals[0].orderNo}</span> 将于 3 天后到期</p>
+        <p><span class="mono">${sanitizePlainText(currentRentals[0].orderNo, 40)}</span> · ${getDueText(currentRentals[0].endDate)}</p>
+        <p class="dashboard-due-date">归还日期：${formatDate(currentRentals[0].endDate)}</p>
         <p style="margin-top: 12px;">
           <a class="button button-sm" href="/customer/rentals">续租申请</a>
           <a class="button button-sm button-secondary" href="/customer/rentals" style="margin-left:8px;">提前归还</a>
@@ -59,7 +77,7 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
       </div>
       <div class="card dashboard-announcements">
         <div class="section-title"><h3>历史通告</h3><a class="link-button" href="/notifications">通知中心 →</a></div>
-        ${announcements.length ? `<div class="notification-list">${announcements.map(item => `<a class="dashboard-announcement" href="/notifications/${encodeURIComponent(item.id)}"><strong>${item.title}</strong><span>${item.created_at}</span><p>${item.message}</p></a>`).join('')}</div>${announcementData.pageCount > 1 ? `<nav class="pagination" aria-label="历史通告分页">${Array.from({ length: announcementData.pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === announcementData.page ? 'button-primary' : 'button-secondary'}" href="/customer/dashboard?announcementPage=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''}` : '<p class="empty-state">暂无历史通告</p>'}
+        ${announcements.length ? `<div class="notification-list">${announcements.map(item => `<a class="dashboard-announcement" href="/notifications/${encodeURIComponent(item.id)}"><strong>${sanitizePlainText(item.title, 160)}</strong><span>${sanitizePlainText(item.created_at, 40)}</span><p>${sanitizePlainText(item.message, 300)}</p></a>`).join('')}</div>${announcementData.pageCount > 1 ? `<nav class="pagination" aria-label="历史通告分页">${Array.from({ length: announcementData.pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === announcementData.page ? 'button-primary' : 'button-secondary'}" href="/customer/dashboard?announcementPage=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''}` : '<p class="empty-state">暂无历史通告</p>'}
       </div>
     </div>
     <div class="panel" style="margin-top: 20px;">
@@ -78,12 +96,12 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
           }
           const statusClass = statusMap[order.status] || 'badge-info'
           return `<tr>
-            <td class="mono">${order.orderNo}</td>
-            <td>${device?.name ?? '-'}</td>
-            <td>${order.startDate} ~ ${order.endDate}</td>
-            <td class="mono">${formatCurrency(order.totalAmount)}</td>
-            <td><span class="badge ${statusClass}">${order.status}</span></td>
-            <td><a class="link-button" href="/customer/orders/${order.id}">详情</a></td>
+            <td data-label="订单号" class="mono">${sanitizePlainText(order.orderNo, 40)}</td>
+            <td data-label="设备">${sanitizePlainText(device?.name ?? '-', 120)}</td>
+            <td data-label="租期">${sanitizePlainText(order.startDate, 30)} ~ ${sanitizePlainText(order.endDate, 30)}</td>
+            <td data-label="金额" class="mono">${formatCurrency(order.totalAmount)}</td>
+            <td data-label="状态"><span class="badge ${statusClass}">${statusLabels[order.status] || '处理中'}</span></td>
+            <td data-label="操作"><a class="link-button" href="/customer/orders/${encodeURIComponent(order.id)}">查看订单详情</a></td>
           </tr>`
         }).join('')}
         </tbody>

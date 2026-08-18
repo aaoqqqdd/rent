@@ -74,6 +74,8 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
               'retired': '已退役'
             }
             const statusText = statusMap[device.status] || device.status;
+            const lifecycleMap: Record<string, string> = { READY: '可租用', RESERVED: '已预约', RENTED: '租赁中', RETURNED: '已归还待上架', INSPECTION: '归还验机中', MAINTENANCE: '维修中', DAMAGED: '损坏待处理', RETIRED: '已退役' }
+            const lifecycle = device.lifecycleStatus || device.lifecycle_status || '-'
             return `
               <tr>
                 <td>${device.id}</td>
@@ -84,7 +86,7 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
                 <td style="font-family: monospace; font-size: 0.85rem;">${device.serialNumber || device.serial_number || '-'}</td>
                 <td>${formatCurrency(device.pricePerDay || device.dailyRate)}</td>
                 <td>${formatCurrency(device.depositAmount)}</td>
-                <td><span class="badge ${statusClass}">${statusText}</span></td>
+                <td><span class="badge ${statusClass}">${statusText}</span><br><small>${lifecycleMap[lifecycle] || lifecycle}</small></td>
                 <td>
                   <a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a>
                   <a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/control">远程控制</a>

@@ -13,11 +13,11 @@ export function renderLogin(errorMessage?: string, showTestAccounts = false) {
           <div class="login-logo"><span class="logo-mark">▣</span>PC Rental</div>
           <p class="login-subtitle">专业设备租赁管理平台</p>
           <form method="POST" action="/login">
-            <label class="form-label">邮箱地址</label>
-            <input class="form-control" name="account" placeholder="name@example.com" />
+            <label class="form-label" for="login-account">邮箱地址</label>
+            <input class="form-control" id="login-account" type="email" name="account" placeholder="name@example.com" autocomplete="username" required />
             <label class="form-label" for="login-password">登录密码</label>
             <div style="position:relative;">
-              <input class="form-control" id="login-password" type="password" name="password" placeholder="••••••••" autocomplete="current-password" style="padding-right:84px;" />
+              <input class="form-control" id="login-password" type="password" name="password" placeholder="••••••••" autocomplete="current-password" style="padding-right:84px;" required />
               <button type="button" id="toggle-login-password" class="link-button" aria-controls="login-password" aria-label="显示密码" style="position:absolute; right:12px; top:50%; transform:translateY(-50%);">显示</button>
             </div>
             <div class="form-row">
