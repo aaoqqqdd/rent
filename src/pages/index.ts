@@ -71,5 +71,6 @@ export * from './admin/userEdit';
 export * from './admin/refunds';
 export * from './admin/withdrawals';
 export * from './admin/paymentReviews';
+export * from './admin/paymentDisputes';
 export * from './admin/deviceCalendar';
 export * from './admin/deviceAgentBindings';

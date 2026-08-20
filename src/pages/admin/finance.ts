@@ -94,6 +94,11 @@ export function renderAdminFinance(user: any, orders: any[] = [], refunds: any[]
           <a href="/admin/refunds" class="button button-sm">查看退款</a>
         </div>
         <div class="finance-section">
+          <h4>⚖️ 支付争议</h4>
+          <p>处理 Stripe 拒付、举证进度和最终财务影响。</p>
+          <a href="/admin/finance/payment-disputes" class="button button-sm">管理支付争议</a>
+        </div>
+        <div class="finance-section">
           <h4>✅ 佣金提现</h4>
           <p>查看佣金发放与提现审核记录。</p>
           <a href="/admin/withdrawals" class="button button-sm">查看提现</a>

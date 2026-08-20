@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
 

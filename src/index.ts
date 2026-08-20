@@ -2274,7 +2274,7 @@ app.get('/admin/exceptions', async (c) => {
     ['离线设备', offlineDevices.results, '/admin/devices', (item: any) => `${item.name} · 设备端离线`],
     ['待结算押金', heldDeposits.results, '/admin/refunds', (item: any) => `${item.orderNo || item.id} · AUD$${Number(item.depositAmount).toFixed(2)}`],
     ['待审核损坏记录', damageCases.results, '/admin/inspections', (item: any) => `订单 ${item.order_id} · ${item.description || '待补充损坏说明'}`],
-    ['待处理支付争议', disputes.results, '/admin/orders', (item: any) => `订单 ${sanitizePlainText(item.order_id || '-', 50)} · ${sanitizePlainText(item.currency, 10)}$${Number(item.amount).toFixed(2)} · ${sanitizePlainText(item.reason || '未说明原因', 100)}`],
+    ['待处理支付争议', disputes.results, '/admin/finance/payment-disputes', (item: any) => `订单 ${sanitizePlainText(item.order_id || '-', 50)} · ${sanitizePlainText(item.currency, 10)}$${Number(item.amount).toFixed(2)} · ${sanitizePlainText(item.reason || '未说明原因', 100)}`],
     ['数据不一致', consistencyIssues.results, '/admin/exceptions', (item: any) => `${sanitizePlainText(item.issue_type, 60)} · ${sanitizePlainText(item.entity_type, 30)} ${sanitizePlainText(item.entity_id, 60)} · 发现于 ${item.detected_at}`],
   ] as const
   const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和押金异常；所有充值与转账审核均在此完成。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
@@ -2934,6 +2934,33 @@ app.get('/admin/finance', async (c) => {
   }
   const revenueData = await pages.getRevenueData(c)
   return c.html(pages.renderAdminFinance(user, revenueData.orders, revenueData.refunds, revenueData.withdrawals))
+})
+
+app.get('/admin/finance/payment-disputes', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const disputes = await c.env.RENT.prepare(`SELECT d.*, o.orderNo AS order_no, u.name AS customer_name, u.email AS customer_email FROM payment_disputes d LEFT JOIN orders o ON o.id = d.order_id LEFT JOIN users u ON u.id = d.customer_id ORDER BY CASE WHEN d.status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') THEN 0 ELSE 1 END, d.evidence_due_by ASC, d.updated_at DESC`).all()
+  return c.html(pages.renderAdminPaymentDisputes(user, disputes.results || []))
+})
+
+app.post('/admin/finance/payment-disputes/:id', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const status = String(form.status || '')
+  const evidenceStatus = sanitizePlainText(String(form.evidenceStatus || ''), 200).trim() || null
+  const result = sanitizePlainText(String(form.result || ''), 1000).trim() || null
+  const impactText = String(form.financialImpact || '').trim()
+  const financialImpact = impactText === '' ? null : Number(impactText)
+  if (!['DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'].includes(status)) return c.text('争议状态无效', 400)
+  if (['DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'].includes(status) && !result) return c.text('结案时必须填写处理结论', 400)
+  if (financialImpact !== null && (!Number.isFinite(financialImpact) || financialImpact < 0)) return c.text('财务影响必须是非负金额', 400)
+  const dispute = await c.env.RENT.prepare('SELECT * FROM payment_disputes WHERE id = ?').bind(c.req.param('id')).first() as any
+  if (!dispute) return c.text('支付争议不存在', 404)
+  const updated = await c.env.RENT.prepare("UPDATE payment_disputes SET status = ?, evidence_status = ?, result = ?, financial_impact = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW')").bind(status, evidenceStatus, result, financialImpact, dispute.id).run()
+  if (!updated.meta?.changes) return c.text('支付争议已结案或已被其他管理员更新', 409)
+  await createAuditLog(c, { actor: admin, action: 'PAYMENT_DISPUTE_UPDATED', targetType: 'PAYMENT_DISPUTE', targetId: dispute.id, before: { status: dispute.status }, after: { status, evidenceStatus, financialImpact }, reason: result || evidenceStatus || '更新支付争议' })
+  return c.redirect('/admin/finance/payment-disputes', 303)
 })
 
 app.get('/admin/revenue-stats', async (c) => {
