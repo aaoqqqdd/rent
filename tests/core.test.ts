@@ -136,7 +136,7 @@ test('order numbers are created once after payment with the public reference for
   }
   const context = { env: { RENT: db } } as any
   const generated = await ensureOrderNumber(context, 'o1', 'pi_123abc')
-  assert.match(generated, /^ORD-\d{8}-[A-Z0-9]{6}$/)
+  assert.match(generated, /^OD-\d{8}-[A-Z0-9]{6}$/)
   assert.equal(await ensureOrderNumber(context, 'o1', 'pi_different'), generated)
 })
 

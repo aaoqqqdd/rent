@@ -57,6 +57,7 @@ import {
   ensureOrderNumber,
   generateReferenceNumber,
   createAuthSession,
+  revokeAllSessions,
   deleteAuthSession,
   buildLayout,
   getSystemSettings,
@@ -1431,6 +1432,8 @@ app.post('/staff/customers/new', async (c) => {
 app.get('/staff/customers/:id/edit', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  const customer = await getUserById(c, c.req.param('id'))
+  if (!customer || customer.role !== 'CUSTOMER' || (user.role !== 'ADMIN' && customer.staffId !== user.id)) return c.html(renderForbidden(), 403)
   return c.html(await pages.renderStaffCustomerEdit(c, user, c.req.param('id')))
 })
 
@@ -1450,6 +1453,8 @@ app.post('/staff/customers/:id/edit', async (c) => {
 app.get('/staff/customers/:id', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  const customer = await getUserById(c, c.req.param('id'))
+  if (!customer || customer.role !== 'CUSTOMER' || (user.role !== 'ADMIN' && customer.staffId !== user.id)) return c.html(renderForbidden(), 403)
   return c.html(await pages.renderStaffCustomerDetail(c, user, c.req.param('id')))
 })
 
@@ -2230,7 +2235,7 @@ app.post('/customer/security', async (c) => {
   }
   if (!isStrongPassword(newPassword)) return c.html(await pages.renderCustomerSecurity(c, user, '新密码至少需要 8 位，并同时包含字母、数字和符号'))
   await updateUser(c, user.id, { password: newPassword })
-  await c.env.RENT.prepare('DELETE FROM auth_sessions WHERE user_id = ?').bind(user.id).run()
+  await revokeAllSessions(c, user.id)
   const session = await createAuthSession(c, user.id)
   const response = c.html(await pages.renderCustomerSecurity(c, user, '密码已更新，其他设备已退出登录', 'success'))
   response.headers.set('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
@@ -2445,7 +2450,9 @@ app.post('/admin/users/:id/edit', async (c) => {
   }
 
   await updateUser(c, targetUserId, dataToUpdate)
-  await createAuditLog(c, { actor: user, action: 'USER_UPDATED', targetType: 'USER', targetId: targetUserId, before: { role: getAccessLevel(targetUser), status: targetUser.accountStatus ?? targetUser.status }, after: { role: requestedLevel, status: accountStatus } })
+  const passwordWasReset = Boolean(dataToUpdate.password)
+  if (passwordWasReset) await revokeAllSessions(c, targetUserId)
+  await createAuditLog(c, { actor: user, action: 'USER_UPDATED', targetType: 'USER', targetId: targetUserId, before: { role: getAccessLevel(targetUser), status: targetUser.accountStatus ?? targetUser.status }, after: { role: requestedLevel, status: accountStatus, sessionsRevoked: passwordWasReset || undefined } })
   return c.redirect(`/admin/users/${targetUserId}`)
 })
 
@@ -2676,8 +2683,9 @@ app.post('/admin/orders/:id/update', async (c) => {
   const status = String(form.status || '')
   const force = String(form.force || '') === '1'
   const order = await getOrderById(c, c.req.param('id'))
-  const editableStatuses = ['suspended', 'cancelled']
-  if (!order || !editableStatuses.includes(status) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
+  const editableStatuses = ['suspended', 'active', 'cancelled']
+  const isResume = status === 'active' && order?.status === 'suspended'
+  if (!order || !editableStatuses.includes(status) || (status === 'active' && !isResume) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
   const automaticCancellationPayment = status === 'cancelled'
     ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND status = 'paid' AND payment_method IN ('balance', 'card') LIMIT 1").bind(order.id).first()
     : null

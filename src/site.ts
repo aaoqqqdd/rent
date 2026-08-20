@@ -9,7 +9,7 @@ import layoutTemplate from './layout.html'
 import { customAlphabet, nanoid } from 'nanoid'
 
 const referenceCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
-export function generateReferenceNumber(prefix: 'ORD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD' | 'CN', at = new Date()): string {
+export function generateReferenceNumber(prefix: 'OD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD' | 'CN', at = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(at)
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
   return `${prefix}-${values.year}${values.month}${values.day}-${referenceCode()}`
@@ -1024,7 +1024,7 @@ export async function ensureOrderNumber(c: Context, orderId: string, externalRef
   if (!existing) throw new Error('订单不存在，无法生成订单编号')
   if (existing.orderNo) return String(existing.orderNo)
 
-  const orderNo = generateReferenceNumber('ORD')
+  const orderNo = generateReferenceNumber('OD')
   await c.env.RENT.prepare('UPDATE orders SET orderNo = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND (orderNo IS NULL OR orderNo = ?)')
     .bind(orderNo, orderId, '').run()
   const saved = await c.env.RENT.prepare('SELECT orderNo FROM orders WHERE id = ?').bind(orderId).first() as any
@@ -3109,6 +3109,7 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
   const session = await db.prepare('SELECT user_id FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP').bind(tokenHash).first() as any
   if (!session?.user_id) return null
   const id = String(session.user_id)
+  await db.prepare('UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?').bind(tokenHash).run()
   const user: User | null = await db
     .prepare("SELECT * FROM users WHERE id = ? AND status = 'active'")
     .bind(id)
@@ -3161,6 +3162,13 @@ export async function createAuthSession(c: Context, userId: string, remember = f
   const expiresAt = new Date(Date.now() + maxAge * 1000).toISOString()
   await c.env.RENT.prepare('INSERT INTO auth_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').bind(await sha256Hex(token), userId, expiresAt).run()
   return { token, maxAge }
+}
+
+// Logs out every device currently signed in as this user. Call whenever a
+// credential could have been compromised: password reset/change (self or
+// admin-initiated), or an account being locked/disabled.
+export async function revokeAllSessions(c: Context, userId: string): Promise<void> {
+  await c.env.RENT.prepare('DELETE FROM auth_sessions WHERE user_id = ?').bind(userId).run()
 }
 
 export async function deleteAuthSession(c: Context, cookieHeader: string | null): Promise<void> {
@@ -3269,7 +3277,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'CUSTOMER' ? `
             ${currentUser.accountType === 'guest' ? renderNavGroup('合同中心', [['/customer/guest', '访客合同中心'], ['/customer/guest/upgrade', '升级账户']]) : `
               ${renderNavLink('/customer/dashboard', '控制台')}
-              ${renderNavGroup('租赁工作区', [/*['/customer/devices', '预览可租设备']*/, ['/customer/rentals', '我的租赁'], ['/customer/orders', '订单管理']])}
+              ${renderNavGroup('租赁工作区', [['/customer/rentals', '我的租赁'], ['/customer/orders', '订单管理']])}
               ${renderNavGroup('账户与钱包', [['/customer/balance', '我的钱包'], ['/customer/profile', '个人资料'], ['/customer/security', '安全设置'], ['/customer/referral', '推荐计划']])}
             `}
           ` : ''}

@@ -7,6 +7,12 @@ import { buildLayout, getOrders, getDevices, getUsers, formatCurrency } from '..
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 
+// The order list has no server-side pagination yet; cap how many rows we ever
+// render in one page load so the table stays usable as order volume grows.
+// Stats above the table (counts, revenue) are computed from the full filtered
+// set before this cap is applied, so they stay accurate.
+const ORDER_LIST_PAGE_SIZE = 200
+
 export const adminOrderStatusMap: Record<string, { text: string; class: string }> = {
   all: { text: '全部', class: 'badge-info' },
   pending_approval: { text: '待审核', class: 'badge-warning' },
@@ -194,6 +200,7 @@ export async function renderAdminOrders(c: Context, user: any) {
       <div style="margin-bottom: 12px; color: var(--text-secondary); font-size: 0.9rem;">
         共 ${filteredOrders.length} 条订单
         ${userIdFilter ? ' · 当前查看用户关联订单' : ''}
+        ${filteredOrders.length > ORDER_LIST_PAGE_SIZE ? ` · 仅显示最近 ${ORDER_LIST_PAGE_SIZE} 条，请使用筛选条件缩小范围查看其余订单` : ''}
       </div>
       <form id="bulk-order-form" method="POST" action="/admin/orders/bulk-update">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
@@ -227,7 +234,7 @@ export async function renderAdminOrders(c: Context, user: any) {
             </tr>
           </thead>
           <tbody>
-            ${filteredOrders.map((order: any) => {
+            ${filteredOrders.slice(0, ORDER_LIST_PAGE_SIZE).map((order: any) => {
     const status = adminOrderStatusMap[order.status] || { text: order.status, class: 'badge-info' };
     const totalAmount = order.total_amount || order.totalAmount || 0;
     const startDate = order.start_date || order.startDate || '-';
@@ -250,7 +257,7 @@ export async function renderAdminOrders(c: Context, user: any) {
                     <div style="display: flex; flex-direction: column; gap: 8px; min-width: 160px;">
                       <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; gap: 8px; align-items: center;">
                         <select name="status" class="form-control" style="min-width: 110px; padding: 6px 10px; font-size: 0.85rem;">
-                          <option value="suspended" ${order.status === 'suspended' ? 'selected' : ''}>已暂停（仅管理员）</option>
+                          ${order.status === 'suspended' ? '<option value="active">恢复租赁</option>' : '<option value="suspended">暂停租赁（仅管理员）</option>'}
                           <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
                         </select>
                         <button type="submit" class="button button-secondary" style="padding: 6px 10px; font-size: 0.8rem;">更新</button>

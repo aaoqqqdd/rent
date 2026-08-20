@@ -145,7 +145,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             <div>
               <label for="status" style="display: block; margin-bottom: 8px; font-weight: 500; color: #374151;">选择新状态</label>
               <select id="status" name="status" style="width: 100%; padding: 14px 16px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 1rem; transition: all 0.2s; outline: none; background: white;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'">
-                <option value="suspended" ${order.status === 'suspended' ? 'selected' : ''}>已暂停（仅管理员）</option>
+                ${order.status === 'suspended' ? '<option value="active">恢复租赁</option>' : '<option value="suspended">暂停租赁（仅管理员）</option>'}
                 <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
               </select>
             </div>
