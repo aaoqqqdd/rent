@@ -709,9 +709,12 @@ function normalizeUserRow(row: any): User {
   const deletedAt = row.deletedAt ?? row.deleted_at ?? null
   const deletionRequestedAt = row.deletionRequestedAt ?? row.deletion_requested_at ?? null
   const deletionScheduledAt = row.deletionScheduledAt ?? row.deletion_scheduled_at ?? null
+  const identityStatus = row.identityStatus ?? row.identity_status ?? null
 
   return {
     ...row,
+    identityStatus,
+    identity_status: identityStatus,
     account_number,
     accountNumber,
     commissionBalance,

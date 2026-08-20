@@ -2603,7 +2603,10 @@ app.post('/admin/orders/:id/update', async (c) => {
   const order = await getOrderById(c, c.req.param('id'))
   const editableStatuses = ['suspended', 'cancelled']
   if (!order || !editableStatuses.includes(status) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
-  if (status === 'cancelled' && order.status === 'paid') {
+  const automaticCancellationPayment = status === 'cancelled'
+    ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND status = 'paid' AND payment_method IN ('balance', 'card') LIMIT 1").bind(order.id).first()
+    : null
+  if (automaticCancellationPayment) {
     const response = await cancelAndRefund(c, user, order.id)
     if (response.status >= 400) return wantsJson ? c.json({ ok: false, error: await response.text() }, response.status as any) : response
     return wantsJson ? c.json({ ok: true, refunded: true }) : response
@@ -2697,7 +2700,10 @@ app.post('/admin/orders/bulk-update', async (c) => {
   if (!validOrders.length) return c.text('所选订单没有可以执行该状态转换的订单', 409)
   if (targetStatus === 'completed') return c.text('完成订单必须逐笔执行归还验机', 409)
   for (const order of validOrders) {
-    if (targetStatus === 'cancelled' && order.status === 'paid') {
+    const automaticCancellationPayment = targetStatus === 'cancelled'
+      ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND status = 'paid' AND payment_method IN ('balance', 'card') LIMIT 1").bind(order.id).first()
+      : null
+    if (automaticCancellationPayment) {
       const response = await cancelAndRefund(c, user, order.id)
       if (response.status >= 400) return c.text(await response.text(), response.status as any)
     } else {
@@ -2800,7 +2806,9 @@ app.post('/admin/orders/:id/cancel-and-refund', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   try {
-    return await cancelAndRefund(c, user, c.req.param('id'))
+    const response = await cancelAndRefund(c, user, c.req.param('id'))
+    if (response.status < 400) await createAuditLog(c, { actor: user, action: 'REFUND_APPROVED', targetType: 'ORDER', targetId: c.req.param('id'), reason: '取消订单并全额退款' })
+    return response
   } catch (error: any) {
     return c.text(error.message || '全额退款失败', 502)
   }
@@ -2809,7 +2817,13 @@ app.post('/admin/orders/:id/cancel-and-refund', async (c) => {
 app.post('/admin/refunds/:id/complete-bank-transfer', async (c) => {
   const admin = c.get('user')
   if (!admin || admin.role !== 'ADMIN') return c.text('无权限', 403)
-  try { await completeBankTransferRefund(c, admin, c.req.param('id')); return c.redirect('/admin/refunds') } catch (error: any) { return c.text(error.message || '退款处理失败', 409) }
+  try {
+    await completeBankTransferRefund(c, admin, c.req.param('id'))
+    await createAuditLog(c, { actor: admin, action: 'REFUND_COMPLETED', targetType: 'PAYMENT_REFUND', targetId: c.req.param('id') })
+    return c.redirect('/admin/refunds')
+  } catch (error: any) {
+    return c.text(error.message || '退款处理失败', 409)
+  }
 })
 
 app.post('/admin/orders/:id/delete', async (c) => {
@@ -3097,6 +3111,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   if (form.lifecycleStatus && !['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'].includes(form.lifecycleStatus)) return c.text('设备生命周期状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
   if (!['normal', 'return', 'maintenance', 'lost'].includes(form.deviceMode || 'normal')) return c.text('客户设备状态无效', 400)
+  const deviceBefore = await getDeviceById(c, c.req.param('id')) as any
   await updateDevice(c, c.req.param('id'), {
     name: form.name,
     brand: form.brand,
@@ -3115,6 +3130,13 @@ app.post('/admin/devices/:id/edit', async (c) => {
     description: form.description || form.remark
   })
   if (form.lifecycleStatus) await recordDeviceLifecycle(c, c.req.param('id'), form.lifecycleStatus as any, { reason: '管理员手动更新设备生命周期', changedBy: user.id })
+  if (deviceBefore && (deviceBefore.status !== form.status || deviceBefore.agent_status !== form.agentStatus || deviceBefore.device_mode !== form.deviceMode)) {
+    await createAuditLog(c, {
+      actor: user, action: 'DEVICE_STATUS_CHANGED', targetType: 'DEVICE', targetId: c.req.param('id'),
+      before: { status: deviceBefore.status, agentStatus: deviceBefore.agent_status, deviceMode: deviceBefore.device_mode },
+      after: { status: form.status, agentStatus: form.agentStatus, deviceMode: form.deviceMode },
+    })
+  }
   const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]
   await c.env.RENT.prepare('DELETE FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).run()
   if (dates.length) await c.env.RENT.batch(dates.map(date => c.env.RENT.prepare('INSERT INTO device_unavailable_dates (device_id, unavailable_date) VALUES (?, ?)').bind(c.req.param('id'), date)))
@@ -3174,13 +3196,15 @@ app.post('/admin/coupons', async (c) => {
   const code = String(form.code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 40)
   const fields = parseCouponFormFields(form)
   if (!code || !fields.valid) return c.redirect('/admin/coupons?error=' + encodeURIComponent('请检查优惠码、折扣值和使用次数限制'))
+  const couponId = `cp-${nanoid(10)}`
   try {
     await c.env.RENT.prepare('INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword, max_discount_amount, minimum_order_amount, max_uses_per_customer, new_customer_only, stackable, restore_on_cancellation, status, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(`cp-${nanoid(10)}`, code, fields.discountType, fields.discountValue, fields.maxUses, fields.startsAt, fields.expiresAt, admin.id, fields.deviceId, fields.brand, fields.configKeyword, fields.maxDiscountAmount, fields.minimumOrderAmount, fields.maxUsesPerCustomer, fields.newCustomerOnly, fields.stackable, fields.restoreOnCancellation, fields.status, fields.status === 'ACTIVE' ? 1 : 0).run()
+      .bind(couponId, code, fields.discountType, fields.discountValue, fields.maxUses, fields.startsAt, fields.expiresAt, admin.id, fields.deviceId, fields.brand, fields.configKeyword, fields.maxDiscountAmount, fields.minimumOrderAmount, fields.maxUsesPerCustomer, fields.newCustomerOnly, fields.stackable, fields.restoreOnCancellation, fields.status, fields.status === 'ACTIVE' ? 1 : 0).run()
   } catch (error: any) {
     if (String(error?.message || '').toLowerCase().includes('unique')) return c.redirect('/admin/coupons?error=' + encodeURIComponent('优惠码已存在，请换一个代码'))
     throw error
   }
+  await createAuditLog(c, { actor: admin, action: 'COUPON_CREATED', targetType: 'COUPON', targetId: couponId, after: { code, discountType: fields.discountType, discountValue: fields.discountValue, status: fields.status } })
   return c.redirect('/admin/coupons?success=' + encodeURIComponent('优惠码创建成功'))
 })
 
@@ -3206,6 +3230,7 @@ app.post('/admin/coupons/:id', async (c) => {
   const discountValue = locked ? coupon.discount_value : fields.discountValue
   await c.env.RENT.prepare(`UPDATE coupons SET discount_type = ?, discount_value = ?, max_uses = ?, starts_at = ?, expires_at = ?, device_id = ?, brand = ?, config_keyword = ?, max_discount_amount = ?, minimum_order_amount = ?, max_uses_per_customer = ?, new_customer_only = ?, stackable = ?, restore_on_cancellation = ?, status = ?, active = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
     .bind(discountType, discountValue, fields.maxUses, fields.startsAt, fields.expiresAt, fields.deviceId, fields.brand, fields.configKeyword, fields.maxDiscountAmount, fields.minimumOrderAmount, fields.maxUsesPerCustomer, fields.newCustomerOnly, fields.stackable, fields.restoreOnCancellation, fields.status, fields.status === 'ACTIVE' ? 1 : 0, admin.id, coupon.id).run()
+  await createAuditLog(c, { actor: admin, action: 'COUPON_UPDATED', targetType: 'COUPON', targetId: coupon.id, before: { discountType: coupon.discount_type, discountValue: coupon.discount_value, status: coupon.status }, after: { discountType, discountValue, status: fields.status } })
   return c.redirect('/admin/coupons?success=' + encodeURIComponent('优惠码已更新'))
 })
 
@@ -3223,7 +3248,10 @@ app.post('/admin/coupons/:id/delete', async (c) => {
 app.post('/admin/coupons/:id/toggle', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const before = await c.env.RENT.prepare('SELECT active, status FROM coupons WHERE id = ?').bind(c.req.param('id')).first() as any
+  if (!before) return c.redirect('/admin/coupons?error=' + encodeURIComponent('优惠码不存在'))
   await c.env.RENT.prepare("UPDATE coupons SET active = CASE active WHEN 1 THEN 0 ELSE 1 END, status = CASE active WHEN 1 THEN 'DISABLED' ELSE 'ACTIVE' END, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(c.req.param('id')).run()
+  await createAuditLog(c, { actor: admin, action: 'COUPON_UPDATED', targetType: 'COUPON', targetId: c.req.param('id'), before: { active: Boolean(before.active), status: before.status }, after: { active: !before.active, status: before.active ? 'DISABLED' : 'ACTIVE' } })
   return c.redirect('/admin/coupons')
 })
 
