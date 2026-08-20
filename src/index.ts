@@ -49,6 +49,7 @@ import {
   releaseDeviceIfUnbooked,
   getContractById,
   getContractByOrderId,
+  getContractByContractNumber,
   updateContractTemplate,
   CONTRACT_OPERATIONAL_FIELDS,
   CONTRACT_SIGNED_FIELDS,
@@ -830,6 +831,52 @@ app.post('/admin/users/:id/identity-status', async (c) => {
   return c.redirect(`/admin/users/${target.id}`, 303)
 })
 
+const RISK_FLAG_TYPES = ['PAYMENT_RISK', 'IDENTITY_RISK', 'DEVICE_NOT_RETURNED', 'SERIOUS_DAMAGE', 'CHARGEBACK', 'ABUSE', 'FRAUD_SUSPECTED', 'MANUAL_REVIEW']
+
+app.get('/admin/users/:id/risk', async (c) => {
+  const admin = c.get('user')
+  if (!admin || !['MANAGER', 'ADMIN'].includes(getAccessLevel(admin))) return c.html(renderForbidden(), 403)
+  const target = await getUserById(c, c.req.param('id'))
+  if (!target || target.role !== 'CUSTOMER') return c.text('客户不存在', 404)
+  const [activeFlags, history] = await Promise.all([
+    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY created_at DESC").bind(target.id).all().then(r => r.results || []),
+    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'RESOLVED' ORDER BY created_at DESC LIMIT 50").bind(target.id).all().then(r => r.results || []),
+  ])
+  return c.html(pages.renderAdminRiskFlags(admin, target, activeFlags as any[], history as any[]))
+})
+
+app.post('/admin/users/:id/risk', async (c) => {
+  const admin = c.get('user')
+  if (!admin || !['MANAGER', 'ADMIN'].includes(getAccessLevel(admin))) return c.html(renderForbidden(), 403)
+  const target = await getUserById(c, c.req.param('id'))
+  if (!target || target.role !== 'CUSTOMER') return c.text('客户不存在', 404)
+  const form = await c.req.parseBody()
+  const flagType = String(form.flagType || '')
+  const severity = ['LOW', 'MEDIUM', 'HIGH'].includes(String(form.severity)) ? String(form.severity) : 'MEDIUM'
+  const reason = String(form.reason || '').trim().slice(0, 500)
+  const evidence = String(form.evidence || '').trim().slice(0, 1000) || null
+  const expiresAt = String(form.expiresAt || '').replace('T', ' ') || null
+  if (!RISK_FLAG_TYPES.includes(flagType) || !reason) return c.text('请选择有效的风险类型并填写原因', 400)
+  const flagId = `rf-${nanoid(12)}`
+  await c.env.RENT.prepare('INSERT INTO risk_flags (id, customer_id, flag_type, severity, reason, evidence, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(flagId, target.id, flagType, severity, reason, evidence, admin.id, expiresAt).run()
+  await createAuditLog(c, { actor: admin, action: 'RISK_FLAG_CREATED', targetType: 'USER', targetId: target.id, after: { flagType, severity, reason }, reason })
+  return c.redirect(`/admin/users/${encodeURIComponent(target.id)}/risk`, 303)
+})
+
+app.post('/admin/users/:id/risk/:flagId/resolve', async (c) => {
+  const admin = c.get('user')
+  if (!admin || !['MANAGER', 'ADMIN'].includes(getAccessLevel(admin))) return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const resolutionReason = String(form.resolutionReason || '').trim().slice(0, 500)
+  if (!resolutionReason) return c.text('解除风险标记必须填写原因', 400)
+  const result = await c.env.RENT.prepare("UPDATE risk_flags SET status = 'RESOLVED', resolved_by = ?, resolved_at = CURRENT_TIMESTAMP, resolution_reason = ? WHERE id = ? AND customer_id = ? AND status = 'ACTIVE'")
+    .bind(admin.id, resolutionReason, c.req.param('flagId'), c.req.param('id')).run()
+  if (!result.meta?.changes) return c.text('风险标记不存在或已解除', 409)
+  await createAuditLog(c, { actor: admin, action: 'RISK_FLAG_RESOLVED', targetType: 'USER', targetId: c.req.param('id'), after: { flagId: c.req.param('flagId') }, reason: resolutionReason })
+  return c.redirect(`/admin/users/${encodeURIComponent(c.req.param('id'))}/risk`, 303)
+})
+
 app.post('/admin/balance-topups/:id/approve', async (c) => {
   const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).first() as any
@@ -1252,6 +1299,8 @@ app.get('/customer/rent/:id', async (c) => {
 app.post('/customer/rent/:id', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const activeRiskFlag = await c.env.RENT.prepare("SELECT id FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) LIMIT 1").bind(user.id).first()
+  if (activeRiskFlag) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
   const device = await getDeviceById(c, c.req.param('id'))
   await loadSystemSettingsFromDB(c)
   const rentalRules = getSystemSettings().rentalRules
@@ -1926,6 +1975,28 @@ app.get('/contract/print/:id', async (c) => {
   return c.html(await pages.renderContractView(c, c.req.param('id'), user, true))
 })
 
+app.get('/verify', async (c) => {
+  const number = String(c.req.query('number') || '').trim()
+  const token = String(c.req.query('token') || '').trim()
+  if (!number || !token) return c.html(pages.renderContractVerifyResult(null), 400)
+  const contract = await getContractByContractNumber(c, number)
+  if (!contract || !(contract as any).verification_token || (contract as any).verification_token !== token) {
+    return c.html(pages.renderContractVerifyResult(null), 404)
+  }
+  const order = await getOrderById(c, contract.rentalId)
+  const device = order ? await getDeviceById(c, order.deviceId) : null
+  const statusLabel = contract.status === 'cancelled' ? '已作废' : ['signed', 'completed'].includes(String(contract.status)) ? '有效' : '待生效'
+  return c.html(pages.renderContractVerifyResult({
+    found: true,
+    contractNumber: contract.contractNumber || undefined,
+    statusLabel,
+    signedDate: contract.signedAt ? new Date(contract.signedAt).toISOString().slice(0, 10) : undefined,
+    rentalPeriod: order ? `${order.startDate} 至 ${order.endDate}` : undefined,
+    deviceModel: device ? `${device.brand || ''} ${device.model || ''}`.trim() : undefined,
+    contentHash: (contract as any).content_hash || undefined,
+  }))
+})
+
 app.get('/payment/result', async (c) => {
   const orderId = c.req.query('orderId') || ''
   const cancelled = c.req.query('cancelled') === '1'
@@ -2181,13 +2252,15 @@ app.get('/admin/dashboard', async (c) => {
 app.get('/admin/exceptions', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases] = await Promise.all([
+  const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases, disputes, consistencyIssues] = await Promise.all([
     c.env.RENT.prepare("SELECT bt.id, bt.user_id, bt.amount, bt.payment_method, bt.reference, bt.note, u.name AS user_name FROM balance_topups bt LEFT JOIN users u ON u.id = bt.user_id WHERE bt.status = 'submitted' ORDER BY bt.updated_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT pp.id, pp.payment_id, p.rental_id, pp.reference_number, pp.uploaded_at, o.orderNo FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN orders o ON o.id = p.rental_id WHERE pp.status = 'submitted' ORDER BY pp.uploaded_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, endDate FROM orders WHERE status IN ('active', 'extended', 'overdue', 'pending_return') AND endDate < ? ORDER BY endDate ASC LIMIT 50").bind(new Date().toISOString().slice(0, 10)).all(),
     c.env.RENT.prepare("SELECT id, name, agent_status FROM devices WHERE agent_token_hash IS NOT NULL AND agent_status = 'offline' ORDER BY updatedAt ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, depositAmount FROM orders WHERE deposit_status = 'HELD' AND status IN ('returned', 'completed') ORDER BY updatedAt ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, order_id, description FROM damage_cases WHERE status IN ('OPEN', 'PENDING', 'UNDER_REVIEW') ORDER BY created_at ASC LIMIT 50").all(),
+    c.env.RENT.prepare("SELECT id, order_id, amount, currency, reason, status FROM payment_disputes WHERE status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') ORDER BY created_at ASC LIMIT 50").all(),
+    c.env.RENT.prepare("SELECT id, issue_type, entity_type, entity_id, detected_at FROM data_consistency_issues WHERE resolved_at IS NULL ORDER BY detected_at ASC LIMIT 50").all(),
   ]) as any[]
   const sections = [
     ['待审核充值', topups.results, '/admin/exceptions', (item: any) => `<strong>${sanitizePlainText(item.user_name || item.user_id, 100)}</strong> · ${sanitizePlainText(item.payment_method, 30)} · AUD$${Number(item.amount).toFixed(2)}<div class="record-actions"><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/approve" data-site-confirm="确认通过这笔充值并立即入账吗？"><button class="button button-sm button-primary">通过并入账</button></form><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/reject" data-site-confirm="确认驳回这笔充值吗？"><button class="button button-sm button-danger">驳回</button></form></div>`],
@@ -2196,6 +2269,8 @@ app.get('/admin/exceptions', async (c) => {
     ['离线设备', offlineDevices.results, '/admin/devices', (item: any) => `${item.name} · 设备端离线`],
     ['待结算押金', heldDeposits.results, '/admin/refunds', (item: any) => `${item.orderNo || item.id} · AUD$${Number(item.depositAmount).toFixed(2)}`],
     ['待审核损坏记录', damageCases.results, '/admin/inspections', (item: any) => `订单 ${item.order_id} · ${item.description || '待补充损坏说明'}`],
+    ['待处理支付争议', disputes.results, '/admin/orders', (item: any) => `订单 ${sanitizePlainText(item.order_id || '-', 50)} · ${sanitizePlainText(item.currency, 10)}$${Number(item.amount).toFixed(2)} · ${sanitizePlainText(item.reason || '未说明原因', 100)}`],
+    ['数据不一致', consistencyIssues.results, '/admin/exceptions', (item: any) => `${sanitizePlainText(item.issue_type, 60)} · ${sanitizePlainText(item.entity_type, 30)} ${sanitizePlainText(item.entity_id, 60)} · 发现于 ${item.detected_at}`],
   ] as const
   const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和押金异常；所有充值与转账审核均在此完成。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
   return c.html(buildLayout('异常任务中心', body, admin))
@@ -3699,7 +3774,7 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, logError } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, logError } = await import('./site')
     ctx.waitUntil(
       (async () => {
         try {
@@ -3739,7 +3814,9 @@ export default {
           const dueNotificationCount = await createDueDateNotifications(c)
           const overduePaymentNotificationCount = await notifyOverduePaymentProofs(c)
           const expiredInspectionResult = await env.RENT.prepare("DELETE FROM device_inspections WHERE created_at < datetime('now', '-1 year')").run()
+          const consistencyIssueCount = await runDataConsistencyChecks(c)
           console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
+          console.log(`Scheduled data consistency check completed: found ${consistencyIssueCount} new issues`)
           console.log(`Scheduled account cleanup completed: disabled ${Number(deletedAccountResult.meta?.changes || 0)} accounts`)
           console.log(`Scheduled guest cleanup completed: disabled ${expiredGuestCount} expired guest accounts`)
           console.log(`Scheduled payment cleanup completed: cancelled ${expiredPaymentCount} unpaid orders`)

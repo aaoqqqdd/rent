@@ -186,6 +186,18 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     statements.push(
       c.env.RENT.prepare("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE stripe_checkout_session_id = ? AND status = 'pending'").bind(session.id),
     )
+  } else if (event.type === 'charge.dispute.created') {
+    const dispute = session
+    const disputedPayment = await c.env.RENT.prepare('SELECT id, rental_id, customer_id FROM payments WHERE stripe_payment_intent_id = ?').bind(String(dispute?.payment_intent || '')).first() as any
+    if (disputedPayment) {
+      statements.push(c.env.RENT.prepare('INSERT OR IGNORE INTO payment_disputes (id, stripe_dispute_id, payment_id, order_id, customer_id, amount, currency, reason, status, evidence_due_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(`pd-${nanoid(12)}`, String(dispute.id), disputedPayment.id, disputedPayment.rental_id, disputedPayment.customer_id, Number(dispute.amount || 0) / 100, String(dispute.currency || 'aud').toUpperCase(), String(dispute.reason || ''), 'DISPUTE_OPENED', dispute.evidence_details?.due_by ? new Date(Number(dispute.evidence_details.due_by) * 1000).toISOString() : null))
+    }
+  } else if (event.type === 'charge.dispute.closed') {
+    const dispute = session
+    const disputeStatusMap: Record<string, string> = { won: 'DISPUTE_WON', lost: 'DISPUTE_LOST', warning_closed: 'DISPUTE_CLOSED' }
+    const mappedStatus = disputeStatusMap[String(dispute?.status || '')] || 'DISPUTE_CLOSED'
+    statements.push(c.env.RENT.prepare("UPDATE payment_disputes SET status = ?, result = ?, updated_at = CURRENT_TIMESTAMP WHERE stripe_dispute_id = ?").bind(mappedStatus, String(dispute?.status || ''), String(dispute?.id || '')))
   }
   statements.push(c.env.RENT.prepare("INSERT INTO stripe_webhook_events (event_id, event_type, payload_hash, processing_status, received_at) VALUES (?, ?, ?, 'PROCESSED', CURRENT_TIMESTAMP)").bind(event.id, event.type, payloadHash))
   try {
@@ -246,6 +258,8 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (!order) return c.text('订单不存在', 404)
   if (order.status !== 'completed') return c.text('只有已归还并完成的订单才能处理押金', 409)
   const payment = await paidPayment(c, order)
+  const openDispute = await c.env.RENT.prepare("SELECT id FROM payment_disputes WHERE payment_id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') LIMIT 1").bind(payment.id).first()
+  if (openDispute) return c.text('该笔付款存在未解决的拒付争议，暂不能退款', 409)
   const refundedResult = await c.env.RENT.prepare(`
     SELECT COALESCE(SUM(refund_amount), 0) AS refunded_amount
     FROM payment_refunds
@@ -358,6 +372,8 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
   if (existingRefund) return c.text('该订单已经全额退款', 409)
   const payment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   if (!payment) return c.text('未找到已结算付款，不能自动退款', 409)
+  const openDispute = await c.env.RENT.prepare("SELECT id FROM payment_disputes WHERE payment_id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') LIMIT 1").bind(payment.id).first()
+  if (openDispute) return c.text('该笔付款存在未解决的拒付争议，暂不能退款', 409)
   const channel = cancellationRefundChannel(payment)
   if (channel === 'unavailable') return c.text('未找到信用卡原路退款所需的 Stripe 交易记录，不能改为余额退款', 409)
   if (channel === 'bank_transfer' && (!order.refundBsb || !order.refundAccountNumber || !order.refundAccountName)) return c.text('订单缺少银行退款账户信息', 409)

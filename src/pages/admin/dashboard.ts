@@ -8,7 +8,7 @@ import { buildLayout, formatCurrency } from '../../site';
 export function renderAdminDashboard(user: any, orders: any[], users: any[], devices: any[]) {
   const today = new Date()
   const totalRevenue = orders.filter(o => o.status === 'completed' || o.status === 'paid' || o.status === 'active').reduce((sum, order) => sum + (order.total_amount || order.totalAmount || 0), 0)
-  
+
   // 活跃租赁：状态为active且当前日期在租期内
   const activeRentals = orders.filter(o => {
     if (o.status !== 'active' && o.status !== 'paid') return false
@@ -16,7 +16,7 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
     const end = new Date(o.end_date || o.endDate)
     return today >= start && today <= end
   }).length
-  
+
   const pendingOrders = orders.filter(o => o.status === 'pending_approval' || o.status === 'pending_payment').length
   const availableDevices = devices.filter(d => d.status === 'available').length
   const totalUsers = users.filter((account: any) => account.status === 'active' && account.accountType !== 'deleted_guest' && account.account_type !== 'deleted_guest').length;
@@ -80,11 +80,11 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
       ` : `
       <table><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
         ${orders.slice(0, 5).map((order) => {
-          const customer = users.find(u => u.id === (order.userId))
-          const device = devices.find(d => d.id === (order.device_id || order.deviceId))
-          const status = statusMap[order.status] || { text: order.status, class: 'badge-info' }
-          return `<tr><td style="font-family: monospace;">${order.id}</td><td>${customer?.name ?? '未知用户'}</td><td>${device?.name ?? '未知设备'}</td><td>${formatCurrency(order.total_amount || order.totalAmount || 0)}</td><td><span class="badge ${status.class}">${status.text}</span></td><td><a class="link-button" href="/admin/orders/${order.id}">查看详情</a></td></tr>`
-        }).join('')}
+    const customer = users.find(u => u.id === (order.userId))
+    const device = devices.find(d => d.id === (order.device_id || order.deviceId))
+    const status = statusMap[order.status] || { text: order.status, class: 'badge-info' }
+    return `<tr><td style="font-family: monospace;">${order.id}</td><td>${customer?.name ?? '未知用户'}</td><td>${device?.name ?? '未知设备'}</td><td>${formatCurrency(order.total_amount || order.totalAmount || 0)}</td><td><span class="badge ${status.class}">${status.text}</span></td><td><a class="link-button" href="/admin/orders/${order.id}">查看详情</a></td></tr>`
+  }).join('')}
       </tbody></table>
       `}
     </div>
@@ -98,11 +98,11 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
       ` : `
       <table><thead><tr><th>设备名称</th><th>型号</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
         ${devices.slice(0, 5).map((device) => {
-          const currentOrder = orders.find(o => (o.device_id || o.deviceId) === device.id && (o.status === 'active' || o.status === 'paid'))
-          const customer = currentOrder ? users.find(u => u.id === (currentOrder.userId)) : null
-          const deviceStatus = deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
-          return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${customer?.name ?? '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">EXE管理</a></td></tr>`
-        }).join('')}
+    const currentOrder = orders.find(o => (o.device_id || o.deviceId) === device.id && (o.status === 'active' || o.status === 'paid'))
+    const customer = currentOrder ? users.find(u => u.id === (currentOrder.userId)) : null
+    const deviceStatus = deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
+    return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${customer?.name ?? '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">远程操作</a></td></tr>`
+  }).join('')}
       </tbody></table>
       `}
     </div>

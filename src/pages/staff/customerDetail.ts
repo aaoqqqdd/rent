@@ -19,8 +19,11 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
   const personName = splitPersonName(customer.name)
 
   const accountNotice = customer.accountType === 'guest' ? `<div class="page-notification page-notification--info"><strong>访客/临时账户</strong> · 仅限订单 ${customer.guestOrderId || '-'} · 计划删除日期 ${customer.guestExpiresAt || '租期结束'}</div>` : customer.accountType === 'deleted_guest' ? '<div class="page-notification page-notification--error"><strong>已删除访客账户</strong> · 登录权限和个人联系方式已清除。</div>' : ''
+  const activeRiskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, reason FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY created_at DESC").bind(customer.id).all()).results as any[]
+  const riskNotice = activeRiskFlags.length ? `<div class="page-notification page-notification--error"><strong>风险提示（${activeRiskFlags.length}）</strong>${activeRiskFlags.map((flag: any) => `<p>${flag.flag_type} · ${flag.severity} · ${flag.reason}</p>`).join('')}</div>` : ''
   const body = `
     ${accountNotice}
+    ${riskNotice}
     <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>ACTIVE RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>${customer.name}</h2><p>${customer.email}</p></div><div class="entity-heading-actions"><a class="button button-secondary" href="/staff/customers">返回客户列表</a><a class="button" href="/staff/customers/${customer.id}/edit">编辑客户</a></div></div></div>
     <div class="panel record-panel single-column"><div class="record-grid">
         <section class="record-section"><p class="section-code">PROFILE</p><h3>基本信息</h3><dl class="data-list"><div><dt>客户 ID</dt><dd class="mono">${customer.id}</dd></div><div><dt>名 / Given name</dt><dd>${personName.firstName || '未填写'}</dd></div><div><dt>姓 / Family name</dt><dd>${personName.lastName || '未填写'}</dd></div><div><dt>邮箱</dt><dd>${customer.email}</dd></div><div><dt>手机</dt><dd>${customer.phone ?? '未填写'}</dd></div><div><dt>注册日期</dt><dd>${customer.registrationDate || customer.createdAt || '-'}</dd></div></dl></section>

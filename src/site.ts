@@ -1094,6 +1094,44 @@ export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<num
   return cancelled
 }
 
+// Periodically scans for known invariant violations (e.g. a paid order with no
+// successful payment row) and records them so they surface in the admin
+// Exception Queue instead of only being discoverable by manual investigation.
+export async function runDataConsistencyChecks(c: Context): Promise<number> {
+  const checks: Array<{ issueType: string; entityType: string; sql: string }> = [
+    {
+      issueType: 'PAID_ORDER_WITHOUT_PAYMENT',
+      entityType: 'ORDER',
+      sql: `SELECT o.id FROM orders o WHERE o.payment_status = 'PAID' AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.rental_id = o.id AND p.status = 'paid')`,
+    },
+    {
+      issueType: 'ACTIVE_ORDER_WITHOUT_HANDOVER',
+      entityType: 'ORDER',
+      sql: `SELECT o.id FROM orders o WHERE o.status IN ('active', 'paid', 'extended', 'overdue') AND o.handover_completed_at IS NULL`,
+    },
+    {
+      issueType: 'COMPLETED_ORDER_DEPOSIT_HELD',
+      entityType: 'ORDER',
+      sql: `SELECT o.id FROM orders o WHERE o.status = 'completed' AND o.deposit_status = 'HELD'`,
+    },
+    {
+      issueType: 'DEVICE_RENTED_WITHOUT_ACTIVE_ORDER',
+      entityType: 'DEVICE',
+      sql: `SELECT d.id FROM devices d WHERE d.lifecycle_status = 'RENTED' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.deviceId = d.id AND o.status IN ('active', 'paid', 'extended', 'overdue', 'pending_return'))`,
+    },
+  ]
+  let found = 0
+  for (const check of checks) {
+    const rows = (await c.env.RENT.prepare(check.sql).all()).results || []
+    for (const row of rows as any[]) {
+      const result = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
+        .bind(`dci-${nanoid(12)}`, check.issueType, check.entityType, row.id, JSON.stringify(row)).run() as any
+      if (Number(result.meta?.changes ?? result.changes ?? 0) > 0) found++
+    }
+  }
+  return found
+}
+
 export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
   const db = getDB(c);
   const mapping: Record<string, { order: string, payment: string, rental: string }> = {
@@ -3249,7 +3287,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('客户与用户', [['/admin/users', '用户管理']])}
             ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
-            ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/calendar', '租赁日历']])}
+            ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('协议与设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}

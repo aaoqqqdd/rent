@@ -9,6 +9,7 @@ export * from './public/forgotPassword';
 export * from './public/notFound';
 export * from './public/contractSign';
 export * from './public/contractView';
+export * from './public/contractVerify';
 export * from './public/paymentResult';
 export * from './invoice';
 
@@ -64,6 +65,7 @@ export * from './admin/orders';
 export * from './admin/orderDetail';
 export * from './admin/users';
 export * from './admin/userDetail';
+export * from './admin/riskFlags';
 export * from './admin/userNew';
 export * from './admin/userEdit';
 export * from './admin/refunds';

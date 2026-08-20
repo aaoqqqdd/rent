@@ -572,7 +572,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
         const signedContent = renderContractVariables(contract.content, signedContract, signedOrder, signedDevice, signedCustomer, signedOrder ? await getContractVariableData(c, signedContract, signedOrder) : {})
         const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signedContent))), byte => byte.toString(16).padStart(2, '0')).join('')
-        await c.env.RENT.prepare('UPDATE contracts SET signed_content = ?, content_hash = ? WHERE id = ?').bind(signedContent, contentHash, contract.id).run()
+        const verificationToken = `${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`
+        await c.env.RENT.prepare('UPDATE contracts SET signed_content = ?, content_hash = ?, verification_token = ? WHERE id = ?').bind(signedContent, contentHash, verificationToken, contract.id).run()
         await updateContractStatusInDB(c, contract.id, 'signed', signedAt);
         await c.env.RENT.prepare('UPDATE contracts SET contractNumber = ? WHERE id = ? AND status = \'signed\'').bind(signedContractNumber, contract.id).run()
         await logError(c, 'INFO', `Contract signed successfully`, undefined, { token, contractId: contract.id });
