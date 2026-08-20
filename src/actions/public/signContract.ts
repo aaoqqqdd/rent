@@ -14,6 +14,7 @@ import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
 import { createStripeCheckout } from '../stripePayments';
 import { getStripeRuntimeConfig } from '../../stripe';
+import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
   const token = identifier; // 明确定义 token
@@ -261,18 +262,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         const { paymentMethod } = body;
-        const couponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
-        if (couponCode && !(order as any).couponCode && !(order as any).coupon_code) {
-          const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(couponCode).first() as any
-          if (!coupon) throw new Error('优惠码无效、已过期或已达到使用次数上限')
-          const rentAmount = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0))
-          const discountAmount = Math.min(rentAmount, Math.max(0, Number((coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : coupon.discount_value).toFixed(2))))
-          const discountedTotal = Number((Number(order.totalAmount) - discountAmount).toFixed(2))
-          const couponClaim = await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND active = 1 AND (max_uses IS NULL OR used_count < max_uses)').bind(coupon.id).run()
-          if (!couponClaim.meta?.changes) throw new Error('优惠码已达到使用次数上限，请重新选择')
-          await c.env.RENT.prepare('UPDATE orders SET totalAmount = ?, coupon_code = ?, discount_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(discountedTotal, String(coupon.code).toUpperCase(), discountAmount, contract.rentalId).run()
-          ;(order as any).totalAmount = discountedTotal
-        }
+        const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
         const pickupTimeSlot = allowedTimeSlots.includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
@@ -402,6 +392,44 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           }
         }
 
+        // 优惠码：此时客户真实身份（userId）才第一次确定，是核销优惠码（原子扣减 used_count
+        // + 写入 coupon_redemptions RESERVED 记录）的正确时机。分两种情况：
+        // 1) 建合同时已经预览过一个优惠码（coupon_code 有值但 coupon_id 还是空，说明尚未正式核销）：
+        //    重新校验一遍（可能这期间过期、命中上限，或这个客户不满足每人限次/仅新客户等条件），
+        //    通过就正式核销；不通过就摘掉优惠码、把总价恢复原价，不阻断签约。
+        // 2) 客户在这一步自己第一次输入优惠码：跟客户自助结账一样，校验不通过就直接抛错阻断。
+        const previewCouponCode = String((order as any).coupon_code || (order as any).couponCode || '').trim().toUpperCase()
+        const previewAlreadyReserved = Boolean((order as any).coupon_id)
+        if (previewCouponCode && !previewAlreadyReserved) {
+          const rentAmountForCoupon = Number(order.rentalPeriod || 0) * Number((order as any).dailyRate || 0)
+          const previousDiscount = Number((order as any).discount_amount ?? (order as any).discountAmount ?? 0)
+          try {
+            const orderDevice = await getDeviceById(c, order.deviceId || (order as any).device_id)
+            if (!orderDevice) throw new Error('订单关联的设备不存在')
+            const coupon = await findEligibleCoupon(c, previewCouponCode, orderDevice, rentAmountForCoupon)
+            await checkCustomerCouponEligibility(c, coupon, userId)
+            const discountAmount = calculateCouponDiscount(coupon, rentAmountForCoupon)
+            await reserveCouponForOrder(c, { coupon, customerId: userId, orderId: contract.rentalId, discountAmount })
+            const adjustment = discountAmount - previousDiscount
+            if (adjustment !== 0) await c.env.RENT.prepare('UPDATE orders SET totalAmount = totalAmount - ? WHERE id = ?').bind(adjustment, contract.rentalId).run()
+            ;(order as any).totalAmount = Number(order.totalAmount) - adjustment
+          } catch (error: any) {
+            await clearPreviewCouponFromOrder(c, contract.rentalId, previousDiscount)
+            ;(order as any).totalAmount = Number(order.totalAmount) + previousDiscount
+            await logError(c, 'INFO', `Preview coupon dropped at signing: ${error?.message || error}`, undefined, { token, orderId: contract.rentalId })
+          }
+        } else if (!previewCouponCode && enteredCouponCode) {
+          const rentAmountForCoupon = Number(order.rentalPeriod || 0) * Number((order as any).dailyRate || 0)
+          const orderDevice = await getDeviceById(c, order.deviceId || (order as any).device_id)
+          if (!orderDevice) throw new Error('订单关联的设备不存在')
+          const coupon = await findEligibleCoupon(c, enteredCouponCode, orderDevice, rentAmountForCoupon)
+          await checkCustomerCouponEligibility(c, coupon, userId)
+          const discountAmount = calculateCouponDiscount(coupon, rentAmountForCoupon)
+          await reserveCouponForOrder(c, { coupon, customerId: userId, orderId: contract.rentalId, discountAmount })
+          await c.env.RENT.prepare('UPDATE orders SET totalAmount = totalAmount - ? WHERE id = ?').bind(discountAmount, contract.rentalId).run()
+          ;(order as any).totalAmount = Number(order.totalAmount) - discountAmount
+        }
+
         // 2. 更新订单信息
         // 处理余额支付
         let orderStatus: Order['status'] = 'pending_payment';
@@ -433,6 +461,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               throw new Error('账户余额不足，无法使用余额支付');
             }
           }
+        }
+
+        if (orderStatus === 'paid') {
+          await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(contract.rentalId).run()
         }
 
         await updateOrderInDB(c, contract.rentalId, {

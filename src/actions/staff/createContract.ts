@@ -5,6 +5,7 @@
 
 import { Context } from 'hono';
 import { User, getDeviceById, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, generateContractNumber } from '../../site';
+import { findEligibleCoupon, calculateCouponDiscount } from '../coupons';
 import { nanoid } from 'nanoid';
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
@@ -88,12 +89,19 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   let discountAmount = 0
   let appliedCouponCode: string | null = null
   if (couponCode) {
-    const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(couponCode).first() as any
-    if (!coupon) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('优惠码无效、已过期或已达到使用次数上限')}`)
-    discountAmount = coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : Number(coupon.discount_value)
-    discountAmount = Math.min(rentAmount, Math.max(0, Number(discountAmount.toFixed(2))))
+    // The order's userId is only a staff placeholder until the customer signs, so
+    // customer-specific eligibility (max_uses_per_customer / new_customer_only) can't
+    // be checked yet. This only previews the discount for the sign link; the coupon
+    // is not reserved (used_count untouched, no coupon_redemptions row) until the real
+    // customer is known — see signContract.ts step 4.
+    let coupon: any
+    try {
+      coupon = await findEligibleCoupon(c, couponCode, device, rentAmount)
+    } catch (error: any) {
+      return c.redirect(`/staff/contracts/new?error=${encodeURIComponent(error?.message || '优惠码无效')}`)
+    }
+    discountAmount = calculateCouponDiscount(coupon, rentAmount)
     appliedCouponCode = String(coupon.code).toUpperCase()
-    await c.env.RENT.prepare('UPDATE coupons SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(coupon.id).run()
   }
   const totalAmount = rentAmount + depositAmount + deliveryFee - discountAmount;
 

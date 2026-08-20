@@ -21,8 +21,9 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS refund_allocations_cannot_exceed_payment
 BEFORE INSERT ON refund_allocations BEGIN
-  SELECT CASE WHEN NEW.amount > (
+  SELECT RAISE(ABORT, 'refund allocation exceeds paid amount')
+  WHERE NEW.amount > (
     COALESCE((SELECT amount FROM payments WHERE id = NEW.payment_id), 0) -
     COALESCE((SELECT SUM(amount) FROM refund_allocations WHERE payment_id = NEW.payment_id), 0)
-  ) THEN RAISE(ABORT, 'refund allocation exceeds paid amount') END;
+  );
 END;

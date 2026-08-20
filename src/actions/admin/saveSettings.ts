@@ -4,7 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
-import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, sanitizeRichHtml, createNotification, renderEmailNotificationHtml } from '../../site'
+import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, createNotification, renderEmailNotificationHtml } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
 import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
 
@@ -53,15 +53,6 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     )
   )
 
-  const settingsBeforeSave = getSystemSettings()
-  const current = {
-    userTerms: settingsBeforeSave.userTerms,
-    rentalTerms: settingsBeforeSave.rentalTerms,
-    serviceTerms: settingsBeforeSave.serviceTerms,
-    privacyPolicy: settingsBeforeSave.privacyPolicy,
-    copyrightNotice: settingsBeforeSave.copyrightNotice,
-    companyDetails: { ...settingsBeforeSave.companyDetails },
-  }
   const next = {
     companyDetails: {
       name: String(payload.companyDetails?.name ?? getSystemSettings().companyDetails.name).trim(),
@@ -77,8 +68,6 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
         ? payload.companyDetails.pickupLocations.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 20)
         : getSystemSettings().companyDetails.pickupLocations,
     },
-    userTerms: sanitizeRichHtml(payload.userTerms ?? getSystemSettings().userTerms),
-    rentalTerms: sanitizeRichHtml(payload.rentalTerms ?? getSystemSettings().rentalTerms),
     priceStrategy: payload.priceStrategy ?? getSystemSettings().priceStrategy,
     paymentMethods: {
       stripe: Boolean(payload.paymentMethods?.stripe),
@@ -137,18 +126,6 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   if (shouldSaveEmailTransport) await saveEmailConfig(c, emailTransportInput)
   await updateSystemSettings(c, next as any)
   await loadSystemSettingsFromDB(c)
-
-  const changedAgreements = [
-    ['userTerms', '用户协议'],
-    ['rentalTerms', '租赁协议'],
-    ['serviceTerms', '服务条款'],
-    ['privacyPolicy', '隐私政策'],
-    ['copyrightNotice', '退款政策'],
-  ].filter(([key]) => Object.prototype.hasOwnProperty.call(next, key) && String((current as any)[key] || '') !== String((next as any)[key] || ''))
-
-  if (changedAgreements.length) {
-    await notifyAgreementUpdate(c, changedAgreements as Array<[string, string]>, current.companyDetails)
-  }
 
   return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c) })
 }

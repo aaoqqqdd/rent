@@ -1084,6 +1084,8 @@ export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<num
       cancelled += changes
       await c.env.RENT.prepare(`UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND status = 'pending'`).bind(order.id).run()
       await releaseDeviceIfUnbooked(c, order.deviceId)
+      const { releaseCouponForOrder } = await import('./actions/coupons')
+      await releaseCouponForOrder(c, order.id)
     }
   }
   return cancelled
@@ -1120,6 +1122,12 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   const lifecycleStatus = lifecycleByOrderStatus[status]
   if (previous?.deviceId && lifecycleStatus) await recordDeviceLifecycle(c, previous.deviceId, lifecycleStatus, { orderId, reason: `订单状态：${status}` })
   await syncReferralOrderState(c, orderId, next.rental)
+  if (status === 'cancelled') {
+    // Dynamic import avoids a static circular dependency (actions/coupons.ts imports
+    // recordFinancialLedgerEntry from this file).
+    const { releaseCouponForOrder } = await import('./actions/coupons')
+    await releaseCouponForOrder(c, orderId)
+  }
 }
 
 export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string, bufferDays = 0): Promise<boolean> {

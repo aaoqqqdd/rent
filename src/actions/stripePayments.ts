@@ -7,6 +7,7 @@ import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
 import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
+import { releaseCouponForOrder } from './coupons'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
@@ -186,7 +187,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       c.env.RENT.prepare("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE stripe_checkout_session_id = ? AND status = 'pending'").bind(session.id),
     )
   }
-  statements.push(c.env.RENT.prepare("INSERT INTO stripe_webhook_events (event_id, event_type, payload_hash, processing_status) VALUES (?, ?, ?, 'PROCESSED')").bind(event.id, event.type, payloadHash))
+  statements.push(c.env.RENT.prepare("INSERT INTO stripe_webhook_events (event_id, event_type, payload_hash, processing_status, received_at) VALUES (?, ?, ?, 'PROCESSED', CURRENT_TIMESTAMP)").bind(event.id, event.type, payloadHash))
   try {
     await c.env.RENT.batch(statements)
   } catch (error: any) {
@@ -201,6 +202,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       if (paidOrder) {
         await recordExternalRentalFlow(c, paidOrder.userId, Number(paidOrder.totalAmount), '信用卡', null, paidOrder.id)
         await recordDeviceLifecycle(c, paidOrder.deviceId, 'RESERVED', { orderId: paidOrder.id, reason: '信用卡付款成功' })
+        await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(paidOrder.id).run()
       }
       await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
       await issueInvoice(c, paidOrderId)
@@ -289,7 +291,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   }
 
   await c.env.RENT.batch([
-    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?, ?)`)
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?)`)
       .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, depositAmount, refundAmount, refundedProcessingFee, deductionAmount, deductionAmount > 0 ? deductionCategory : null, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(refundAmount >= depositAmount ? 'REFUNDED' : refundAmount <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED', deductionAmount, refundAmount, order.id),
@@ -356,6 +358,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
       c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
       c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
     ])
+    await releaseCouponForOrder(c, order.id)
     return c.redirect(`/admin/orders/${order.id}`, 303)
   }
 
@@ -375,6 +378,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
     c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
+  await releaseCouponForOrder(c, order.id)
   await issueCreditNote(c, order.id, order.totalAmount, 0, `cancellation-${nanoid(12)}`)
   await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status, deviceId: order.deviceId }), JSON.stringify({ status: 'cancelled', deviceReleased: true }), '取消订单并退款', admin.id).run()
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
