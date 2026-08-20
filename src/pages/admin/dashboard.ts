@@ -5,8 +5,9 @@
 
 import { buildLayout, formatCurrency } from '../../site';
 
-export function renderAdminDashboard(user: any, orders: any[], users: any[], devices: any[]) {
+export function renderAdminDashboard(user: any, orders: any[], users: any[], devices: any[], opsCounts?: { failedPayments: number; failedCommands: number; pendingDamage: number }) {
   const today = new Date()
+  const todayStr = today.toISOString().slice(0, 10)
   const totalRevenue = orders.filter(o => o.status === 'completed' || o.status === 'paid' || o.status === 'active').reduce((sum, order) => sum + (order.total_amount || order.totalAmount || 0), 0)
 
   // 活跃租赁：状态为active且当前日期在租期内
@@ -20,6 +21,19 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
   const pendingOrders = orders.filter(o => o.status === 'pending_approval' || o.status === 'pending_payment').length
   const availableDevices = devices.filter(d => d.status === 'available').length
   const totalUsers = users.filter((account: any) => account.status === 'active' && account.accountType !== 'deleted_guest' && account.account_type !== 'deleted_guest').length;
+
+  const todayPickups = orders.filter(o => (o.start_date || o.startDate) === todayStr && ['approved', 'paid', 'pending_pickup'].includes(o.status)).length
+  const todayReturns = orders.filter(o => (o.end_date || o.endDate) === todayStr && ['active', 'extended', 'overdue'].includes(o.status)).length
+  const overdueRentals = orders.filter(o => ['active', 'extended', 'overdue', 'pending_return'].includes(o.status) && (o.end_date || o.endDate) < todayStr).length
+  const pendingDeposits = orders.filter(o => (o.deposit_status || o.depositStatus) === 'HELD').length
+  const deviceCounts = devices.reduce((acc: Record<string, number>, d: any) => {
+    const key = d.lifecycle_status || d.status || 'unknown'
+    acc[key] = (acc[key] || 0) + 1
+    return acc
+  }, {})
+  const reservedDevices = (deviceCounts.RESERVED || 0)
+  const maintenanceDevices = (deviceCounts.MAINTENANCE || 0)
+  const damagedDevices = (deviceCounts.DAMAGED || 0)
 
   const statusMap: Record<string, { text: string; class: string }> = {
     'pending_approval': { text: '待审核', class: 'badge-warning' },
@@ -69,6 +83,19 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
         <div class="value">${totalUsers} 人</div>
         <div class="trend">有效用户数（不含已删除访客账户）</div>
       </div>
+    </div>
+    <div class="section-title" style="margin-top:24px"><h3>今日运营</h3></div>
+    <div class="stats-grid">
+      <div class="stat-card"><h3>今日取货</h3><div class="value">${todayPickups}</div></div>
+      <div class="stat-card"><h3>今日归还</h3><div class="value">${todayReturns}</div></div>
+      <div class="stat-card ${overdueRentals ? 'warning' : ''}"><h3>逾期租赁</h3><div class="value">${overdueRentals}</div></div>
+      <div class="stat-card ${pendingDeposits ? 'warning' : ''}"><h3>待结算押金</h3><div class="value">${pendingDeposits}</div></div>
+      <div class="stat-card"><h3>预留设备</h3><div class="value">${reservedDevices}</div></div>
+      <div class="stat-card ${maintenanceDevices ? 'warning' : ''}"><h3>维护中设备</h3><div class="value">${maintenanceDevices}</div></div>
+      <div class="stat-card ${damagedDevices ? 'warning' : ''}"><h3>损坏设备</h3><div class="value">${damagedDevices}</div></div>
+      <div class="stat-card ${opsCounts?.failedPayments ? 'warning' : ''}"><h3>近7日失败付款</h3><div class="value">${opsCounts?.failedPayments ?? '-'}</div></div>
+      <div class="stat-card ${opsCounts?.failedCommands ? 'warning' : ''}"><h3>近7日失败远程命令</h3><div class="value">${opsCounts?.failedCommands ?? '-'}</div></div>
+      <div class="stat-card ${opsCounts?.pendingDamage ? 'warning' : ''}"><h3>待处理损坏记录</h3><div class="value">${opsCounts?.pendingDamage ?? '-'}</div></div>
     </div>
     <div class="panel">
       <div class="section-title">

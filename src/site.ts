@@ -428,6 +428,18 @@ export async function revokeReferralRewardForOrder(c: Context, orderId: string, 
 // Moves rewards from PENDING to AVAILABLE once the qualifying order has
 // cleared the settlement/chargeback window (referralSettings.settlementPeriod
 // days past qualification), skipping any order with an open Stripe dispute.
+// Flips one PENDING reward to AVAILABLE and credits the referrer's commission
+// balance. Shared by the scheduled settlement job and the admin "release now"
+// override. Returns false if the reward wasn't PENDING (already handled).
+async function markReferralRewardAvailable(c: Context, reward: { id: string; customer_id: string; reward_amount: number; referral_id: string }, actorId?: string | null): Promise<boolean> {
+  const claimed = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'AVAILABLE', available_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'PENDING'").bind(reward.id).run() as any
+  if (!Number(claimed.meta?.changes ?? claimed.changes ?? 0)) return false
+  await c.env.RENT.prepare('UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(reward.reward_amount, reward.customer_id).run()
+  await recordFinancialLedgerEntry(c, { entryType: 'REFERRAL_REWARD', amount: Number(reward.reward_amount), customerId: reward.customer_id, sourceType: 'REFERRAL_REWARD', sourceId: reward.id, description: '推荐奖励结算到账', createdBy: actorId || null })
+  await c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, actor_id, metadata) VALUES (?, ?, 'REWARD_RELEASED', ?, ?)").bind(`rfa-${nanoid(16)}`, reward.referral_id, actorId || null, JSON.stringify({ rewardId: reward.id, amount: reward.reward_amount })).run()
+  return true
+}
+
 export async function releaseQualifiedReferralRewards(c: Context): Promise<number> {
   const settlementDays = Math.max(1, Math.floor(Number(getSystemSettings().referralSettings.settlementPeriod || 30)))
   const rows = (await c.env.RENT.prepare(`
@@ -446,14 +458,18 @@ export async function releaseQualifiedReferralRewards(c: Context): Promise<numbe
   `).bind(`-${settlementDays} days`).all()).results || []
   let released = 0
   for (const row of rows as any[]) {
-    const claimed = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'AVAILABLE', available_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'PENDING'").bind(row.id).run() as any
-    if (!Number(claimed.meta?.changes ?? claimed.changes ?? 0)) continue
-    await c.env.RENT.prepare('UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(row.reward_amount, row.customer_id).run()
-    await recordFinancialLedgerEntry(c, { entryType: 'REFERRAL_REWARD', amount: Number(row.reward_amount), customerId: row.customer_id, sourceType: 'REFERRAL_REWARD', sourceId: row.id, description: '推荐奖励结算到账', createdBy: null })
-    await c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, metadata) VALUES (?, ?, 'REWARD_RELEASED', ?)").bind(`rfa-${nanoid(16)}`, row.referral_id, JSON.stringify({ rewardId: row.id, amount: row.reward_amount })).run()
-    released++
+    if (await markReferralRewardAvailable(c, row)) released++
   }
   return released
+}
+
+// Admin override: release a specific reward immediately, bypassing the
+// settlement-period wait (but not the open-dispute rule, callers should check
+// separately if they want to warn the admin about that).
+export async function releaseReferralRewardNow(c: Context, rewardId: string, actorId: string): Promise<boolean> {
+  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, referral_id FROM referral_rewards WHERE id = ? AND status = 'PENDING'").bind(rewardId).first() as any
+  if (!reward) return false
+  return markReferralRewardAvailable(c, reward, actorId)
 }
 
 export async function recordExternalRentalFlow(c: Context, userId: string, amount: number, method: string, createdBy?: string | null, orderId?: string): Promise<void> {
@@ -1174,17 +1190,39 @@ export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<num
 // Periodically scans for known invariant violations (e.g. a paid order with no
 // successful payment row) and records them so they surface in the admin
 // Exception Queue instead of only being discoverable by manual investigation.
+// Runs one named step of the scheduled() cron in isolation: records a
+// scheduled_job_runs row, and — critically — catches its own error so one
+// failing step can no longer abort every step queued after it in the same
+// cron tick (the previous design was one flat try/catch around everything).
+// Returns the step's result, or null if it threw (the error is logged both
+// to scheduled_job_runs and via logError, matching existing convention).
+export async function runScheduledJob<T>(c: Context, jobName: string, fn: () => Promise<T>): Promise<T | null> {
+  const runId = `sjr-${nanoid(16)}`
+  await c.env.RENT.prepare("INSERT INTO scheduled_job_runs (id, job_name, status) VALUES (?, ?, 'RUNNING')").bind(runId, jobName).run()
+  try {
+    const result = await fn()
+    await c.env.RENT.prepare("UPDATE scheduled_job_runs SET status = 'SUCCESS', completed_at = CURRENT_TIMESTAMP, result_summary = ? WHERE id = ?").bind(JSON.stringify(result ?? null).slice(0, 2000), runId).run()
+    return result
+  } catch (error: any) {
+    await c.env.RENT.prepare("UPDATE scheduled_job_runs SET status = 'FAILED', completed_at = CURRENT_TIMESTAMP, error_message = ? WHERE id = ?").bind(String(error?.message || error).slice(0, 2000), runId).run()
+    await logError(c, 'ERROR', `Scheduled job failed: ${jobName}`, error as Error)
+    return null
+  }
+}
+
 export async function runDataConsistencyChecks(c: Context): Promise<number> {
-  const checks: Array<{ issueType: string; entityType: string; sql: string }> = [
+  const checks: Array<{ issueType: string; entityType: string; sql: string; autoSuspend?: boolean }> = [
     {
       issueType: 'PAID_ORDER_WITHOUT_PAYMENT',
       entityType: 'ORDER',
+      autoSuspend: true,
       sql: `SELECT o.id FROM orders o WHERE o.payment_status = 'PAID' AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.rental_id = o.id AND p.status = 'paid')`,
     },
     {
       issueType: 'ACTIVE_ORDER_WITHOUT_HANDOVER',
       entityType: 'ORDER',
-      sql: `SELECT o.id FROM orders o WHERE o.status IN ('active', 'paid', 'extended', 'overdue') AND o.handover_completed_at IS NULL`,
+      autoSuspend: true,
+      sql: `SELECT o.id FROM orders o WHERE o.status IN ('active', 'extended', 'overdue') AND o.handover_completed_at IS NULL`,
     },
     {
       issueType: 'COMPLETED_ORDER_DEPOSIT_HELD',
@@ -1204,6 +1242,16 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
       const result = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
         .bind(`dci-${nanoid(12)}`, check.issueType, check.entityType, row.id, JSON.stringify(row)).run() as any
       if (Number(result.meta?.changes ?? result.changes ?? 0) > 0) found++
+      if (Number(result.meta?.changes ?? result.changes ?? 0) > 0 && check.autoSuspend) {
+        const order = await c.env.RENT.prepare("SELECT id, status FROM orders WHERE id = ? AND status IN ('paid', 'active', 'extended', 'overdue')").bind(row.id).first() as any
+        if (order) {
+          const issue = await c.env.RENT.prepare('SELECT id FROM data_consistency_issues WHERE issue_type = ? AND entity_id = ? AND resolved_at IS NULL').bind(check.issueType, order.id).first() as any
+          if (issue) {
+            await c.env.RENT.prepare('INSERT OR IGNORE INTO anomalous_order_reviews (id, order_id, consistency_issue_id, anomaly_type, original_status) VALUES (?, ?, ?, ?, ?)').bind(`aor-${nanoid(12)}`, order.id, issue.id, check.issueType, order.status).run()
+            await updateOrderStatus(c, order.id, 'suspended')
+          }
+        }
+      }
     }
   }
   return found
@@ -3373,7 +3421,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}
         </div>

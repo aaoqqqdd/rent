@@ -154,6 +154,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
   const session = event.data?.object
   const statements: any[] = []
   let paidOrderId = ''
+  let disputedOrderId = ''
   if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
     const topupId = String(session?.metadata?.topup_id || '')
     if (topupId) {
@@ -192,6 +193,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     if (disputedPayment) {
       statements.push(c.env.RENT.prepare('INSERT OR IGNORE INTO payment_disputes (id, stripe_dispute_id, payment_id, order_id, customer_id, amount, currency, reason, status, evidence_due_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .bind(`pd-${nanoid(12)}`, String(dispute.id), disputedPayment.id, disputedPayment.rental_id, disputedPayment.customer_id, Number(dispute.amount || 0) / 100, String(dispute.currency || 'aud').toUpperCase(), String(dispute.reason || ''), 'DISPUTE_OPENED', dispute.evidence_details?.due_by ? new Date(Number(dispute.evidence_details.due_by) * 1000).toISOString() : null))
+      disputedOrderId = String(disputedPayment.rental_id || '')
     }
   } else if (event.type === 'charge.dispute.closed') {
     const dispute = session
@@ -221,6 +223,13 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       await enqueueRentalUserCreation(c, await getOrderById(c, paidOrderId))
     } catch (error: any) {
       console.error('Stripe webhook post-processing failed:', error?.message || error)
+    }
+  }
+  if (disputedOrderId) {
+    try {
+      await revokeReferralRewardForOrder(c, disputedOrderId, 'Stripe 拒付争议')
+    } catch (error: any) {
+      console.error('Stripe webhook dispute post-processing failed:', error?.message || error)
     }
   }
 
@@ -390,6 +399,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
       c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
     ])
     await releaseCouponForOrder(c, order.id)
+    await revokeReferralRewardForOrder(c, order.id, '订单取消并退款')
     return c.redirect(`/admin/orders/${order.id}`, 303)
   }
 
@@ -410,6 +420,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
   await releaseCouponForOrder(c, order.id)
+  await revokeReferralRewardForOrder(c, order.id, '订单取消并退款')
   if (channel === 'balance') await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '取消订单全额退款', admin.id)
   await issueCreditNote(c, order.id, Math.max(0, refundAmount - refundedProcessingFee), refundedProcessingFee, `cancellation-${nanoid(12)}`)
   await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status, deviceId: order.deviceId }), JSON.stringify({ status: 'cancelled', deviceReleased: true }), '取消订单并退款', admin.id).run()

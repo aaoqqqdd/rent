@@ -58,6 +58,8 @@ import {
   generateReferenceNumber,
   createAuthSession,
   revokeAllSessions,
+  releaseReferralRewardNow,
+  revokeReferralRewardForOrder,
   deleteAuthSession,
   buildLayout,
   getSystemSettings,
@@ -1980,6 +1982,59 @@ app.get('/contract/print/:id', async (c) => {
   return c.html(await pages.renderContractView(c, c.req.param('id'), user, true))
 })
 
+app.get('/health', async (c) => {
+  const checks: Record<string, any> = {}
+  let unhealthy = false
+  let degraded = false
+
+  try {
+    await c.env.RENT.prepare('SELECT 1').first()
+    checks.database = { ok: true }
+  } catch (error: any) {
+    checks.database = { ok: false, error: error?.message || String(error) }
+    unhealthy = true
+  }
+
+  try {
+    const stripeSummary = await getStripeConfigSummary(c)
+    checks.stripe = { ok: true, configured: Boolean(stripeSummary.configured) }
+    if (!stripeSummary.configured) degraded = true
+  } catch (error: any) {
+    checks.stripe = { ok: false, error: error?.message || String(error) }
+    degraded = true
+  }
+
+  try {
+    const emailSummary = await getEmailConfigSummary(c)
+    checks.email = { ok: true, configured: Boolean((emailSummary as any).configured) }
+    if (!(emailSummary as any).configured) degraded = true
+  } catch (error: any) {
+    checks.email = { ok: false, error: error?.message || String(error) }
+    degraded = true
+  }
+
+  try {
+    const offline = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM devices WHERE agent_token_hash IS NOT NULL AND agent_status = 'offline'").first() as any
+    checks.devices = { ok: true, offlineCount: Number(offline?.count || 0) }
+  } catch (error: any) {
+    checks.devices = { ok: false, error: error?.message || String(error) }
+    degraded = true
+  }
+
+  try {
+    const recentFailures = await c.env.RENT.prepare("SELECT job_name, COUNT(*) AS failures FROM scheduled_job_runs WHERE status = 'FAILED' AND started_at > datetime('now', '-2 hours') GROUP BY job_name").all()
+    const failedJobs = (recentFailures.results || []) as any[]
+    checks.scheduledJobs = { ok: failedJobs.length === 0, recentFailures: failedJobs }
+    if (failedJobs.length > 0) degraded = true
+  } catch (error: any) {
+    checks.scheduledJobs = { ok: false, error: error?.message || String(error) }
+    degraded = true
+  }
+
+  const status = unhealthy ? 'unhealthy' : degraded ? 'degraded' : 'healthy'
+  return c.json({ status, checks, timestamp: new Date().toISOString() }, unhealthy ? 503 : 200)
+})
+
 app.get('/verify', async (c) => {
   const number = String(c.req.query('number') || '').trim()
   const token = String(c.req.query('token') || '').trim()
@@ -2248,16 +2303,27 @@ app.get('/admin/dashboard', async (c) => {
     return c.redirect('/login')
   }
   const { getOrdersAsync, getDevicesAsync } = await import('./site')
-  const orders = await getOrdersAsync(c)
-  const users = await getUsers(c)
-  const devices = await getDevicesAsync(c)
-  return c.html(pages.renderAdminDashboard(user, orders, users, devices))
+  const [orders, users, devices, opsCounts] = await Promise.all([
+    getOrdersAsync(c),
+    getUsers(c),
+    getDevicesAsync(c),
+    Promise.all([
+      c.env.RENT.prepare("SELECT COUNT(*) AS count FROM payments WHERE status = 'failed' AND created_at > datetime('now', '-7 days')").first(),
+      c.env.RENT.prepare("SELECT COUNT(*) AS count FROM device_commands WHERE status = 'FAILED' AND created_at > datetime('now', '-7 days')").first(),
+      c.env.RENT.prepare("SELECT COUNT(*) AS count FROM damage_cases WHERE status IN ('OPEN', 'PENDING', 'UNDER_REVIEW')").first(),
+    ]).then(([failedPayments, failedCommands, pendingDamage]) => ({
+      failedPayments: Number((failedPayments as any)?.count || 0),
+      failedCommands: Number((failedCommands as any)?.count || 0),
+      pendingDamage: Number((pendingDamage as any)?.count || 0),
+    })),
+  ])
+  return c.html(pages.renderAdminDashboard(user, orders, users, devices, opsCounts))
 })
 
 app.get('/admin/exceptions', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases, disputes, consistencyIssues] = await Promise.all([
+  const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases, disputes, anomalousOrders, consistencyIssues, failingJobs] = await Promise.all([
     c.env.RENT.prepare("SELECT bt.id, bt.user_id, bt.amount, bt.payment_method, bt.reference, bt.note, u.name AS user_name FROM balance_topups bt LEFT JOIN users u ON u.id = bt.user_id WHERE bt.status = 'submitted' ORDER BY bt.updated_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT pp.id, pp.payment_id, p.rental_id, pp.reference_number, pp.uploaded_at, o.orderNo FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN orders o ON o.id = p.rental_id WHERE pp.status = 'submitted' ORDER BY pp.uploaded_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, endDate FROM orders WHERE status IN ('active', 'extended', 'overdue', 'pending_return') AND endDate < ? ORDER BY endDate ASC LIMIT 50").bind(new Date().toISOString().slice(0, 10)).all(),
@@ -2265,7 +2331,18 @@ app.get('/admin/exceptions', async (c) => {
     c.env.RENT.prepare("SELECT id, orderNo, depositAmount FROM orders WHERE deposit_status = 'HELD' AND status IN ('returned', 'completed') ORDER BY updatedAt ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, order_id, description FROM damage_cases WHERE status IN ('OPEN', 'PENDING', 'UNDER_REVIEW') ORDER BY created_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, order_id, amount, currency, reason, status FROM payment_disputes WHERE status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') ORDER BY created_at ASC LIMIT 50").all(),
+    c.env.RENT.prepare("SELECT r.id, r.order_id, r.anomaly_type, o.orderNo FROM anomalous_order_reviews r LEFT JOIN orders o ON o.id = r.order_id WHERE r.status = 'PENDING' ORDER BY r.detected_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, issue_type, entity_type, entity_id, detected_at FROM data_consistency_issues WHERE resolved_at IS NULL ORDER BY detected_at ASC LIMIT 50").all(),
+    c.env.RENT.prepare(`
+      WITH ranked AS (
+        SELECT job_name, status, started_at, error_message,
+               ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY started_at DESC) AS rn
+        FROM scheduled_job_runs
+      )
+      SELECT job_name, MAX(started_at) AS last_failed_at, MAX(error_message) AS last_error
+      FROM ranked WHERE rn <= 3 AND status = 'FAILED'
+      GROUP BY job_name HAVING COUNT(*) = 3
+    `).all(),
   ]) as any[]
   const sections = [
     ['待审核充值', topups.results, '/admin/exceptions', (item: any) => `<strong>${sanitizePlainText(item.user_name || item.user_id, 100)}</strong> · ${sanitizePlainText(item.payment_method, 30)} · AUD$${Number(item.amount).toFixed(2)}<div class="record-actions"><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/approve" data-site-confirm="确认通过这笔充值并立即入账吗？"><button class="button button-sm button-primary">通过并入账</button></form><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/reject" data-site-confirm="确认驳回这笔充值吗？"><button class="button button-sm button-danger">驳回</button></form></div>`],
@@ -2275,10 +2352,50 @@ app.get('/admin/exceptions', async (c) => {
     ['待结算押金', heldDeposits.results, '/admin/refunds', (item: any) => `${item.orderNo || item.id} · AUD$${Number(item.depositAmount).toFixed(2)}`],
     ['待审核损坏记录', damageCases.results, '/admin/inspections', (item: any) => `订单 ${item.order_id} · ${item.description || '待补充损坏说明'}`],
     ['待处理支付争议', disputes.results, '/admin/finance/payment-disputes', (item: any) => `订单 ${sanitizePlainText(item.order_id || '-', 50)} · ${sanitizePlainText(item.currency, 10)}$${Number(item.amount).toFixed(2)} · ${sanitizePlainText(item.reason || '未说明原因', 100)}`],
+    ['待审核异常订单', anomalousOrders.results, '/admin/finance/anomalous-orders', (item: any) => `订单 ${sanitizePlainText(item.orderNo || item.order_id, 50)} · ${sanitizePlainText(item.anomaly_type, 100)} · 已自动暂停`],
     ['数据不一致', consistencyIssues.results, '/admin/exceptions', (item: any) => `${sanitizePlainText(item.issue_type, 60)} · ${sanitizePlainText(item.entity_type, 30)} ${sanitizePlainText(item.entity_id, 60)} · 发现于 ${item.detected_at}`],
+    ['连续失败的定时任务', failingJobs.results, '/health', (item: any) => `${sanitizePlainText(item.job_name, 80)} · 最近失败于 ${item.last_failed_at} · ${sanitizePlainText(item.last_error || '无错误信息', 200)}`],
   ] as const
   const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和押金异常；所有充值与转账审核均在此完成。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
   return c.html(buildLayout('异常任务中心', body, admin))
+})
+
+app.get('/admin/referrals', async (c) => {
+  const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!admin || !['MANAGER', 'ADMIN'].includes(getAccessLevel(admin))) return c.html(renderForbidden(), 403)
+  await loadSystemSettingsFromDB(c)
+  const rewards = (await c.env.RENT.prepare(`
+    SELECT rw.id, rw.reward_number, rw.customer_id, rw.reward_amount, rw.status, rw.reason,
+           r.qualified_at, referrer.name AS referrer_name, referee.name AS referee_name
+    FROM referral_rewards rw
+    JOIN referrals r ON r.id = rw.referral_id
+    LEFT JOIN users referrer ON referrer.id = rw.customer_id
+    LEFT JOIN users referee ON referee.id = r.referee_customer_id
+    ORDER BY rw.created_at DESC LIMIT 200
+  `).all()).results || []
+  return c.html(pages.renderAdminReferrals(admin, rewards as any[], getSystemSettings().referralSettings.settlementPeriod))
+})
+
+app.post('/admin/referrals/:id/release', async (c) => {
+  const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!admin || !['MANAGER', 'ADMIN'].includes(getAccessLevel(admin))) return c.html(renderForbidden(), 403)
+  const released = await releaseReferralRewardNow(c, c.req.param('id'), admin.id)
+  if (!released) return c.text('该推荐奖励不存在或已处理', 409)
+  await createAuditLog(c, { actor: admin, action: 'REFERRAL_REWARD_RELEASED', targetType: 'REFERRAL_REWARD', targetId: c.req.param('id') })
+  return c.redirect('/admin/referrals', 303)
+})
+
+app.post('/admin/referrals/:id/revoke', async (c) => {
+  const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!admin || !['MANAGER', 'ADMIN'].includes(getAccessLevel(admin))) return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const reason = String(form.reason || '').trim().slice(0, 300)
+  if (!reason) return c.text('撤销推荐奖励必须填写原因', 400)
+  const reward = await c.env.RENT.prepare("SELECT order_id FROM referral_rewards WHERE id = ? AND status IN ('PENDING', 'AVAILABLE')").bind(c.req.param('id')).first() as any
+  if (!reward?.order_id) return c.text('该推荐奖励不存在或已处理', 409)
+  await revokeReferralRewardForOrder(c, reward.order_id, reason)
+  await createAuditLog(c, { actor: admin, action: 'REFERRAL_REWARD_REVOKED', targetType: 'REFERRAL_REWARD', targetId: c.req.param('id'), reason })
+  return c.redirect('/admin/referrals', 303)
 })
 
 app.get('/manager/staff', async (c) => {
@@ -2961,6 +3078,33 @@ app.post('/admin/finance/payment-disputes/:id', async (c) => {
   if (!updated.meta?.changes) return c.text('支付争议已结案或已被其他管理员更新', 409)
   await createAuditLog(c, { actor: admin, action: 'PAYMENT_DISPUTE_UPDATED', targetType: 'PAYMENT_DISPUTE', targetId: dispute.id, before: { status: dispute.status }, after: { status, evidenceStatus, financialImpact }, reason: result || evidenceStatus || '更新支付争议' })
   return c.redirect('/admin/finance/payment-disputes', 303)
+})
+
+app.get('/admin/finance/anomalous-orders', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const reviews = await c.env.RENT.prepare(`SELECT r.*, o.orderNo AS order_no, u.name AS customer_name, u.email AS customer_email, reviewer.name AS reviewer_name FROM anomalous_order_reviews r LEFT JOIN orders o ON o.id = r.order_id LEFT JOIN users u ON u.id = o.userId LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by ORDER BY CASE WHEN r.status = 'PENDING' THEN 0 ELSE 1 END, r.detected_at DESC`).all()
+  return c.html(pages.renderAdminAnomalousOrders(user, reviews.results || []))
+})
+
+app.post('/admin/finance/anomalous-orders/:id', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const decision = String(form.decision || '')
+  const note = sanitizePlainText(String(form.note || ''), 1000).trim()
+  if (!['restore', 'confirm'].includes(decision) || !note) return c.text('请选择审核结果并填写说明', 400)
+  const review = await c.env.RENT.prepare("SELECT * FROM anomalous_order_reviews WHERE id = ? AND status = 'PENDING'").bind(c.req.param('id')).first() as any
+  if (!review) return c.text('异常订单不存在或已审核', 409)
+  const order = await getOrderById(c, review.order_id)
+  if (!order || order.status !== 'suspended') return c.text('订单当前不是系统暂停状态，无法按此审核记录处理', 409)
+  if (decision === 'restore') await updateOrderStatus(c, order.id, review.original_status)
+  await c.env.RENT.batch([
+    c.env.RENT.prepare("UPDATE anomalous_order_reviews SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_note = ? WHERE id = ? AND status = 'PENDING'").bind(decision === 'restore' ? 'RESTORED' : 'CONFIRMED', admin.id, note, review.id),
+    c.env.RENT.prepare('UPDATE data_consistency_issues SET resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND resolved_at IS NULL').bind(review.consistency_issue_id),
+  ])
+  await createAuditLog(c, { actor: admin, action: 'ANOMALOUS_ORDER_REVIEWED', targetType: 'ORDER', targetId: order.id, before: { status: 'suspended', anomalyType: review.anomaly_type }, after: { status: decision === 'restore' ? review.original_status : 'suspended', decision }, reason: note })
+  return c.redirect('/admin/finance/anomalous-orders', 303)
 })
 
 app.get('/admin/revenue-stats', async (c) => {
@@ -3809,11 +3953,16 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, logError } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runScheduledJob } = await import('./site')
     ctx.waitUntil(
       (async () => {
-        try {
-          await ensureDeviceCommandTables(env.RENT)
+        // Each step below runs through runScheduledJob so it's isolated: a step
+        // that throws is recorded as FAILED and logged, but no longer prevents
+        // every step queued after it in this tick from running (the previous
+        // design wrapped the whole sequence in one try/catch).
+        await runScheduledJob(c, 'ensure_device_command_tables', () => ensureDeviceCommandTables(env.RENT))
+
+        await runScheduledJob(c, 'mark_overdue_handovers', async () => {
           const handoverRows = (await env.RENT.prepare("SELECT id, rental_status, startDate FROM orders WHERE payment_status = 'PAID' AND rental_status = 'READY_FOR_PICKUP' AND startDate <= date('now')").all()).results || []
           for (const row of handoverRows as any[]) {
             await env.RENT.batch([
@@ -3821,8 +3970,13 @@ export default {
               env.RENT.prepare("INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, 'SYSTEM', ?)").bind(`rsh-${crypto.randomUUID()}`, row.id, row.rental_status, 'HANDOVER_PENDING', '已到预约取货日期但尚未确认交付')
             ])
           }
+          return handoverRows.length
+        })
+
+        await runScheduledJob(c, 'windows_rental_user_lifecycle', async () => {
           const lifecycleRows = (await env.RENT.prepare(`SELECT o.id, o.deviceId, o.status, o.startDate, o.endDate, c.id AS contract_id, c.contract_data, u.name AS customer_name FROM orders o JOIN contracts c ON c.orderId = o.id LEFT JOIN users u ON u.id = o.userId WHERE o.status IN ('paid', 'active', 'completed') AND c.status IN ('signed', 'completed')`).all()).results || []
           const today = new Date().toISOString().slice(0, 10)
+          let touched = 0
           for (const row of lifecycleRows as any[]) {
             let data: any = {}
             try { data = JSON.parse(row.contract_data || '{}') } catch (_) { }
@@ -3832,36 +3986,37 @@ export default {
               await env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CREATE_RENTAL_USER', ?, NULL, datetime('now', '+7 days'))").bind(`cmd-${crypto.randomUUID()}`, row.deviceId, JSON.stringify({ username, password: data.windows_password })).run()
               data.windows_account_created = true
               await env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), row.contract_id).run()
+              touched++
             }
             if (String(row.status) === 'completed' && !data.windows_account_deleted) {
               await env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'DELETE_RENTAL_USER', ?, NULL, datetime('now', '+30 days'))").bind(`cmd-${crypto.randomUUID()}`, row.deviceId, JSON.stringify({ username })).run()
               data.windows_account_deleted = true
               await env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), row.contract_id).run()
+              touched++
             }
           }
+          return touched
+        })
+
+        await runScheduledJob(c, 'purge_scheduled_account_deletions', async () => {
           for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
             try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) { }
           }
           const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET name = '删除账户', email = 'deleted-account-' || id || '@invalid.local', phone = NULL, bsb = NULL, account = NULL, account_number = NULL, balance = 0, commission_balance = 0, password_hash = 'disabled', password_salt = 'disabled', referral_code = NULL, referrer_id = NULL, staff_id = NULL, user_agreement_accepted_ip = NULL, status = 'inactive', account_status = 'inactive', deleted_at = CURRENT_TIMESTAMP, deletion_requested_at = NULL, deletion_scheduled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
-          const deletedCount = await cleanupExpiredAndCancelledContracts(c)
-          const expiredGuestCount = await cleanupExpiredGuestAccounts(c)
-          const expiredPaymentCount = await cancelExpiredPendingPaymentOrders(c)
-          const dueNotificationCount = await createDueDateNotifications(c)
-          const overduePaymentNotificationCount = await notifyOverduePaymentProofs(c)
-          const expiredInspectionResult = await env.RENT.prepare("DELETE FROM device_inspections WHERE created_at < datetime('now', '-1 year')").run()
-          const consistencyIssueCount = await runDataConsistencyChecks(c)
-          console.log(`Scheduled contract cleanup completed: removed ${deletedCount} expired/cancelled contracts`)
-          console.log(`Scheduled data consistency check completed: found ${consistencyIssueCount} new issues`)
-          console.log(`Scheduled account cleanup completed: disabled ${Number(deletedAccountResult.meta?.changes || 0)} accounts`)
-          console.log(`Scheduled guest cleanup completed: disabled ${expiredGuestCount} expired guest accounts`)
-          console.log(`Scheduled payment cleanup completed: cancelled ${expiredPaymentCount} unpaid orders`)
-          console.log(`Scheduled due notifications completed: created ${dueNotificationCount} reminders`)
-          console.log(`Scheduled payment review notifications completed: notified ${overduePaymentNotificationCount} proofs`)
-          console.log(`Scheduled inspection cleanup completed: removed ${Number(expiredInspectionResult.meta?.changes || 0)} records`)
-        } catch (error) {
-          await logError(c, 'ERROR', 'Failed to run scheduled contract cleanup', error as Error)
-          console.error('Scheduled contract cleanup failed:', error)
-        }
+          return Number(deletedAccountResult.meta?.changes || 0)
+        })
+
+        await runScheduledJob(c, 'cleanup_expired_contracts', () => cleanupExpiredAndCancelledContracts(c))
+        await runScheduledJob(c, 'cleanup_expired_guest_accounts', () => cleanupExpiredGuestAccounts(c))
+        await runScheduledJob(c, 'cancel_expired_pending_payments', () => cancelExpiredPendingPaymentOrders(c))
+        await runScheduledJob(c, 'create_due_date_notifications', () => createDueDateNotifications(c))
+        await runScheduledJob(c, 'notify_overdue_payment_proofs', () => notifyOverduePaymentProofs(c))
+        await runScheduledJob(c, 'purge_old_device_inspections', async () => {
+          const result = await env.RENT.prepare("DELETE FROM device_inspections WHERE created_at < datetime('now', '-1 year')").run()
+          return Number(result.meta?.changes || 0)
+        })
+        await runScheduledJob(c, 'run_data_consistency_checks', () => runDataConsistencyChecks(c))
+        await runScheduledJob(c, 'release_qualified_referral_rewards', () => releaseQualifiedReferralRewards(c))
       })()
     )
   }

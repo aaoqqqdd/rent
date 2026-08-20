@@ -63,7 +63,7 @@ export function renderAdminFinance(user: any, orders: any[] = [], refunds: any[]
     </style>
     <div class="panel">
       <div class="section-title">
-        <h2>财务管理</h2>
+        <h2>财务总览</h2>
         <span class="section-note">统计范围：仅计入已支付、租赁中、已完成订单；已取消、待审核和待支付订单不计入营收。</span>
       </div>
 
@@ -99,6 +99,11 @@ export function renderAdminFinance(user: any, orders: any[] = [], refunds: any[]
           <a href="/admin/finance/payment-disputes" class="button button-sm">管理支付争议</a>
         </div>
         <div class="finance-section">
+          <h4>⚠️ 异常订单</h4>
+          <p>系统检测到异常后自动暂停，等待管理员审核恢复或确认暂停。</p>
+          <a href="/admin/finance/anomalous-orders" class="button button-sm">审核异常订单</a>
+        </div>
+        <div class="finance-section">
           <h4>✅ 佣金提现</h4>
           <p>查看佣金发放与提现审核记录。</p>
           <a href="/admin/withdrawals" class="button button-sm">查看提现</a>
@@ -112,5 +117,5 @@ export function renderAdminFinance(user: any, orders: any[] = [], refunds: any[]
     </div>
   `;
 
-  return buildLayout('财务管理 - 电脑租赁管理系统', body, user);
+  return buildLayout('财务总览 - 电脑租赁管理系统', body, user);
 }
