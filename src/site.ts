@@ -3269,7 +3269,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'CUSTOMER' ? `
             ${currentUser.accountType === 'guest' ? renderNavGroup('合同中心', [['/customer/guest', '访客合同中心'], ['/customer/guest/upgrade', '升级账户']]) : `
               ${renderNavLink('/customer/dashboard', '控制台')}
-              ${renderNavGroup('租赁工作区', [['/customer/devices', '预览可租设备'], ['/customer/rentals', '我的租赁'], ['/customer/orders', '订单管理']])}
+              ${renderNavGroup('租赁工作区', [/*['/customer/devices', '预览可租设备']*/, ['/customer/rentals', '我的租赁'], ['/customer/orders', '订单管理']])}
               ${renderNavGroup('账户与钱包', [['/customer/balance', '我的钱包'], ['/customer/profile', '个人资料'], ['/customer/security', '安全设置'], ['/customer/referral', '推荐计划']])}
             `}
           ` : ''}
@@ -3284,12 +3284,12 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
             ${renderNavGroup('通知管理', [['/admin/notifications', '通知中心'], ['/notifications', '发布通知']])}
-            ${renderNavGroup('客户与用户', [['/admin/users', '用户管理']])}
+            ${renderNavGroup('用户管理', [['/admin/users', '用户管理']])}
             ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
-            ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录']])}
+            ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
-            ${renderNavGroup('协议与设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
+            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">
