@@ -63,6 +63,25 @@ export function refundableDepositFee(refundAmount: number, payment: any): number
   return Math.round(cents(refundAmount) * getStripeProcessingFeeRate()) / 100
 }
 
+export function allocateProportionalRefund(sources: Array<{ id: string; amount: number; refunded?: number }>, refundAmount: number): Array<{ id: string; amount: number }> {
+  const requested = cents(refundAmount)
+  const available = sources.map(source => ({ id: source.id, cents: Math.max(0, cents(source.amount) - cents(source.refunded || 0)) }))
+  const total = available.reduce((sum, source) => sum + source.cents, 0)
+  if (!Number.isInteger(requested) || requested <= 0 || requested > total) throw new Error('退款金额超过原始付款可退余额')
+  let assigned = 0
+  const result = available.map(source => {
+    const amount = Math.floor(requested * source.cents / total)
+    assigned += amount
+    return { id: source.id, cents: amount }
+  })
+  for (const source of result) {
+    if (assigned >= requested) break
+    const capacity = available.find(item => item.id === source.id)!.cents
+    if (source.cents < capacity) { source.cents++; assigned++ }
+  }
+  return result.filter(source => source.cents > 0).map(source => ({ id: source.id, amount: source.cents / 100 }))
+}
+
 function melbourneDate(): string {
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
   const value = Object.fromEntries(parts.map(part => [part.type, part.value]))
@@ -115,6 +134,8 @@ export async function createStripeCheckout(c: Context, user: any, orderId: strin
 
 export async function handleStripeWebhook(c: Context): Promise<Response> {
   const rawBody = await c.req.text()
+  const payloadDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(rawBody))
+  const payloadHash = Array.from(new Uint8Array(payloadDigest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
   let event: any
   try {
     event = await verifyStripeWebhook(c, rawBody, c.req.header('stripe-signature'))
@@ -165,7 +186,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       c.env.RENT.prepare("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE stripe_checkout_session_id = ? AND status = 'pending'").bind(session.id),
     )
   }
-  statements.push(c.env.RENT.prepare('INSERT INTO stripe_webhook_events (event_id, event_type) VALUES (?, ?)').bind(event.id, event.type))
+  statements.push(c.env.RENT.prepare("INSERT INTO stripe_webhook_events (event_id, event_type, payload_hash, processing_status) VALUES (?, ?, ?, 'PROCESSED')").bind(event.id, event.type, payloadHash))
   try {
     await c.env.RENT.batch(statements)
   } catch (error: any) {
@@ -355,6 +376,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
   await issueCreditNote(c, order.id, order.totalAmount, 0, `cancellation-${nanoid(12)}`)
+  await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status, deviceId: order.deviceId }), JSON.stringify({ status: 'cancelled', deviceReleased: true }), '取消订单并退款', admin.id).run()
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -Number(order.totalAmount), customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '取消订单退款', createdBy: admin.id, metadata: { channel } })
   return c.redirect(`/admin/orders/${order.id}`, 303)

@@ -22,7 +22,7 @@ import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
 import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
-import { refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts } from '../src/actions/stripePayments'
+import { allocateProportionalRefund, refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
@@ -217,6 +217,12 @@ test('only deposit refunds return the fee attributable to the refunded deposit p
   assert.equal(refundableDepositFee(499.99, stripePayment), 12.5)
   assert.equal(refundableDepositFee(1000, { payment_method: 'bank_transfer', processing_fee: 0 }), 0)
   assert.equal(refundableDepositFee(1000, { payment_method: 'card', processing_fee: 0 }), 0)
+})
+
+test('mixed-payment refunds are proportional, rounded to cents, and never exceed a source balance', () => {
+  assert.deepEqual(allocateProportionalRefund([{ id: 'balance', amount: 50 }, { id: 'stripe', amount: 150 }], 100), [{ id: 'balance', amount: 25 }, { id: 'stripe', amount: 75 }])
+  assert.deepEqual(allocateProportionalRefund([{ id: 'a', amount: 1 }, { id: 'b', amount: 2 }], 0.01), [{ id: 'a', amount: 0.01 }])
+  assert.throws(() => allocateProportionalRefund([{ id: 'a', amount: 10, refunded: 8 }], 3), /超过原始付款/)
 })
 
 test('all registered contract variables render without leftovers', () => {

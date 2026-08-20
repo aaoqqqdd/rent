@@ -1544,7 +1544,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (String(copyrightNoticeValue || '').trim()) systemSettings.copyrightNotice = sanitizeRichHtml(copyrightNoticeValue)
   const parsedLegalMetadata = safeJsonParse<any>(legalMetadataValue)
   if (parsedLegalMetadata) systemSettings.legalMetadata = { ...systemSettings.legalMetadata, ...parsedLegalMetadata }
-  if (String(priceStrategyValue || '').trim()) systemSettings.priceStrategy = priceStrategyValue
+  if (String(priceStrategyValue || '').trim()) systemSettings.priceStrategy = String(priceStrategyValue)
 
   const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
@@ -3152,7 +3152,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
     '/notifications': 'N', '/admin/notifications': '☷', '/admin/dashboard': '⌘', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/payment-reviews': '✓', '/admin/exceptions': '⚿', '/admin/devices': '◒', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
+    '/admin/withdrawals': '↗', '/admin/exceptions': '⚿', '/admin/devices': '◒', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
   }
 
   const navIconSvg = (kind: string) => {
@@ -3198,8 +3198,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   }
   const renderNavLink = (href: string, text: string) => {
     const icon = navIcons[href] || navIcons[href.split('?')[0]] || '▣'
-    const navigationFallback = href === '/admin/payment-reviews' ? ' data-full-navigation="true"' : ''
-    return `<a href="${href}"${navigationFallback}><span class="nav-icon">${navIconSvg(icon)}</span>${text}</a>`
+    return `<a href="${href}"><span class="nav-icon">${navIconSvg(icon)}</span>${text}</a>`
   }
   const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group" open><summary>${label}<span aria-hidden="true">⌄</span></summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
@@ -3240,7 +3239,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备与日历', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/calendar', '租赁日历']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/payment-reviews', '充值与转账审核'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('协议与设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}
         </div>
