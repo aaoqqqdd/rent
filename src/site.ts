@@ -2140,22 +2140,6 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   return inserted
 }
 
-// ===== Customer account helpers (used by src/pages/customer/account.ts) =====
-
-export async function updatePassword(c: Context, userId: string, newPassword: string): Promise<User | null> {
-  return updateUser(c, userId, { password: newPassword })
-}
-
-export async function bindReferrer(c: Context, userId: string, referrerId: string): Promise<User | null> {
-  const user = await getUserById(c, userId)
-  if (!user || user.referrerId) return user
-  return updateUser(c, userId, { referrerId })
-}
-
-export async function unbindReferrer(c: Context, userId: string): Promise<User | null> {
-  return updateUser(c, userId, { referrerId: null as any })
-}
-
 export async function updateDevice(c: Context, deviceId: string, data: Partial<Device>): Promise<Device | null> {
   const db = getDB(c)
   const existing = await getDeviceById(c, deviceId)
