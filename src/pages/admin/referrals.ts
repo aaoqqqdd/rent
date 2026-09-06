@@ -5,8 +5,8 @@
 
 import { buildLayout, formatCurrency, sanitizePlainText } from '../../site';
 
-const statusLabels: Record<string, string> = { PENDING: '待结算', AVAILABLE: '已发放', REVOKED: '已撤销' }
-const statusBadge: Record<string, string> = { PENDING: 'badge-warning', AVAILABLE: 'badge-success', REVOKED: 'badge-danger' }
+const statusLabels: Record<string, string> = { PENDING: '待结算', AVAILABLE: '已发放', CANCELLED: '已撤销' }
+const statusBadge: Record<string, string> = { PENDING: 'badge-warning', AVAILABLE: 'badge-success', CANCELLED: 'badge-danger' }
 
 export function renderAdminReferrals(user: any, rewards: any[] = [], settlementDays: number) {
   const rows = rewards.map((reward: any) => `<tr>

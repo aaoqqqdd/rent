@@ -411,12 +411,14 @@ async function syncReferralOrderState(c: Context, orderId: string, rentalStatus:
 // Reverses a reward that hasn't been paid out yet (PENDING) or claws back one
 // that already was (AVAILABLE, credited to commission_balance). Safe to call
 // on orders with no reward at all (no-op). Idempotent: a second call finds
-// the reward already REVOKED and does nothing further.
+// the reward already CANCELLED and does nothing further. Uses 'CANCELLED'
+// (not e.g. 'REVOKED') to match the status values allowed by the CHECK
+// constraint in migrations/0079_referral_program.sql.
 export async function revokeReferralRewardForOrder(c: Context, orderId: string, reason: string): Promise<void> {
   const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, status, referral_id FROM referral_rewards WHERE order_id = ? AND status IN ('PENDING','AVAILABLE')").bind(orderId).first() as any
   if (!reward) return
   const wasAvailable = reward.status === 'AVAILABLE'
-  const result = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'REVOKED', cancelled_at = CURRENT_TIMESTAMP, reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING','AVAILABLE')").bind(reason, reward.id).run() as any
+  const result = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP, reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING','AVAILABLE')").bind(reason, reward.id).run() as any
   if (!Number(result.meta?.changes ?? result.changes ?? 0)) return
   if (wasAvailable) {
     await c.env.RENT.prepare('UPDATE users SET commission_balance = MAX(0, commission_balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(reward.reward_amount, reward.customer_id).run()
