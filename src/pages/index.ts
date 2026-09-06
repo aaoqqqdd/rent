@@ -66,6 +66,7 @@ export * from './admin/users';
 export * from './admin/userDetail';
 export * from './admin/riskFlags';
 export * from './admin/referrals';
+export * from './admin/deviceReports';
 export * from './admin/userNew';
 export * from './admin/userEdit';
 export * from './admin/refunds';

@@ -3318,9 +3318,10 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣', '/customer/balance': '◌', '/customer/guest': '▰', '/customer/guest/upgrade': '↥',
     '/staff/dashboard': '◍', '/staff/orders': '◓', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
     '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
-    '/notifications': 'N', '/admin/notifications': '☷', '/admin/dashboard': '⌘', '/admin/users': '♙', '/admin/orders': '▥',
+    '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/exceptions': '⚿', '/admin/devices': '◒', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙'
+    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙',
+    '/admin/devices/reports': 'chart', '/admin/referrals': 'gift'
   }
 
   const navIconSvg = (kind: string) => {
@@ -3338,7 +3339,13 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       '$': '<path d="M12 3v18M16 7.5c-.8-1-2-1.5-4-1.5-2.4 0-4 1.2-4 3s1.6 3 4 3 4 1.2 4 3-1.6 3-4 3c-2 0-3.2-.5-4-1.5"></path>',
       '⚿': '<rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>',
       '✦': '<path d="m12 3 1.7 6.3L20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3Z"></path>',
-      '◈': '<path d="m12 3 8 9-8 9-8-9 8-9Z"></path><path d="m12 8 3 4-3 4-3-4 3-4Z"></path>',
+      '◈': '<rect x="6" y="4" width="12" height="17" rx="2"></rect><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"></path><path d="m9 13 2 2 4-4"></path>',
+      'grid': '<rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect>',
+      'alert': '<path d="M12 3 2 20h20L12 3Z"></path><path d="M12 9.5v4.5"></path><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"></circle>',
+      'inbox': '<path d="M4 12h4l2 3h4l2-3h4"></path><path d="M5.5 5h13L21 12v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6L5.5 5Z"></path>',
+      'chart': '<path d="M4 20V10M10 20V4M16 20v-6"></path><path d="M3 20h18"></path>',
+      'gift': '<rect x="3" y="8" width="18" height="13" rx="1"></rect><path d="M3 8h18M12 8v13"></path><path d="M12 8c-2-3-6-3-6 0M12 8c2-3 6-3 6 0"></path>',
+      'laptop': '<rect x="3" y="4" width="18" height="12" rx="1.5"></rect><path d="M2 20h20"></path>',
       '+': '<path d="M12 5v14M5 12h14"></path>',
       '♙': '<circle cx="12" cy="8" r="3"></circle><path d="M5 20c.8-3.2 3.1-5 7-5s6.2 1.8 7 5"></path><path d="M8 4h8"></path>',
       '▥': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M4 10h16M9 10v9M15 10v9"></path>',
@@ -3406,7 +3413,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('用户管理', [['/admin/users', '用户管理']])}
             ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
-            ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录']])}
+            ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
           ` : ''}

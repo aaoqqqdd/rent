@@ -2320,6 +2320,51 @@ app.get('/admin/dashboard', async (c) => {
   return c.html(pages.renderAdminDashboard(user, orders, users, devices, opsCounts))
 })
 
+app.get('/admin/devices/reports', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const rows = (await c.env.RENT.prepare(`
+    SELECT
+      d.id, d.name, d.model, d.brand, d.lifecycle_status,
+      COALESCE(o.total_revenue, 0) AS total_revenue,
+      COALESCE(o.total_rental_days, 0) AS total_rental_days,
+      COALESCE(o.recent_rental_days, 0) AS recent_rental_days,
+      COALESCE(m.maintenance_count, 0) AS maintenance_count,
+      COALESCE(m.maintenance_cost, 0) AS maintenance_cost,
+      COALESCE(dc.damage_count, 0) AS damage_count,
+      COALESCE(dc.damage_cost_cents, 0) AS damage_cost_cents,
+      ret.retired_at
+    FROM devices d
+    LEFT JOIN (
+      SELECT deviceId,
+        -- Rent only: totalAmount also carries the refundable deposit and the
+        -- delivery/time-slot service fee, neither of which is device revenue.
+        -- Coupon discounts are already netted into totalAmount at creation.
+        -- Refunds, cancellations after payment and deposit forfeits are not
+        -- reflected here, so this stays an operational estimate, not a ledger figure.
+        SUM(MAX(totalAmount - COALESCE(depositAmount, 0) - COALESCE(serviceFee, 0), 0)) AS total_revenue,
+        SUM(rentalPeriod) AS total_rental_days,
+        SUM(CASE WHEN createdAt > datetime('now', '-30 days') THEN rentalPeriod ELSE 0 END) AS recent_rental_days
+      FROM orders
+      WHERE status IN ('completed', 'active', 'extended', 'overdue', 'returned', 'pending_return', 'paid')
+      GROUP BY deviceId
+    ) o ON o.deviceId = d.id
+    LEFT JOIN (
+      SELECT device_id, COUNT(*) AS maintenance_count, SUM(cost) AS maintenance_cost
+      FROM maintenance_records GROUP BY device_id
+    ) m ON m.device_id = d.id
+    LEFT JOIN (
+      SELECT device_id, COUNT(*) AS damage_count, SUM(COALESCE(final_cost_cents, estimated_cost_cents)) AS damage_cost_cents
+      FROM damage_cases GROUP BY device_id
+    ) dc ON dc.device_id = d.id
+    LEFT JOIN (
+      SELECT device_id, MAX(created_at) AS retired_at FROM device_lifecycle_events WHERE next_status = 'RETIRED' GROUP BY device_id
+    ) ret ON ret.device_id = d.id
+    ORDER BY total_revenue DESC
+  `).all()).results || []
+  return c.html(pages.renderAdminDeviceReports(user, rows as any[]))
+})
+
 app.get('/admin/exceptions', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
