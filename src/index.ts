@@ -525,8 +525,10 @@ for (const { paths, title, key, code, metaKey, varPrefix } of PUBLIC_LEGAL_PAGES
   })
 }
 
-// 租赁协议范本（签署前查阅）。rentalTerms 含大量合同变量，此处只填充公司与协议版本
-// 变量，其余未填充的占位符替换为空位符号，页面顶部注明以签署合同为准。
+// 租赁协议范本（签署前查阅）。rentalTerms 含大量合同变量：能从系统设置解析的
+// （协议版本、管辖地、GST、公司与收款账户信息）在此填充，与签署流程里的
+// renderContractVariables 取值保持一致；仅属于具体订单的字段（承租方、设备、
+// 租期、金额、签署时间等）留作 —— 空位，页面顶部注明以签署合同为准。
 app.on('GET', ['/rental-terms', '/rental-agreement'], async (c) => {
   const settings = await loadSystemSettingsFromDB(c)
   const currentUser = c.get('user')
@@ -534,6 +536,12 @@ app.on('GET', ['/rental-terms', '/rental-agreement'], async (c) => {
   const rendered = renderSiteVariables(String(settings.rentalTerms ?? ''), currentUser, {
     rental_agreement_version: metadata.version,
     rental_agreement_last_updated_date: metadata.lastUpdatedDate,
+    jurisdiction: 'VIC',
+    gst_included: settings.companyDetails.gstIncluded ? '是' : '否',
+    bank_name: settings.bankDetails.bankName,
+    bank_bsb: settings.bankDetails.bsb,
+    bank_account: settings.bankDetails.account,
+    account_name: settings.bankDetails.accountName,
   })
   const content = neutralizeTemplateTokens(rendered)
   const notice = '<p class="section-note">以下为标准《设备租赁协议》范本，供签署前查阅。带 —— 的位置将在您下单后按实际合同数据填写；最终以您签署的租赁合同为准。</p>'
