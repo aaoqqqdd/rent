@@ -57,6 +57,7 @@ import {
   enforceRateLimit,
   sanitizeRichHtml,
   renderSiteVariables,
+  neutralizeTemplateTokens,
   renderContractVariables,
   updateDeviceStatus,
   recordDeviceLifecycle,
@@ -99,6 +100,7 @@ import {
   , lockReferralRelationship
   , createAuditLog
 } from './site'
+import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
@@ -490,35 +492,53 @@ async function sendEmailVerification(c: any, user: any) {
   await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, eventKey).run()
 }
 
-app.get(['/terms', '/user-terms'], async (c) => {
+app.on('GET', ['/terms', '/user-terms'], async (c) => {
   const settings = await loadSystemSettingsFromDB(c)
   const currentUser = c.get('user')
   const content = renderSiteVariables(settings.userTerms, currentUser)
   return c.html(buildLayout('用户协议', `<div class="panel contract-section"><div class="section-title"><h2>用户协议</h2><span class="section-note mono">LEGAL / USER TERMS</span></div>${content}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`, currentUser))
 })
 
-for (const [path, title, key, code] of [
-  ['/service-terms', '服务条款', 'serviceTerms', 'LEGAL / SERVICE TERMS'],
-  ['/privacy', '隐私政策', 'privacyPolicy', 'LEGAL / PRIVACY'],
-  ['/software-terms', '软件使用协议', 'softwareTerms', 'LEGAL / SOFTWARE'],
-  ['/refund-policy', '退款政策', 'copyrightNotice', 'LEGAL / REFUND POLICY'],
-  ['/copyright', '退款政策', 'copyrightNotice', 'LEGAL / REFUND POLICY'],
-] as const) {
-  app.get(path, async (c) => {
+// 公开法务页面。metaKey 与 legalMetadata 的键一致；varPrefix 生成 `${prefix}_version`
+// 与 `${prefix}_last_updated_date` 两个模板变量，供文档正文引用。
+const PUBLIC_LEGAL_PAGES: Array<{ paths: string[]; title: string; key: SystemSettingsKey; code: string; metaKey: string; varPrefix: string }> = [
+  { paths: ['/service-terms'], title: '服务条款', key: 'serviceTerms', code: 'LEGAL / SERVICE TERMS', metaKey: 'service', varPrefix: 'service_terms' },
+  { paths: ['/privacy'], title: '隐私政策', key: 'privacyPolicy', code: 'LEGAL / PRIVACY', metaKey: 'privacy', varPrefix: 'privacy_policy' },
+  { paths: ['/software-terms'], title: '软件使用协议', key: 'softwareTerms', code: 'LEGAL / SOFTWARE', metaKey: 'software', varPrefix: 'software_terms' },
+  { paths: ['/refund-policy', '/copyright'], title: '退款政策', key: 'copyrightNotice', code: 'LEGAL / REFUND POLICY', metaKey: 'copyright', varPrefix: 'refund_policy' },
+  { paths: ['/cookies', '/cookie-policy'], title: 'Cookie 政策', key: 'cookiePolicy', code: 'LEGAL / COOKIE POLICY', metaKey: 'cookie', varPrefix: 'cookie_policy' },
+  { paths: ['/complaints', '/dispute-resolution'], title: '投诉与争议解决政策', key: 'complaintsPolicy', code: 'LEGAL / COMPLAINTS', metaKey: 'complaints', varPrefix: 'complaints_policy' },
+  { paths: ['/acceptable-use', '/aup'], title: '可接受使用政策', key: 'acceptableUsePolicy', code: 'LEGAL / ACCEPTABLE USE', metaKey: 'aup', varPrefix: 'acceptable_use_policy' },
+  { paths: ['/consumer-rights'], title: '澳大利亚消费者法下的权利', key: 'consumerRights', code: 'LEGAL / CONSUMER RIGHTS', metaKey: 'consumer', varPrefix: 'consumer_rights' },
+]
+for (const { paths, title, key, code, metaKey, varPrefix } of PUBLIC_LEGAL_PAGES) {
+  app.on('GET', paths, async (c) => {
     const settings = await loadSystemSettingsFromDB(c)
     const currentUser = c.get('user')
-    const metadataKey = key === 'copyrightNotice' ? 'copyright' : key === 'softwareTerms' ? 'software' : path === '/terms' || path === '/user-terms' ? 'user' : path === '/service-terms' ? 'service' : 'privacy'
-    const metadata = settings.legalMetadata[metadataKey]
-    const content = renderSiteVariables(settings[key], currentUser, {
-      ...(metadataKey === 'user' ? { user_agreement_version: metadata.version, user_agreement_last_updated_date: metadata.lastUpdatedDate } : {}),
-      ...(metadataKey === 'service' ? { service_terms_version: metadata.version, service_terms_last_updated_date: metadata.lastUpdatedDate } : {}),
-      ...(metadataKey === 'privacy' ? { privacy_policy_version: metadata.version, privacy_policy_last_updated_date: metadata.lastUpdatedDate } : {}),
-      ...(metadataKey === 'software' ? { software_terms_version: metadata.version, software_terms_last_updated_date: metadata.lastUpdatedDate } : {}),
-      ...(metadataKey === 'copyright' ? { refund_policy_version: metadata.version, refund_policy_last_updated_date: metadata.lastUpdatedDate, last_updated_date: metadata.lastUpdatedDate } : {}),
+    const metadata = (settings.legalMetadata as Record<string, { version: string; lastUpdatedDate: string }>)[metaKey] || { version: '1.0', lastUpdatedDate: '' }
+    const content = renderSiteVariables(String((settings as any)[key] ?? ''), currentUser, {
+      [`${varPrefix}_version`]: metadata.version,
+      [`${varPrefix}_last_updated_date`]: metadata.lastUpdatedDate,
+      ...(metaKey === 'copyright' ? { last_updated_date: metadata.lastUpdatedDate } : {}),
     })
     return c.html(buildLayout(title, `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">${code}</p><h2>${title}</h2></div></div><div class="legal-document__content">${content}</div></article>`, currentUser))
   })
 }
+
+// 租赁协议范本（签署前查阅）。rentalTerms 含大量合同变量，此处只填充公司与协议版本
+// 变量，其余未填充的占位符替换为空位符号，页面顶部注明以签署合同为准。
+app.on('GET', ['/rental-terms', '/rental-agreement'], async (c) => {
+  const settings = await loadSystemSettingsFromDB(c)
+  const currentUser = c.get('user')
+  const metadata = (settings.legalMetadata as Record<string, { version: string; lastUpdatedDate: string }>).rental || { version: '1.0', lastUpdatedDate: '' }
+  const rendered = renderSiteVariables(String(settings.rentalTerms ?? ''), currentUser, {
+    rental_agreement_version: metadata.version,
+    rental_agreement_last_updated_date: metadata.lastUpdatedDate,
+  })
+  const content = neutralizeTemplateTokens(rendered)
+  const notice = '<p class="section-note">以下为标准《设备租赁协议》范本，供签署前查阅。带 —— 的位置将在您下单后按实际合同数据填写；最终以您签署的租赁合同为准。</p>'
+  return c.html(buildLayout('设备租赁协议', `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">LEGAL / RENTAL AGREEMENT</p><h2>设备租赁协议</h2></div></div>${notice}<div class="legal-document__content">${content}</div></article>`, currentUser))
+})
 
 app.post('/register', async (c) => {
   const form = await c.req.parseBody()
@@ -3915,23 +3935,37 @@ app.get('/admin/templates/preview/:previewKind', async (c) => {
   return c.html(await pages.renderAdminTemplatePreview(user, c, previewKind))
 })
 
+// 可在 /admin/templates 编辑的协议：kind → D1 设置键 + 站内信/邮件里显示的名称。
+const EDITABLE_AGREEMENTS: Record<string, { settingKey: SystemSettingsKey; label: string }> = {
+  user: { settingKey: 'userTerms', label: '用户协议' },
+  rental: { settingKey: 'rentalTerms', label: '租赁协议' },
+  service: { settingKey: 'serviceTerms', label: '服务条款' },
+  privacy: { settingKey: 'privacyPolicy', label: '隐私政策' },
+  software: { settingKey: 'softwareTerms', label: '软件使用协议' },
+  copyright: { settingKey: 'copyrightNotice', label: '退款政策' },
+  cookie: { settingKey: 'cookiePolicy', label: 'Cookie 政策' },
+  complaints: { settingKey: 'complaintsPolicy', label: '投诉与争议解决政策' },
+  aup: { settingKey: 'acceptableUsePolicy', label: '可接受使用政策' },
+  consumer: { settingKey: 'consumerRights', label: '澳大利亚消费者法下的权利' },
+}
+
 app.get('/admin/templates/:kind', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const kind = c.req.param('kind')
   if (kind === 'contract') return c.html(await pages.renderAdminContracts(c, user))
-  if (!['user', 'rental', 'service', 'privacy', 'software', 'copyright'].includes(kind)) return c.html(renderNotFound(), 404)
+  if (!(kind in EDITABLE_AGREEMENTS)) return c.html(renderNotFound(), 404)
   await loadSystemSettingsFromDB(c)
-  const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', software: 'softwareTerms', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright']
+  const settingKey = EDITABLE_AGREEMENTS[kind].settingKey
   const databaseSetting = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
-  return c.html(pages.renderAdminAgreementEditor(user, kind, databaseSetting?.value !== undefined ? String(databaseSetting.value) : undefined))
+  return c.html(pages.renderAdminAgreementEditor(user, kind as any, databaseSetting?.value !== undefined ? String(databaseSetting.value) : undefined))
 })
 
 app.post('/admin/templates/:kind', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限保存协议' }, 403)
   const kind = c.req.param('kind')
-  if (!['user', 'rental', 'service', 'privacy', 'software', 'copyright'].includes(kind)) return c.json({ success: false, error: '未知的协议类型' }, 404)
+  if (!(kind in EDITABLE_AGREEMENTS)) return c.json({ success: false, error: '未知的协议类型' }, 404)
   try {
     const contentType = c.req.header('content-type') || ''
     const payload = contentType.includes('application/json')
@@ -3940,7 +3974,7 @@ app.post('/admin/templates/:kind', async (c) => {
     const content = sanitizeRichHtml(payload?.content || '')
     if (!String(content).trim()) return c.json({ success: false, error: '协议内容不能为空，请填写后再保存' }, 400)
     await loadSystemSettingsFromDB(c)
-    const settingKey = ({ user: 'userTerms', rental: 'rentalTerms', service: 'serviceTerms', privacy: 'privacyPolicy', software: 'softwareTerms', copyright: 'copyrightNotice' } as const)[kind as 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright']
+    const settingKey = EDITABLE_AGREEMENTS[kind].settingKey
     const metadata = getSystemSettings().legalMetadata || {}
     const lastUpdatedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.lastUpdatedDate || '')) ? String(payload.lastUpdatedDate) : new Date().toISOString().slice(0, 10)
     const before = String((getSystemSettings() as any)[settingKey] || '')
@@ -3955,7 +3989,7 @@ app.post('/admin/templates/:kind', async (c) => {
     if (before !== content) {
       // 通知/邮件是「保存成功之后的事」，不能让它把已经落库的协议变更回报成保存失败。
       // 放到 waitUntil 里异步执行，notifyAgreementUpdate 自身也吞掉所有异常。
-      const notifyPayload: Array<[string, string]> = [[settingKey, ({ user: '用户协议', rental: '租赁协议', service: '服务条款', privacy: '隐私政策', software: '软件使用协议', copyright: '退款政策' } as any)[kind]]]
+      const notifyPayload: Array<[string, string]> = [[settingKey, EDITABLE_AGREEMENTS[kind].label]]
       const companyDetails = getSystemSettings().companyDetails
       const dispatch = () => notifyAgreementUpdate(c, notifyPayload, companyDetails).catch((error) => console.error('notifyAgreementUpdate dispatch failed:', error))
       try { c.executionCtx.waitUntil(dispatch()) } catch (_) { await dispatch() }

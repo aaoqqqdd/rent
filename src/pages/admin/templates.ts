@@ -5,11 +5,11 @@
 
 import { buildLayout, CONTRACT_VARIABLE_GROUPS, getSystemSettings, getContractTemplate, renderContractVariables, sanitizeRichHtml } from '../../site'
 
-type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright'
+type AgreementKind = 'user' | 'rental' | 'service' | 'privacy' | 'software' | 'copyright' | 'cookie' | 'complaints' | 'aup' | 'consumer'
 
 export function renderAdminTemplateHub(user: any) {
   const body = `
-    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>AGREEMENT CONTROL</span><span>6 ACTIVE AGREEMENTS</span></div><div class="entity-heading"><div><p class="section-code">LEGAL AGREEMENTS</p><h2>协议模板</h2><p>独立管理用户协议、租赁协议、服务条款、隐私政策、软件协议和退款政策。</p></div><div class="record-actions"><a class="button button-secondary" href="/admin/templates/preview/agreements">预览协议</a><a class="button button-primary" href="/admin/contracts">合同模板</a></div></div></div>
+    <div class="entity-header template-library-header"><div class="identity-strip mono"><span>AGREEMENT CONTROL</span><span>10 ACTIVE AGREEMENTS</span></div><div class="entity-heading"><div><p class="section-code">LEGAL AGREEMENTS</p><h2>协议模板</h2><p>独立管理用户协议、租赁协议、服务条款、隐私政策、Cookie 政策、退款政策、消费者权利、投诉与争议、可接受使用政策和软件协议。</p></div><div class="record-actions"><a class="button button-secondary" href="/admin/templates/preview/agreements">预览协议</a><a class="button button-primary" href="/admin/contracts">合同模板</a></div></div></div>
     <div class="panel template-register">
       <div class="template-register__labels mono"><span>文档</span><span>显示位置</span><span>类型</span><span>操作</span></div>
       <article class="template-register__row">
@@ -20,6 +20,10 @@ export function renderAdminTemplateHub(user: any) {
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">PP</span><div><h3>隐私政策</h3><p>说明个人资料、付款信息和保存方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/privacy">编辑政策</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">SW</span><div><h3>软件使用协议</h3><p>说明 Windows 客户端的授权、更新和设备数据使用规则。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">软件法务</span><a class="button button-sm button-secondary" href="/admin/templates/software">编辑协议</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">RF</span><div><h3>退款政策</h3><p>说明订单取消、押金退还和退款方式。</p></div></div><p>全站右下角</p><span class="badge badge-neutral">退款规则</span><a class="button button-sm button-secondary" href="/admin/templates/copyright">编辑政策</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">CK</span><div><h3>Cookie 政策</h3><p>说明 Cookie 与类似技术的使用与管理方式。</p></div></div><p>全站右下角 · /cookies</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/cookie">编辑政策</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">CR</span><div><h3>消费者权利</h3><p>概述《澳大利亚消费者法》下不可排除的保障。</p></div></div><p>全站右下角 · /consumer-rights</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/consumer">编辑说明</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">CP</span><div><h3>投诉与争议解决</h3><p>说明投诉流程、时限与外部争议渠道。</p></div></div><p>全站右下角 · /complaints</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/complaints">编辑政策</a></article>
+      <article class="template-register__row"><div class="template-register__document"><span class="document-mark">AU</span><div><h3>可接受使用政策</h3><p>规定租赁设备与管理软件的禁止用途。</p></div></div><p>全站右下角 · /acceptable-use</p><span class="badge badge-neutral">网站法务</span><a class="button button-sm button-secondary" href="/admin/templates/aup">编辑政策</a></article>
       <article class="template-register__row"><div class="template-register__document"><span class="document-mark">RA</span><div><h3>租赁协议</h3><p>客户签署流程第一步阅读并同意。</p></div></div><p>签署步骤 1</p><span class="badge badge-neutral">支持变量</span><a class="button button-sm button-secondary" href="/admin/templates/rental">编辑协议</a></article>
     </div>`
   return buildLayout('协议模板 - 电脑租赁管理系统', body, user)
@@ -40,7 +44,11 @@ export async function renderAdminTemplatePreview(user: any, c: any, previewKind:
     ['用户协议', settings.userTerms],
     ['服务条款', settings.serviceTerms],
     ['隐私政策', settings.privacyPolicy],
+    ['Cookie 政策', settings.cookiePolicy],
     ['退款政策', settings.copyrightNotice],
+    ['澳大利亚消费者法下的权利', settings.consumerRights],
+    ['投诉与争议解决政策', settings.complaintsPolicy],
+    ['可接受使用政策', settings.acceptableUsePolicy],
   ].map(([title, content]) => `<section class="panel"><div class="section-title"><h3>${title}</h3><span class="badge badge-neutral">网站</span></div><div class="template-preview-paper">${sanitizeRichHtml(content)}</div></section>`).join('')
   const previewTitle = previewKind === 'contract' ? '合同预览' : '协议预览'
   const previewBody = previewKind === 'contract'
@@ -60,6 +68,10 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind, datab
     privacy: ['编辑隐私政策', '显示在全站右下角的隐私政策页面。', settings.privacyPolicy],
     software: ['编辑软件使用协议', '显示在管理软件的软件协议页面。', settings.softwareTerms],
     copyright: ['编辑退款政策', '显示在全站右下角的退款政策页面。', settings.copyrightNotice],
+    cookie: ['编辑 Cookie 政策', '显示在全站右下角的 /cookies 页面。', settings.cookiePolicy],
+    complaints: ['编辑投诉与争议解决政策', '显示在全站右下角的 /complaints 页面。', settings.complaintsPolicy],
+    aup: ['编辑可接受使用政策', '显示在全站右下角的 /acceptable-use 页面。', settings.acceptableUsePolicy],
+    consumer: ['编辑澳大利亚消费者法下的权利', '显示在全站右下角的 /consumer-rights 页面。', settings.consumerRights],
   }
   const documentMeta = documentMetaMap[kind]
   if (databaseContent !== undefined) documentMeta[2] = databaseContent
@@ -73,6 +85,10 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind, datab
     privacy: ['privacy_policy_version', 'privacy_policy_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     software: ['software_terms_version', 'software_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     copyright: ['refund_policy_version', 'refund_policy_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
+    cookie: ['cookie_policy_version', 'cookie_policy_last_updated_date', 'company_name', 'company_abn', 'company_address', 'company_email', 'company_phone'],
+    complaints: ['complaints_policy_version', 'complaints_policy_last_updated_date', 'company_name', 'company_abn', 'company_address', 'company_email', 'company_phone'],
+    aup: ['acceptable_use_policy_version', 'acceptable_use_policy_last_updated_date', 'company_name', 'company_abn', 'company_address', 'company_email', 'company_phone'],
+    consumer: ['consumer_rights_version', 'consumer_rights_last_updated_date', 'company_name', 'company_abn', 'company_address', 'company_email', 'company_phone'],
     rental: ['rental_agreement_version', 'rental_agreement_last_updated_date', 'contract_version', 'contract_last_updated_date', 'customer_name', 'customer_email', 'device_name', 'start_date', 'end_date', 'total_rent', 'deposit_amount', 'company_name'],
   }
   const variableNames = agreementVariables[kind]
