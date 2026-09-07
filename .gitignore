@@ -37,3 +37,6 @@ lerna-debug.log*
 .DS_Store
 
 设计文档/
+
+# claude code local tooling / worktrees
+.claude/

@@ -5,12 +5,22 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus } from '../site'
 import { stripeRequest, verifyStripeWebhook } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
+}
+
+// 完善.md §31 —— 一笔付款只要还有未结案的拒付争议，就不允许再走任何正常退款。
+// 所有退款入口（押金退款、提前归还退款、取消退款、银行转账补款）统一调用。
+export async function hasOpenPaymentDispute(c: Context, paymentId: string): Promise<boolean> {
+  if (!paymentId) return false
+  const row = await c.env.RENT.prepare(
+    "SELECT 1 FROM payment_disputes WHERE payment_id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') LIMIT 1"
+  ).bind(paymentId).first()
+  return Boolean(row)
 }
 
 export const STRIPE_PROCESSING_FEE_RATE = 0.025
@@ -64,23 +74,9 @@ export function refundableDepositFee(refundAmount: number, payment: any): number
   return Math.round(cents(refundAmount) * getStripeProcessingFeeRate()) / 100
 }
 
+// Thin back-compat wrapper over the shared refund allocation engine in site.ts.
 export function allocateProportionalRefund(sources: Array<{ id: string; amount: number; refunded?: number }>, refundAmount: number): Array<{ id: string; amount: number }> {
-  const requested = cents(refundAmount)
-  const available = sources.map(source => ({ id: source.id, cents: Math.max(0, cents(source.amount) - cents(source.refunded || 0)) }))
-  const total = available.reduce((sum, source) => sum + source.cents, 0)
-  if (!Number.isInteger(requested) || requested <= 0 || requested > total) throw new Error('退款金额超过原始付款可退余额')
-  let assigned = 0
-  const result = available.map(source => {
-    const amount = Math.floor(requested * source.cents / total)
-    assigned += amount
-    return { id: source.id, cents: amount }
-  })
-  for (const source of result) {
-    if (assigned >= requested) break
-    const capacity = available.find(item => item.id === source.id)!.cents
-    if (source.cents < capacity) { source.cents++; assigned++ }
-  }
-  return result.filter(source => source.cents > 0).map(source => ({ id: source.id, amount: source.cents / 100 }))
+  return buildRefundAllocation(sources, refundAmount, 'proportional').map(({ id, amount }) => ({ id, amount }))
 }
 
 function melbourneDate(): string {
@@ -148,13 +144,18 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     return c.json({ received: false, accepted: false, reason: 'verification_failed' }, 400)
   }
 
-  const processed = await c.env.RENT.prepare('SELECT event_id FROM stripe_webhook_events WHERE event_id = ?').bind(event.id).first()
-  if (processed) return c.json({ received: true, duplicate: true })
+  const claim = await claimWebhookEvent(c, { provider: 'stripe', eventId: event.id, eventType: event.type, payloadHash })
+  if (!claim.firstDelivery && claim.status === 'PROCESSED') return c.json({ received: true, duplicate: true })
+  // A prior delivery that stalled at RECEIVED/FAILED falls through and is
+  // reprocessed. Every business statement below is idempotent (status-guarded
+  // UPDATEs / INSERT OR IGNORE), so a safe retry cannot double-apply.
 
   const session = event.data?.object
   const statements: any[] = []
   let paidOrderId = ''
   let disputedOrderId = ''
+  let disputedCustomerId = ''
+  let disputedStripeId = ''
   if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
     const topupId = String(session?.metadata?.topup_id || '')
     if (topupId) {
@@ -189,25 +190,38 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     )
   } else if (event.type === 'charge.dispute.created') {
     const dispute = session
-    const disputedPayment = await c.env.RENT.prepare('SELECT id, rental_id, customer_id FROM payments WHERE stripe_payment_intent_id = ?').bind(String(dispute?.payment_intent || '')).first() as any
+    const disputedPayment = await c.env.RENT.prepare('SELECT p.id, p.rental_id, p.customer_id, o.deviceId AS device_id FROM payments p LEFT JOIN orders o ON o.id = p.rental_id WHERE p.stripe_payment_intent_id = ?').bind(String(dispute?.payment_intent || '')).first() as any
     if (disputedPayment) {
-      statements.push(c.env.RENT.prepare('INSERT OR IGNORE INTO payment_disputes (id, stripe_dispute_id, payment_id, order_id, customer_id, amount, currency, reason, status, evidence_due_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(`pd-${nanoid(12)}`, String(dispute.id), disputedPayment.id, disputedPayment.rental_id, disputedPayment.customer_id, Number(dispute.amount || 0) / 100, String(dispute.currency || 'aud').toUpperCase(), String(dispute.reason || ''), 'DISPUTE_OPENED', dispute.evidence_details?.due_by ? new Date(Number(dispute.evidence_details.due_by) * 1000).toISOString() : null))
+      const dueBy = dispute.evidence_details?.due_by ? new Date(Number(dispute.evidence_details.due_by) * 1000).toISOString() : null
+      statements.push(c.env.RENT.prepare('INSERT OR IGNORE INTO payment_disputes (id, stripe_dispute_id, payment_id, order_id, customer_id, device_id, amount, currency, reason, status, evidence_due_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(`pd-${nanoid(12)}`, String(dispute.id), disputedPayment.id, disputedPayment.rental_id, disputedPayment.customer_id, disputedPayment.device_id || null, Number(dispute.amount || 0) / 100, String(dispute.currency || 'aud').toUpperCase(), String(dispute.reason || ''), 'DISPUTE_OPENED', dueBy))
       disputedOrderId = String(disputedPayment.rental_id || '')
+      disputedCustomerId = String(disputedPayment.customer_id || '')
+      disputedStripeId = String(dispute.id || '')
     }
+  } else if (event.type === 'charge.dispute.updated') {
+    // 举证期 / Stripe 状态变化时刷新——仅在争议尚未结案时更新。
+    const dispute = session
+    const dueBy = dispute.evidence_details?.due_by ? new Date(Number(dispute.evidence_details.due_by) * 1000).toISOString() : null
+    statements.push(c.env.RENT.prepare("UPDATE payment_disputes SET status = ?, evidence_due_by = COALESCE(?, evidence_due_by), updated_at = CURRENT_TIMESTAMP WHERE stripe_dispute_id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW')")
+      .bind(mapStripeDisputeStatus(String(dispute?.status || '')), dueBy, String(dispute?.id || '')))
   } else if (event.type === 'charge.dispute.closed') {
     const dispute = session
-    const disputeStatusMap: Record<string, string> = { won: 'DISPUTE_WON', lost: 'DISPUTE_LOST', warning_closed: 'DISPUTE_CLOSED' }
-    const mappedStatus = disputeStatusMap[String(dispute?.status || '')] || 'DISPUTE_CLOSED'
-    statements.push(c.env.RENT.prepare("UPDATE payment_disputes SET status = ?, result = ?, updated_at = CURRENT_TIMESTAMP WHERE stripe_dispute_id = ?").bind(mappedStatus, String(dispute?.status || ''), String(dispute?.id || '')))
+    const mappedStatus = mapStripeDisputeStatus(String(dispute?.status || ''))
+    // 败诉即资金已被划走：把争议金额记为真实财务影响（管理员之后可在后台修正）。
+    const lostImpact = mappedStatus === 'DISPUTE_LOST' ? Number(dispute?.amount || 0) / 100 : null
+    statements.push(c.env.RENT.prepare("UPDATE payment_disputes SET status = ?, result = ?, financial_impact = COALESCE(financial_impact, ?), updated_at = CURRENT_TIMESTAMP WHERE stripe_dispute_id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW')")
+      .bind(mappedStatus, String(dispute?.status || ''), lostImpact, String(dispute?.id || '')))
   }
-  statements.push(c.env.RENT.prepare("INSERT INTO stripe_webhook_events (event_id, event_type, payload_hash, processing_status, received_at) VALUES (?, ?, ?, 'PROCESSED', CURRENT_TIMESTAMP)").bind(event.id, event.type, payloadHash))
+  statements.push(c.env.RENT.prepare("INSERT OR IGNORE INTO stripe_webhook_events (event_id, event_type, payload_hash, processing_status, received_at) VALUES (?, ?, ?, 'PROCESSED', CURRENT_TIMESTAMP)").bind(event.id, event.type, payloadHash))
   try {
     await c.env.RENT.batch(statements)
   } catch (error: any) {
     if (String(error.message).includes('UNIQUE')) return c.json({ received: true, duplicate: true })
+    await markWebhookFailed(c, claim.recordId, error?.message || String(error))
     throw error
   }
+  await markWebhookProcessed(c, claim.recordId)
 
   const response = c.json({ received: true })
   if (paidOrderId) {
@@ -230,6 +244,21 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       await revokeReferralRewardForOrder(c, disputedOrderId, 'Stripe 拒付争议')
     } catch (error: any) {
       console.error('Stripe webhook dispute post-processing failed:', error?.message || error)
+    }
+  }
+  if (disputedCustomerId && disputedStripeId) {
+    // Chargeback 自动升起 CHARGEBACK 风险标记（完善.md §21/§32），阻止该客户继续自助下单。
+    try {
+      const existing = await c.env.RENT.prepare("SELECT id FROM risk_flags WHERE customer_id = ? AND flag_type = 'CHARGEBACK' AND status = 'ACTIVE' LIMIT 1").bind(disputedCustomerId).first() as any
+      let flagId = existing?.id as string | undefined
+      if (!flagId) {
+        flagId = `rk-${nanoid(12)}`
+        await c.env.RENT.prepare("INSERT INTO risk_flags (id, customer_id, flag_type, severity, reason, evidence, created_by) VALUES (?, ?, 'CHARGEBACK', 'HIGH', ?, ?, 'system')")
+          .bind(flagId, disputedCustomerId, 'Stripe 拒付争议自动标记', `stripe_dispute:${disputedStripeId}`).run()
+      }
+      await c.env.RENT.prepare('UPDATE payment_disputes SET risk_flag_id = ? WHERE stripe_dispute_id = ? AND risk_flag_id IS NULL').bind(flagId, disputedStripeId).run()
+    } catch (error: any) {
+      console.error('Stripe webhook chargeback risk-flag failed:', error?.message || error)
     }
   }
 
@@ -267,8 +296,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (!order) return c.text('订单不存在', 404)
   if (order.status !== 'completed') return c.text('只有已归还并完成的订单才能处理押金', 409)
   const payment = await paidPayment(c, order)
-  const openDispute = await c.env.RENT.prepare("SELECT id FROM payment_disputes WHERE payment_id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') LIMIT 1").bind(payment.id).first()
-  if (openDispute) return c.text('该笔付款存在未解决的拒付争议，暂不能退款', 409)
+  if (await hasOpenPaymentDispute(c, payment.id)) return c.text('该笔付款存在未解决的拒付争议，暂不能退款', 409)
   const refundedResult = await c.env.RENT.prepare(`
     SELECT COALESCE(SUM(refund_amount), 0) AS refunded_amount
     FROM payment_refunds
@@ -347,6 +375,7 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
   const existing = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'early_return' AND status IN ('pending', 'succeeded')").bind(order.id).first()
   if (existing) return
   const payment = await paidPayment(c, order)
+  if (await hasOpenPaymentDispute(c, payment.id)) throw new Error('该笔付款存在未解决的拒付争议，暂不能退还未使用租金')
   let channel = refundChannel(order, payment)
   if (channel === 'unavailable') channel = 'balance'
   if (channel === 'bank_transfer') {
@@ -381,8 +410,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
   if (existingRefund) return c.text('该订单已经全额退款', 409)
   const payment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   if (!payment) return c.text('未找到已结算付款，不能自动退款', 409)
-  const openDispute = await c.env.RENT.prepare("SELECT id FROM payment_disputes WHERE payment_id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') LIMIT 1").bind(payment.id).first()
-  if (openDispute) return c.text('该笔付款存在未解决的拒付争议，暂不能退款', 409)
+  if (await hasOpenPaymentDispute(c, payment.id)) return c.text('该笔付款存在未解决的拒付争议，暂不能退款', 409)
   const channel = cancellationRefundChannel(payment)
   if (channel === 'unavailable') return c.text('未找到信用卡原路退款所需的 Stripe 交易记录，不能改为余额退款', 409)
   if (channel === 'bank_transfer' && (!order.refundBsb || !order.refundAccountNumber || !order.refundAccountName)) return c.text('订单缺少银行退款账户信息', 409)
@@ -430,6 +458,9 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
 }
 
 export async function completeBankTransferRefund(c: Context, admin: any, refundId: string): Promise<void> {
+  const pending = await c.env.RENT.prepare("SELECT payment_id FROM payment_refunds WHERE id = ? AND type IN ('cancellation', 'early_return') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(refundId).first() as any
+  if (!pending) throw new Error('退款记录不存在或已经处理')
+  if (await hasOpenPaymentDispute(c, String(pending.payment_id || ''))) throw new Error('该笔付款存在未解决的拒付争议，暂不能放款')
   const result = await c.env.RENT.prepare("UPDATE payment_refunds SET status = 'succeeded', processed_by = ?, created_at = CURRENT_TIMESTAMP WHERE id = ? AND type IN ('cancellation', 'early_return') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(admin.id, refundId).run()
   if (!result.meta?.changes) throw new Error('退款记录不存在或已经处理')
 }

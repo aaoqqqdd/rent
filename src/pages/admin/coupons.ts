@@ -44,6 +44,8 @@ export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[
       <select class="form-control" name="deviceId"><option value="">适用全部设备</option>${deviceOptions}</select>
       <input class="form-control" name="brand" maxlength="120" placeholder="限定品牌（例如 Apple，可留空）">
       <input class="form-control" name="configKeyword" maxlength="120" placeholder="限定配置关键词（例如 M3、32GB，可留空）">
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" checked disabled> 租赁费用（始终参与优惠计算）</label>
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="applyDeliveryFee"> 配送费用也参与优惠（押金 / 逾期费 / 损坏费永久排除）</label>
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="newCustomerOnly"> 仅限新客户使用</label>
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="stackable"> 允许与其他优惠叠加（系统当前每单仅支持一个优惠码，此字段为后续功能预留）</label>
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="restoreOnCancellation" checked> 订单取消后恢复使用次数</label>
@@ -79,6 +81,8 @@ export function renderAdminCouponEdit(user: any, coupon: any, devices: any[] = [
       <select class="form-control" name="deviceId"><option value="">适用全部设备</option>${deviceOptions}</select>
       <input class="form-control" name="brand" maxlength="120" value="${sanitizePlainText(coupon.brand || '', 120)}" placeholder="限定品牌（可留空）">
       <input class="form-control" name="configKeyword" maxlength="120" value="${sanitizePlainText(coupon.config_keyword || '', 120)}" placeholder="限定配置关键词（可留空）">
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" checked disabled> 租赁费用（始终参与优惠计算）</label>
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="applyDeliveryFee" ${String(coupon.applicable_components || '').toUpperCase().includes('DELIVERY_FEE') ? 'checked' : ''}> 配送费用也参与优惠（押金 / 逾期费 / 损坏费永久排除）</label>
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="newCustomerOnly" ${coupon.new_customer_only ? 'checked' : ''}> 仅限新客户使用</label>
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="stackable" ${coupon.stackable ? 'checked' : ''}> 允许与其他优惠叠加（当前系统每单仅支持一个优惠码，此字段为后续功能预留）</label>
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="restoreOnCancellation" ${coupon.restore_on_cancellation ? 'checked' : ''}> 订单取消后恢复使用次数</label>

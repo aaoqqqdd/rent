@@ -29,8 +29,19 @@ export async function renderContractView(c: Context, contractId: string, user: a
   const customer = order ? await getUserById(c, order.userId) : null;
   const internalViewer = user.role === 'ADMIN' || user.role === 'STAFF'
   const contractSource = internalViewer ? contract.content : (contract.signed_content || contract.content)
-  const renderedContract = trimContractLeadingWhitespace(renderContractVariables(contractSource, contract, order, device, customer, await getContractVariableData(c, contract, order), internalViewer))
+  // 客户查看本人合同时展示完整证件号（本人数据）；内部人员默认脱敏。
+  const revealSensitive = user.role === 'CUSTOMER'
+  const renderedContract = trimContractLeadingWhitespace(renderContractVariables(contractSource, contract, order, device, customer, await getContractVariableData(c, contract, order), internalViewer, revealSensitive))
   const returnUrl = user.role === 'ADMIN' ? '/admin/contracts' : user.role === 'STAFF' ? '/staff/contracts' : order ? `/customer/orders/${order.id}` : '/customer/dashboard'
+
+  // 公开验证链接（完善.md §24/§36）：仅对已定稿且有令牌的合同展示，供合同持有人对外核验。
+  const verificationToken = String((contract as any).verification_token || '')
+  const verifyUrl = verificationToken && contract.contractNumber
+    ? `${new URL(c.req.url).origin}/verify?number=${encodeURIComponent(contract.contractNumber)}&token=${encodeURIComponent(verificationToken)}`
+    : ''
+  const verifyPanel = !printMode && verifyUrl
+    ? `<div class="panel" style="margin-top:16px"><div class="section-title"><h3>合同真伪核验</h3></div><p class="section-note">把下面的链接提供给第三方，可在不暴露任何个人信息的情况下核实本合同的编号、状态与文件哈希。</p><p class="mono" style="word-break:break-all"><a href="${verifyUrl}">${verifyUrl}</a></p></div>`
+    : ''
 
   const body = `
     <div class="contract-viewer${printMode ? ' contract-print-page' : ''}">
@@ -39,7 +50,7 @@ export async function renderContractView(c: Context, contractId: string, user: a
       <div class="a4-document contract-content">
         ${renderedContract}
       </div>
-      ${!printMode ? `${user?.accountType === 'guest' ? '<div class="page-notification page-notification--info"><strong>访客账户</strong> · 仅可查看和下载本次租赁合同，账户将在租期结束后自动失效。</div>' : ''}<div class="contract-actions">${user ? `<a class="button button-primary" href="${order ? `/customer/orders/${order.id}` : user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'}">查看订单详情</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}</div>` : ''}
+      ${!printMode ? `${user?.accountType === 'guest' ? '<div class="page-notification page-notification--info"><strong>访客账户</strong> · 仅可查看和下载本次租赁合同，账户将在租期结束后自动失效。</div>' : ''}<div class="contract-actions">${user ? `<a class="button button-primary" href="${order ? `/customer/orders/${order.id}` : user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard'}">查看订单详情</a>` : `<a class="button button-primary" href="/register">注册账户绑定此合同</a>`}</div>${verifyPanel}` : ''}
     </div>
   `
   if (printMode) {

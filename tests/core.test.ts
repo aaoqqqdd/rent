@@ -236,6 +236,18 @@ test('all registered contract variables render without leftovers', () => {
   assert.equal(result.includes('${'), false)
 })
 
+test('contract ID number is masked for internal viewers unless sensitive reveal is on', () => {
+  const contract = { id: 'c', rentalId: 'o', contractNumber: 'CN1', content: '', signedAt: null, status: 'signed', contract_data: { customer_id_number: 'X1234567' } } as any
+  const tpl = 'ID=${customer_id_number}'
+  // includeInternal=true, revealSensitive omitted -> still masked
+  const masked = renderContractVariables(tpl, contract, {}, {}, {}, { customer_id_number: 'X1234567' }, true)
+  assert.equal(masked.includes('X1234567'), false)
+  assert.match(masked, /ID=X1\*+67/)
+  // explicit reveal -> full value
+  const revealed = renderContractVariables(tpl, contract, {}, {}, {}, { customer_id_number: 'X1234567' }, true, true)
+  assert.match(revealed, /ID=X1234567/)
+})
+
 test('site variables replace company and user values in legal pages', () => {
   const html = renderSiteVariables('<p>欢迎来到 {company_name}，用户：${user_name}，邮箱：{user_email}</p>', { name: '张三', email: 'zhangsan@example.com' })
   assert.match(html, /欢迎来到.*PC Rental/)

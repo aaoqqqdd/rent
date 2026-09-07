@@ -34,7 +34,7 @@ export async function renderAdminUserDetail(c: Context, user: any, targetUserId:
   ])
   const pendingTopups = targetUser.role === 'CUSTOMER' ? ((await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE user_id = ? AND status = 'submitted' ORDER BY created_at DESC").bind(targetUser.id).all()).results as any[]) : []
   const agreementAcceptance: any = targetUser.role === 'CUSTOMER' ? targetUser : {}
-  const activeRiskFlags = targetUser.role === 'CUSTOMER' ? ((await c.env.RENT.prepare("SELECT flag_type, severity, reason FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY created_at DESC").bind(targetUser.id).all()).results as any[]) : []
+  const activeRiskFlags = targetUser.role === 'CUSTOMER' ? ((await c.env.RENT.prepare("SELECT flag_type, severity, reason FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY CASE severity WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END, created_at DESC").bind(targetUser.id).all()).results as any[]) : []
 
   const accountNotice = targetUser.accountType === 'guest' ? `<div class="page-notification page-notification--info"><strong>访客/临时账户</strong> · 关联订单 ${targetUser.guestOrderId || '-'} · 计划删除日期 ${targetUser.guestExpiresAt || '租期结束'}</div>` : targetUser.accountType === 'deleted_guest' ? '<div class="page-notification page-notification--error"><strong>已删除访客账户</strong> · 登录权限和个人联系方式已清除。</div>' : ''
   const riskNotice = activeRiskFlags.length ? `<div class="page-notification page-notification--error"><strong>风险标记（${activeRiskFlags.length}）</strong>${activeRiskFlags.map((flag: any) => `<p>${flag.flag_type} · ${flag.severity} · ${flag.reason}</p>`).join('')}</div>` : ''

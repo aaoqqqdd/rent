@@ -3,8 +3,10 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, systemSettings, isContractExpired } from '../../site'
+import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site'
 import type { Context } from 'hono'
+
+const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 export async function renderStaffOrderDetail(c: Context, user: any, orderId: string, message?: string, type: 'success' | 'error' = 'error') {
   const order = await getOrderById(c, orderId)
@@ -15,7 +17,12 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   if (user.role !== 'ADMIN' && customer?.staffId !== user.id) {
     return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2><p>员工只能查看自己名下客户的订单。</p></div>', user)
   }
-  const [device, contract, timeChanges] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all()])
+  const [device, contract, timeChanges, changeHistory] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT change_type, before_json, after_json, reason, changed_by, created_at FROM order_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all()])
+  const [reconciliation, paymentSources, refundRows] = await Promise.all([
+    reconcileOrderPayments(c, order.id),
+    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+  ])
   const contractExpired = contract ? isContractExpired(contract) : false
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const statusLabels: Record<string, string> = { pending: '待处理', pending_approval: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', approved: '租赁已确认，等待开始', paid: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
@@ -66,6 +73,22 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
       </div>
 
       ${timeChanges?.results?.length ? `<div class="panel" style="margin-top:20px;"><h3>预约时间变更记录</h3>${timeChanges.results.map((change: any) => `<p>${change.created_at}：${change.previous_pickup_slot || '未设置'} / ${change.previous_return_slot || '未设置'} → ${change.pickup_slot} / ${change.return_slot}${Number(change.additional_service_fee) > 0 ? `，新增服务费 ${formatCurrency(change.additional_service_fee)}` : ''}</p>`).join('')}</div>` : ''}
+
+      ${changeHistory?.results?.length ? `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>订单修改历史</h3><span class="section-note">最近 ${changeHistory.results.length} 条，只读。订单关键字段由管理员修改。</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>类型</th><th>变更内容</th><th>原因</th><th>操作人</th></tr></thead><tbody>${changeHistory.results.map((item: any) => {
+        let before: any = {}; let after: any = {}
+        try { before = JSON.parse(item.before_json || '{}') } catch (_) {}
+        try { after = JSON.parse(item.after_json || '{}') } catch (_) {}
+        const diffs = diffOrderSnapshots(before, after)
+        const detail = diffs.length ? diffs.map(d => `<div>${esc(d.label)}：<span class="mono">${esc(String(d.before ?? '—'))}</span> → <strong class="mono">${esc(String(d.after ?? '—'))}</strong></div>`).join('') : '—'
+        return `<tr><td class="mono">${esc(item.created_at)}</td><td>${esc(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${esc(item.reason || '—')}</td><td class="mono">${esc(item.changed_by || '—')}</td></tr>`
+      }).join('')}</tbody></table></div></section>` : ''}
+
+      ${(paymentSources.length || refundRows.length) ? `<section class="panel" style="margin-top:20px">
+        <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">只读 · 实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}</span></div>
+        ${reconciliation.ok ? '<div class="alert" style="background:#ecfdf5;color:#065f46">账目一致：分配合计与实付/退款相符，无超退。</div>' : `<div class="alert" style="background:#fef2f2;color:#991b1b"><strong>发现 ${reconciliation.issues.length} 处账目异常，请通知管理员：</strong><ul style="margin:6px 0 0;padding-left:18px">${reconciliation.issues.map((i: any) => `<li>[${esc(i.code)}] ${esc(i.detail)}</li>`).join('')}</ul></div>`}
+        <div class="table-wrapper"><table><thead><tr><th>付款来源</th><th>方式</th><th>金额</th><th>手续费</th><th>状态</th></tr></thead><tbody>${paymentSources.map((p: any) => `<tr><td class="mono">${esc(p.id)}</td><td>${esc(p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${esc(p.status)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-state">无付款记录</td></tr>'}</tbody></table></div>
+        ${refundRows.length ? `<div class="table-wrapper" style="margin-top:12px"><table><thead><tr><th>退款单</th><th>对应付款</th><th>类型</th><th>金额</th><th>方式</th><th>状态</th><th>时间</th></tr></thead><tbody>${refundRows.map((r: any) => `<tr><td class="mono">${esc(r.id)}</td><td class="mono">${esc(r.payment_id || '—')}</td><td>${esc(r.type)}</td><td>${formatCurrency(r.refund_amount)}</td><td>${esc(r.refund_method || '—')}</td><td>${esc(r.status)}</td><td class="mono">${esc(String(r.created_at).slice(0, 16))}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      </section>` : ''}
 
       ${contract ? `
         <div class="section-title order-section-heading" style="margin-top: 24px;"><h3>合同详情 #${contract.contractNumber || '待生成'}</h3><span class="section-note">查看合同状态、签署记录和正式合同文件。</span></div>

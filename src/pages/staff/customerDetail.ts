@@ -19,7 +19,7 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
   const personName = splitPersonName(customer.name)
 
   const accountNotice = customer.accountType === 'guest' ? `<div class="page-notification page-notification--info"><strong>访客/临时账户</strong> · 仅限订单 ${customer.guestOrderId || '-'} · 计划删除日期 ${customer.guestExpiresAt || '租期结束'}</div>` : customer.accountType === 'deleted_guest' ? '<div class="page-notification page-notification--error"><strong>已删除访客账户</strong> · 登录权限和个人联系方式已清除。</div>' : ''
-  const activeRiskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, reason FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY created_at DESC").bind(customer.id).all()).results as any[]
+  const activeRiskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, reason FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY CASE severity WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END, created_at DESC").bind(customer.id).all()).results as any[]
   const riskNotice = activeRiskFlags.length ? `<div class="page-notification page-notification--error"><strong>风险提示（${activeRiskFlags.length}）</strong>${activeRiskFlags.map((flag: any) => `<p>${flag.flag_type} · ${flag.severity} · ${flag.reason}</p>`).join('')}</div>` : ''
   const body = `
     ${accountNotice}

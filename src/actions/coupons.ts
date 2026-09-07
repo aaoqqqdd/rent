@@ -25,9 +25,39 @@ function buildDeviceText(device: CouponDeviceLike): string {
     .filter(Boolean).join(' ').toLowerCase()
 }
 
+export interface CouponFeeParts {
+  // The rental-fee subtotal (rentalPeriod × dailyRate). Always discountable.
+  rentalFee: number
+  // Confirmed delivery fee, if any. Only discountable when the coupon opts in
+  // via applicable_components. 0 during self-serve checkout (fee set later).
+  deliveryFee?: number
+}
+
+// Which order components a coupon may reduce. RENTAL_FEE is always included;
+// DELIVERY_FEE is opt-in. Deposit / late fee / damage fee are never discountable.
+export function couponApplicableComponents(coupon: any): Set<string> {
+  const raw = String(coupon?.applicable_components || 'RENTAL_FEE')
+    .split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean)
+  const set = new Set<string>(raw.length ? raw : ['RENTAL_FEE'])
+  set.add('RENTAL_FEE')
+  return set
+}
+
+// The subtotal a coupon's percentage / minimum / cap all apply to, given the
+// coupon's scope. Falls back to rentalFee alone for the default coupon.
+export function couponDiscountableBase(coupon: any, parts: CouponFeeParts): number {
+  const components = couponApplicableComponents(coupon)
+  let base = Math.max(0, Number(parts.rentalFee || 0))
+  if (components.has('DELIVERY_FEE')) base += Math.max(0, Number(parts.deliveryFee || 0))
+  return Number(base.toFixed(2))
+}
+
 // Read-only lookup shared by the preview endpoints and every checkout path.
-// rentAmount must be the discountable rental-fee subtotal (never deposit/delivery/insurance).
-export async function findEligibleCoupon(c: Context, code: string, device: CouponDeviceLike, rentAmount: number): Promise<any> {
+// parts carries the fee breakdown; the discountable base is derived from the
+// coupon's applicable_components. Passing a bare number keeps the old callers
+// working (treated as the rental fee, delivery fee 0).
+export async function findEligibleCoupon(c: Context, code: string, device: CouponDeviceLike, parts: number | CouponFeeParts): Promise<any> {
+  const feeParts: CouponFeeParts = typeof parts === 'number' ? { rentalFee: parts } : parts
   const normalized = String(code || '').trim().toUpperCase().slice(0, 40)
   if (!normalized) throw new Error('请输入优惠码')
   const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(normalized).first() as any
@@ -37,16 +67,21 @@ export async function findEligibleCoupon(c: Context, code: string, device: Coupo
   const brandMatches = !coupon.brand || String(device.brand || '').trim().toLowerCase() === String(coupon.brand).trim().toLowerCase()
   const configMatches = !coupon.config_keyword || deviceText.includes(String(coupon.config_keyword).trim().toLowerCase())
   if (!deviceMatches || !brandMatches || !configMatches) throw new Error('该优惠码不适用于当前设备')
-  if (coupon.minimum_order_amount && rentAmount < Number(coupon.minimum_order_amount)) {
+  const discountableBase = couponDiscountableBase(coupon, feeParts)
+  if (coupon.minimum_order_amount && discountableBase < Number(coupon.minimum_order_amount)) {
     throw new Error(`订单金额未达到该优惠码要求的最低消费 AUD$${Number(coupon.minimum_order_amount).toFixed(2)}`)
   }
+  coupon._discountableBase = discountableBase
   return coupon
 }
 
-export function calculateCouponDiscount(coupon: any, rentAmount: number): number {
-  let discount = coupon.discount_type === 'percent' ? rentAmount * Number(coupon.discount_value) / 100 : Number(coupon.discount_value)
+export function calculateCouponDiscount(coupon: any, parts: number | CouponFeeParts): number {
+  const base = coupon?._discountableBase != null
+    ? Number(coupon._discountableBase)
+    : couponDiscountableBase(coupon, typeof parts === 'number' ? { rentalFee: parts } : parts)
+  let discount = coupon.discount_type === 'percent' ? base * Number(coupon.discount_value) / 100 : Number(coupon.discount_value)
   if (coupon.max_discount_amount) discount = Math.min(discount, Number(coupon.max_discount_amount))
-  return Math.min(rentAmount, Math.max(0, Number(discount.toFixed(2))))
+  return Math.min(base, Math.max(0, Number(discount.toFixed(2))))
 }
 
 // Only call once the real customer identity is known (not the staff placeholder
@@ -71,7 +106,19 @@ export async function reserveCouponForOrder(c: Context, params: { coupon: any; c
   if (!claimed.meta?.changes) throw new Error('优惠码刚刚达到使用次数上限，请重新提交')
   const redemptionId = `cr-${nanoid(12)}`
   const couponCode = String(coupon.code).toUpperCase()
-  await c.env.RENT.prepare("INSERT INTO coupon_redemptions (id, coupon_id, coupon_code, customer_id, order_id, discount_amount, status) VALUES (?, ?, ?, ?, ?, ?, 'RESERVED')").bind(redemptionId, coupon.id, couponCode, customerId, orderId, discountAmount).run()
+  // Per-customer limit as a conditional INSERT: the row lands only if the
+  // customer is still under max_uses_per_customer. D1 serialises writes, so
+  // this closes the check-then-act race two concurrent orders could exploit.
+  const perCustomerCap = coupon.max_uses_per_customer ? Number(coupon.max_uses_per_customer) : 1_000_000_000
+  const inserted = await c.env.RENT.prepare(
+    `INSERT INTO coupon_redemptions (id, coupon_id, coupon_code, customer_id, order_id, discount_amount, status)
+     SELECT ?, ?, ?, ?, ?, ?, 'RESERVED'
+     WHERE (SELECT COUNT(*) FROM coupon_redemptions WHERE coupon_id = ? AND customer_id = ? AND status IN ('RESERVED', 'REDEEMED')) < ?`,
+  ).bind(redemptionId, coupon.id, couponCode, customerId, orderId, discountAmount, coupon.id, customerId, perCustomerCap).run()
+  if (!inserted.meta?.changes) {
+    await c.env.RENT.prepare('UPDATE coupons SET used_count = MAX(0, used_count - 1), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(coupon.id).run()
+    throw new Error('您已达到该优惠码的最多使用次数')
+  }
   const snapshot = { code: couponCode, discountType: coupon.discount_type, discountValue: Number(coupon.discount_value), discountAmount }
   await c.env.RENT.prepare('UPDATE orders SET coupon_id = ?, coupon_code = ?, discount_amount = ?, coupon_snapshot = ? WHERE id = ?').bind(coupon.id, couponCode, discountAmount, JSON.stringify(snapshot), orderId).run()
   await recordFinancialLedgerEntry(c, { entryType: 'COUPON_DISCOUNT', amount: -discountAmount, customerId, orderId, sourceType: 'COUPON_REDEMPTION', sourceId: redemptionId, description: `优惠码 ${couponCode} 折扣`, createdBy: customerId, metadata: { couponId: coupon.id, status: 'RESERVED' } })

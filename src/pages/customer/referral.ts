@@ -20,42 +20,39 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
     return buildLayout('我的推荐 - 电脑租赁管理系统', '<div class="panel"><h2>用户未找到</h2><p>无法加载推荐信息。</p></div>', user);
   }
 
-  // 推荐奖励记录仍存放在现有 commission_records 表中，页面统一使用“推荐奖励”术语。
-  const commissionRecords = await c.env.RENT.prepare(`
-    SELECT * FROM commission_records WHERE referrer_id = ?
+  // referral_rewards 是唯一的推荐奖励账本（customer_id = 推荐人）。
+  const rewardRows = await c.env.RENT.prepare(`
+    SELECT reward_amount AS amount, status, withdrawn_at
+    FROM referral_rewards WHERE customer_id = ?
   `).bind(user.id).all();
 
-  type CommissionRecord = { amount: number; status: string }
-
-  const records = (commissionRecords.results || []) as CommissionRecord[]
+  type RewardRow = { amount: number; status: string; withdrawn_at: string | null }
+  const records = (rewardRows.results || []) as RewardRow[]
   const commissionBalance = Number(currentUser.commissionBalance || 0)
 
-  // 计算推荐奖励统计
-  const totalReward = records.reduce((sum, record) => sum + (record.amount || 0), 0)
-  const pendingReward = records
-    .filter((record) => record.status === 'pending')
-    .reduce((sum, record) => sum + (record.amount || 0), 0)
-  const settledReward = records
-    .filter((record) => record.status === 'settled')
-    .reduce((sum, record) => sum + (record.amount || 0), 0)
-  const withdrawnReward = records
-    .filter((record) => record.status === 'withdrawn')
-    .reduce((sum, record) => sum + (record.amount || 0), 0)
+  const active = records.filter((r) => !['CANCELLED', 'REVERSED'].includes(r.status))
+  const totalReward = active.reduce((sum, r) => sum + (r.amount || 0), 0)
+  const pendingReward = active
+    .filter((r) => r.status === 'PENDING' || r.status === 'APPROVED')
+    .reduce((sum, r) => sum + (r.amount || 0), 0)
+  const withdrawnReward = active
+    .filter((r) => r.withdrawn_at)
+    .reduce((sum, r) => sum + (r.amount || 0), 0)
 
-  // 获取已推荐的好友列表
-  let referredUsersQuery = `
-    SELECT 
-      u.name, 
-      u.created_at as registeredAt,
-      COUNT(r.id) as orderCount,
-      SUM(cr.amount) as contributedReward
+  // 已推荐好友列表：好友贡献的奖励从 referral_rewards 经 referrals 关联被推荐人。
+  const referredUsers = await c.env.RENT.prepare(`
+    SELECT
+      u.name,
+      u.created_at AS registeredAt,
+      COUNT(DISTINCT o.id) AS orderCount,
+      COALESCE(SUM(rw.reward_amount), 0) AS contributedReward
     FROM users u
-          LEFT JOIN orders r ON u.id = r.userId
-          LEFT JOIN commission_records cr ON u.id = cr.customer_id
+    LEFT JOIN orders o ON o.userId = u.id
+    LEFT JOIN referrals r ON r.referee_customer_id = u.id
+    LEFT JOIN referral_rewards rw ON rw.referral_id = r.id AND rw.status NOT IN ('CANCELLED', 'REVERSED')
     WHERE u.referrer_id = ?
-  `;
-  referredUsersQuery += 'GROUP BY u.id';
-  const referredUsers = await c.env.RENT.prepare(referredUsersQuery).bind(user.id).all();
+    GROUP BY u.id
+  `).bind(user.id).all();
   const referralLink = currentUser.referralCode ? new URL(`/register?ref=${encodeURIComponent(currentUser.referralCode)}`, c.req?.url || 'https://example.com/').toString() : ''
   const referralShareText = referralLink ? `邀请你使用 PC Rental 租赁电脑，注册时可通过我的推荐链接加入：\n${referralLink}` : ''
 
@@ -100,11 +97,11 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
           <p class="text-large">${formatCurrency(totalReward)}</p>
         </div>
         <div class="card text-center">
-          <h3>待发放奖励</h3>
+          <h3>待结算奖励</h3>
           <p class="text-large">${formatCurrency(pendingReward)}</p>
         </div>
         <div class="card text-center">
-          <h3>已发放奖励</h3>
+          <h3>已提现</h3>
           <p class="text-large">${formatCurrency(withdrawnReward)}</p>
         </div>
       </div>

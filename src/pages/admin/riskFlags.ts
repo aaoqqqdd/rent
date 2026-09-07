@@ -17,17 +17,23 @@ const FLAG_TYPE_LABELS: Record<string, string> = {
 }
 
 export function renderAdminRiskFlags(user: any, targetUser: any, activeFlags: any[] = [], history: any[] = []) {
+  const now = Date.now()
+  const isExpired = (flag: any) => flag.expires_at && !Number.isNaN(new Date(String(flag.expires_at).replace(' ', 'T')).getTime()) && new Date(String(flag.expires_at).replace(' ', 'T')).getTime() <= now
+  const BLOCKING_TYPES = new Set(['PAYMENT_RISK', 'DEVICE_NOT_RETURNED', 'CHARGEBACK', 'FRAUD_SUSPECTED'])
+  const blocks = (flag: any) => flag.status === 'ACTIVE' && !isExpired(flag) && (String(flag.severity).toUpperCase() === 'HIGH' || BLOCKING_TYPES.has(String(flag.flag_type)))
   const flagRow = (flag: any) => `<tr>
-    <td>${FLAG_TYPE_LABELS[flag.flag_type] || flag.flag_type}</td>
+    <td>${FLAG_TYPE_LABELS[flag.flag_type] || flag.flag_type}${blocks(flag) ? ' <span class="badge badge-danger">拦截下单</span>' : ''}</td>
     <td>${sanitizePlainText(flag.severity, 20)}</td>
     <td>${sanitizePlainText(flag.reason, 500)}</td>
     <td>${sanitizePlainText(flag.created_by, 60)}</td>
-    <td>${flag.created_at || '-'}</td>
-    <td>${flag.status === 'ACTIVE'
+    <td>${flag.created_at || '-'}${flag.expires_at ? `<small>${isExpired(flag) ? '已于' : '有效至'} ${sanitizePlainText(flag.expires_at, 40)}</small>` : ''}</td>
+    <td>${flag.status === 'ACTIVE' && !isExpired(flag)
       ? `<form method="post" action="/admin/users/${encodeURIComponent(targetUser.id)}/risk/${encodeURIComponent(flag.id)}/resolve"><input class="form-control" name="resolutionReason" maxlength="500" required placeholder="解除原因（必填）"><button class="button button-sm button-secondary" type="submit" style="margin-top:6px">解除标记</button></form>`
-      : `已解除 · ${sanitizePlainText(flag.resolution_reason || '', 500)}（${flag.resolved_at || '-'}）`}</td>
+      : isExpired(flag) && flag.status === 'ACTIVE'
+        ? `已过期失效（${sanitizePlainText(flag.expires_at || '', 40)}）`
+        : `已解除 · ${sanitizePlainText(flag.resolution_reason || '', 500)}（${flag.resolved_at || '-'}）`}</td>
   </tr>`
-  const body = `<div class="page-header"><div><p class="section-code">RISK MANAGEMENT</p><h2>风险标记 · ${sanitizePlainText(targetUser.name, 100)}</h2><p>高风险客户将被禁止通过网站自助下单；员工建合同不受此限制，但会看到提示。</p></div><a class="button button-secondary" href="/admin/users/${encodeURIComponent(targetUser.id)}">返回客户</a></div>
+  const body = `<div class="page-header"><div><p class="section-code">RISK MANAGEMENT</p><h2>风险标记 · ${sanitizePlainText(targetUser.name, 100)}</h2><p>任意 HIGH 级标记或“拦截下单”类型（付款风险 / 设备未归还 / 拒付 / 疑似欺诈）会禁止客户自助下单；员工建合同不受此限制，但会看到提示。过期标记自动失效。</p></div><a class="button button-secondary" href="/admin/users/${encodeURIComponent(targetUser.id)}">返回客户</a></div>
   <div class="panel">
     <h3>新增风险标记</h3>
     <form method="post" action="/admin/users/${encodeURIComponent(targetUser.id)}/risk" class="grid grid-2">

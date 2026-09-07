@@ -1236,6 +1236,26 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
       entityType: 'DEVICE',
       sql: `SELECT d.id FROM devices d WHERE d.lifecycle_status = 'RENTED' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.deviceId = d.id AND o.status IN ('active', 'paid', 'extended', 'overdue', 'pending_return'))`,
     },
+    {
+      issueType: 'RETURNED_ORDER_WITHOUT_RETURN_RECORD',
+      entityType: 'ORDER',
+      sql: `SELECT o.id FROM orders o WHERE o.status IN ('returned', 'pending_return', 'completed') AND o.rental_status IN ('RETURNED', 'COMPLETED') AND o.return_received_at IS NULL`,
+    },
+    {
+      issueType: 'REFUNDED_ORDER_WITHOUT_REFUND_TXN',
+      entityType: 'ORDER',
+      sql: `SELECT o.id FROM orders o WHERE o.payment_status IN ('REFUNDED', 'PARTIALLY_REFUNDED') AND NOT EXISTS (SELECT 1 FROM payment_refunds r WHERE r.order_id = o.id AND r.status = 'succeeded')`,
+    },
+    {
+      issueType: 'INVOICE_WITHOUT_PAYMENT',
+      entityType: 'ORDER',
+      sql: `SELECT i.order_id AS id FROM invoices i WHERE NOT EXISTS (SELECT 1 FROM payments p WHERE p.rental_id = i.order_id AND p.status = 'paid')`,
+    },
+    {
+      issueType: 'DEVICE_AVAILABLE_WITH_ACTIVE_ORDER',
+      entityType: 'DEVICE',
+      sql: `SELECT d.id FROM devices d WHERE COALESCE(d.lifecycle_status, d.status) IN ('AVAILABLE', 'available', 'READY') AND EXISTS (SELECT 1 FROM orders o WHERE o.deviceId = d.id AND o.status IN ('active', 'extended', 'overdue', 'pending_return'))`,
+    },
   ]
   let found = 0
   for (const check of checks) {
@@ -1257,6 +1277,51 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
     }
   }
   return found
+}
+
+// 系统健康监控（完善.md §30, §48）：把近 24 小时的失败率 / 积压量汇总成分级指标。
+// 每个指标独立 try/catch，缺表不影响其它指标。
+export async function collectMonitoringMetrics(c: Context): Promise<MonitorMetric[]> {
+  const metrics: MonitorMetric[] = []
+  const add = async (key: string, label: string, warn: number, crit: number, sql: string, note?: string) => {
+    try {
+      const row = await c.env.RENT.prepare(sql).first() as { n?: number; d?: number } | null
+      const numerator = Number(row?.n || 0)
+      const denominator = Number(row?.d || 0)
+      const { rate, level } = rateHealth(numerator, denominator, warn, crit)
+      metrics.push({ key, label, numerator, denominator, rate, level, note })
+    } catch {
+      metrics.push({ key, label, numerator: 0, denominator: 0, rate: 0, level: 'OK', note: '无数据源' })
+    }
+  }
+  await add('api_error_rate', 'API 错误率（24h）', 0.02, 0.1,
+    `SELECT (SELECT COUNT(*) FROM error_logs WHERE error_level IN ('ERROR','FATAL') AND created_at > datetime('now','-1 day')) AS n, (SELECT COUNT(*) FROM error_logs WHERE created_at > datetime('now','-1 day')) AS d`)
+  await add('payment_failure_rate', '付款失败率（24h）', 0.1, 0.3,
+    `SELECT SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM payments WHERE created_at > datetime('now','-1 day')`)
+  await add('email_failure_rate', '邮件失败率（24h）', 0.1, 0.3,
+    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM email_events WHERE created_at > datetime('now','-1 day')`)
+  await add('device_offline_rate', '设备离线率', 0.2, 0.5,
+    `SELECT SUM(CASE WHEN agent_status = 'offline' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL`)
+  await add('remote_command_failure_rate', '远程命令失败率（24h）', 0.15, 0.4,
+    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')`)
+  await add('scheduled_job_failure_rate', '定时任务失败率（24h）', 0.1, 0.25,
+    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM scheduled_job_runs WHERE started_at > datetime('now','-1 day')`)
+  await add('open_exception_backlog', '异常任务积压', 0.001, 0.001,
+    `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL) + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n, 1 AS d`,
+    '任一条未处理即 WARN')
+  return metrics
+}
+
+// 调度步骤：跑一遍监控，若有 CRITICAL 指标则写入异常任务中心（去重按当天）。
+export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number }> {
+  const metrics = await collectMonitoringMetrics(c)
+  let alerts = 0
+  for (const m of metrics.filter(x => x.level === 'CRITICAL')) {
+    const res = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
+      .bind(`dci-${nanoid(12)}`, 'MONITORING_ALERT', 'METRIC', `${m.key}:${new Date().toISOString().slice(0, 10)}`, JSON.stringify(m)).run() as any
+    if (Number(res.meta?.changes ?? res.changes ?? 0) > 0) alerts++
+  }
+  return { metrics: metrics.length, alerts }
 }
 
 export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
@@ -1334,6 +1399,616 @@ const ORDER_TRANSITIONS: Record<string, string[]> = {
 
 export function canTransitionOrder(from: string, to: string): boolean {
   return from === to || Boolean(ORDER_TRANSITIONS[from]?.includes(to))
+}
+
+// ---------------------------------------------------------------------------
+// 订单修改历史 (TODO.md P1 #5 / 完善.md §34)
+//
+// 任何已创建订单的关键字段都不能被静默修改：每次调整都要落一条
+// order_change_history，记录改了什么、为什么、谁改的，并保持库存一致。
+// 下面是纯函数部分（无 DB），供路由与单元测试共用；设备是否存在、租期是否
+// 冲突等依赖 DB 的检查由调用方在拿到 patch 后执行。
+// ---------------------------------------------------------------------------
+
+export const ORDER_CHANGE_TYPES = ['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT', 'LOCATION_CHANGE'] as const
+export type OrderChangeType = typeof ORDER_CHANGE_TYPES[number]
+
+export const ORDER_CHANGE_TYPE_LABELS: Record<string, string> = {
+  EXTENSION: '调整租期',
+  DEVICE_SWAP: '更换设备',
+  PRICE_ADJUSTMENT: '调整价格 / 押金',
+  LOCATION_CHANGE: '修改取还地点',
+  CANCELLATION: '取消订单',
+  INVENTORY_RELEASE: '释放库存',
+}
+
+const ORDER_CHANGE_FIELD_LABELS: Record<string, string> = {
+  deviceId: '设备',
+  startDate: '起租日期',
+  endDate: '归还日期',
+  rentalPeriod: '租期天数',
+  totalAmount: '订单总额',
+  depositAmount: '押金',
+  discountAmount: '优惠金额',
+  pickupLocation: '取货地点',
+  returnLocation: '归还地点',
+  deliveryMethod: '配送方式',
+  status: '订单状态',
+}
+
+const ORDER_CHANGE_DELIVERY_METHODS = ['Pickup', 'Delivery']
+
+// 订单被追踪的关键字段快照，作为 before/after JSON 的统一结构。
+export function orderChangeSnapshot(order: any): Record<string, any> {
+  return {
+    deviceId: order.deviceId ?? order.device_id ?? '',
+    startDate: order.startDate ?? order.start_date ?? '',
+    endDate: order.endDate ?? order.end_date ?? '',
+    rentalPeriod: Number(order.rentalPeriod ?? order.rental_period ?? 0),
+    totalAmount: Number(order.totalAmount ?? order.total_amount ?? 0),
+    depositAmount: Number(order.depositAmount ?? order.deposit_amount ?? 0),
+    discountAmount: Number(order.discountAmount ?? order.discount_amount ?? 0),
+    pickupLocation: order.pickupLocation ?? order.pickup_location ?? '',
+    returnLocation: order.returnLocation ?? order.return_location ?? '',
+    deliveryMethod: order.deliveryMethod ?? order.delivery_method ?? 'Pickup',
+  }
+}
+
+// 两个快照之间发生变化的字段列表，用于渲染修改历史的可读对照。
+export function diffOrderSnapshots(
+  before: Record<string, any> | null | undefined,
+  after: Record<string, any> | null | undefined,
+): { field: string; label: string; before: any; after: any }[] {
+  const keys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]
+  const changes: { field: string; label: string; before: any; after: any }[] = []
+  for (const key of keys) {
+    const a = (before as any)?.[key] ?? null
+    const b = (after as any)?.[key] ?? null
+    if (String(a ?? '') === String(b ?? '')) continue
+    changes.push({ field: key, label: ORDER_CHANGE_FIELD_LABELS[key] || key, before: a, after: b })
+  }
+  return changes
+}
+
+function daysBetween(startDate: string, endDate: string): number {
+  return Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000)
+}
+
+export interface OrderChangePlan {
+  patch: Record<string, any>
+  // 目标设备（换机时为新设备，其它类型为原设备）在新租期内需要做冲突检查
+  bookingCheck?: { deviceId: string; startDate: string; endDate: string }
+  // 需要确认该设备存在且状态可租
+  deviceAvailabilityCheck?: string
+}
+
+// 纯校验 + patch 构造。返回 { error } 表示输入不合法；否则返回需要写回订单的
+// 字段补丁以及调用方还需执行的 DB 依赖检查。
+export function buildOrderChangePlan(
+  type: string,
+  before: Record<string, any>,
+  input: Record<string, string | undefined>,
+): OrderChangePlan | { error: string } {
+  switch (type) {
+    case 'EXTENSION': {
+      const startDate = (input.startDate ?? '').trim() || before.startDate
+      const endDate = (input.endDate ?? '').trim() || before.endDate
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return { error: '日期格式无效' }
+      if (endDate <= startDate) return { error: '归还日期必须晚于起租日期' }
+      if (startDate === before.startDate && endDate === before.endDate) return { error: '租期没有变化' }
+      return {
+        patch: { startDate, endDate, rentalPeriod: daysBetween(startDate, endDate) },
+        bookingCheck: { deviceId: before.deviceId, startDate, endDate },
+      }
+    }
+    case 'DEVICE_SWAP': {
+      const deviceId = (input.deviceId ?? '').trim()
+      if (!deviceId) return { error: '请选择替换设备' }
+      if (deviceId === before.deviceId) return { error: '替换设备与当前设备相同' }
+      return {
+        patch: { deviceId },
+        deviceAvailabilityCheck: deviceId,
+        bookingCheck: { deviceId, startDate: before.startDate, endDate: before.endDate },
+      }
+    }
+    case 'PRICE_ADJUSTMENT': {
+      const totalAmount = Number(input.totalAmount)
+      const depositAmount = Number(input.depositAmount)
+      const discountAmount = input.discountAmount === undefined || input.discountAmount === ''
+        ? Number(before.discountAmount || 0)
+        : Number(input.discountAmount)
+      if (![totalAmount, depositAmount, discountAmount].every(Number.isFinite)) return { error: '金额必须是数字' }
+      if (totalAmount < 0 || depositAmount < 0 || discountAmount < 0) return { error: '金额不能为负' }
+      if (depositAmount > totalAmount) return { error: '押金不能超过订单总额' }
+      const patch = {
+        totalAmount: Number(totalAmount.toFixed(2)),
+        depositAmount: Number(depositAmount.toFixed(2)),
+        discountAmount: Number(discountAmount.toFixed(2)),
+      }
+      const unchanged = patch.totalAmount === Number(before.totalAmount)
+        && patch.depositAmount === Number(before.depositAmount)
+        && patch.discountAmount === Number(before.discountAmount || 0)
+      if (unchanged) return { error: '价格没有变化' }
+      return { patch }
+    }
+    case 'LOCATION_CHANGE': {
+      const pickupLocation = (input.pickupLocation ?? before.pickupLocation ?? '').trim().slice(0, 200)
+      const returnLocation = (input.returnLocation ?? before.returnLocation ?? '').trim().slice(0, 200)
+      const deliveryMethod = (input.deliveryMethod ?? before.deliveryMethod ?? 'Pickup').trim()
+      if (!ORDER_CHANGE_DELIVERY_METHODS.includes(deliveryMethod)) return { error: '配送方式无效' }
+      const unchanged = pickupLocation === (before.pickupLocation || '')
+        && returnLocation === (before.returnLocation || '')
+        && deliveryMethod === (before.deliveryMethod || 'Pickup')
+      if (unchanged) return { error: '取还信息没有变化' }
+      return { patch: { pickupLocation, returnLocation, deliveryMethod } }
+    }
+    default:
+      return { error: '不支持的订单修改类型' }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 通用 Webhook 幂等 (TODO.md P7 / 完善.md §43)
+//
+// Stripe、设备回调、未来第三方服务共用一张 webhook_events：provider + event_id
+// 唯一，保证同一事件只产生一次业务副作用，并可安全重试。
+// ---------------------------------------------------------------------------
+
+export type WebhookClaim =
+  | { firstDelivery: true; recordId: string }
+  | { firstDelivery: false; status: 'RECEIVED' | 'PROCESSED' | 'FAILED'; recordId: string }
+
+// 记录一次 webhook 投递。首次投递写入 RECEIVED 并返回 firstDelivery=true；
+// 重复投递返回既有记录的状态（并累加 attempts），调用方据此决定跳过或重跑。
+export async function claimWebhookEvent(
+  c: Context,
+  input: { provider: string; eventId: string; eventType?: string; payloadHash?: string },
+): Promise<WebhookClaim> {
+  const db = getDB(c)
+  const id = `wh-${nanoid(16)}`
+  const inserted = await db.prepare(
+    `INSERT INTO webhook_events (id, provider, event_id, event_type, payload_hash, status)
+     VALUES (?, ?, ?, ?, ?, 'RECEIVED')
+     ON CONFLICT(provider, event_id) DO NOTHING`,
+  ).bind(id, input.provider, input.eventId, input.eventType ?? null, input.payloadHash ?? null).run() as any
+  if (Number(inserted.meta?.changes ?? inserted.changes ?? 0) > 0) {
+    return { firstDelivery: true, recordId: id }
+  }
+  const existing = await db.prepare(
+    'SELECT id, status FROM webhook_events WHERE provider = ? AND event_id = ?',
+  ).bind(input.provider, input.eventId).first() as any
+  await db.prepare(
+    'UPDATE webhook_events SET attempts = attempts + 1 WHERE provider = ? AND event_id = ?',
+  ).bind(input.provider, input.eventId).run()
+  return { firstDelivery: false, status: String(existing?.status || 'RECEIVED') as any, recordId: String(existing?.id || '') }
+}
+
+export async function markWebhookProcessed(c: Context, recordId: string): Promise<void> {
+  await getDB(c).prepare(
+    "UPDATE webhook_events SET status = 'PROCESSED', processed_at = CURRENT_TIMESTAMP, failure_reason = NULL WHERE id = ?",
+  ).bind(recordId).run()
+}
+
+export async function markWebhookFailed(c: Context, recordId: string, reason: string): Promise<void> {
+  await getDB(c).prepare(
+    "UPDATE webhook_events SET status = 'FAILED', failure_reason = ? WHERE id = ?",
+  ).bind(String(reason || '').slice(0, 500), recordId).run()
+}
+
+// ---------------------------------------------------------------------------
+// 远程设备命令状态机 (TODO.md P1 #3 / 完善.md §23)
+//
+//   QUEUED → SENT → ACKNOWLEDGED → RUNNING → SUCCESS
+//   QUEUED/SENT/ACKNOWLEDGED/RUNNING → FAILED
+//   QUEUED → EXPIRED | CANCELLED
+// 终态命令不可再流转；客户端重复上报同一终态视为幂等成功。
+// ---------------------------------------------------------------------------
+
+export const DEVICE_COMMAND_STATES = ['QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED'] as const
+export type DeviceCommandState = typeof DEVICE_COMMAND_STATES[number]
+
+export const DEVICE_COMMAND_TERMINAL_STATES = new Set<DeviceCommandState>(['SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED'])
+
+const DEVICE_COMMAND_TRANSITIONS: Record<DeviceCommandState, DeviceCommandState[]> = {
+  QUEUED: ['SENT', 'EXPIRED', 'CANCELLED', 'FAILED'],
+  SENT: ['ACKNOWLEDGED', 'RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED'],
+  ACKNOWLEDGED: ['RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED'],
+  RUNNING: ['SUCCESS', 'FAILED', 'EXPIRED'],
+  SUCCESS: [], FAILED: [], EXPIRED: [], CANCELLED: [],
+}
+
+export function canTransitionDeviceCommand(from: string, to: string): boolean {
+  return Boolean(DEVICE_COMMAND_TRANSITIONS[from as DeviceCommandState]?.includes(to as DeviceCommandState))
+}
+
+// 高风险远程命令：需要 MANAGER 及以上、二次确认并写审计日志。
+export const HIGH_RISK_DEVICE_COMMANDS = new Set(['LOCK_DEVICE', 'REBOOT', 'DATA_WIPE', 'SYSTEM_RESET', 'REREGISTER_AGENT', 'DELETE_RENTAL_USER'])
+
+export function isHighRiskDeviceCommand(type: string): boolean {
+  return HIGH_RISK_DEVICE_COMMANDS.has(String(type || '').trim().toUpperCase())
+}
+
+// ---------------------------------------------------------------------------
+// 设备生命周期状态机 (TODO.md P1 #4 / 完善.md §13, §16)
+//
+//   RESERVED → RENTED
+//   RENTED → RETURNED → INSPECTION → MAINTENANCE → READY
+//   INSPECTION → DAMAGED → MAINTENANCE → READY
+//   MAINTENANCE / DAMAGED → RETIRED
+// 这是推荐流转；管理员在设备编辑页仍可手动纠正，但“存在未完成维护时不得置为
+// READY / 可用”是硬性规则，由路由单独强制。
+// ---------------------------------------------------------------------------
+
+export const DEVICE_LIFECYCLE_FLOW: Record<string, string[]> = {
+  RESERVED: ['READY', 'RENTED'],
+  READY: ['RESERVED', 'RENTED', 'MAINTENANCE', 'RETIRED'],
+  RENTED: ['RETURNED', 'INSPECTION', 'READY'],
+  RETURNED: ['INSPECTION', 'MAINTENANCE', 'READY'],
+  INSPECTION: ['MAINTENANCE', 'DAMAGED', 'RETURNED', 'READY'],
+  DAMAGED: ['MAINTENANCE', 'RETIRED'],
+  MAINTENANCE: ['READY', 'DAMAGED', 'RETIRED'],
+  RETIRED: [],
+}
+
+export function canTransitionDeviceLifecycle(from: string, to: string): boolean {
+  return from === to || Boolean(DEVICE_LIFECYCLE_FLOW[from]?.includes(to))
+}
+
+export const MAINTENANCE_OPEN_STATES = new Set(['OPEN', 'IN_PROGRESS', 'DATA_CLEAN', 'SYSTEM_RESET', 'CLIENT_CHECK'])
+export const MAINTENANCE_ADVANCE_NEXT: Record<string, string> = {
+  OPEN: 'IN_PROGRESS', IN_PROGRESS: 'DATA_CLEAN', DATA_CLEAN: 'SYSTEM_RESET', SYSTEM_RESET: 'CLIENT_CHECK',
+}
+// 归还后设备准备的十项验证（完善.md §16）——全部通过才允许维护记录 COMPLETED、设备回到 READY。
+export const MAINTENANCE_CHECK_TYPES = ['DATA_WIPE', 'SYSTEM_RESET', 'WINDOWS_BOOT', 'AGENT_INSTALLED', 'AGENT_VERSION', 'DEVICE_SERIAL', 'DISK_HEALTH', 'NETWORK', 'HARDWARE', 'ACCESSORIES'] as const
+
+// ---------------------------------------------------------------------------
+// 支付争议 / Chargeback 状态机 (完善.md §21, §31 / TODO.md P2 #9)
+//
+//   DISPUTE_OPENED → DISPUTE_UNDER_REVIEW → DISPUTE_WON | DISPUTE_LOST | DISPUTE_CLOSED
+//   DISPUTE_OPENED → DISPUTE_WON | DISPUTE_LOST | DISPUTE_CLOSED（Stripe 直接结案）
+// 终态不可再流转。争议处于 OPENED / UNDER_REVIEW 时，对应付款禁止任何正常退款，
+// 避免同一笔钱既被拒付又被主动退款（完善.md §31“防止争议金额被再次正常退款”）。
+// ---------------------------------------------------------------------------
+
+export const PAYMENT_DISPUTE_STATES = ['DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'] as const
+export type PaymentDisputeState = typeof PAYMENT_DISPUTE_STATES[number]
+
+export const PAYMENT_DISPUTE_OPEN_STATES = new Set<PaymentDisputeState>(['DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW'])
+export const PAYMENT_DISPUTE_TERMINAL_STATES = new Set<PaymentDisputeState>(['DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'])
+
+const PAYMENT_DISPUTE_TRANSITIONS: Record<PaymentDisputeState, PaymentDisputeState[]> = {
+  DISPUTE_OPENED: ['DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'],
+  DISPUTE_UNDER_REVIEW: ['DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'],
+  DISPUTE_WON: [], DISPUTE_LOST: [], DISPUTE_CLOSED: [],
+}
+
+export function canTransitionPaymentDispute(from: string, to: string): boolean {
+  return Boolean(PAYMENT_DISPUTE_TRANSITIONS[from as PaymentDisputeState]?.includes(to as PaymentDisputeState))
+}
+
+export function isPaymentDisputeOpen(status: string): boolean {
+  return PAYMENT_DISPUTE_OPEN_STATES.has(String(status || '').trim().toUpperCase() as PaymentDisputeState)
+}
+
+// 一笔付款只要还有未结案的争议，就不允许再走正常退款流程。
+export function paymentsBlockedByDispute(disputes: Array<{ status?: string } | null | undefined>): boolean {
+  return (disputes || []).some(row => row && isPaymentDisputeOpen(String(row.status || '')))
+}
+
+// 把 Stripe 的 dispute.status / 结案原因映射到内部状态机。
+// https://stripe.com/docs/api/disputes/object#dispute_object-status
+export function mapStripeDisputeStatus(stripeStatus: string): PaymentDisputeState {
+  switch (String(stripeStatus || '').trim().toLowerCase()) {
+    case 'warning_needs_response':
+    case 'needs_response':
+      return 'DISPUTE_OPENED'
+    case 'warning_under_review':
+    case 'under_review':
+      return 'DISPUTE_UNDER_REVIEW'
+    case 'won':
+      return 'DISPUTE_WON'
+    case 'lost':
+      return 'DISPUTE_LOST'
+    case 'warning_closed':
+    case 'charge_refunded':
+    default:
+      return 'DISPUTE_CLOSED'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 风险标记与黑名单 (完善.md §22, §32 / TODO.md P2 #10)
+//
+// 不是一个 is_blacklisted 布尔，而是带类型 / 严重程度 / 证据 / 过期时间的标记表。
+// “高风险客户禁止自动创建新租赁”：任意 HIGH 级标记，或命中硬拦截类型
+// （拒付、疑似欺诈、设备未归还、付款风险）时阻止客户继续自助下单；
+// 过期标记（expires_at 已过）视为失效，不再拦截，也不再显示为有效提示。
+// ---------------------------------------------------------------------------
+
+export const RISK_FLAG_TYPES = ['PAYMENT_RISK', 'IDENTITY_RISK', 'DEVICE_NOT_RETURNED', 'SERIOUS_DAMAGE', 'CHARGEBACK', 'ABUSE', 'FRAUD_SUSPECTED', 'MANUAL_REVIEW'] as const
+export type RiskFlagType = typeof RISK_FLAG_TYPES[number]
+export const RISK_FLAG_SEVERITIES = ['LOW', 'MEDIUM', 'HIGH'] as const
+
+export const ORDER_BLOCKING_RISK_FLAG_TYPES = new Set<RiskFlagType>(['PAYMENT_RISK', 'DEVICE_NOT_RETURNED', 'CHARGEBACK', 'FRAUD_SUSPECTED'])
+
+export interface RiskFlagLike { flag_type?: string; severity?: string; status?: string; expires_at?: string | null }
+
+export function isRiskFlagCurrentlyActive(flag: RiskFlagLike | null | undefined, now: Date = new Date()): boolean {
+  if (!flag || String(flag.status || '').toUpperCase() !== 'ACTIVE') return false
+  if (!flag.expires_at) return true
+  const expiry = new Date(String(flag.expires_at).replace(' ', 'T'))
+  return Number.isNaN(expiry.getTime()) ? true : expiry.getTime() > now.getTime()
+}
+
+// 返回第一条会阻止客户自助下单的有效标记；没有则返回 null。
+export function findBlockingRiskFlag<T extends RiskFlagLike>(flags: Array<T | null | undefined>, now: Date = new Date()): T | null {
+  for (const flag of flags || []) {
+    if (!isRiskFlagCurrentlyActive(flag, now)) continue
+    const severity = String(flag!.severity || '').toUpperCase()
+    const type = String(flag!.flag_type || '').toUpperCase() as RiskFlagType
+    if (severity === 'HIGH' || ORDER_BLOCKING_RISK_FLAG_TYPES.has(type)) return flag as T
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// 运营分析报表 (完善.md §23, §40)
+//
+// 金额只从 Ledger / Payment / Refund 明细汇总，不从订单 UI 状态推算。
+// 这里放两个纯函数：车队利用率、支付方式占比——其余聚合在路由里用 SQL 完成。
+// ---------------------------------------------------------------------------
+
+// 车队利用率 = 统计窗口内被租出的“设备·天” / （可租设备数 × 窗口天数），夹在 0..1。
+export function deviceUtilisationRate(rentedDeviceDays: number, fleetSize: number, windowDays: number): number {
+  const capacity = Math.max(0, Number(fleetSize) || 0) * Math.max(0, Number(windowDays) || 0)
+  if (capacity <= 0) return 0
+  const used = Math.max(0, Number(rentedDeviceDays) || 0)
+  return Math.min(1, Math.max(0, used / capacity))
+}
+
+export interface PaymentMethodRow { method: string; amount: number; count?: number }
+export interface PaymentMethodShare { method: string; amount: number; count: number; share: number }
+
+// 各支付方式金额占比（百分比，保留两位，误差补到最大的一档，合计恰为 100）。
+export function paymentMethodBreakdown(rows: Array<PaymentMethodRow | null | undefined>): PaymentMethodShare[] {
+  const clean = (rows || []).filter((r): r is PaymentMethodRow => Boolean(r) && Number(r!.amount) > 0)
+    .map(r => ({ method: String(r.method || 'unknown'), amount: Number(r.amount) || 0, count: Number(r.count) || 0 }))
+  const total = clean.reduce((sum, r) => sum + r.amount, 0)
+  if (total <= 0) return clean.map(r => ({ ...r, share: 0 }))
+  const withShare = clean
+    .map(r => ({ ...r, share: Math.round((r.amount / total) * 10000) / 100 }))
+    .sort((a, b) => b.amount - a.amount)
+  const drift = Number((100 - withShare.reduce((sum, r) => sum + r.share, 0)).toFixed(2))
+  if (withShare.length && drift !== 0) withShare[0].share = Number((withShare[0].share + drift).toFixed(2))
+  return withShare
+}
+
+// 定长时间字符串比较——用于合同验证码 / 令牌校验，避免按字符提前返回的计时侧信道。
+export function timingSafeEqualStr(a: string, b: string): boolean {
+  const x = String(a ?? '')
+  const y = String(b ?? '')
+  let diff = x.length ^ y.length
+  for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i % (y.length || 1))
+  return diff === 0
+}
+
+// ---------------------------------------------------------------------------
+// 数据保留策略 (完善.md §25, §37 / P3 #18)
+//
+// 每类数据配置：保留天数 + 到期动作。RETAIN = 永久保留（合同 / 财务 / 审计），
+// ARCHIVE / DELETE / ANONYMISE = 到期后可被清理任务处理。这里只放纯判定，
+// 实际清理由调度任务执行。
+// ---------------------------------------------------------------------------
+
+export const RETENTION_ACTIONS = ['RETAIN', 'ARCHIVE', 'DELETE', 'ANONYMISE'] as const
+export type RetentionAction = typeof RETENTION_ACTIONS[number]
+
+export interface RetentionPolicyLike { retention_days?: number; action?: string; enabled?: number | boolean }
+
+// 保留期截止时间：早于该时刻的记录已过保留期。
+export function retentionCutoffDate(retentionDays: number, now: Date = new Date()): Date {
+  const days = Math.max(0, Math.floor(Number(retentionDays) || 0))
+  return new Date(now.getTime() - days * 86400000)
+}
+
+export function isPastRetention(recordDate: string | number | Date, retentionDays: number, now: Date = new Date()): boolean {
+  const t = recordDate instanceof Date ? recordDate.getTime() : new Date(String(recordDate).replace(' ', 'T')).getTime()
+  if (Number.isNaN(t)) return false
+  return t <= retentionCutoffDate(retentionDays, now).getTime()
+}
+
+// 该策略是否会真正清理数据（启用且动作不是 RETAIN）。
+export function retentionSweepActionable(policy: RetentionPolicyLike | null | undefined): boolean {
+  if (!policy) return false
+  const enabled = policy.enabled === true || Number(policy.enabled) === 1
+  return enabled && String(policy.action || '').toUpperCase() !== 'RETAIN' && RETENTION_ACTIONS.includes(String(policy.action || '').toUpperCase() as RetentionAction)
+}
+
+// ---------------------------------------------------------------------------
+// 备份与恢复 (完善.md §26, §39 / P4 #19, #20)
+// ---------------------------------------------------------------------------
+
+export type BackupHealthStatus = 'OK' | 'WARN' | 'STALE' | 'NONE'
+
+// 依据 RPO 目标评估最近一次备份的新鲜度：超过 RPO 记 WARN，超过 2×RPO 记 STALE。
+export function backupHealth(lastBackupAt: string | number | Date | null | undefined, rpoMinutes: number, now: Date = new Date()): { status: BackupHealthStatus; ageMinutes: number | null } {
+  if (!lastBackupAt) return { status: 'NONE', ageMinutes: null }
+  const t = lastBackupAt instanceof Date ? lastBackupAt.getTime() : new Date(String(lastBackupAt).replace(' ', 'T')).getTime()
+  if (Number.isNaN(t)) return { status: 'NONE', ageMinutes: null }
+  const ageMinutes = Math.max(0, Math.round((now.getTime() - t) / 60000))
+  const rpo = Math.max(1, Number(rpoMinutes) || 0)
+  const status: BackupHealthStatus = ageMinutes > rpo * 2 ? 'STALE' : ageMinutes > rpo ? 'WARN' : 'OK'
+  return { status, ageMinutes }
+}
+
+// 恢复演练是否已超期（默认要求至少每 90 天演练一次）。
+export function restoreTestOverdue(lastTestAt: string | number | Date | null | undefined, maxIntervalDays = 90, now: Date = new Date()): boolean {
+  if (!lastTestAt) return true
+  const t = lastTestAt instanceof Date ? lastTestAt.getTime() : new Date(String(lastTestAt).replace(' ', 'T')).getTime()
+  if (Number.isNaN(t)) return true
+  return (now.getTime() - t) > Math.max(1, maxIntervalDays) * 86400000
+}
+
+// 轻量校验和（FNV-1a 32 位十六进制），用于给离线快照留一个可比对指纹。
+export function fnv1aHex(input: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i)
+    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
+// ---------------------------------------------------------------------------
+// 系统健康监控 (完善.md §30, §48 / P8 #32, #33)
+//
+// 把“分子 / 分母”比率按阈值分级。分母为 0（没有样本）时记 OK 而非报警。
+// ---------------------------------------------------------------------------
+export type HealthLevel = 'OK' | 'WARN' | 'CRITICAL'
+
+export interface MonitorMetric { key: string; label: string; numerator: number; denominator: number; rate: number; level: HealthLevel; note?: string }
+
+export function rateHealth(numerator: number, denominator: number, warnRate: number, critRate: number): { rate: number; level: HealthLevel } {
+  const n = Math.max(0, Number(numerator) || 0)
+  const d = Math.max(0, Number(denominator) || 0)
+  if (d <= 0) return { rate: 0, level: 'OK' }
+  const rate = n / d
+  const level: HealthLevel = rate >= critRate ? 'CRITICAL' : rate >= warnRate ? 'WARN' : 'OK'
+  return { rate: Math.round(rate * 10000) / 10000, level }
+}
+
+// 一组指标里最差的级别，作为系统整体健康度。
+export function worstHealthLevel(metrics: Array<{ level: HealthLevel }>): HealthLevel {
+  if (metrics.some(m => m.level === 'CRITICAL')) return 'CRITICAL'
+  if (metrics.some(m => m.level === 'WARN')) return 'WARN'
+  return 'OK'
+}
+
+// ---------------------------------------------------------------------------
+// Agent Program（预留，完善.md §29）——佣金计算纯函数，尚未接入任何结算流程。
+// ---------------------------------------------------------------------------
+export function agentCommission(orderSubtotal: number, rate: number, maxPerOrder?: number | null): number {
+  const base = Math.max(0, Number(orderSubtotal) || 0)
+  const r = Math.min(1, Math.max(0, Number(rate) || 0))
+  let commission = Math.round(base * r * 100) / 100
+  if (maxPerOrder != null && Number.isFinite(Number(maxPerOrder))) commission = Math.min(commission, Math.max(0, Number(maxPerOrder)))
+  return commission
+}
+
+// ---------------------------------------------------------------------------
+// 混合付款 / 退款分配引擎 (TODO.md P1 #6 / 完善.md §28, §29)
+//
+// 一笔订单可能由多个来源结算（Stripe + 余额 + 押金 + 调整）。退款时必须把退款
+// 额分摊到各来源，且任一来源的累计退款不得超过该来源实付、订单累计退款不得超过
+// 订单实付。分摊策略：
+//   proportional —— 按各来源“剩余可退”比例分摊（默认）
+//   priority     —— 按传入顺序优先退（§29“优先原支付方式”）
+// 分币误差统一由排在前面的来源逐分吸收。
+// ---------------------------------------------------------------------------
+
+const toCents = (value: number) => Math.round(Number(value) * 100)
+
+export interface RefundSource { id: string; amount: number; refunded?: number; method?: string }
+export interface RefundAllocationLine { id: string; amount: number; method?: string }
+
+export function buildRefundAllocation(
+  sources: RefundSource[],
+  refundAmount: number,
+  strategy: 'proportional' | 'priority' = 'proportional',
+): RefundAllocationLine[] {
+  const requested = toCents(refundAmount)
+  const rows = sources.map(s => ({ id: s.id, method: s.method, remaining: Math.max(0, toCents(s.amount) - toCents(s.refunded || 0)) }))
+  const capacity = rows.reduce((sum, r) => sum + r.remaining, 0)
+  if (!Number.isInteger(requested) || requested <= 0) throw new Error('退款金额必须大于 0')
+  if (requested > capacity) throw new Error('退款金额超过原始付款可退余额')
+
+  const assigned = new Map<string, number>()
+  if (strategy === 'priority') {
+    let left = requested
+    for (const r of rows) {
+      if (left <= 0) break
+      const take = Math.min(left, r.remaining)
+      if (take > 0) { assigned.set(r.id, take); left -= take }
+    }
+  } else {
+    let running = 0
+    for (const r of rows) {
+      const share = capacity ? Math.floor(requested * r.remaining / capacity) : 0
+      assigned.set(r.id, share)
+      running += share
+    }
+    // Distribute the rounding remainder one cent at a time, earliest source first.
+    let leftover = requested - running
+    for (const r of rows) {
+      if (leftover <= 0) break
+      const cur = assigned.get(r.id) || 0
+      if (cur < r.remaining) { assigned.set(r.id, cur + 1); leftover-- }
+    }
+  }
+  return rows
+    .filter(r => (assigned.get(r.id) || 0) > 0)
+    .map(r => ({ id: r.id, method: r.method, amount: (assigned.get(r.id) || 0) / 100 }))
+}
+
+export interface ReconInput {
+  payments: { id: string; amount: number; status: string }[]
+  paymentAllocations: { payment_id: string; amount: number }[]
+  refunds: { id: string; payment_id: string | null; refund_amount: number; status: string }[]
+  refundAllocations: { refund_id: string; payment_id: string; amount: number }[]
+}
+export interface ReconIssue { code: string; detail: string }
+export interface ReconResult { ok: boolean; paidTotal: number; refundedTotal: number; issues: ReconIssue[] }
+
+// 纯函数对账：给定订单的付款 / 分配 / 退款行，找出账目不一致。
+export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
+  const issues: ReconIssue[] = []
+  const EPS = 1 // 1 分容差
+  const paidPayments = input.payments.filter(p => p.status === 'paid' || p.status === 'refunded')
+  const paidTotalC = paidPayments.reduce((s, p) => s + toCents(p.amount), 0)
+  const paymentIds = new Set(input.payments.map(p => p.id))
+
+  for (const p of paidPayments) {
+    const allocC = input.paymentAllocations.filter(a => a.payment_id === p.id).reduce((s, a) => s + toCents(a.amount), 0)
+    if (allocC > 0 && Math.abs(allocC - toCents(p.amount)) > EPS) {
+      issues.push({ code: 'ALLOCATION_MISMATCH', detail: `付款 ${p.id} 金额 ${p.amount} 与拆分合计 ${(allocC / 100).toFixed(2)} 不符` })
+    }
+    const refundedC = input.refundAllocations.filter(r => r.payment_id === p.id).reduce((s, r) => s + toCents(r.amount), 0)
+    if (refundedC - toCents(p.amount) > EPS) {
+      issues.push({ code: 'OVER_REFUND_SOURCE', detail: `付款 ${p.id} 已退 ${(refundedC / 100).toFixed(2)} 超过实付 ${p.amount}` })
+    }
+  }
+
+  const succeededRefunds = input.refunds.filter(r => r.status === 'succeeded')
+  const refundedTotalC = succeededRefunds.reduce((s, r) => s + toCents(r.refund_amount), 0)
+  if (refundedTotalC - paidTotalC > EPS) {
+    issues.push({ code: 'OVER_REFUND_ORDER', detail: `订单累计退款 ${(refundedTotalC / 100).toFixed(2)} 超过累计实付 ${(paidTotalC / 100).toFixed(2)}` })
+  }
+  for (const ra of input.refundAllocations) {
+    if (!paymentIds.has(ra.payment_id)) issues.push({ code: 'ORPHAN_REFUND_ALLOCATION', detail: `退款分配 ${ra.refund_id} 指向的付款 ${ra.payment_id} 不属于本订单` })
+  }
+  for (const r of succeededRefunds) {
+    const hasAlloc = input.refundAllocations.some(ra => ra.refund_id === r.id)
+    if (!hasAlloc) issues.push({ code: 'UNALLOCATED_REFUND', detail: `退款 ${r.id}（${r.refund_amount}）没有对应的来源分配` })
+  }
+  return { ok: issues.length === 0, paidTotal: paidTotalC / 100, refundedTotal: refundedTotalC / 100, issues }
+}
+
+// D1 包装：读取订单相关行并跑纯对账。
+export async function reconcileOrderPayments(c: Context, orderId: string): Promise<ReconResult> {
+  const db = getDB(c)
+  const [payments, refunds] = await Promise.all([
+    db.prepare('SELECT id, amount, status FROM payments WHERE rental_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
+    db.prepare('SELECT id, payment_id, refund_amount, status FROM payment_refunds WHERE order_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
+  ])
+  const paymentRows = payments as any[]
+  const refundRows = refunds as any[]
+  const paymentIds = paymentRows.map((p: any) => p.id)
+  const inClause = paymentIds.map(() => '?').join(',') || "''"
+  const [paymentAllocations, refundAllocations] = await Promise.all([
+    paymentIds.length ? db.prepare(`SELECT payment_id, amount FROM payment_allocations WHERE payment_id IN (${inClause})`).bind(...paymentIds).all().then((r: any) => (r.results || []) as any[]) : Promise.resolve([] as any[]),
+    refundRows.length ? db.prepare(`SELECT refund_id, payment_id, amount FROM refund_allocations WHERE refund_id IN (${refundRows.map(() => '?').join(',')})`).bind(...refundRows.map((r: any) => r.id)).all().then((r: any) => (r.results || []) as any[]) : Promise.resolve([] as any[]),
+  ])
+  return evaluatePaymentReconciliation({ payments: paymentRows, paymentAllocations, refunds: refundRows, refundAllocations })
 }
 
 export function validateHostedImageUrls(value: unknown, maxUrls = 5): string[] {
@@ -1469,7 +2144,8 @@ export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
       AND datetime(deleted_at) < datetime('now', '-30 days')
       AND NOT EXISTS (SELECT 1 FROM orders WHERE orders.userId = users.id)
       AND NOT EXISTS (SELECT 1 FROM payments WHERE payments.customer_id = users.id)
-      AND NOT EXISTS (SELECT 1 FROM commission_records WHERE commission_records.customer_id = users.id)
+      AND NOT EXISTS (SELECT 1 FROM referral_rewards WHERE referral_rewards.customer_id = users.id)
+      AND NOT EXISTS (SELECT 1 FROM referrals WHERE referrals.referrer_customer_id = users.id OR referrals.referee_customer_id = users.id)
       AND NOT EXISTS (SELECT 1 FROM addresses WHERE addresses.user_id = users.id)
   `).run() as any
   return ids.length + Number(purgeResult.meta?.changes ?? purgeResult.changes ?? 0)
@@ -2224,6 +2900,42 @@ async function getTableColumns(c: Context, tableName: string): Promise<string[]>
   return (result.results || []).map((column: any) => column.name)
 }
 
+export interface WithdrawableReward { id: string; amount: number }
+export interface WithdrawalPlan {
+  eligible: boolean
+  fullyConsumedIds: string[]
+  // The boundary reward that only partly covers the request: mark it withdrawn
+  // for `withdrawnAmount` and leave a residual AVAILABLE reward for the rest.
+  split?: { id: string; withdrawnAmount: number; residualAmount: number }
+  total: number
+  shortfall: number
+}
+
+// FIFO 选出足以覆盖提现额的 AVAILABLE 推荐奖励。金额按分计算避免浮点误差；跨越提现
+// 额的那一笔奖励会被拆分，不整笔吞掉，避免"余额还在但没有可提现奖励"的死角。
+export function planWithdrawalConsumption(rewards: WithdrawableReward[], amount: number): WithdrawalPlan {
+  const targetC = Math.round(Number(amount) * 100)
+  let accC = 0
+  const fullyConsumedIds: string[] = []
+  let split: WithdrawalPlan['split']
+  for (const r of rewards) {
+    if (accC >= targetC) break
+    const c = Math.round(Number(r.amount || 0) * 100)
+    if (c <= 0) continue
+    if (accC + c <= targetC) {
+      fullyConsumedIds.push(r.id)
+      accC += c
+    } else {
+      const withdrawnC = targetC - accC
+      split = { id: r.id, withdrawnAmount: withdrawnC / 100, residualAmount: (c - withdrawnC) / 100 }
+      accC = targetC
+      break
+    }
+  }
+  const totalC = rewards.reduce((s, r) => s + Math.max(0, Math.round(Number(r.amount || 0) * 100)), 0)
+  return { eligible: accC >= targetC, fullyConsumedIds, split, total: totalC / 100, shortfall: Math.max(0, targetC - totalC) / 100 }
+}
+
 export async function createWithdrawalRequest(
   c: Context,
   userId: string,
@@ -2244,102 +2956,81 @@ export async function createWithdrawalRequest(
     return { success: false, message: '银行转账提现金额必须大于 100 且为整数' }
   }
 
+  // D1 doesn't allow raw BEGIN/COMMIT; do all reads first, reserve the commission
+  // with one guarded atomic UPDATE, then apply the rest as a single batch and
+  // compensate (re-credit) if that batch fails.
+  const user = await db.prepare('SELECT commission_balance FROM users WHERE id = ?').bind(userId).first() as any
+  if (!user) return { success: false, message: '用户不存在' }
+  const currentCommissionBalance = Number(user.commission_balance ?? 0)
+  if (currentCommissionBalance < normalizedAmount) {
+    return { success: false, message: '提现金额不能超过可提现余额' }
+  }
+
+  // 唯一账本 referral_rewards：可提现 = 未被其它提现划走的 AVAILABLE 奖励。
+  const availableRewards = await db.prepare(`
+    SELECT id, reward_amount AS amount
+    FROM referral_rewards
+    WHERE customer_id = ? AND status = 'AVAILABLE' AND withdrawn_at IS NULL
+    ORDER BY COALESCE(available_at, created_at) ASC, created_at ASC
+  `).bind(userId).all() as any
+  const plan = planWithdrawalConsumption(
+    (availableRewards.results || []).map((r: any) => ({ id: String(r.id), amount: Number(r.amount || 0) })),
+    normalizedAmount,
+  )
+  if (!plan.eligible) {
+    return { success: false, message: '可提现的推荐奖励不足，请稍后再试' }
+  }
+
+  const withdrawalId = `w-${nanoid(8)}`
+  const consumeWithdrawalId = withdrawMethod === 'bank_transfer' ? withdrawalId : null
+
+  // Reserve: only proceeds if the balance is still there (guards double-spend).
+  const reserved = await db.prepare(
+    'UPDATE users SET commission_balance = ROUND(commission_balance - ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND commission_balance >= ? RETURNING commission_balance',
+  ).bind(normalizedAmount, userId, normalizedAmount).first()
+  if (!reserved) return { success: false, message: '可提现余额已变化，请刷新后重试' }
+
   try {
-    await db.prepare('BEGIN IMMEDIATE').run()
-
-    const user = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
-    if (!user) {
-      await db.prepare('ROLLBACK').run()
-      return { success: false, message: '用户不存在' }
+    const writes = plan.fullyConsumedIds.map(id => db.prepare(
+      'UPDATE referral_rewards SET withdrawn_at = CURRENT_TIMESTAMP, withdrawal_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND withdrawn_at IS NULL',
+    ).bind(consumeWithdrawalId, id))
+    if (plan.split) {
+      // Boundary reward: shrink the original to the residual, add a withdrawn
+      // sibling row for the consumed portion (same referral/order lineage).
+      writes.push(
+        db.prepare('UPDATE referral_rewards SET reward_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND withdrawn_at IS NULL').bind(plan.split.residualAmount, plan.split.id),
+        db.prepare(`INSERT INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_type, reward_amount, currency, status, available_at, withdrawn_at, withdrawal_id, reason, created_at, updated_at)
+          SELECT ?, ?, referral_id, customer_id, order_id, reward_type, ?, currency, 'AVAILABLE', available_at, CURRENT_TIMESTAMP, ?, '提现拆分', created_at, CURRENT_TIMESTAMP FROM referral_rewards WHERE id = ?`)
+          .bind(`rrw-${nanoid(14)}`, `RRW-SPLIT-${nanoid(10)}`, plan.split.withdrawnAmount, consumeWithdrawalId, plan.split.id),
+      )
     }
-
-    const currentCommissionBalance = Number(user.commission_balance ?? user.commissionBalance ?? 0)
-    if (currentCommissionBalance < normalizedAmount) {
-      await db.prepare('ROLLBACK').run()
-      return { success: false, message: '提现金额不能超过可提现余额' }
-    }
-
-    const pendingRecords = await db.prepare(`
-      SELECT id, amount
-      FROM commission_records
-      WHERE referrer_id = ? AND status = 'pending'
-      ORDER BY created_at ASC
-    `).bind(userId).all() as any
-
-    const pendingTotal = (pendingRecords.results || []).reduce((sum: number, record: any) => sum + Number(record.amount || 0), 0)
-    if (pendingTotal < normalizedAmount) {
-      await db.prepare('ROLLBACK').run()
-      return { success: false, message: '暂无足够的待结算佣金可提取' }
-    }
-
-    let remainingAmount = normalizedAmount
-    for (const record of pendingRecords.results || []) {
-      if (remainingAmount <= 0) break
-      const recordAmount = Number(record.amount || 0)
-      if (recordAmount <= 0) continue
-
-      await db.prepare(`
-        UPDATE commission_records
-        SET status = 'withdrawn', settled_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND status = 'pending'
-      `).bind(record.id).run()
-      remainingAmount -= recordAmount
-    }
-
-    await db.prepare(`
-      UPDATE users
-      SET commission_balance = commission_balance - ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(normalizedAmount, userId).run()
 
     if (withdrawMethod === 'balance') {
-      await db.prepare(`
-        UPDATE users
-        SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(normalizedAmount, userId).run()
-      await db.prepare('COMMIT').run()
+      writes.push(db.prepare('UPDATE users SET balance = ROUND(balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalizedAmount, userId))
+      await db.batch(writes)
       return { success: true, message: '提现成功！金额已划入您的账户余额' }
     }
 
-    const withdrawalId = `w-${nanoid(8)}`
     const withdrawalColumns = await getTableColumns(c, 'commission_withdrawals')
-    const hasAccountNameColumn = withdrawalColumns.includes('account_name') || withdrawalColumns.includes('accountName')
-    const hasAccountNumberColumn = withdrawalColumns.includes('account_number') || withdrawalColumns.includes('accountNumber')
+    const accountNumberColumn = withdrawalColumns.includes('account_number') ? 'account_number' : withdrawalColumns.includes('accountNumber') ? 'accountNumber' : null
+    const accountNameColumn = withdrawalColumns.includes('account_name') ? 'account_name' : withdrawalColumns.includes('accountName') ? 'accountName' : null
     const bsbColumn = withdrawalColumns.includes('bsb') ? 'bsb' : null
-    const accountNumberColumn = hasAccountNumberColumn ? (withdrawalColumns.includes('account_number') ? 'account_number' : 'accountNumber') : null
-    const accountNameColumn = hasAccountNameColumn ? (withdrawalColumns.includes('account_name') ? 'account_name' : 'accountName') : null
 
     const insertColumns = ['id', 'user_id', 'amount']
     const insertValues: any[] = [withdrawalId, userId, normalizedAmount]
-
-    if (bsbColumn) {
-      insertColumns.push(bsbColumn)
-      insertValues.push(bankDetails?.bsb ?? null)
-    }
-
-    if (accountNumberColumn) {
-      insertColumns.push(accountNumberColumn)
-      insertValues.push(bankDetails?.accountNumber ?? null)
-    }
-
-    if (accountNameColumn) {
-      insertColumns.push(accountNameColumn)
-      insertValues.push(bankDetails?.accountName ?? null)
-    }
-
-    insertColumns.push('status')
-    insertValues.push('pending')
+    if (bsbColumn) { insertColumns.push(bsbColumn); insertValues.push(bankDetails?.bsb ?? null) }
+    if (accountNumberColumn) { insertColumns.push(accountNumberColumn); insertValues.push(bankDetails?.accountNumber ?? null) }
+    if (accountNameColumn) { insertColumns.push(accountNameColumn); insertValues.push(bankDetails?.accountName ?? null) }
+    insertColumns.push('status'); insertValues.push('pending')
 
     const placeholders = insertColumns.map(() => '?').join(', ')
-    const insertSql = `INSERT INTO commission_withdrawals (${insertColumns.join(', ')}) VALUES (${placeholders})`
-
-    await db.prepare(insertSql).bind(...insertValues).run()
-    await db.prepare('COMMIT').run()
+    writes.push(db.prepare(`INSERT INTO commission_withdrawals (${insertColumns.join(', ')}) VALUES (${placeholders})`).bind(...insertValues))
+    await db.batch(writes)
     return { success: true, message: '提现申请已提交，预计2个工作日处理' }
   } catch (error) {
-    await db.prepare('ROLLBACK').run()
-    console.error('Withdrawal failed:', error)
+    // Reservation went through but the rest failed — put the commission back.
+    await db.prepare('UPDATE users SET commission_balance = ROUND(commission_balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalizedAmount, userId).run().catch(() => {})
+    console.error('Withdrawal failed after commission was reserved (refunded):', error)
     return { success: false, message: '提现失败，请稍后重试' }
   }
 }
@@ -2644,7 +3335,21 @@ export const CONTRACT_VARIABLE_GROUPS = [
   ['系统', ['created_by', 'approved_by', 'notes', 'qr_code', 'contract_url', 'invoice_number', 'invoice_url']],
 ] as const
 
-export function renderContractVariables(content: string, contract: Contract, order?: any, device?: any, customer?: any, extra: Record<string, unknown> = {}, includeInternal = false): string {
+// 证件号码在任何非本人视图里默认脱敏；只有 MANAGER/ADMIN 主动“显示完整证件”
+// （经 sensitive_data_access_logs + 审计）或客户查看本人合同时才展示完整值。
+// 完善.md §18 — 普通 STAFF 不得查看完整证件号码。
+export const SENSITIVE_CONTRACT_FIELDS = new Set(['customer_id_number'])
+
+export async function logSensitiveDataAccess(
+  c: Context,
+  input: { actorId: string; targetUserId: string; field: string; purpose: string },
+): Promise<void> {
+  await getDB(c).prepare(
+    'INSERT INTO sensitive_data_access_logs (id, actor_id, target_user_id, field_name, purpose) VALUES (?, ?, ?, ?, ?)',
+  ).bind(`sda-${nanoid(14)}`, input.actorId, input.targetUserId, input.field, String(input.purpose || '').slice(0, 200)).run()
+}
+
+export function renderContractVariables(content: string, contract: Contract, order?: any, device?: any, customer?: any, extra: Record<string, unknown> = {}, includeInternal = false, revealSensitive = false): string {
   const rentOnly = Math.max(0, Number(order?.totalAmount ?? order?.total_amount ?? 0) - Number(order?.depositAmount ?? order?.deposit_amount ?? 0))
   const stored = typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : (contract.contract_data || {})
   const creatorName = String(extra.created_by || stored.created_by || '').trim()
@@ -2729,9 +3434,10 @@ export function renderContractVariables(content: string, contract: Contract, ord
   const filled = Object.entries(values).reduce((result, [name, value]) => {
     const signature = name === 'esign_signature' || name === 'company_signature'
     const raw = String(value ?? '')
+    const forceMaskSensitive = SENSITIVE_CONTRACT_FIELDS.has(name) && !revealSensitive
     const safe = signature && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(raw)
       ? `<img src="${raw}" alt="电子签名" style="max-width:280px;max-height:100px;object-fit:contain">`
-      : escapeContractValue(!includeInternal ? maskContractValue(name, value) : value)
+      : escapeContractValue(forceMaskSensitive || !includeInternal ? maskContractValue(name, value) : value)
     return result.replace(new RegExp(`\\$\\{${name}\\}|\\{${name}\\}`, 'g'), safe)
   }, String(content || ''))
   return renderFlexibleContent(filled)
@@ -3321,7 +4027,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙',
-    '/admin/devices/reports': 'chart', '/admin/referrals': 'gift'
+    '/admin/devices/reports': 'chart', '/admin/reports': 'chart', '/admin/data-retention': '⧗', '/admin/backup': '⤓', '/admin/monitoring': 'activity', '/admin/agents': '♟', '/admin/referrals': 'gift'
   }
 
   const navIconSvg = (kind: string) => {
@@ -3414,8 +4120,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
-            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/agents', '代理计划'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略'], ['/admin/backup', '备份与恢复']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">

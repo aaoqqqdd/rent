@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractById, getOrderById, getUserById, getDeviceById, formatCurrency, renderContractVariables, getContractVariableData } from '../../site';
+import { buildLayout, getContractById, getOrderById, getUserById, getDeviceById, formatCurrency, renderContractVariables, getContractVariableData, logSensitiveDataAccess, createAuditLog } from '../../site';
 import { Context } from 'hono';
 
 export async function renderAdminContractDetail(c: Context, user: any, contractId: string) {
@@ -27,12 +27,19 @@ export async function renderAdminContractDetail(c: Context, user: any, contractI
   const customer = order ? await getUserById(c, order.userId) : null;
   const device = order ? await getDeviceById(c, order.deviceId) : null
   const creator = contract.createdBy || contract.created_by ? await getUserById(c, contract.createdBy || contract.created_by || '') : null
-  const renderedContract = renderContractVariables(contract.signed_content || contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
+  // 证件号码默认脱敏；?reveal=id 时对本次查看记录敏感数据访问日志 + 审计。
+  const revealSensitive = c.req.query('reveal') === 'id'
+  if (revealSensitive && customer) {
+    await logSensitiveDataAccess(c, { actorId: user.id, targetUserId: customer.id, field: 'customer_id_number', purpose: `查看合同 ${contract.contractNumber}` })
+    await createAuditLog(c, { actor: user, action: 'SENSITIVE_DATA_VIEWED', targetType: 'USER', targetId: customer.id, after: { field: 'customer_id_number', contract: contract.contractNumber } })
+  }
+  const renderedContract = renderContractVariables(contract.signed_content || contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true, revealSensitive)
+  const revealToggle = customer ? `<a class="button button-secondary" href="/admin/contracts/${encodeURIComponent(contract.id)}${revealSensitive ? '' : '?reveal=id'}">${revealSensitive ? '隐藏完整证件号' : '显示完整证件号（记录审计）'}</a>` : ''
 
   const body = `
     <div class="panel contract-viewer">
       <div class="contract-archive-bar"><div><span class="contract-kicker">RENTAL AGREEMENT / ARCHIVE</span><h1>租赁合同</h1><p class="contract-number">${contract.contractNumber}</p></div><span class="contract-status">${contract.status}</span></div>
-      <div class="contract-toolbar"><div class="contract-toolbar__meta"><span>签署日期</span><strong>${contract.signedAt ?? '未签署'}</strong></div><div class="contract-toolbar__actions"><button class="button button-secondary" type="button" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button><a class="button button-secondary" href="/admin/contracts">返回</a></div></div>
+      <div class="contract-toolbar"><div class="contract-toolbar__meta"><span>签署日期</span><strong>${contract.signedAt ?? '未签署'}</strong></div><div class="contract-toolbar__actions"><button class="button button-secondary" type="button" onclick="window.print()">打印 / 下载 PDF</button><button class="button button-secondary" onclick="document.querySelector('.a4-document')?.classList.toggle('document-zoomed')">缩放</button>${revealToggle}<a class="button button-secondary" href="/admin/contracts">返回</a></div></div>
 
       <div class="contract-header">
         <h3>合同编号: ${contract.contractNumber}</h3>

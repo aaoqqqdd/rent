@@ -278,7 +278,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
-                <span><strong>信用卡支付（Stripe）</strong><small>支付 ${formatCurrency(stripeTotal)}，包含 ${formatCurrency(stripeFee)}（2.5%）手续费。Stripe 安全处理付款，网站不保存卡号、有效期或安全码。</small></span>
+                <span><strong>信用卡支付（Stripe）</strong><small>支付 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，包含 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（2.5%）手续费。Stripe 安全处理付款，网站不保存卡号、有效期或安全码。</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -291,21 +291,21 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<label class="payment-option"><input type="radio" name="paymentMethod" value="wechat" required /><span><strong>微信支付（人民币）</strong><small class="rmb-summary">选择后获取实时汇率</small></span></label>` : ''}
               ${systemSettings.paymentMethods.balancePayment && canUseBalance ? `
               <label class="payment-option">
-                <input type="radio" name="paymentMethod" value="balance" required ${Number(paymentUser?.balance || 0) >= order.totalAmount ? '' : 'disabled'} />
-                <span><strong>账户余额支付</strong><small>当前余额 ${formatCurrency(paymentUser?.balance || 0)} ${Number(paymentUser?.balance || 0) >= order.totalAmount ? '' : '（余额不足）'}</small></span>
+                <input type="radio" name="paymentMethod" value="balance" id="balance-payment-radio" data-account-balance="${Number(paymentUser?.balance || 0)}" required ${Number(paymentUser?.balance || 0) >= order.totalAmount ? '' : 'disabled'} />
+                <span><strong>账户余额支付</strong><small>当前余额 ${formatCurrency(paymentUser?.balance || 0)} <span data-balance-insufficient ${Number(paymentUser?.balance || 0) >= order.totalAmount ? 'hidden' : ''}>（余额不足）</span></small></span>
               </label>
               ` : ''}
             </div>
-            ${systemSettings.paymentMethods.bankTransfer ? `<aside id="bank-transfer-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>银行转账资料</strong><span class="mono">AUD</span></div><dl><div><dt>银行</dt><dd>${escapeAttribute(systemSettings.bankDetails.bankName || '—')}</dd></div><div><dt>账户名</dt><dd>${escapeAttribute(systemSettings.bankDetails.accountName)}</dd></div><div><dt>BSB</dt><dd>${escapeAttribute(systemSettings.bankDetails.bsb)}</dd></div><div><dt>账号</dt><dd>${escapeAttribute(systemSettings.bankDetails.account)}</dd></div><div><dt>转账金额</dt><dd>${formatCurrency(order.totalAmount)}</dd></div></dl><div class="grid grid-2"><div class="form-group"><label class="form-label" for="transferReference">银行 Reference</label><input class="form-control bank-proof-input" id="transferReference" name="transferReference" maxlength="100" placeholder="银行交易 Reference"><span class="field-error" data-payment-error="transferReference"></span></div><div class="form-group"><label class="form-label" for="transferProofUrl">付款截图链接</label><input class="form-control bank-proof-input" id="transferProofUrl" name="transferProofUrl" type="url" placeholder="https://.../payment-proof.jpg"><span class="field-error" data-payment-error="transferProofUrl"></span></div></div><div class="form-group"><label class="form-label" for="transferNote">转账备注（选填）</label><textarea class="form-control" id="transferNote" name="transferNote" maxlength="500"></textarea><small class="form-text">请先把截图上传到可公开访问的 HTTPS 图床，再粘贴图片链接；提交后由管理员审核。</small></div></aside>` : ''}
+            ${systemSettings.paymentMethods.bankTransfer ? `<aside id="bank-transfer-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>银行转账资料</strong><span class="mono">AUD</span></div><dl><div><dt>银行</dt><dd>${escapeAttribute(systemSettings.bankDetails.bankName || '—')}</dd></div><div><dt>账户名</dt><dd>${escapeAttribute(systemSettings.bankDetails.accountName)}</dd></div><div><dt>BSB</dt><dd>${escapeAttribute(systemSettings.bankDetails.bsb)}</dd></div><div><dt>账号</dt><dd>${escapeAttribute(systemSettings.bankDetails.account)}</dd></div><div><dt>转账金额</dt><dd data-price="orderTotal">${formatCurrency(order.totalAmount)}</dd></div></dl><div class="grid grid-2"><div class="form-group"><label class="form-label" for="transferReference">银行 Reference</label><input class="form-control bank-proof-input" id="transferReference" name="transferReference" maxlength="100" placeholder="银行交易 Reference"><span class="field-error" data-payment-error="transferReference"></span></div><div class="form-group"><label class="form-label" for="transferProofUrl">付款截图链接</label><input class="form-control bank-proof-input" id="transferProofUrl" name="transferProofUrl" type="url" placeholder="https://.../payment-proof.jpg"><span class="field-error" data-payment-error="transferProofUrl"></span></div></div><div class="form-group"><label class="form-label" for="transferNote">转账备注（选填）</label><textarea class="form-control" id="transferNote" name="transferNote" maxlength="500"></textarea><small class="form-text">请先把截图上传到可公开访问的 HTTPS 图床，再粘贴图片链接；提交后由管理员审核。</small></div></aside>` : ''}
             ${((systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl) || (systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl)) ? `<aside id="rmb-payment-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>人民币付款</strong><span class="mono">CNY</span></div><p id="rmb-payment-summary">选择支付宝或微信后获取实时汇率。</p><div class="grid grid-2">${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<div><strong>支付宝收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.alipayQrUrl)}" alt="支付宝收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<div><strong>微信收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.wechatQrUrl)}" alt="微信收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}</div><div class="grid grid-2"><div class="form-group"><label class="form-label">付款 Reference</label><input class="form-control bank-proof-input" name="transferReference" maxlength="100" placeholder="支付宝/微信交易单号"></div><div class="form-group"><label class="form-label">付款凭证图片链接</label><input class="form-control bank-proof-input" name="transferProofUrl" type="url" placeholder="https://..."></div></div><div class="form-group"><label class="form-label">备注（选填）</label><textarea class="form-control" name="transferNote" maxlength="500"></textarea></div></aside>` : ''}
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">2.5%</span></div>
               <p>选择 Stripe 信用卡支付时，将在租金和押金合计金额上加收由支付提供商收取的手续费。付款由 Stripe 安全处理，本网站不保存任何信息。</p>
               <dl>
-                <div><dt>订单本金（含押金）</dt><dd>${formatCurrency(order.totalAmount)}</dd></div>
-                <div><dt>Stripe 支付手续费</dt><dd>${formatCurrency(stripeFee)}</dd></div>
-                <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd>${formatCurrency(stripeTotal)}</dd></div>
+                <div><dt>订单本金（含押金）</dt><dd data-price="orderTotal">${formatCurrency(order.totalAmount)}</dd></div>
+                <div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div>
+                <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div>
               </dl>
               <p class="payment-fee-notice__warning">仅处理押金退款时，会同时退回实际退还押金对应的 2.5% 手续费；取消订单及其他退款不退手续费。</p>
             </aside>
@@ -343,12 +343,48 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const couponInput = document.getElementById('couponCode');
               const couponPreview = document.getElementById('coupon-preview');
               const totalPreview = document.getElementById('coupon-total-preview');
+              const originalTotalHtml = totalPreview ? totalPreview.innerHTML : '';
+              const ORIGINAL_TOTAL = ${Number(order.totalAmount)};
+              let currentTotal = ORIGINAL_TOTAL;
+              const money = value => 'AUD$' + Number(value).toFixed(2);
+              const balanceRadio = document.getElementById('balance-payment-radio');
+              const balanceShort = document.querySelector('[data-balance-insufficient]');
+              const applyTotal = total => {
+                currentTotal = Number(total);
+                const fee = Math.round(currentTotal * 100 * 0.025) / 100;
+                const stripeTotalNow = currentTotal + fee;
+                document.querySelectorAll('[data-price="orderTotal"]').forEach(el => { el.textContent = money(currentTotal); });
+                document.querySelectorAll('[data-price="stripeFee"]').forEach(el => { el.textContent = money(fee); });
+                document.querySelectorAll('[data-price="stripeTotal"]').forEach(el => { el.textContent = money(stripeTotalNow); });
+                if (balanceRadio) {
+                  const funds = Number(balanceRadio.dataset.accountBalance || 0);
+                  const enough = funds >= currentTotal;
+                  balanceRadio.disabled = !enough;
+                  if (!enough && balanceRadio.checked) balanceRadio.checked = false;
+                  if (balanceShort) balanceShort.hidden = enough;
+                }
+                update();
+              };
               let couponTimer;
               const previewCoupon = () => {
                 clearTimeout(couponTimer);
                 const code = couponInput?.value.trim() || '';
-                if (!code) { if (couponPreview) couponPreview.textContent = ''; return; }
-                couponTimer = setTimeout(() => fetch('/api/contract-sign/coupon-preview?${tokenOrNumber === contract.contractNumber ? `number=${encodeURIComponent(tokenOrNumber)}` : `token=${encodeURIComponent(tokenOrNumber)}`}&code=' + encodeURIComponent(code)).then(response => response.json()).then(data => { if (couponPreview) { couponPreview.textContent = data.message || ''; couponPreview.style.color = data.ok ? '#16794f' : '#b42318'; } if (data.ok && totalPreview) totalPreview.innerHTML = '<strong>优惠后应付总额: AUD$' + Number(data.total).toFixed(2) + '</strong>（已优惠 AUD$' + Number(data.discount).toFixed(2) + '）'; }).catch(() => {}), 250);
+                if (!code) {
+                  if (couponPreview) couponPreview.textContent = '';
+                  if (totalPreview) totalPreview.innerHTML = originalTotalHtml;
+                  applyTotal(ORIGINAL_TOTAL);
+                  return;
+                }
+                couponTimer = setTimeout(() => fetch('/api/contract-sign/coupon-preview?${tokenOrNumber === contract.contractNumber ? `number=${encodeURIComponent(tokenOrNumber)}` : `token=${encodeURIComponent(tokenOrNumber)}`}&code=' + encodeURIComponent(code)).then(response => response.json()).then(data => {
+                  if (couponPreview) { couponPreview.textContent = data.message || ''; couponPreview.style.color = data.ok ? '#16794f' : '#b42318'; }
+                  if (data.ok && data.total != null) {
+                    if (totalPreview) totalPreview.innerHTML = '<strong>优惠后应付总额: AUD$' + Number(data.total).toFixed(2) + '</strong>（已优惠 AUD$' + Number(data.discount).toFixed(2) + '）';
+                    applyTotal(Number(data.total));
+                  } else {
+                    if (totalPreview) totalPreview.innerHTML = originalTotalHtml;
+                    applyTotal(ORIGINAL_TOTAL);
+                  }
+                }).catch(() => {}), 250);
               };
               couponInput?.addEventListener('input', previewCoupon);
               const bankProofInputs = Array.from(document.querySelectorAll('.bank-proof-input'));
@@ -365,7 +401,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 bankProofInputs.forEach(input => input.required = input.closest('aside')?.id === 'bank-transfer-notice' ? payment === 'bank_transfer' : ['alipay', 'wechat'].includes(payment));
                 if (['alipay', 'wechat'].includes(payment) && rmbSummary) {
                   rmbSummary.textContent = '正在获取实时汇率…';
-                  fetch('/api/payment/aud-cny?amount=${encodeURIComponent(String(order.totalAmount))}').then(response => response.ok ? response.json() : Promise.reject(new Error('rate'))).then(data => { rmbSummary.innerHTML = '请使用对应收款码支付 <strong>CNY ' + Number(data.cnyAmount).toFixed(2) + '</strong>；1 AUD = ' + Number(data.rate).toFixed(6) + ' CNY，金额按两位小数上舍入。'; }).catch(() => { rmbSummary.textContent = '暂时无法获取实时汇率，请稍后重试。'; });
+                  fetch('/api/payment/aud-cny?amount=' + encodeURIComponent(String(currentTotal))).then(response => response.ok ? response.json() : Promise.reject(new Error('rate'))).then(data => { rmbSummary.innerHTML = '请使用对应收款码支付 <strong>CNY ' + Number(data.cnyAmount).toFixed(2) + '</strong>；1 AUD = ' + Number(data.rate).toFixed(6) + ' CNY，金额按两位小数上舍入。'; }).catch(() => { rmbSummary.textContent = '暂时无法获取实时汇率，请稍后重试。'; });
                 }
               };
               form.addEventListener('change', update);

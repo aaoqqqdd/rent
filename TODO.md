@@ -71,9 +71,18 @@ P0 — 核心运营与财务安全
 
 P1 — 上线前必须完成
 
+进度（2026-09-07）：#2 身份验证/敏感资料脱敏 ✅、#3 远程命令状态机 ✅、#4 设备维护生命周期 ✅、#5 订单修改历史 ✅、#6 混合付款/退款分配 ✅、#7 Webhook 幂等 ✅。仅 #1 邮件事件幂等待做（用户暂缓）。迁移 0103–0106（0104 顺带修 0073/0074 遗留的 device_command_results 悬空外键；0106 为 0018 遗留的 users→users_old 加同步触发器，与 0060 对 devices 的做法一致）。测试 tests/orderChanges·deviceCommandStateMachine·deviceLifecycle·refundAllocation·core。
+
+进度（2026-09-07，补充）：把 #5 / #6 的可见性下沉到员工与客户端（原计划外，仅前端只读展示，无新迁移 / 无新业务逻辑）。
+* 员工订单详情 `src/pages/staff/orderDetail.ts`：新增“订单修改历史”只读表（`order_change_history` + `diffOrderSnapshots`）与“付款与退款对账”只读面板（`reconcileOrderPayments`，异常提示员工通知管理员）。订单关键字段修改入口仍仅管理员。
+* 客户订单详情 `src/pages/customer/orderDetail.ts`：新增“订单变更记录”（客户友好措辞，隐去操作人与设备内部 ID）与“付款与退款明细”（按付款来源 / 退款来源列出金额，不展示对账异常代码）。对应 P6 #25 的“查看付款记录 / 查看收据 / 查看押金状态”。
+* 合同视图脱敏（#2）此前已下沉到 `src/pages/staff/contractView.ts`、`src/pages/public/contractView.ts`。
+
+推荐奖励账本整合（2026-09-07，计划外，用户指出）：迁移 0108。历史上"佣金"用 `commission_records`，推荐流程改版后只写 `referral_rewards` + `users.commission_balance`，但 `/customer/referral` 页面和 `createWithdrawalRequest` 的提现资格校验仍只读 `commission_records`（已无写入方）——结果客户推荐页归零、新流程赚的佣金完全无法提现。本次以 `referral_rewards` 为唯一赚取账本：新增 `withdrawn_at` / `withdrawal_id` 列 + 回填历史 `commission_records` 后 `DROP TABLE commission_records`；`createWithdrawalRequest` 改为按 `referral_rewards`（AVAILABLE 且未被划走）FIFO 消耗、跨越提现额的那笔奖励拆分（`planWithdrawalConsumption`，`tests/referralWithdrawal.test.ts`），并把失效的 `BEGIN IMMEDIATE` 事务换成"守卫式扣减 + batch + 失败补偿"；`/admin/withdrawals/:id/status` 驳回时把预留佣金退回 `commission_balance` 并释放奖励（原来驳回不退款，是个资金 bug），完成/驳回都写审计；客户推荐页与访客清理守卫改读 `referral_rewards`。`commission_withdrawals`（打款队列）保留不变。invariant：`commission_balance` 恒等于未划走的 AVAILABLE 奖励合计，全流程本地验证通过。
+
 1. 邮件事件幂等
 
-当前状态：数据库结构完成，业务逻辑未完成。
+当前状态：数据库结构完成，业务逻辑未完成（用户暂缓，未实施）。
 
 * 所有业务邮件通过统一 email_events 服务发送。
 * 每个邮件事件生成唯一 idempotency_key。
@@ -98,7 +107,7 @@ P1 — 上线前必须完成
 
 2. 身份验证与敏感资料保护
 
-当前状态：字段完成，业务逻辑未完成。
+当前状态：已完成。Verification 部分原已实现（`/admin/users/:id/identity` + `/identity-status`：五状态 NOT_REQUIRED/PENDING/VERIFIED/REJECTED/EXPIRED、验证方式、操作员工 verified_by、拒绝原因、verified_at，状态变更写 `IDENTITY_STATUS_UPDATED` 审计）。本次补齐 Sensitive Data：`SENSITIVE_CONTRACT_FIELDS`（customer_id_number）在 `renderContractVariables` 里对所有内部视图默认脱敏（新增 `revealSensitive` 参数）——普通 STAFF 的合同视图不再显示完整证件号；仅 ADMIN 可通过 `?reveal=id` 查看完整值，每次查看写 `sensitive_data_access_logs` + `SENSITIVE_DATA_VIEWED` 审计（helper `logSensitiveDataAccess`）；客户查看本人合同仍显示完整本人证件号。订单 CSV 导出本就不含证件字段。测试见 `tests/core.test.ts`（脱敏/揭示）。数据保留周期属 P3 #18。
 
 Verification
 
@@ -130,7 +139,7 @@ Sensitive Data
 
 3. 远程设备命令完整状态机
 
-当前状态：约 50%。
+当前状态：已完成（迁移 0104：`idempotency_key` 唯一键 + 修复 0074 遗留的 `device_command_results` 悬空外键）。`canTransitionDeviceCommand` / `DEVICE_COMMAND_TERMINAL_STATES` / `isHighRiskDeviceCommand` 状态机；`/api/device-agent/commands/:id/{ack,start}` 与 `/command-results` 对重复上报返回 `{ok:true,duplicate:true}` 而非 409，终态命令不再重复触发副作用；`/admin/devices/:id/commands` 用幂等键折叠重复下发；新增 `/admin/devices/:id/commands/:cmdId/cancel`（MANAGER+，QUEUED→CANCELLED，写审计）；控制台展示状态时间线 + 取消按钮。测试 `tests/deviceCommandStateMachine.test.ts`。TTL 过期、二次确认、审计日志沿用既有实现。
 
 实现：
 
@@ -176,7 +185,7 @@ QUEUED → CANCELLED
 
 4. 设备维护生命周期
 
-当前状态：约 40%。
+当前状态：已完成（迁移 0105：维护记录增加 replacement_parts / data_wipe_method / repair_notes / failure_reason）。`canTransitionDeviceLifecycle` + `DEVICE_LIFECYCLE_FLOW`（RETURNED→INSPECTION→MAINTENANCE→READY，DAMAGED/MAINTENANCE→RETIRED）；设备控制台新增“维护生命周期”面板：新建维护、按阶段推进、归还前十项验证清单、编辑维护详情（成本/服务商/技师/部件/数据清除方式/维修说明/发票链接）、退役设备。`/admin/maintenance/:id/{update}` + `/admin/devices/:id/retire`（MANAGER+，写审计，进行中订单禁止退役，退役自动终止未完成维护）。硬性规则：存在未完成维护时设备不能在编辑页被置为可用 / READY，CLIENT_CHECK 需 10/10 项通过才能完成维护并回到 READY。测试 `tests/deviceLifecycle.test.ts`。附带修复迁移 0074 遗留的 `device_command_results` 悬空外键（见迁移 0104）。
 
 归还后的推荐流程：
 
@@ -231,7 +240,7 @@ MAINTENANCE → READY
 
 5. 订单修改历史
 
-当前状态：仅数据库结构。
+当前状态：已完成（迁移 0103；`buildOrderChangePlan` / `orderChangeSnapshot` / `diffOrderSnapshots` + `/admin/orders/:id/changes` 路由 + 订单详情页“订单修改”表单与“订单修改历史”列表 + `tests/orderChanges.test.ts`）。支持调整租期、更换设备、调整价格/押金/折扣、修改取还地点，均写 `order_change_history` 与 Audit Log；换机与改期自动做库存冲突检查并释放/锁定设备。尚未接入：审批流 `approval_id`、缩短租期的按比例退费、把独立的取消/退款路由回写为 `CANCELLATION` 历史。
 
 任何已经创建的订单禁止直接静默修改关键字段。
 
@@ -271,7 +280,7 @@ MAINTENANCE → READY
 
 6. 混合付款与退款分配
 
-当前状态：约 50%。
+当前状态：已完成（无新迁移，复用 payment_allocations / refund_allocations + 触发器 0093/0100）。新增统一分配引擎 `buildRefundAllocation(sources, amount, 'proportional'|'priority')`：按各来源“剩余可退”比例或按顺序（原支付方式优先，§29）分摊，强制单来源上限与订单总额上限，分币误差由靠前来源逐分吸收；`allocateProportionalRefund` 改为其薄封装。新增对账：纯函数 `evaluatePaymentReconciliation`（检测 ALLOCATION_MISMATCH / OVER_REFUND_SOURCE / OVER_REFUND_ORDER / ORPHAN_REFUND_ALLOCATION / UNALLOCATED_REFUND）+ D1 包装 `reconcileOrderPayments`；订单详情页新增只读“付款与退款对账”面板，展示各付款来源 / 拆分 / 退款单并高亮异常。单来源退款上限本就由触发器 `refund_allocations_cannot_exceed_payment` 在库层强制。测试 `tests/refundAllocation.test.ts`。注：系统当前每单仅产生单一 payments 行，本项是把“多来源结算 + 退款分摊 + 账目守恒”能力与检测补齐。
 
 支持：
 
@@ -305,6 +314,8 @@ Stripe $300 + Balance $200
 ⸻
 
 7. Webhook 幂等
+
+当前状态：已完成（迁移 0104：通用 `webhook_events` 表，`provider + event_id` 唯一，含 payload_hash / status(RECEIVED|PROCESSED|FAILED) / failure_reason / attempts / received_at / processed_at）。`claimWebhookEvent` / `markWebhookProcessed` / `markWebhookFailed` helper。Stripe webhook 改用该表做去重，处理失败时标记 FAILED 并返回 5xx（原来吞成 200 导致 Stripe 不再重投、事件静默丢失），配合幂等业务语句可安全重试；`stripe_webhook_events` 保留但改为 `INSERT OR IGNORE`。设备回调幂等见 P1 #3。邮件回调待 P1 #1（用户暂缓）。
 
 这一项建议单独增加，不要只依赖邮件幂等。
 
@@ -350,6 +361,18 @@ Ledger 完成不等于财务系统完成。
 ⸻
 
 P2 — 风控、争议与客户生命周期
+
+进度（2026-09-07）：按用户要求，把「设计文档/完善.md §1 的 P2（§21–§30，后续增强）」整体做完（本 TODO 自己的 P2 #9–#13 编号与之不同；§27 Referral 风控 / §28 Coupon 并发由并行会话处理，迁移 0108 / 0111_coupon_scope_and_concurrency）。本轮改动全部新增文件 / 追加式 helper，尽量不与并行会话冲突。整体：`npm test` 105 通过、`tsc --noEmit` 0 error、本地 D1 迁移 0107 / 0109–0113 全通过。
+
+* §21 支付争议 / Chargeback（= TODO #9）✅：迁移 0107 给 payment_disputes 加 device_id / risk_flag_id 并回填历史设备。site.ts 纯函数状态机 canTransitionPaymentDispute / isPaymentDisputeOpen / paymentsBlockedByDispute / mapStripeDisputeStatus（DISPUTE_OPENED→UNDER_REVIEW→WON|LOST|CLOSED，终态锁定）。Stripe webhook 现处理 charge.dispute.created / updated / closed：created 关联设备、closed 败诉自动写 financial_impact、并自动升起 HIGH 级 CHARGEBACK 风险标记（回写 risk_flag_id）。退款侧统一 helper hasOpenPaymentDispute 覆盖全部入口（押金退款、提前归还退款、取消全额退款、银行转账补款）。后台 /admin/finance/payment-disputes 放宽到 MANAGER+，改用状态机校验流转。测试 tests/paymentDisputes.test.ts。
+* §22 风险标记与黑名单（= TODO #10）✅：CRUD / 8 类型 / MANAGER+ / 审计此前已具备。本轮 site.ts 新增 isRiskFlagCurrentlyActive / findBlockingRiskFlag + ORDER_BLOCKING_RISK_FLAG_TYPES（PAYMENT_RISK / DEVICE_NOT_RETURNED / CHARGEBACK / FRAUD_SUSPECTED）——自助下单拦截从「任意标记」改为「任意 HIGH 级 或 硬拦截类型」，并全面过滤已过期标记（下单校验、风险页有效列表、员工 / 管理员客户页风险提示，均按严重程度排序）。风险页展示「拦截下单」徽标与到期状态。测试 tests/riskFlags.test.ts。
+* §23 报表与运营分析（§40）✅：新增 /admin/reports「运营分析报表」（ADMIN），覆盖 §40 全部 12 项指标（租金收入 / 退款 / 净收入 / 应收未收 / 押金在持·已退·没收 / 逾期租赁 / 车队利用率 / 损坏·维护·优惠码·推荐奖励成本 / 支付方式占比），金额全部从 payments / payment_refunds / financial_ledger_entries / orders 明细聚合。site.ts 纯函数 deviceUtilisationRate / paymentMethodBreakdown。测试 tests/operationsReport.test.ts。
+* §24 合同验证页（§36，= TODO #13）✅：/verify 此前已实现（六字段零 PII）。本轮加 IP 限流（contract-verify 30/10min）、常时比较 timingSafeEqualStr、无参数时的手动核验表单 renderContractVerifyForm、客户合同视图展示可对外分享的验证链接；迁移 0109 为历史已签署合同回填 64 位十六进制验证令牌。测试 tests/contractVerification.test.ts。
+* §25 数据保留策略（§37 / P3 #18）✅：迁移 0110 建 data_retention_policies（9 类，保留天数 + 依据 + 到期动作 RETAIN/ARCHIVE/DELETE/ANONYMISE + 启用位）并 seed。/admin/data-retention（ADMIN）可编辑策略 + 只读「已过期条数」预览（合同 / 财务 / 审计禁止设为 DELETE），改动写 DATA_RETENTION_POLICY_UPDATED 审计。site.ts 纯函数 retentionCutoffDate / isPastRetention / retentionSweepActionable。实际清理任务留待 §30 / P4。测试 tests/dataRetention.test.ts。
+* §26 备份与恢复（§39 / P4 #19、#20）✅：迁移 0112 建 backup_policy（单行 RPO/RTO + 最近恢复演练）/ backup_runs / restore_tests。/admin/backup（ADMIN）：下载 /admin/backup/export.json 离线快照（合同 / 付款 / 退款 / Ledger / 余额流水 / 审计 / 发票 + FNV-1a 校验和，写 backup_runs + BACKUP_EXPORTED 审计）、编辑 RPO/RTO 策略、记录恢复演练（写 RESTORE_TEST_RECORDED 审计）。site.ts 纯函数 backupHealth / restoreTestOverdue / fnv1aHex。测试 tests/backupRestore.test.ts。
+* §27 Referral 风控（§41）／§28 Coupon 并发和预留（§42）：由并行会话负责（迁移 0108 referral 账本整合、0111_coupon_scope_and_concurrency + src/actions/coupons.ts / src/pages/customer/referral.ts / tests/referralWithdrawal.test.ts）。本会话未改动这两块以避免冲突。
+* §29 Agent Program 预留（§49 Phase 4）✅：迁移 0113 建 agents / agent_attributions / feature_flags（agent_program 默认关闭），仅预留、不接入下单结算。/admin/agents（ADMIN）只读展示并显式提示「未启用」。site.ts 纯函数 agentCommission（含单单上限）。测试 tests/agentProgram.test.ts。
+* §30 异常自动化与监控（§47 / §48 / P8 #32、#33）✅：runDataConsistencyChecks 增补 §47 剩余 5 项校验（RETURNED 无归还记录 / REFUNDED 无退款流水 / 发票无付款 / 设备 RENTED 无有效订单已有、AVAILABLE 却有活跃订单）。新增 /admin/monitoring（ADMIN）系统健康监控：API 错误率 / 付款·邮件失败率 / 设备离线率 / 远程命令·定时任务失败率 / 异常积压，按 OK/WARN/CRITICAL 分级。site.ts 纯函数 rateHealth / worstHealthLevel + collectMonitoringMetrics / runMonitoringSweep（CRITICAL 自动写 data_consistency_issues MONITORING_ALERT），并挂到 scheduled() cron 的 run_monitoring_sweep 步。测试 tests/monitoring.test.ts。
 
 9. 支付争议 / Chargeback
 

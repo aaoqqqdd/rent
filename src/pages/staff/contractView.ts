@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractByOrderId, getOrderById, getUserById, getDeviceById, isContractFinalized, renderContractVariables, getContractVariableData } from '../../site'
+import { buildLayout, getContractByOrderId, getOrderById, getUserById, getDeviceById, isContractFinalized, renderContractVariables, getContractVariableData, logSensitiveDataAccess, createAuditLog } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffContractView(c: Context, user: any, orderId: string) {
@@ -26,7 +26,13 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
 
   const customer = await getUserById(c, order.userId);
   const device = await getDeviceById(c, order.deviceId)
-  const renderedContract = renderContractVariables(contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true)
+  // 普通 STAFF 永远只看到脱敏证件号；仅 ADMIN 可 ?reveal=id 查看完整值（记录审计）。
+  const revealSensitive = user.role === 'ADMIN' && c.req.query('reveal') === 'id'
+  if (revealSensitive && customer) {
+    await logSensitiveDataAccess(c, { actorId: user.id, targetUserId: customer.id, field: 'customer_id_number', purpose: `查看合同 ${contract.contractNumber || contract.id}` })
+    await createAuditLog(c, { actor: user, action: 'SENSITIVE_DATA_VIEWED', targetType: 'USER', targetId: customer.id, after: { field: 'customer_id_number', contract: contract.contractNumber } })
+  }
+  const renderedContract = renderContractVariables(contract.content, contract, order, device, customer, await getContractVariableData(c, contract, order), true, revealSensitive)
 
   // 客户信息脱敏处理
   const maskedCustomerName = customer ? `${customer.name.charAt(0)}**` : '未知';

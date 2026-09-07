@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, formatCurrency, validateHostedImageUrls, isContractFinalized } from '../../site';
+import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, formatCurrency, validateHostedImageUrls, isContractFinalized, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 
@@ -18,14 +18,22 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user);
   }
 
-  const [customer, device, contract, completedRefund, depositRefundSummary, transferProof, statusHistory, depositSettlement] = await Promise.all([
+  const [customer, device, contract, completedRefund, depositRefundSummary, transferProof, statusHistory, depositSettlement, changeHistory, swapDevices] = await Promise.all([
     getUserById(c, order.userId), getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id),
     c.env.RENT.prepare("SELECT type, status, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
     c.env.RENT.prepare("SELECT COALESCE(SUM(refund_amount), 0) AS refunded_amount FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded'").bind(order.id).first(),
     c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first(),
     c.env.RENT.prepare('SELECT old_status, new_status, trigger_type, triggered_by, reason, created_at FROM rental_status_history WHERE rental_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all(),
-    c.env.RENT.prepare('SELECT * FROM deposit_settlements WHERE order_id = ? ORDER BY requested_at DESC LIMIT 1').bind(order.id).first()
+    c.env.RENT.prepare('SELECT * FROM deposit_settlements WHERE order_id = ? ORDER BY requested_at DESC LIMIT 1').bind(order.id).first(),
+    c.env.RENT.prepare('SELECT change_type, before_json, after_json, reason, changed_by, created_at FROM order_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all(),
+    c.env.RENT.prepare("SELECT id, name, status FROM devices WHERE id != ? AND status NOT IN ('retired') ORDER BY name LIMIT 200").bind(order.deviceId).all()
   ]) as any[];
+  const [reconciliation, paymentSources, refundRows] = await Promise.all([
+    reconcileOrderPayments(c, order.id),
+    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+  ]);
+  const canModifyOrder = !['completed', 'cancelled'].includes(String(order.status));
   const depositAmount = Number(order.depositAmount || order.deposit_amount || 0)
   const refundedDepositAmount = Number(depositRefundSummary?.refunded_amount || 0)
   const remainingDepositRefund = Math.max(0, Number((depositAmount - refundedDepositAmount).toFixed(2)))
@@ -72,6 +80,20 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order">查看合同</a>` : ''}
     </div>
     ${statusHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>租赁状态历史</h3><span class="section-note">最近 ${statusHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>状态变化</th><th>触发方式</th><th>原因</th></tr></thead><tbody>${statusHistory.results.map((item: any) => `<tr><td class="mono">${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.old_status || '—')} → <strong>${escapeHtml(item.new_status)}</strong></td><td>${escapeHtml(item.trigger_type)}${item.triggered_by ? ` · ${escapeHtml(item.triggered_by)}` : ''}</td><td>${escapeHtml(item.reason || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
+    ${changeHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>订单修改历史</h3><span class="section-note">最近 ${changeHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>类型</th><th>变更内容</th><th>原因</th><th>操作人</th></tr></thead><tbody>${changeHistory.results.map((item: any) => {
+      let before: any = {}; let after: any = {};
+      try { before = JSON.parse(item.before_json || '{}') } catch { }
+      try { after = JSON.parse(item.after_json || '{}') } catch { }
+      const diffs = diffOrderSnapshots(before, after);
+      const detail = diffs.length ? diffs.map(d => `<div>${escapeHtml(d.label)}：<span class="mono">${escapeHtml(String(d.before ?? '—'))}</span> → <strong class="mono">${escapeHtml(String(d.after ?? '—'))}</strong></div>`).join('') : '—';
+      return `<tr><td class="mono">${escapeHtml(item.created_at)}</td><td>${escapeHtml(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${escapeHtml(item.reason || '—')}</td><td class="mono">${escapeHtml(item.changed_by || '—')}</td></tr>`;
+    }).join('')}</tbody></table></div></section>` : ''}
+    ${(paymentSources.length || refundRows.length) ? `<section class="panel" style="margin: 0 0 24px;">
+      <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}</span></div>
+      ${reconciliation.ok ? '<div class="alert" style="background:#ecfdf5;color:#065f46">账目一致：分配合计与实付/退款相符，无超退。</div>' : `<div class="alert" style="background:#fef2f2;color:#991b1b"><strong>发现 ${reconciliation.issues.length} 处账目异常：</strong><ul style="margin:6px 0 0;padding-left:18px">${reconciliation.issues.map((i: any) => `<li>[${escapeHtml(i.code)}] ${escapeHtml(i.detail)}</li>`).join('')}</ul></div>`}
+      <div class="table-wrapper"><table><thead><tr><th>付款来源</th><th>方式</th><th>金额</th><th>手续费</th><th>状态</th></tr></thead><tbody>${paymentSources.map((p: any) => `<tr><td class="mono">${escapeHtml(p.id)}</td><td>${escapeHtml(p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${escapeHtml(p.status)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-state">无付款记录</td></tr>'}</tbody></table></div>
+      ${refundRows.length ? `<div class="table-wrapper" style="margin-top:12px"><table><thead><tr><th>退款单</th><th>对应付款</th><th>类型</th><th>金额</th><th>方式</th><th>状态</th><th>时间</th></tr></thead><tbody>${refundRows.map((r: any) => `<tr><td class="mono">${escapeHtml(r.id)}</td><td class="mono">${escapeHtml(r.payment_id || '—')}</td><td>${escapeHtml(r.type)}</td><td>${formatCurrency(r.refund_amount)}</td><td>${escapeHtml(r.refund_method || '—')}</td><td>${escapeHtml(r.status)}</td><td class="mono">${escapeHtml(String(r.created_at).slice(0, 16))}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    </section>` : ''}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
@@ -136,6 +158,60 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">⚙️ 订单管理操作</h3>
       </div>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;">
+        ${canModifyOrder ? `<div style="padding:24px;background:linear-gradient(135deg,#eef2ff 0%,#e0e7ff 100%);border-radius:16px">
+          <h4 style="margin:0 0 12px 0;color:#4338ca;display:flex;align-items:center;gap:8px">📝 订单修改</h4>
+          <p class="section-note">调整关键字段会记录到订单修改历史并写入审计日志；换机与改期会自动做库存冲突检查。</p>
+          <form method="POST" action="/admin/orders/${order.id}/changes" class="js-order-change-form" style="display:flex;flex-direction:column;gap:12px">
+            <div>
+              <label class="form-label" for="changeType">修改类型</label>
+              <select class="form-control" id="changeType" name="changeType" required>
+                <option value="">请选择…</option>
+                <option value="EXTENSION">调整租期</option>
+                <option value="DEVICE_SWAP">更换设备</option>
+                <option value="PRICE_ADJUSTMENT">调整价格 / 押金</option>
+                <option value="LOCATION_CHANGE">修改取还地点</option>
+              </select>
+            </div>
+            <div class="order-change-fields" data-for="EXTENSION" hidden>
+              <label class="form-label">起租日期</label>
+              <input class="form-control" type="date" name="startDate" value="${escapeHtml(order.startDate)}">
+              <label class="form-label">归还日期</label>
+              <input class="form-control" type="date" name="endDate" value="${escapeHtml(order.endDate)}">
+            </div>
+            <div class="order-change-fields" data-for="DEVICE_SWAP" hidden>
+              <label class="form-label">替换设备</label>
+              <select class="form-control" name="deviceId">
+                <option value="">请选择设备…</option>
+                ${(swapDevices?.results || []).map((d: any) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name || d.id)}（${escapeHtml(d.status)}）</option>`).join('')}
+              </select>
+            </div>
+            <div class="order-change-fields" data-for="PRICE_ADJUSTMENT" hidden>
+              <label class="form-label">订单总额</label>
+              <input class="form-control" type="number" min="0" step="0.01" name="totalAmount" value="${Number(order.totalAmount || 0)}">
+              <label class="form-label">押金</label>
+              <input class="form-control" type="number" min="0" step="0.01" name="depositAmount" value="${Number(order.depositAmount || 0)}">
+              <label class="form-label">优惠金额</label>
+              <input class="form-control" type="number" min="0" step="0.01" name="discountAmount" value="${Number((order as any).discount_amount || 0)}">
+            </div>
+            <div class="order-change-fields" data-for="LOCATION_CHANGE" hidden>
+              <label class="form-label">配送方式</label>
+              <select class="form-control" name="deliveryMethod">
+                <option value="Pickup" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? '' : 'selected'}>自取 Pickup</option>
+                <option value="Delivery" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? 'selected' : ''}>配送 Delivery</option>
+              </select>
+              <label class="form-label">取货地点</label>
+              <input class="form-control" name="pickupLocation" maxlength="200" value="${escapeHtml(order.pickupLocation || '')}">
+              <label class="form-label">归还地点</label>
+              <input class="form-control" name="returnLocation" maxlength="200" value="${escapeHtml(order.returnLocation || '')}">
+            </div>
+            <div>
+              <label class="form-label" for="orderChangeReason">修改原因（必填）</label>
+              <textarea class="form-control" id="orderChangeReason" name="reason" maxlength="500" rows="2" required placeholder="例如：客户申请延长租期 3 天"></textarea>
+            </div>
+            <button type="submit" class="button button-primary">保存修改</button>
+          </form>
+          <script>(function(){var sel=document.getElementById('changeType');if(!sel)return;var form=sel.closest('form');function sync(){var groups=form.querySelectorAll('.order-change-fields');for(var i=0;i<groups.length;i++){groups[i].hidden=groups[i].getAttribute('data-for')!==sel.value;}}sel.addEventListener('change',sync);sync();})();</script>
+        </div>` : ''}
         ${['active', 'pending_return'].includes(String(order.status)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>设备归还</h4><p>${String(order.status) === 'pending_return' ? '客户已获批提前归还，请完成归还验机。' : order.early_return_requested_at ? '客户已申请提前归还，等待审批。' : '订单租赁中，可申请提前归还并安排验机。'}</p>${String(order.status) === 'active' && order.early_return_requested_at ? `<form method="post" action="/staff/orders/${order.id}/early-return/approve" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-warning" type="submit">批准提前归还</button></form>` : ''}${String(order.status) === 'pending_return' ? `<a class="button button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>` : ''}</div>` : ''}
         ${order.paymentMethod === 'bank_transfer' && String(order.status) !== 'active' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>银行转账审核</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>备注：${escapeHtml(transferProof.note || '-')}</p>${proofImage ? `<a href="${escapeHtml(proofImage)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(proofImage)}" alt="转账凭证" loading="lazy" referrerpolicy="no-referrer" style="max-width:100%;max-height:320px;border-radius:8px"></a>` : '<p class="alert">凭证图片链接缺失或无效</p>'}<p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交转账 Reference。</p>'}</div>` : ''}
         ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}付款审核</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交付款凭证。</p>'}</div>` : ''}

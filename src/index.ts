@@ -38,7 +38,21 @@ import {
   insertOrder,
   updateOrderStatus,
   hasDeviceBookingConflict,
+  orderChangeSnapshot,
+  buildOrderChangePlan,
   canTransitionOrder,
+  canTransitionDeviceCommand,
+  DEVICE_COMMAND_TERMINAL_STATES,
+  isHighRiskDeviceCommand,
+  canTransitionPaymentDispute,
+  PAYMENT_DISPUTE_STATES,
+  RISK_FLAG_TYPES,
+  findBlockingRiskFlag,
+  timingSafeEqualStr,
+  fnv1aHex,
+  collectMonitoringMetrics,
+  canTransitionDeviceLifecycle,
+  MAINTENANCE_CHECK_TYPES,
   validateHostedImageUrls,
   enforceRateLimit,
   sanitizeRichHtml,
@@ -90,7 +104,7 @@ import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
-import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder } from './actions/coupons'
+import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import siteStyles from './styles.css'
 
@@ -317,6 +331,7 @@ app.use('*', async (c, next) => {
       : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
         : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
           : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
+            : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
             : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
@@ -834,16 +849,14 @@ app.post('/admin/users/:id/identity-status', async (c) => {
   return c.redirect(`/admin/users/${target.id}`, 303)
 })
 
-const RISK_FLAG_TYPES = ['PAYMENT_RISK', 'IDENTITY_RISK', 'DEVICE_NOT_RETURNED', 'SERIOUS_DAMAGE', 'CHARGEBACK', 'ABUSE', 'FRAUD_SUSPECTED', 'MANUAL_REVIEW']
-
 app.get('/admin/users/:id/risk', async (c) => {
   const admin = c.get('user')
   if (!admin || !['MANAGER', 'ADMIN'].includes(getAccessLevel(admin))) return c.html(renderForbidden(), 403)
   const target = await getUserById(c, c.req.param('id'))
   if (!target || target.role !== 'CUSTOMER') return c.text('客户不存在', 404)
   const [activeFlags, history] = await Promise.all([
-    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY created_at DESC").bind(target.id).all().then(r => r.results || []),
-    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'RESOLVED' ORDER BY created_at DESC LIMIT 50").bind(target.id).all().then(r => r.results || []),
+    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY created_at DESC").bind(target.id).all().then(r => r.results || []),
+    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND (status = 'RESOLVED' OR (status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP)) ORDER BY created_at DESC LIMIT 50").bind(target.id).all().then(r => r.results || []),
   ])
   return c.html(pages.renderAdminRiskFlags(admin, target, activeFlags as any[], history as any[]))
 })
@@ -859,7 +872,7 @@ app.post('/admin/users/:id/risk', async (c) => {
   const reason = String(form.reason || '').trim().slice(0, 500)
   const evidence = String(form.evidence || '').trim().slice(0, 1000) || null
   const expiresAt = String(form.expiresAt || '').replace('T', ' ') || null
-  if (!RISK_FLAG_TYPES.includes(flagType) || !reason) return c.text('请选择有效的风险类型并填写原因', 400)
+  if (!(RISK_FLAG_TYPES as readonly string[]).includes(flagType) || !reason) return c.text('请选择有效的风险类型并填写原因', 400)
   const flagId = `rf-${nanoid(12)}`
   await c.env.RENT.prepare('INSERT INTO risk_flags (id, customer_id, flag_type, severity, reason, evidence, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     .bind(flagId, target.id, flagType, severity, reason, evidence, admin.id, expiresAt).run()
@@ -1302,8 +1315,8 @@ app.get('/customer/rent/:id', async (c) => {
 app.post('/customer/rent/:id', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
-  const activeRiskFlag = await c.env.RENT.prepare("SELECT id FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) LIMIT 1").bind(user.id).first()
-  if (activeRiskFlag) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
+  const riskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, status, expires_at FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE'").bind(user.id).all()).results as any[]
+  if (findBlockingRiskFlag(riskFlags)) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
   const device = await getDeviceById(c, c.req.param('id'))
   await loadSystemSettingsFromDB(c)
   const rentalRules = getSystemSettings().rentalRules
@@ -1921,12 +1934,13 @@ app.get('/api/contract-sign/coupon-preview', async (c) => {
   const base = Number(order.totalAmount || order.total_amount || 0)
   const rentAmount = Math.max(0, base - deposit - delivery)
   let coupon: any
+  const feeParts = { rentalFee: rentAmount, deliveryFee: delivery }
   try {
-    coupon = await findEligibleCoupon(c, code, device || { id: order.deviceId || order.device_id }, rentAmount)
+    coupon = await findEligibleCoupon(c, code, device || { id: order.deviceId || order.device_id }, feeParts)
   } catch (error: any) {
     return c.json({ ok: false, message: error?.message || '优惠码无效' })
   }
-  const discount = calculateCouponDiscount(coupon, rentAmount)
+  const discount = calculateCouponDiscount(coupon, feeParts)
   return c.json({ ok: true, discount, total: Number((base - discount).toFixed(2)), message: `已优惠 AUD$${discount.toFixed(2)}` })
 })
 
@@ -2038,9 +2052,11 @@ app.get('/health', async (c) => {
 app.get('/verify', async (c) => {
   const number = String(c.req.query('number') || '').trim()
   const token = String(c.req.query('token') || '').trim()
-  if (!number || !token) return c.html(pages.renderContractVerifyResult(null), 400)
+  if (!number && !token) return c.html(pages.renderContractVerifyForm())
+  if (!number || !token) return c.html(pages.renderContractVerifyForm(number), 400)
   const contract = await getContractByContractNumber(c, number)
-  if (!contract || !(contract as any).verification_token || (contract as any).verification_token !== token) {
+  const expected = contract ? String((contract as any).verification_token || '') : ''
+  if (!contract || !expected || !timingSafeEqualStr(expected, token)) {
     return c.html(pages.renderContractVerifyResult(null), 404)
   }
   const order = await getOrderById(c, contract.rentalId)
@@ -2111,10 +2127,11 @@ app.post('/webhooks/stripe', async (c) => {
   try {
     return await handleStripeWebhook(c)
   } catch (error: any) {
-    // Stripe retries non-2xx events. Keep the endpoint healthy when a
-    // post-processing/database error occurs; the event is logged for repair.
+    // The event is recorded as FAILED in webhook_events. Return 5xx so Stripe
+    // redelivers it; the handler is idempotent, so a later retry completes it
+    // instead of the failure being silently swallowed.
     console.error('Stripe webhook processing failed:', error?.message || error)
-    return c.json({ received: true, accepted: true }, 200)
+    return c.json({ received: false, error: 'processing_failed' }, 500)
   }
 })
 
@@ -2654,11 +2671,23 @@ app.post('/admin/withdrawals/:id/status', async (c) => {
     return c.redirect('/admin/withdrawals')
   }
 
-  await c.env.RENT.prepare(`
-    UPDATE commission_withdrawals
-    SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).bind(status, user.id, withdrawalId).run();
+  const withdrawal = await c.env.RENT.prepare('SELECT id, user_id, amount, status FROM commission_withdrawals WHERE id = ?').bind(withdrawalId).first() as any
+  if (!withdrawal) return c.redirect('/admin/withdrawals')
+  // Already finalised — don't re-refund or re-complete.
+  if (['completed', 'rejected'].includes(String(withdrawal.status))) return c.redirect('/admin/withdrawals')
+
+  if (status === 'rejected') {
+    // 未打款而驳回：把预留的佣金退回 commission_balance，并释放被划走的奖励。
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE commission_withdrawals SET status = 'rejected', processed_at = CURRENT_TIMESTAMP, processed_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending', 'approved')").bind(user.id, withdrawalId),
+      c.env.RENT.prepare('UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(Number(withdrawal.amount || 0), withdrawal.user_id),
+      c.env.RENT.prepare("UPDATE referral_rewards SET withdrawn_at = NULL, withdrawal_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE withdrawal_id = ?").bind(withdrawalId),
+    ])
+    await createAuditLog(c, { actor: user, action: 'WITHDRAWAL_REJECTED', targetType: 'COMMISSION_WITHDRAWAL', targetId: withdrawalId, before: { status: withdrawal.status }, after: { status: 'rejected', refunded: Number(withdrawal.amount || 0), userId: withdrawal.user_id } })
+  } else {
+    await c.env.RENT.prepare("UPDATE commission_withdrawals SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(status, user.id, withdrawalId).run()
+    if (status === 'completed') await createAuditLog(c, { actor: user, action: 'WITHDRAWAL_COMPLETED', targetType: 'COMMISSION_WITHDRAWAL', targetId: withdrawalId, before: { status: withdrawal.status }, after: { status: 'completed', amount: Number(withdrawal.amount || 0), userId: withdrawal.user_id } })
+  }
 
   return c.redirect('/admin/withdrawals')
 })
@@ -2809,30 +2838,57 @@ app.post('/admin/orders/:id/changes', async (c) => {
   const type = String(form.changeType || '')
   const reason = String(form.reason || '').trim().slice(0, 500)
   if (!reason) return c.text('订单修改必须填写原因', 400)
-  const before = { deviceId: order.deviceId, startDate: order.startDate, endDate: order.endDate, totalAmount: order.totalAmount, depositAmount: order.depositAmount }
-  let after: any = { ...before }
-  if (type === 'EXTENSION') {
-    const endDate = String(form.endDate || '')
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate) || endDate <= order.startDate) return c.text('新的归还日期无效', 400)
-    if (await hasDeviceBookingConflict(c, order.deviceId, order.startDate, endDate, order.id)) return c.text('延期与后续预约冲突', 409)
-    after.endDate = endDate
-  } else if (type === 'DEVICE_SWAP') {
-    const deviceId = String(form.deviceId || '')
-    if (!deviceId || deviceId === order.deviceId) return c.text('请选择不同的替换设备', 400)
-    if (await hasDeviceBookingConflict(c, deviceId, order.startDate, order.endDate, order.id)) return c.text('替换设备在该租期不可用', 409)
-    const device = await getDeviceById(c, deviceId)
+
+  const before = orderChangeSnapshot(order)
+  const plan = buildOrderChangePlan(type, before, {
+    startDate: form.startDate != null ? String(form.startDate) : undefined,
+    endDate: form.endDate != null ? String(form.endDate) : undefined,
+    deviceId: form.deviceId != null ? String(form.deviceId) : undefined,
+    totalAmount: form.totalAmount != null ? String(form.totalAmount) : undefined,
+    depositAmount: form.depositAmount != null ? String(form.depositAmount) : undefined,
+    discountAmount: form.discountAmount != null ? String(form.discountAmount) : undefined,
+    pickupLocation: form.pickupLocation != null ? String(form.pickupLocation) : undefined,
+    returnLocation: form.returnLocation != null ? String(form.returnLocation) : undefined,
+    deliveryMethod: form.deliveryMethod != null ? String(form.deliveryMethod) : undefined,
+  })
+  if ('error' in plan) return c.text(plan.error, 400)
+
+  if (plan.deviceAvailabilityCheck) {
+    const device = await getDeviceById(c, plan.deviceAvailabilityCheck)
     if (!device || ['maintenance', 'retired'].includes(String(device.status))) return c.text('替换设备不可用', 409)
-    after.deviceId = deviceId
-  } else if (type === 'PRICE_ADJUSTMENT') {
-    const totalAmount = Number(form.totalAmount); const depositAmount = Number(form.depositAmount)
-    if (!Number.isFinite(totalAmount) || !Number.isFinite(depositAmount) || totalAmount < depositAmount || depositAmount < 0) return c.text('价格或押金无效', 400)
-    after.totalAmount = Number(totalAmount.toFixed(2)); after.depositAmount = Number(depositAmount.toFixed(2))
-  } else return c.text('不支持的订单修改类型', 400)
+  }
+  if (plan.bookingCheck && await hasDeviceBookingConflict(c, plan.bookingCheck.deviceId, plan.bookingCheck.startDate, plan.bookingCheck.endDate, order.id)) {
+    return c.text('目标设备在该租期存在预约冲突', 409)
+  }
+
+  const after = { ...before, ...plan.patch }
   await c.env.RENT.batch([
-    c.env.RENT.prepare('UPDATE orders SET deviceId = ?, endDate = ?, totalAmount = ?, depositAmount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(after.deviceId, after.endDate, after.totalAmount, after.depositAmount, order.id),
+    c.env.RENT.prepare('UPDATE orders SET deviceId = ?, startDate = ?, endDate = ?, rentalPeriod = ?, totalAmount = ?, depositAmount = ?, discount_amount = ?, pickupLocation = ?, returnLocation = ?, deliveryMethod = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(after.deviceId, after.startDate, after.endDate, after.rentalPeriod, after.totalAmount, after.depositAmount, after.discountAmount, after.pickupLocation || null, after.returnLocation || null, after.deliveryMethod, order.id),
     c.env.RENT.prepare('INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`och-${nanoid(12)}`, order.id, type, JSON.stringify(before), JSON.stringify(after), reason, admin.id),
   ])
-  if (type === 'DEVICE_SWAP') { await releaseDeviceIfUnbooked(c, order.deviceId); await recordDeviceLifecycle(c, after.deviceId, 'RESERVED', { orderId: order.id, reason: '订单换机', changedBy: admin.id }) }
+  if (type === 'DEVICE_SWAP') { await releaseDeviceIfUnbooked(c, before.deviceId); await recordDeviceLifecycle(c, after.deviceId, 'RESERVED', { orderId: order.id, reason: '订单换机', changedBy: admin.id }) }
+
+  // 设计文档/优惠码 §37：改租期 / 换机 / 改价后，若可打折基数跌破优惠码最低消费，
+  // 该优惠码不再成立——释放名额、移除折扣、把折扣额加回订单总价，并留痕。
+  if (['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT'].includes(type) && (order as any).coupon_id && Number(after.discountAmount || 0) > 0) {
+    const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ?').bind((order as any).coupon_id).first() as any
+    if (coupon && coupon.minimum_order_amount) {
+      const dailyRate = type === 'DEVICE_SWAP'
+        ? Number((await getDeviceById(c, after.deviceId) as any)?.pricePerDay || (order as any).dailyRate || 0)
+        : Number((order as any).dailyRate || 0)
+      const newRentalFee = Number((Number(after.rentalPeriod || order.rentalPeriod || 0) * dailyRate).toFixed(2))
+      const base = couponDiscountableBase(coupon, { rentalFee: newRentalFee, deliveryFee: Number((order as any).deliveryFee || 0) })
+      if (base < Number(coupon.minimum_order_amount)) {
+        const droppedDiscount = Number(after.discountAmount || 0)
+        await releaseCouponForOrder(c, order.id)
+        await c.env.RENT.prepare('UPDATE orders SET discount_amount = 0, coupon_code = NULL, totalAmount = totalAmount + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(droppedDiscount, order.id).run()
+        await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'COUPON_REVALIDATED', ?, ?, ?, ?)")
+          .bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ couponCode: (order as any).coupon_code, discountAmount: droppedDiscount }), JSON.stringify({ couponCode: null, discountAmount: 0 }), `订单变更后可打折金额 AUD$${base.toFixed(2)} 低于优惠码最低消费 AUD$${Number(coupon.minimum_order_amount).toFixed(2)}，已移除优惠码`, admin.id).run()
+        await createAuditLog(c, { actor: admin, action: 'COUPON_REVALIDATED', targetType: 'ORDER', targetId: order.id, before: { couponCode: (order as any).coupon_code, discountAmount: droppedDiscount }, after: { couponCode: null, discountAmount: 0 }, reason: '订单变更后不再满足优惠码条件' })
+      }
+    }
+  }
   await createAuditLog(c, { actor: admin, action: 'ORDER_CHANGED', targetType: 'ORDER', targetId: order.id, before, after, reason })
   return c.redirect(`/admin/orders/${order.id}`, 303)
 })
@@ -3100,25 +3156,26 @@ app.get('/admin/finance', async (c) => {
 
 app.get('/admin/finance/payment-disputes', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const disputes = await c.env.RENT.prepare(`SELECT d.*, o.orderNo AS order_no, u.name AS customer_name, u.email AS customer_email FROM payment_disputes d LEFT JOIN orders o ON o.id = d.order_id LEFT JOIN users u ON u.id = d.customer_id ORDER BY CASE WHEN d.status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') THEN 0 ELSE 1 END, d.evidence_due_by ASC, d.updated_at DESC`).all()
+  if (!user || !['MANAGER', 'ADMIN'].includes(getAccessLevel(user))) return c.redirect('/login')
+  const disputes = await c.env.RENT.prepare(`SELECT d.*, o.orderNo AS order_no, u.name AS customer_name, u.email AS customer_email, dev.name AS device_name, dev.serialNumber AS device_serial, rf.flag_type AS risk_flag_type, rf.status AS risk_flag_status FROM payment_disputes d LEFT JOIN orders o ON o.id = d.order_id LEFT JOIN users u ON u.id = d.customer_id LEFT JOIN devices dev ON dev.id = d.device_id LEFT JOIN risk_flags rf ON rf.id = d.risk_flag_id ORDER BY CASE WHEN d.status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') THEN 0 ELSE 1 END, d.evidence_due_by ASC, d.updated_at DESC`).all()
   return c.html(pages.renderAdminPaymentDisputes(user, disputes.results || []))
 })
 
 app.post('/admin/finance/payment-disputes/:id', async (c) => {
   const admin = c.get('user')
-  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  if (!admin || !['MANAGER', 'ADMIN'].includes(getAccessLevel(admin))) return c.html(renderForbidden(), 403)
   const form = await c.req.parseBody()
   const status = String(form.status || '')
   const evidenceStatus = sanitizePlainText(String(form.evidenceStatus || ''), 200).trim() || null
   const result = sanitizePlainText(String(form.result || ''), 1000).trim() || null
   const impactText = String(form.financialImpact || '').trim()
   const financialImpact = impactText === '' ? null : Number(impactText)
-  if (!['DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'].includes(status)) return c.text('争议状态无效', 400)
+  if (!PAYMENT_DISPUTE_STATES.includes(status as any)) return c.text('争议状态无效', 400)
   if (['DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'].includes(status) && !result) return c.text('结案时必须填写处理结论', 400)
   if (financialImpact !== null && (!Number.isFinite(financialImpact) || financialImpact < 0)) return c.text('财务影响必须是非负金额', 400)
   const dispute = await c.env.RENT.prepare('SELECT * FROM payment_disputes WHERE id = ?').bind(c.req.param('id')).first() as any
   if (!dispute) return c.text('支付争议不存在', 404)
+  if (!canTransitionPaymentDispute(String(dispute.status), status)) return c.text(`不允许从 ${dispute.status} 变更为 ${status}`, 409)
   const updated = await c.env.RENT.prepare("UPDATE payment_disputes SET status = ?, evidence_status = ?, result = ?, financial_impact = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW')").bind(status, evidenceStatus, result, financialImpact, dispute.id).run()
   if (!updated.meta?.changes) return c.text('支付争议已结案或已被其他管理员更新', 409)
   await createAuditLog(c, { actor: admin, action: 'PAYMENT_DISPUTE_UPDATED', targetType: 'PAYMENT_DISPUTE', targetId: dispute.id, before: { status: dispute.status }, after: { status, evidenceStatus, financialImpact }, reason: result || evidenceStatus || '更新支付争议' })
@@ -3156,6 +3213,206 @@ app.get('/admin/revenue-stats', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   return c.html(pages.renderAdminRevenueStats(user, await pages.getRevenueData(c)))
+})
+
+// 运营分析报表（完善.md §23, §40）——金额一律从 Ledger / Payment / Refund 明细汇总。
+app.get('/admin/reports', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const windowDays = [7, 30, 90, 365].includes(Number(c.req.query('days'))) ? Number(c.req.query('days')) : 30
+  const since = `datetime('now', '-${windowDays} days')`
+  const [rentalRevenue, refundTotal, deposits, outstanding, overdue, fleet, rentedDays, damage, maintenance, coupon, referral, methods] = await Promise.all([
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(COALESCE(rental_amount, amount)), 0) AS v FROM payments WHERE status = 'paid' AND paid_at >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(refund_amount), 0) AS v FROM payment_refunds WHERE status = 'succeeded' AND created_at >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT
+        COALESCE(SUM(CASE WHEN deposit_status IN ('HELD','PAID','PARTIALLY_DEDUCTED','REFUND_PENDING') THEN deposit_held_amount ELSE 0 END), 0) AS held,
+        COALESCE(SUM(CASE WHEN deposit_status IN ('REFUNDED','PARTIALLY_REFUNDED') AND deposit_refund_at >= ${since} THEN deposit_refund_amount ELSE 0 END), 0) AS refunded,
+        COALESCE(SUM(CASE WHEN deposit_status = 'FORFEITED' AND deposit_refund_at >= ${since} THEN deposit_deduction_amount ELSE 0 END), 0) AS forfeited
+      FROM orders`).first<{ held: number; refunded: number; forfeited: number }>(),
+    c.env.RENT.prepare("SELECT COALESCE(SUM(totalAmount), 0) AS v FROM orders WHERE status = 'pending_payment'").first<{ v: number }>(),
+    c.env.RENT.prepare("SELECT COUNT(*) AS v FROM orders WHERE rental_status = 'OVERDUE' OR (status IN ('active','extended') AND endDate < date('now'))").first<{ v: number }>(),
+    c.env.RENT.prepare("SELECT COUNT(*) AS v FROM devices WHERE COALESCE(lifecycle_status, status, '') NOT IN ('RETIRED','retired')").first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(rentalPeriod), 0) AS v FROM orders WHERE status IN ('active','extended','completed','overdue','returned','pending_return','paid','pending_pickup') AND createdAt >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(COALESCE(final_cost_cents, estimated_cost_cents)), 0) AS v FROM damage_cases WHERE created_at >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(cost), 0) AS v FROM maintenance_records WHERE COALESCE(completed_at, started_at) >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(discount_amount), 0) AS v FROM coupon_redemptions WHERE status = 'REDEEMED' AND COALESCE(redeemed_at, created_at) >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(reward_amount), 0) AS v FROM referral_rewards WHERE status IN ('APPROVED','AVAILABLE') AND created_at >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT payment_method AS method, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS count FROM payments WHERE status = 'paid' AND paid_at >= ${since} GROUP BY payment_method`).all(),
+  ])
+  return c.html(pages.renderAdminOperationsReport(user, {
+    windowDays,
+    rentalRevenue: Number(rentalRevenue?.v || 0),
+    refundTotal: Number(refundTotal?.v || 0),
+    depositHeld: Number(deposits?.held || 0),
+    depositRefunded: Number(deposits?.refunded || 0),
+    depositForfeited: Number(deposits?.forfeited || 0),
+    outstandingBalance: Number(outstanding?.v || 0),
+    overdueRentals: Number(overdue?.v || 0),
+    fleetSize: Number(fleet?.v || 0),
+    rentedDeviceDays: Number(rentedDays?.v || 0),
+    damageCost: Number(damage?.v || 0) / 100,
+    maintenanceCost: Number(maintenance?.v || 0),
+    couponDiscountCost: Number(coupon?.v || 0),
+    referralRewardCost: Number(referral?.v || 0),
+    paymentMethods: ((methods?.results || []) as any[]).map(r => ({ method: String(r.method || 'unknown'), amount: Number(r.amount || 0), count: Number(r.count || 0) })),
+  }))
+})
+
+// 数据保留策略（完善.md §25, §37 / P3 #18）
+const RETENTION_PREVIEW_SOURCES: Record<string, { table: string; dateCol: string }> = {
+  CONTRACTS: { table: 'contracts', dateCol: 'createdAt' },
+  FINANCIAL_RECORDS: { table: 'financial_ledger_entries', dateCol: 'created_at' },
+  REFERRAL_RECORDS: { table: 'referral_rewards', dateCol: 'created_at' },
+  COUPON_RECORDS: { table: 'coupon_redemptions', dateCol: 'created_at' },
+  AUDIT_LOGS: { table: 'audit_logs', dateCol: 'created_at' },
+}
+
+app.get('/admin/data-retention', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const policies = (await c.env.RENT.prepare('SELECT * FROM data_retention_policies ORDER BY rowid').all()).results as any[]
+  const preview: Record<string, number> = {}
+  for (const p of policies) {
+    const src = RETENTION_PREVIEW_SOURCES[p.category]
+    if (!src) continue
+    try {
+      const row = await c.env.RENT.prepare(`SELECT COUNT(*) AS v FROM ${src.table} WHERE ${src.dateCol} <= datetime('now', ?)`).bind(`-${Math.max(0, Number(p.retention_days) || 0)} days`).first<{ v: number }>()
+      preview[p.category] = Number(row?.v || 0)
+    } catch { /* 该类别暂无对应可预览表 */ }
+  }
+  return c.html(pages.renderAdminDataRetention(user, policies, preview))
+})
+
+app.post('/admin/data-retention/:category', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const category = c.req.param('category')
+  const existing = await c.env.RENT.prepare('SELECT * FROM data_retention_policies WHERE category = ?').bind(category).first() as any
+  if (!existing) return c.text('未知的数据类别', 404)
+  const form = await c.req.parseBody()
+  const retentionDays = Math.round(Number(form.retentionDays))
+  const action = String(form.action || '')
+  const basis = sanitizePlainText(String(form.basis || ''), 200).trim()
+  const notes = sanitizePlainText(String(form.notes || ''), 300).trim() || null
+  const enabled = form.enabled === '1' ? 1 : 0
+  if (!Number.isFinite(retentionDays) || retentionDays < 0 || retentionDays > 36500) return c.text('保留天数无效', 400)
+  if (!['RETAIN', 'ARCHIVE', 'DELETE', 'ANONYMISE'].includes(action)) return c.text('到期动作无效', 400)
+  if (!basis) return c.text('必须填写保留依据', 400)
+  if (action === 'DELETE' && ['CONTRACTS', 'FINANCIAL_RECORDS', 'AUDIT_LOGS'].includes(category)) return c.text('合同 / 财务 / 审计记录不允许设置为删除', 409)
+  await c.env.RENT.prepare('UPDATE data_retention_policies SET retention_days = ?, action = ?, basis = ?, notes = ?, enabled = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE category = ?')
+    .bind(retentionDays, action, basis, notes, enabled, admin.id, category).run()
+  await createAuditLog(c, { actor: admin, action: 'DATA_RETENTION_POLICY_UPDATED', targetType: 'DATA_RETENTION_POLICY', targetId: category, before: { retentionDays: existing.retention_days, action: existing.action, enabled: existing.enabled }, after: { retentionDays, action, enabled }, reason: notes || basis })
+  return c.redirect('/admin/data-retention', 303)
+})
+
+// 备份与恢复（完善.md §26, §39 / P4 #19, #20）
+const BACKUP_EXPORT_TABLES = ['contracts', 'payments', 'payment_refunds', 'financial_ledger_entries', 'balance_transactions', 'audit_logs', 'invoices']
+
+app.get('/admin/backup', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const [policy, runs, tests] = await Promise.all([
+    c.env.RENT.prepare('SELECT * FROM backup_policy WHERE id = 1').first(),
+    c.env.RENT.prepare('SELECT * FROM backup_runs ORDER BY created_at DESC LIMIT 30').all().then(r => r.results || []),
+    c.env.RENT.prepare('SELECT * FROM restore_tests ORDER BY created_at DESC LIMIT 30').all().then(r => r.results || []),
+  ])
+  return c.html(pages.renderAdminBackup(user, policy, runs as any[], tests as any[]))
+})
+
+app.get('/admin/backup/export.json', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const snapshot: Record<string, any> = { generatedAt: new Date().toISOString(), generatedBy: user.id, tables: {} }
+  const rowCounts: Record<string, number> = {}
+  for (const table of BACKUP_EXPORT_TABLES) {
+    try {
+      const rows = (await c.env.RENT.prepare(`SELECT * FROM ${table}`).all()).results || []
+      snapshot.tables[table] = rows
+      rowCounts[table] = rows.length
+    } catch (error: any) {
+      snapshot.tables[table] = { error: String(error?.message || error) }
+    }
+  }
+  const serialised = JSON.stringify(snapshot)
+  const checksum = fnv1aHex(serialised)
+  snapshot.checksum = checksum
+  const body = JSON.stringify(snapshot, null, 2)
+  await c.env.RENT.prepare('INSERT INTO backup_runs (id, scope, status, row_counts_json, checksum, byte_size, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(`bkp-${nanoid(12)}`, `离线 JSON 快照：${BACKUP_EXPORT_TABLES.join(', ')}`, 'SUCCESS', JSON.stringify(rowCounts), checksum, body.length, user.id).run()
+  await createAuditLog(c, { actor: user, action: 'BACKUP_EXPORTED', targetType: 'BACKUP', targetId: checksum, after: { rowCounts, bytes: body.length }, reason: '下载离线 JSON 快照' })
+  return new Response(body, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="rent-backup-${new Date().toISOString().slice(0, 10)}-${checksum}.json"` } })
+})
+
+app.post('/admin/backup/runs', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const counts: Record<string, number> = {}
+  for (const table of BACKUP_EXPORT_TABLES) {
+    try { counts[table] = Number((await c.env.RENT.prepare(`SELECT COUNT(*) AS v FROM ${table}`).first<{ v: number }>())?.v || 0) } catch { /* skip */ }
+  }
+  await c.env.RENT.prepare('INSERT INTO backup_runs (id, scope, status, row_counts_json, created_by) VALUES (?, ?, ?, ?, ?)')
+    .bind(`bkp-${nanoid(12)}`, '手动记录（外部备份已完成）', 'SUCCESS', JSON.stringify(counts), admin.id).run()
+  await createAuditLog(c, { actor: admin, action: 'BACKUP_RUN_RECORDED', targetType: 'BACKUP', targetId: 'manual', after: { rowCounts: counts }, reason: '手动记录一次备份执行' })
+  return c.redirect('/admin/backup', 303)
+})
+
+app.post('/admin/backup/policy', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const rpoMinutes = Math.round(Number(form.rpoMinutes))
+  const rtoMinutes = Math.round(Number(form.rtoMinutes))
+  const scheduleNote = sanitizePlainText(String(form.scheduleNote || ''), 300).trim()
+  const scopeNote = sanitizePlainText(String(form.scopeNote || ''), 300).trim()
+  if (![rpoMinutes, rtoMinutes].every(n => Number.isFinite(n) && n >= 1 && n <= 43200)) return c.text('RPO / RTO 必须是 1–43200 分钟', 400)
+  if (!scheduleNote || !scopeNote) return c.text('备份计划与覆盖范围说明必填', 400)
+  const before = await c.env.RENT.prepare('SELECT rpo_minutes, rto_minutes FROM backup_policy WHERE id = 1').first() as any
+  await c.env.RENT.prepare('UPDATE backup_policy SET rpo_minutes = ?, rto_minutes = ?, schedule_note = ?, scope_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1')
+    .bind(rpoMinutes, rtoMinutes, scheduleNote, scopeNote, admin.id).run()
+  await createAuditLog(c, { actor: admin, action: 'BACKUP_POLICY_UPDATED', targetType: 'BACKUP_POLICY', targetId: '1', before, after: { rpoMinutes, rtoMinutes }, reason: '更新备份策略' })
+  return c.redirect('/admin/backup', 303)
+})
+
+app.post('/admin/backup/restore-tests', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const scope = sanitizePlainText(String(form.scope || ''), 120).trim()
+  const outcome = String(form.outcome || '')
+  const durationText = String(form.durationMinutes || '').trim()
+  const durationMinutes = durationText === '' ? null : Math.round(Number(durationText))
+  const notes = sanitizePlainText(String(form.notes || ''), 500).trim() || null
+  if (!scope) return c.text('必须填写演练范围', 400)
+  if (!['PASS', 'FAIL'].includes(outcome)) return c.text('结果无效', 400)
+  if (durationMinutes !== null && (!Number.isFinite(durationMinutes) || durationMinutes < 0 || durationMinutes > 10080)) return c.text('耗时无效', 400)
+  await c.env.RENT.batch([
+    c.env.RENT.prepare('INSERT INTO restore_tests (id, scope, outcome, duration_minutes, notes, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(`rst-${nanoid(12)}`, scope, outcome, durationMinutes, notes, admin.id),
+    c.env.RENT.prepare("UPDATE backup_policy SET last_restore_test_at = CURRENT_TIMESTAMP, last_restore_test_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1")
+      .bind(`${outcome}${notes ? ` · ${notes}` : ''}`, admin.id),
+  ])
+  await createAuditLog(c, { actor: admin, action: 'RESTORE_TEST_RECORDED', targetType: 'BACKUP', targetId: 'restore-test', after: { scope, outcome, durationMinutes }, reason: notes || `恢复演练 ${outcome}` })
+  return c.redirect('/admin/backup', 303)
+})
+
+// 系统健康监控（完善.md §30, §48 / P8 #32, #33）
+app.get('/admin/monitoring', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const [metrics, jobRuns] = await Promise.all([
+    collectMonitoringMetrics(c),
+    c.env.RENT.prepare('SELECT job_name, status, started_at, completed_at, error_message, result_summary FROM scheduled_job_runs ORDER BY started_at DESC LIMIT 25').all().then(r => r.results || []),
+  ])
+  return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[]))
+})
+
+// 代理计划（完善.md §29，预留未启用）
+app.get('/admin/agents', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const flag = await c.env.RENT.prepare("SELECT enabled FROM feature_flags WHERE key = 'agent_program'").first<{ enabled: number }>()
+  const agents = (await c.env.RENT.prepare('SELECT a.*, u.name AS user_name, u.email AS user_email FROM agents a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.created_at DESC').all()).results || []
+  return c.html(pages.renderAdminAgents(user, Number(flag?.enabled) === 1, agents as any[]))
 })
 
 app.get('/admin/coupons', async (c) => {
@@ -3275,8 +3532,15 @@ app.get('/admin/devices/:id/control', async (c) => {
   await ensureDeviceCommandTables(c.env.RENT)
   const device = await getDeviceById(c, c.req.param('id'))
   if (!device) return c.redirect('/admin/devices')
-  const commands = (await c.env.RENT.prepare(`SELECT dc.created_at, dc.command_type, dc.status, dcr.result_message FROM device_commands dc LEFT JOIN device_command_results dcr ON dcr.command_id = dc.id WHERE dc.device_id = ? ORDER BY dc.created_at DESC LIMIT 20`).bind(device.id).all()).results || []
-  return c.html(pages.renderAdminDeviceControl(user, device, commands as any[]))
+  const commands = (await c.env.RENT.prepare(`SELECT dc.id, dc.created_at, dc.command_type, dc.status, dc.sent_at, dc.acknowledged_at, dc.started_at, dc.completed_at, dc.error_message, dcr.result_message FROM device_commands dc LEFT JOIN device_command_results dcr ON dcr.command_id = dc.id WHERE dc.device_id = ? ORDER BY dc.created_at DESC LIMIT 20`).bind(device.id).all()).results || []
+  const [maintenanceRes, checkRes] = await Promise.all([
+    c.env.RENT.prepare("SELECT id, maintenance_type, status, description, cost, vendor, invoice_url, technician, replacement_parts, repair_notes, data_wipe_method, notes, started_at, completed_at, failure_reason FROM maintenance_records WHERE device_id = ? ORDER BY started_at DESC LIMIT 8").bind(device.id).all(),
+    c.env.RENT.prepare("SELECT mpc.maintenance_id, mpc.check_type, mpc.passed, mpc.details FROM maintenance_preparation_checks mpc JOIN maintenance_records mr ON mr.id = mpc.maintenance_id WHERE mr.device_id = ? ORDER BY mpc.verified_at DESC").bind(device.id).all(),
+  ])
+  const maintenance = (maintenanceRes.results || []) as any[]
+  const checksByRecord: Record<string, any[]> = {}
+  for (const row of (checkRes.results || []) as any[]) (checksByRecord[row.maintenance_id] ||= []).push(row)
+  return c.html(pages.renderAdminDeviceControl(user, device, commands as any[], { maintenance, checksByRecord, checkTypes: [...MAINTENANCE_CHECK_TYPES] }))
 })
 
 app.get('/admin/devices/:id/agent-binding-status', async (c) => {
@@ -3338,15 +3602,23 @@ app.post('/admin/devices/:id/commands', async (c) => {
   const type = String(form.commandType || form.command || form.type || '').trim().toUpperCase()
   const allowed = ['SYNC', 'SHOW_MESSAGE', 'PAUSE_RENTAL', 'RESUME_RENTAL', 'REFRESH_DEVICE_INFO', 'CHECK_UPDATE', 'CREATE_RENTAL_USER', 'UPDATE_RENTAL_USER', 'DELETE_RENTAL_USER', 'LOCK_DEVICE', 'REBOOT', 'DATA_WIPE', 'SYSTEM_RESET', 'REREGISTER_AGENT']
   if (!allowed.includes(type)) return c.text('命令类型无效', 400)
-  const highRisk = new Set(['LOCK_DEVICE', 'REBOOT', 'DATA_WIPE', 'SYSTEM_RESET', 'REREGISTER_AGENT'])
-  if (highRisk.has(type) && String(form.confirmed || '') !== '1') return c.text('高风险命令必须二次确认', 400)
+  const highRisk = isHighRiskDeviceCommand(type)
+  if (highRisk && String(form.confirmed || '') !== '1') return c.text('高风险命令必须二次确认', 400)
   const payload = type === 'SHOW_MESSAGE' ? JSON.stringify({ title: String(form.title || '租赁通知').slice(0, 120), message: String(form.message || '').slice(0, 500) }) : '{}'
   if (type === 'SHOW_MESSAGE' && !JSON.parse(payload).message) return c.text('通知内容不能为空', 400)
+  // Idempotency: an explicit key from the caller, otherwise collapse identical
+  // rapid re-submits (double-click / retried POST) into one queued command by
+  // bucketing to a 10s window. ON CONFLICT DO NOTHING keeps it exactly-once.
+  const explicitKey = String(form.idempotencyKey || '').trim().slice(0, 160)
+  const idempotencyKey = explicitKey || `dc-${c.req.param('id')}-${type}-${payload.slice(0, 80)}-${Math.floor(Date.now() / 10000)}`.slice(0, 200)
   // Commands must remain available while a device is briefly offline. The
   // client will claim and complete them as soon as its next poll succeeds.
   const expiryHours = 24
-  await c.env.RENT.prepare('INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\', ?))').bind(`cmd-${nanoid(12)}`, c.req.param('id'), type, payload, user.id, `+${expiryHours} hours`).run()
-  await createAuditLog(c, { actor: user, action: 'REMOTE_COMMAND_QUEUED', targetType: 'DEVICE', targetId: c.req.param('id'), after: { commandType: type, highRisk: highRisk.has(type) }, reason: highRisk.has(type) ? '已二次确认高风险远程命令' : undefined })
+  const inserted = await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at, idempotency_key) VALUES (?, ?, ?, ?, ?, datetime('now', ?), ?) ON CONFLICT(idempotency_key) DO NOTHING").bind(`cmd-${nanoid(12)}`, c.req.param('id'), type, payload, user.id, `+${expiryHours} hours`, idempotencyKey).run() as any
+  if (!Number(inserted.meta?.changes ?? inserted.changes ?? 0)) {
+    return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/control?success=相同命令已在队列中，未重复下发`)
+  }
+  await createAuditLog(c, { actor: user, action: 'REMOTE_COMMAND_QUEUED', targetType: 'DEVICE', targetId: c.req.param('id'), after: { commandType: type, highRisk }, reason: highRisk ? '已二次确认高风险远程命令' : undefined })
   return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/control?success=命令已发送，设备下次同步时执行`)
 })
 
@@ -3374,12 +3646,73 @@ app.post('/admin/maintenance/:id/advance', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const record = await c.env.RENT.prepare("SELECT * FROM maintenance_records WHERE id = ? AND status NOT IN ('COMPLETED','FAILED')").bind(c.req.param('id')).first() as any
   if (!record) return c.text('维护记录不存在或已结束', 409)
+  // CLIENT_CHECK is the last phase; completing it manually is only allowed once
+  // every one of the ten return-preparation checks has been recorded as passed
+  // (完善.md §16 — "完成维护前禁止进入 READY").
+  if (record.status === 'CLIENT_CHECK') {
+    const passed = await c.env.RENT.prepare('SELECT COUNT(*) AS n FROM maintenance_preparation_checks WHERE maintenance_id = ? AND passed = 1').bind(record.id).first() as any
+    if (Number(passed?.n || 0) < 10) return c.text(`还有 ${10 - Number(passed?.n || 0)} 项设备验证未通过，不能完成维护`, 409)
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE maintenance_records SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'CLIENT_CHECK'").bind(record.id),
+      c.env.RENT.prepare("UPDATE devices SET status = 'available', device_mode = 'normal' WHERE id = ?").bind(record.device_id),
+    ])
+    await recordDeviceLifecycle(c, record.device_id, 'READY', { reason: '维护完成，十项设备验证通过', changedBy: user.id })
+    await createAuditLog(c, { actor: user, action: 'MAINTENANCE_ADVANCED', targetType: 'MAINTENANCE_RECORD', targetId: record.id, before: { status: 'CLIENT_CHECK' }, after: { status: 'COMPLETED' } })
+    return c.redirect(`/admin/devices/${record.device_id}/control`, 303)
+  }
   const next = ({ OPEN: 'IN_PROGRESS', IN_PROGRESS: 'DATA_CLEAN', DATA_CLEAN: 'SYSTEM_RESET', SYSTEM_RESET: 'CLIENT_CHECK' } as Record<string, string>)[record.status]
   if (!next) return c.text('维护状态无效', 409)
-  await c.env.RENT.prepare("UPDATE maintenance_records SET status = ?, completed_at = CASE WHEN ? = 'COMPLETED' THEN CURRENT_TIMESTAMP END WHERE id = ?").bind(next, next, record.id).run()
+  await c.env.RENT.prepare("UPDATE maintenance_records SET status = ? WHERE id = ?").bind(next, record.id).run()
   if (next === 'CLIENT_CHECK') await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CHECK_UPDATE', '{}', ?, datetime('now', '+24 hours'))").bind(`cmd-${nanoid(12)}`, record.device_id, user.id).run()
   await createAuditLog(c, { actor: user, action: 'MAINTENANCE_ADVANCED', targetType: 'MAINTENANCE_RECORD', targetId: record.id, before: { status: record.status }, after: { status: next } })
   return c.redirect(`/admin/devices/${record.device_id}/control`, 303)
+})
+
+app.post('/admin/maintenance/:id/update', async (c) => {
+  const user = c.get('user')
+  if (!user || !['MANAGER', 'ADMIN'].includes(getAccessLevel(user))) return c.html(renderForbidden(), 403)
+  const record = await c.env.RENT.prepare('SELECT * FROM maintenance_records WHERE id = ?').bind(c.req.param('id')).first() as any
+  if (!record) return c.text('维护记录不存在', 404)
+  const form = await c.req.parseBody()
+  const cost = Number(form.cost)
+  if (form.cost !== undefined && form.cost !== '' && (!Number.isFinite(cost) || cost < 0)) return c.text('维修成本必须是非负数字', 400)
+  // Absent or blank field -> null, which COALESCE(?, col) leaves untouched.
+  const text = (key: string, max = 1000): string | null => { const v = form[key]; return v == null ? null : (String(v).trim().slice(0, max) || null) }
+  const invoiceUrl = text('invoiceUrl', 500)
+  if (invoiceUrl) { try { validateHostedImageUrls(invoiceUrl, 1) } catch { return c.text('发票 / 附件链接必须是公开 HTTPS 链接', 400) } }
+  await c.env.RENT.prepare(
+    `UPDATE maintenance_records SET
+       cost = COALESCE(?, cost), vendor = COALESCE(?, vendor), invoice_url = COALESCE(?, invoice_url),
+       technician = COALESCE(?, technician), replacement_parts = COALESCE(?, replacement_parts),
+       repair_notes = COALESCE(?, repair_notes), data_wipe_method = COALESCE(?, data_wipe_method), notes = COALESCE(?, notes)
+     WHERE id = ?`,
+  ).bind(
+    form.cost === undefined || form.cost === '' ? null : Number(cost.toFixed(2)),
+    text('vendor', 200), invoiceUrl, text('technician', 200), text('replacementParts'), text('repairNotes'),
+    text('dataWipeMethod', 200), text('notes'), record.id,
+  ).run()
+  await createAuditLog(c, { actor: user, action: 'MAINTENANCE_UPDATED', targetType: 'MAINTENANCE_RECORD', targetId: record.id, before: { cost: record.cost, vendor: record.vendor }, after: { cost: form.cost ?? record.cost } })
+  return c.redirect(`/admin/devices/${record.device_id}/control`, 303)
+})
+
+app.post('/admin/devices/:id/retire', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || !['MANAGER', 'ADMIN'].includes(getAccessLevel(user))) return c.redirect('/login')
+  const device = await getDeviceById(c, c.req.param('id')) as any
+  if (!device) return c.text('设备不存在', 404)
+  const form = await c.req.parseBody()
+  const reason = String(form.reason || '').trim().slice(0, 500)
+  if (!reason) return c.text('退役设备必须填写原因', 400)
+  const activeRental = await c.env.RENT.prepare("SELECT id FROM orders WHERE deviceId = ? AND status IN ('paid','active','pending_pickup','pending_return','extended','overdue','suspended') LIMIT 1").bind(device.id).first()
+  if (activeRental) return c.text('该设备还有进行中的订单，不能退役', 409)
+  const currentLifecycle = String(device.lifecycle_status || device.lifecycleStatus || 'READY')
+  if (!canTransitionDeviceLifecycle(currentLifecycle, 'RETIRED') && String(form.force || '') !== '1') {
+    return c.text(`当前生命周期为 ${currentLifecycle}，通常应先进入维护 / 损坏处理再退役；如确需强制退役请勾选强制。`, 409)
+  }
+  await c.env.RENT.prepare("UPDATE maintenance_records SET status = 'FAILED', failure_reason = COALESCE(failure_reason, '设备退役'), completed_at = CURRENT_TIMESTAMP WHERE device_id = ? AND status IN ('OPEN','IN_PROGRESS','DATA_CLEAN','SYSTEM_RESET','CLIENT_CHECK')").bind(device.id).run()
+  await recordDeviceLifecycle(c, device.id, 'RETIRED', { reason, changedBy: user.id })
+  await createAuditLog(c, { actor: user, action: 'DEVICE_RETIRED', targetType: 'DEVICE', targetId: device.id, before: { lifecycle: currentLifecycle }, after: { lifecycle: 'RETIRED' }, reason })
+  return c.redirect(`/admin/devices/${encodeURIComponent(device.id)}/control?success=设备已退役`, 303)
 })
 
 app.post('/admin/maintenance/:id/checks', async (c) => {
@@ -3410,6 +3743,11 @@ app.post('/admin/devices/:id/edit', async (c) => {
   if (form.lifecycleStatus && !['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'].includes(form.lifecycleStatus)) return c.text('设备生命周期状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
   if (!['normal', 'return', 'maintenance', 'lost'].includes(form.deviceMode || 'normal')) return c.text('客户设备状态无效', 400)
+  // 完善.md §16：设备还有未完成的维护记录时，不能被标记为可用 / READY。
+  if ((form.status === 'available' || form.lifecycleStatus === 'READY')) {
+    const openMaintenance = await c.env.RENT.prepare("SELECT id FROM maintenance_records WHERE device_id = ? AND status IN ('OPEN','IN_PROGRESS','DATA_CLEAN','SYSTEM_RESET','CLIENT_CHECK') LIMIT 1").bind(c.req.param('id')).first()
+    if (openMaintenance) return c.text('该设备还有未完成的维护记录，完成维护后才能标记为可用', 409)
+  }
   const deviceBefore = await getDeviceById(c, c.req.param('id')) as any
   await updateDevice(c, c.req.param('id'), {
     name: form.name,
@@ -3480,6 +3818,7 @@ function parseCouponFormFields(form: Record<string, any>) {
     (minimumOrderAmount === null || (Number.isFinite(minimumOrderAmount) && minimumOrderAmount >= 0))
   return {
     valid, discountType, discountValue, maxUses, maxUsesPerCustomer, maxDiscountAmount, minimumOrderAmount, deviceId, brand, configKeyword, status,
+    applicableComponents: form.applyDeliveryFee ? 'RENTAL_FEE,DELIVERY_FEE' : 'RENTAL_FEE',
     newCustomerOnly: form.newCustomerOnly ? 1 : 0,
     stackable: form.stackable ? 1 : 0,
     restoreOnCancellation: form.restoreOnCancellation ? 1 : 0,
@@ -3497,8 +3836,8 @@ app.post('/admin/coupons', async (c) => {
   if (!code || !fields.valid) return c.redirect('/admin/coupons?error=' + encodeURIComponent('请检查优惠码、折扣值和使用次数限制'))
   const couponId = `cp-${nanoid(10)}`
   try {
-    await c.env.RENT.prepare('INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword, max_discount_amount, minimum_order_amount, max_uses_per_customer, new_customer_only, stackable, restore_on_cancellation, status, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(couponId, code, fields.discountType, fields.discountValue, fields.maxUses, fields.startsAt, fields.expiresAt, admin.id, fields.deviceId, fields.brand, fields.configKeyword, fields.maxDiscountAmount, fields.minimumOrderAmount, fields.maxUsesPerCustomer, fields.newCustomerOnly, fields.stackable, fields.restoreOnCancellation, fields.status, fields.status === 'ACTIVE' ? 1 : 0).run()
+    await c.env.RENT.prepare('INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword, max_discount_amount, minimum_order_amount, max_uses_per_customer, new_customer_only, stackable, restore_on_cancellation, status, active, applicable_components) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(couponId, code, fields.discountType, fields.discountValue, fields.maxUses, fields.startsAt, fields.expiresAt, admin.id, fields.deviceId, fields.brand, fields.configKeyword, fields.maxDiscountAmount, fields.minimumOrderAmount, fields.maxUsesPerCustomer, fields.newCustomerOnly, fields.stackable, fields.restoreOnCancellation, fields.status, fields.status === 'ACTIVE' ? 1 : 0, fields.applicableComponents).run()
   } catch (error: any) {
     if (String(error?.message || '').toLowerCase().includes('unique')) return c.redirect('/admin/coupons?error=' + encodeURIComponent('优惠码已存在，请换一个代码'))
     throw error
@@ -3527,8 +3866,8 @@ app.post('/admin/coupons/:id', async (c) => {
   if (!locked && !fields.valid) return c.redirect(`/admin/coupons/${encodeURIComponent(coupon.id)}/edit?error=` + encodeURIComponent('请检查折扣值和使用次数限制'))
   const discountType = locked ? coupon.discount_type : fields.discountType
   const discountValue = locked ? coupon.discount_value : fields.discountValue
-  await c.env.RENT.prepare(`UPDATE coupons SET discount_type = ?, discount_value = ?, max_uses = ?, starts_at = ?, expires_at = ?, device_id = ?, brand = ?, config_keyword = ?, max_discount_amount = ?, minimum_order_amount = ?, max_uses_per_customer = ?, new_customer_only = ?, stackable = ?, restore_on_cancellation = ?, status = ?, active = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-    .bind(discountType, discountValue, fields.maxUses, fields.startsAt, fields.expiresAt, fields.deviceId, fields.brand, fields.configKeyword, fields.maxDiscountAmount, fields.minimumOrderAmount, fields.maxUsesPerCustomer, fields.newCustomerOnly, fields.stackable, fields.restoreOnCancellation, fields.status, fields.status === 'ACTIVE' ? 1 : 0, admin.id, coupon.id).run()
+  await c.env.RENT.prepare(`UPDATE coupons SET discount_type = ?, discount_value = ?, max_uses = ?, starts_at = ?, expires_at = ?, device_id = ?, brand = ?, config_keyword = ?, max_discount_amount = ?, minimum_order_amount = ?, max_uses_per_customer = ?, new_customer_only = ?, stackable = ?, restore_on_cancellation = ?, status = ?, active = ?, applicable_components = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .bind(discountType, discountValue, fields.maxUses, fields.startsAt, fields.expiresAt, fields.deviceId, fields.brand, fields.configKeyword, fields.maxDiscountAmount, fields.minimumOrderAmount, fields.maxUsesPerCustomer, fields.newCustomerOnly, fields.stackable, fields.restoreOnCancellation, fields.status, fields.status === 'ACTIVE' ? 1 : 0, fields.applicableComponents, admin.id, coupon.id).run()
   await createAuditLog(c, { actor: admin, action: 'COUPON_UPDATED', targetType: 'COUPON', targetId: coupon.id, before: { discountType: coupon.discount_type, discountValue: coupon.discount_value, status: coupon.status }, after: { discountType, discountValue, status: fields.status } })
   return c.redirect('/admin/coupons?success=' + encodeURIComponent('优惠码已更新'))
 })
@@ -3550,7 +3889,7 @@ app.post('/admin/coupons/:id/toggle', async (c) => {
   const before = await c.env.RENT.prepare('SELECT active, status FROM coupons WHERE id = ?').bind(c.req.param('id')).first() as any
   if (!before) return c.redirect('/admin/coupons?error=' + encodeURIComponent('优惠码不存在'))
   await c.env.RENT.prepare("UPDATE coupons SET active = CASE active WHEN 1 THEN 0 ELSE 1 END, status = CASE active WHEN 1 THEN 'DISABLED' ELSE 'ACTIVE' END, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(c.req.param('id')).run()
-  await createAuditLog(c, { actor: admin, action: 'COUPON_UPDATED', targetType: 'COUPON', targetId: c.req.param('id'), before: { active: Boolean(before.active), status: before.status }, after: { active: !before.active, status: before.active ? 'DISABLED' : 'ACTIVE' } })
+  await createAuditLog(c, { actor: admin, action: before.active ? 'COUPON_DISABLED' : 'COUPON_ENABLED', targetType: 'COUPON', targetId: c.req.param('id'), before: { active: Boolean(before.active), status: before.status }, after: { active: !before.active, status: before.active ? 'DISABLED' : 'ACTIVE' } })
   return c.redirect('/admin/coupons')
 })
 
@@ -3927,20 +4266,38 @@ app.get('/api/device-agent/commands', async (c) => {
   return c.json({ ok: true, commands })
 })
 
-app.post('/api/device-agent/commands/:id/ack', async (c) => {
+// Advance a device command one step. A repeated call from the client (network
+// retry) for a step already taken returns { ok:true, duplicate:true } instead
+// of a 409, so agents can retry safely without special-casing.
+async function advanceDeviceCommand(c: any, targetState: 'ACKNOWLEDGED' | 'RUNNING', timestampColumn: string) {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
-  const result = await c.env.RENT.prepare("UPDATE device_commands SET status = 'ACKNOWLEDGED', acknowledged_at = CURRENT_TIMESTAMP WHERE id = ? AND device_id = ? AND status = 'SENT'").bind(c.req.param('id'), device.id).run() as any
-  if (!result.meta?.changes) return c.json({ ok: false, error: 'Command is not awaiting acknowledgement' }, 409)
+  const id = c.req.param('id')
+  const cmd = await c.env.RENT.prepare('SELECT status FROM device_commands WHERE id = ? AND device_id = ?').bind(id, device.id).first() as any
+  if (!cmd) return c.json({ ok: false, error: 'Command not found' }, 404)
+  const from = String(cmd.status)
+  if (from === targetState || DEVICE_COMMAND_TERMINAL_STATES.has(from) || (targetState === 'ACKNOWLEDGED' && from === 'RUNNING')) {
+    return c.json({ ok: true, duplicate: true })
+  }
+  if (!canTransitionDeviceCommand(from, targetState)) return c.json({ ok: false, error: `Command is not ${targetState === 'ACKNOWLEDGED' ? 'awaiting acknowledgement' : 'runnable'}` }, 409)
+  await c.env.RENT.prepare(`UPDATE device_commands SET status = ?, ${timestampColumn} = COALESCE(${timestampColumn}, CURRENT_TIMESTAMP) WHERE id = ? AND device_id = ? AND status = ?`).bind(targetState, id, device.id, from).run()
   return c.json({ ok: true })
-})
+}
 
-app.post('/api/device-agent/commands/:id/start', async (c) => {
-  const device = await getAgentDevice(c)
-  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
-  const result = await c.env.RENT.prepare("UPDATE device_commands SET status = 'RUNNING', started_at = CURRENT_TIMESTAMP WHERE id = ? AND device_id = ? AND status IN ('SENT', 'ACKNOWLEDGED')").bind(c.req.param('id'), device.id).run() as any
-  if (!result.meta?.changes) return c.json({ ok: false, error: 'Command is not runnable' }, 409)
-  return c.json({ ok: true })
+app.post('/api/device-agent/commands/:id/ack', (c) => advanceDeviceCommand(c, 'ACKNOWLEDGED', 'acknowledged_at'))
+app.post('/api/device-agent/commands/:id/start', (c) => advanceDeviceCommand(c, 'RUNNING', 'started_at'))
+
+app.post('/admin/devices/:id/commands/:cmdId/cancel', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || !['MANAGER', 'ADMIN'].includes(getAccessLevel(user))) return c.redirect('/login')
+  await ensureDeviceCommandTables(c.env.RENT)
+  const cmd = await c.env.RENT.prepare('SELECT device_id, status, command_type FROM device_commands WHERE id = ? AND device_id = ?').bind(c.req.param('cmdId'), c.req.param('id')).first() as any
+  if (!cmd) return c.text('命令不存在', 404)
+  if (!canTransitionDeviceCommand(String(cmd.status), 'CANCELLED')) return c.text('命令已被认领或已结束，无法取消', 409)
+  const result = await c.env.RENT.prepare("UPDATE device_commands SET status = 'CANCELLED', completed_at = CURRENT_TIMESTAMP, error_message = COALESCE(error_message, '管理员取消') WHERE id = ? AND status = 'QUEUED'").bind(c.req.param('cmdId')).run() as any
+  if (!Number(result.meta?.changes ?? result.changes ?? 0)) return c.text('命令已被认领或已结束，无法取消', 409)
+  await createAuditLog(c, { actor: user, action: 'REMOTE_COMMAND_CANCELLED', targetType: 'DEVICE', targetId: String(cmd.device_id), before: { status: cmd.status }, after: { status: 'CANCELLED', commandType: cmd.command_type } })
+  return c.redirect(`/admin/devices/${encodeURIComponent(String(cmd.device_id))}/control?success=命令已取消`, 303)
 })
 
 app.post('/api/device-agent/command-results', async (c) => {
@@ -3951,8 +4308,11 @@ app.post('/api/device-agent/command-results', async (c) => {
   const commandId = String(payload.commandId || '').slice(0, 120)
   const resultCode = String(payload.resultCode || 'FAILED').slice(0, 40)
   if (!commandId || !/^[A-Z0-9_]+$/.test(resultCode)) return c.json({ ok: false, error: 'Invalid command result' }, 400)
-  const command = await c.env.RENT.prepare('SELECT id FROM device_commands WHERE id = ? AND device_id = ?').bind(commandId, device.id).first()
+  const command = await c.env.RENT.prepare('SELECT id, status FROM device_commands WHERE id = ? AND device_id = ?').bind(commandId, device.id).first() as any
   if (!command) return c.json({ ok: false, error: 'Command not found' }, 404)
+  // Already finished (client retried its result POST): acknowledge without
+  // re-running downstream side effects such as maintenance completion.
+  if (DEVICE_COMMAND_TERMINAL_STATES.has(String(command.status))) return c.json({ ok: true, duplicate: true })
   const success = Boolean(payload.success)
   const executedAt = String(payload.executedAt || new Date().toISOString()).slice(0, 40)
   await c.env.RENT.batch([
@@ -3998,7 +4358,7 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runScheduledJob } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob } = await import('./site')
     ctx.waitUntil(
       (async () => {
         // Each step below runs through runScheduledJob so it's isolated: a step
@@ -4061,6 +4421,7 @@ export default {
           return Number(result.meta?.changes || 0)
         })
         await runScheduledJob(c, 'run_data_consistency_checks', () => runDataConsistencyChecks(c))
+        await runScheduledJob(c, 'run_monitoring_sweep', () => runMonitoringSweep(c))
         await runScheduledJob(c, 'release_qualified_referral_rewards', () => releaseQualifiedReferralRewards(c))
       })()
     )
