@@ -566,6 +566,38 @@ export async function createDueDateNotifications(c: Context): Promise<number> {
   return created
 }
 
+// 投递 notifyAgreementUpdate 排入 email_events 队列的协议更新邮件。
+// 由 cron 触发，每次只处理一小批，避免一次调用里对外发起过多子请求；
+// 失败的行会在下一次 tick 自动重试，直到 max_attempts。
+export async function deliverPendingAgreementEmails(c: Context): Promise<number> {
+  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
+  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+  if (!apiKey || !from) return 0
+  const rows = (((await c.env.RENT.prepare(
+    "SELECT id, recipient, subject, text_body, html_body FROM email_events WHERE event_type = 'AGREEMENT_UPDATE' AND status IN ('PENDING', 'FAILED') AND retry_count < max_attempts ORDER BY created_at LIMIT 90"
+  ).all()) as any).results || []) as any[]
+  let sent = 0
+  for (const row of rows) {
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: [row.recipient], subject: row.subject, text: row.text_body, html: row.html_body || undefined }),
+      })
+      const result = await response.json().catch(() => ({})) as any
+      await c.env.RENT.prepare(
+        "UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?"
+      ).bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status).slice(0, 500), response.ok ? 1 : 0, row.id).run()
+      if (response.ok) sent += 1
+    } catch (error: any) {
+      await c.env.RENT.prepare(
+        "UPDATE email_events SET status = 'FAILED', error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP WHERE id = ?"
+      ).bind(String(error?.message || error).slice(0, 500), row.id).run()
+    }
+  }
+  return sent
+}
+
 export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
   await c.env.RENT.prepare('ALTER TABLE payment_proofs ADD COLUMN admin_notified_at TEXT').run().catch(() => undefined)
   await ensureNotificationsTable(c)
@@ -3610,58 +3642,122 @@ export async function issueCreditNote(c: Context, orderId: string, amount: numbe
     .bind(creditNoteNumber, `cn-${refundKey}`).run()
 }
 
+export const DEFAULT_CONTRACT_TEMPLATE_HTML = `<h1>设备租赁合同</h1>
+<p>合同编号：<strong>{contract_number}</strong>　合同版本：{contract_version}　最后更新：{contract_last_updated_date}</p>
+<p>生成时间：{created_time}　签署时间：<strong>{sign_time}</strong>　管辖地：{jurisdiction}</p>
+<p>本设备租赁合同（下称「本合同」）由下列双方签署，构成具有法律约束力的租赁（bailment）合同。承租方以电子方式签署，即表示已阅读、理解并接受本合同全部条款。</p>
+
+<h2>一、双方当事人</h2>
+<table style="width:100%;border-collapse:collapse;margin:12px 0;">
+  <tr style="background:#f3f4f6;"><th style="border:1px solid #e5e7eb;padding:8px;text-align:left;width:22%;">出租方（甲方）</th><td style="border:1px solid #e5e7eb;padding:8px;">{company_name}（ABN {company_abn}）</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">地址</td><td style="border:1px solid #e5e7eb;padding:8px;">{company_address}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">联系方式</td><td style="border:1px solid #e5e7eb;padding:8px;">电话 {company_phone}　邮箱 {company_email}</td></tr>
+  <tr style="background:#f3f4f6;"><th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">承租方（乙方）</th><td style="border:1px solid #e5e7eb;padding:8px;">{customer_name}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">证件</td><td style="border:1px solid #e5e7eb;padding:8px;">{customer_id_type} {customer_id_number}　出生日期 {customer_dob}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">联系方式</td><td style="border:1px solid #e5e7eb;padding:8px;">电话 {customer_phone}　邮箱 {customer_email}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">联系地址</td><td style="border:1px solid #e5e7eb;padding:8px;">{customer_address}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">紧急联系人</td><td style="border:1px solid #e5e7eb;padding:8px;">{emergency_contact}　{emergency_phone}</td></tr>
+</table>
+
+<h2>二、租赁设备</h2>
+<table style="width:100%;border-collapse:collapse;margin:12px 0;">
+  <tr style="background:#f3f4f6;"><th style="border:1px solid #e5e7eb;padding:8px;text-align:left;width:22%;">设备名称</th><td style="border:1px solid #e5e7eb;padding:8px;">{device_name}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">品牌 / 型号</td><td style="border:1px solid #e5e7eb;padding:8px;">{device_brand} / {device_model}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">序列号 / 资产编号</td><td style="border:1px solid #e5e7eb;padding:8px;">{device_sn} / {asset_tag}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">配置</td><td style="border:1px solid #e5e7eb;padding:8px;">{device_cpu}　{device_ram}　{device_storage}　{device_gpu}　{device_os}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">电池健康</td><td style="border:1px solid #e5e7eb;padding:8px;">{battery_health}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">交付状况</td><td style="border:1px solid #e5e7eb;padding:8px;">{device_condition}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">随附配件</td><td style="border:1px solid #e5e7eb;padding:8px;">{device_accessories}</td></tr>
+</table>
+<p>设备在交付时处于可正常使用的状况。承租方应在取件时当场检查并确认上述信息；签署本合同即视为确认设备与描述相符。</p>
+
+<h2>三、租期、交付与归还</h2>
+<ul>
+<li>租期：<strong>{start_date}</strong> 至 <strong>{end_date}</strong>，共 {rental_days} 天。</li>
+<li>交付方式：{delivery_method}（配送费 {currency} {delivery_fee}）　取件地点：{pickup_location}</li>
+<li>归还方式：{return_method}　归还地点：{return_location}　约定归还日：{return_date}</li>
+<li>承租方应在租期届满时，以交付时的状况（正常损耗除外）连同全部配件归还设备。</li>
+</ul>
+
+<h2>四、费用与付款</h2>
+<table style="width:100%;border-collapse:collapse;margin:12px 0;">
+  <tr style="background:#f3f4f6;"><th style="border:1px solid #e5e7eb;padding:8px;text-align:left;width:40%;">项目</th><th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">金额（{currency}）</th></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">日租金</td><td style="border:1px solid #e5e7eb;padding:8px;">{daily_rate}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">租金小计</td><td style="border:1px solid #e5e7eb;padding:8px;">{subtotal}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">优惠（{coupon_code}）</td><td style="border:1px solid #e5e7eb;padding:8px;">-{discount}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">保险（{insurance_selected}）</td><td style="border:1px solid #e5e7eb;padding:8px;">{insurance_fee}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">租金总额（含 GST：{gst_included}，其中 GST {gst_amount}）</td><td style="border:1px solid #e5e7eb;padding:8px;"><strong>{total_rent}</strong></td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">押金（security bond）</td><td style="border:1px solid #e5e7eb;padding:8px;"><strong>{deposit_amount}</strong></td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">已付租金 / 已付押金</td><td style="border:1px solid #e5e7eb;padding:8px;">{rent_paid} / {deposit_paid}</td></tr>
+  <tr><td style="border:1px solid #e5e7eb;padding:8px;">应付余额</td><td style="border:1px solid #e5e7eb;padding:8px;"><strong>{amount_due}</strong></td></tr>
+</table>
+<p>付款方式：{payment_method}　付款日期：{payment_date}　付款参考号：{payment_reference}　税务发票编号：{invoice_number}</p>
+<p>所有价格均以澳元（AUD）标示，并依据《澳大利亚消费者法》（Australian Consumer Law）第 48 条以含商品及服务税（GST）的单一价格显示。甲方依 1999 年《商品及服务税法》开具税务发票。</p>
+
+<h2>五、押金</h2>
+<p>押金用于担保承租方履行本合同，<strong>不是</strong>预付租金，也不作为惩罚性款项。设备归还并完成验机后，甲方将在 <strong>10 个营业日</strong>内退还可退部分。如需从押金中扣款，甲方将提供逐项说明及相应凭证（维修报价、照片或发票），扣款金额以实际、合理的费用为限，例如超出正常损耗的维修或更换费用、缺件、必要清洁费、逾期费。扣款受《澳大利亚消费者法》不公平合同条款制度约束。对扣款有异议的，按第十四条处理。</p>
+
+<h2>六、所有权与使用限制</h2>
+<ul>
+<li>设备所有权始终归甲方所有。本合同为短期租赁，租期不超过 4 个月且承租方不享有购买设备的权利或义务，<strong>不构成</strong>《国家信贷法》（National Credit Code）下的「消费者租赁」或信贷合同。</li>
+<li>承租方不得转租、转借、出售、质押设备，或将设备移出澳大利亚境外。</li>
+<li>设备仅限合法用途；不得拆解、改装，不得移除资产标签或管理软件，不得越权刷写系统。</li>
+<li>承租方应保持操作系统与安全更新为最新，妥善保管登录凭据。</li>
+</ul>
+
+<h2>七、风险、损坏与赔偿</h2>
+<p>自交付时起至设备退还并经甲方确认接收时止，设备的丢失或损坏风险由承租方承担，<strong>正常损耗（fair wear and tear）除外</strong>。因承租方或其允许使用人造成的丢失或超出正常损耗的损坏，承租方应按实际维修费用赔偿；若无法修复，则按扣除折旧后的市场重置价值赔偿，二者取较低者。甲方将提供维修报价或重置价值的证明。承租方可自行投保以覆盖上述风险。</p>
+
+<h2>八、逾期归还</h2>
+<p>未按时归还的，按每日逾期费 {currency} {late_fee_per_day} 计收（作为对逾期占用造成损失的合理预估，而非罚金）。截至目前逾期 {late_days} 天，逾期费合计 {currency} {late_fee}。逾期费不影响甲方依法追偿其他损失或依第十二条取回设备。</p>
+
+<h2>九、设备管理软件</h2>
+<p>设备可能预装甲方的管理软件，用于上报设备状态、硬件信息与租期信息，并在符合<a href="/software-terms">《软件使用协议》</a>所列情形时执行锁定、重启或数据清除等远程操作。相关个人信息处理见<a href="/privacy">《隐私政策》</a>。数据清除将删除设备上的用户数据，承租方应自行提前备份。</p>
+
+<h2>十、消费者保障</h2>
+<p>本合同项下提供的商品与服务附带《澳大利亚消费者法》规定的消费者保障，包括设备须具有<strong>可接受的质量</strong>、与描述相符、适合告知的特定用途，服务须以合理的谨慎与技能提供。这些保障<strong>不能被排除、限制或修改</strong>。就重大失败，承租方有权解除本合同并要求退还相应款项，或就价值减损获得赔偿；就非重大失败，甲方将在合理时间内修理或更换。</p>
+
+<h2>十一、责任限制</h2>
+<p>在法律允许且不影响上述不可排除的消费者保障的前提下，甲方不对承租方的数据丢失、业务中断或其他间接或后果性损失负责；甲方可依法限制的责任，以重新提供服务或支付其合理费用为限，或以本合同项下已付租金总额为限。本合同中的任何内容均不排除或限制依法不能排除的责任。</p>
+
+<h2>十二、违约与取回</h2>
+<p>如承租方未支付到期款项、违反使用限制或存在欺诈，甲方可在发出合理书面通知并给予补救期后终止本合同。甲方仅可通过合法方式取回设备，不得进入住宅或采用胁迫手段。终止不影响已产生的付款义务。</p>
+
+<h2>十三、不可抗力</h2>
+<p>因超出一方合理控制的事件（如自然灾害、战争、罢工、电信或电力中断、政府行为）导致的履约迟延或不能，该方在受影响范围内不承担违约责任，但应尽快通知对方并努力减轻影响。</p>
+
+<h2>十四、适用法律与争议解决</h2>
+<p>本合同受澳大利亚 {jurisdiction} 州法律管辖，双方服从该州法院的非专属管辖。如发生争议，请先通过第一条所列方式联系甲方协商解决；承租方亦可向维多利亚州消费者事务局（Consumer Affairs Victoria）或澳大利亚竞争与消费者委员会（ACCC）寻求协助。</p>
+
+<h2>十五、电子签名</h2>
+<p>双方同意以电子方式订立与签署本合同。依据 1999 年《电子交易法》（Electronic Transactions Act 1999 (Cth)）及《2000 年电子交易（维多利亚）法》，电子签名与手写签名具有同等法律效力。系统记录的签署证据如下：</p>
+<ul>
+<li>签署时间：{sign_time}</li>
+<li>签署 IP：{esign_ip}</li>
+<li>签署设备：{esign_device}</li>
+<li>浏览器 / 系统：{esign_browser} / {esign_os}</li>
+</ul>
+
+<h2>十六、其他条款</h2>
+<p>本合同连同其引用的政策构成双方就本次设备租赁的完整约定，取代此前一切口头或书面沟通。对本合同的任何修改须经双方书面确认。若任何条款被认定无效或不可执行，不影响其余条款的效力。</p>
+
+<h2>十七、银行账户</h2>
+<p>开户行：{bank_name}　账户名：{account_name}　BSB：{bank_bsb}　账号：{bank_account}</p>
+
+<h2>十八、双方签署</h2>
+<table style="width:100%;border-collapse:collapse;margin:12px 0;">
+  <tr style="background:#f3f4f6;"><th style="border:1px solid #e5e7eb;padding:8px;text-align:left;width:50%;">出租方（甲方）</th><th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">承租方（乙方）</th></tr>
+  <tr>
+    <td style="border:1px solid #e5e7eb;padding:8px;">{company_name}<br>授权代表：{company_representative}<br>签章：{company_signature}<br>日期：{sign_time}</td>
+    <td style="border:1px solid #e5e7eb;padding:8px;">{signer_name}<br>姓名首字母确认：{customer_initials}<br>签名：{esign_signature}<br>日期：{sign_time}</td>
+  </tr>
+</table>
+<p>承租方确认：本人已阅读并理解本合同全部条款，确认所填资料真实准确，并同意受本合同约束。</p>`
+
 export const contractTemplate = {
   id: 'tmpl-1',
   name: '标准租赁合同模板',
-  content: `<h1>电脑租赁协议</h1>
-
-<p>合同编号：<strong>{contract_number}</strong></p>
-<p>签署日期：<strong>{sign_time}</strong></p>
-
-<h2>一、双方当事人</h2>
-<p><strong>出租方（甲方）：</strong>PC Rental电脑租赁平台</p>
-<p>联系电话：{company_phone}</p>
-<p>联系邮箱：{company_email}</p>
-<br>
-<p><strong>承租方（乙方）：</strong>{customer_name}</p>
-<p>联系电话：{customer_phone}</p>
-<p>联系邮箱：{customer_email}</p>
-
-<h2>二、租赁设备信息</h2>
-<table style="width:100%;border-collapse:collapse;margin:16px 0;">
-  <tr style="background:#f3f4f6;">
-    <th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">设备名称</th>
-    <th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">{device_name}</th>
-  </tr>
-  <tr>
-    <td style="border:1px solid #e5e7eb;padding:8px;">设备型号</td>
-    <td style="border:1px solid #e5e7eb;padding:8px;">{device_model}</td>
-  </tr>
-  <tr style="background:#f3f4f6;">
-    <td style="border:1px solid #e5e7eb;padding:8px;">序列号</td>
-    <td style="border:1px solid #e5e7eb;padding:8px;">{device_sn}</td>
-  </tr>
-</table>
-
-<h2>三、租赁期限</h2>
-<p>租赁开始日期：{start_date}</p>
-<p>租赁结束日期：{end_date}</p>
-<p>租赁天数：{rental_days}天</p>
-
-<h2>四、费用明细</h2>
-<p>日租金：AUD$ {daily_rate}</p>
-<p>租金总额：AUD$ {total_rent}</p>
-<p>押金金额：AUD$ {deposit_amount}</p>
-<p>支付方式：{payment_method}</p>
-
-<h2>五、银行账户信息</h2>
-<p>BSB：{bank_bsb}</p>
-<p>账号：{bank_account}</p>
-<p>账户名：{account_name}</p>
-
-<h2>六、双方签字</h2>
-<p>甲方签字：_____________________ 日期：__________</p>
-<p>乙方签字：{signer_name} 日期：{sign_time}</p>`,
+  content: DEFAULT_CONTRACT_TEMPLATE_HTML,
 }
 
 export async function getContractTemplate(c: Context): Promise<ContractTemplate> {
@@ -3674,54 +3770,7 @@ export async function getContractTemplate(c: Context): Promise<ContractTemplate>
   return {
     id: 'default',
     name: '标准租赁合同模板',
-    content: `<h1>电脑租赁协议</h1>
-<p>合同编号：<strong>{contract_number}</strong></p>
-<p>签署日期：<strong>{sign_time}</strong></p>
-
-<h2>一、双方当事人</h2>
-<p><strong>出租方（甲方）：</strong>PC Rental电脑租赁平台</p>
-<p>联系电话：{company_phone}</p>
-<p>联系邮箱：{company_email}</p>
-<br>
-<p><strong>承租方（乙方）：</strong>{customer_name}</p>
-<p>联系电话：{customer_phone}</p>
-<p>联系邮箱：{customer_email}</p>
-
-<h2>二、租赁设备信息</h2>
-<table style="width:100%;border-collapse:collapse;margin:16px 0;">
-  <tr style="background:#f3f4f6;">
-    <th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">设备名称</th>
-    <th style="border:1px solid #e5e7eb;padding:8px;text-align:left;">{device_name}</th>
-  </tr>
-  <tr>
-    <td style="border:1px solid #e5e7eb;padding:8px;">设备型号</td>
-    <td style="border:1px solid #e5e7eb;padding:8px;">{device_model}</td>
-  </tr>
-  <tr style="background:#f3f4f6;">
-    <td style="border:1px solid #e5e7eb;padding:8px;">序列号</td>
-    <td style="border:1px solid #e5e7eb;padding:8px;">{device_sn}</td>
-  </tr>
-</table>
-
-<h2>三、租赁期限</h2>
-<p>租赁开始日期：{start_date}</p>
-<p>租赁结束日期：{end_date}</p>
-<p>租赁天数：{rental_days}天</p>
-
-<h2>四、费用明细</h2>
-<p>日租金：AUD$ {daily_rate}</p>
-<p>租金总额：AUD$ {total_rent}</p>
-<p>押金金额：AUD$ {deposit_amount}</p>
-<p>支付方式：{payment_method}</p>
-
-<h2>五、银行账户信息</h2>
-<p>BSB：{bank_bsb}</p>
-<p>账号：{bank_account}</p>
-<p>账户名：{account_name}</p>
-
-<h2>六、双方签字</h2>
-<p>甲方签字：_____________________ 日期：__________</p>
-<p>乙方签字：{signer_name} 日期：{sign_time}</p>`,
+    content: DEFAULT_CONTRACT_TEMPLATE_HTML,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

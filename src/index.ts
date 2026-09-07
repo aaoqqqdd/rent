@@ -3952,7 +3952,14 @@ app.post('/admin/templates/:kind', async (c) => {
     const saved = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
     if (String(saved?.value ?? '') !== content) throw new Error('协议保存校验失败，请重试')
     await loadSystemSettingsFromDB(c)
-    if (before !== content) await notifyAgreementUpdate(c, [[settingKey, ({ user: '用户协议', rental: '租赁协议', service: '服务条款', privacy: '隐私政策', software: '软件使用协议', copyright: '退款政策' } as any)[kind]]], getSystemSettings().companyDetails)
+    if (before !== content) {
+      // 通知/邮件是「保存成功之后的事」，不能让它把已经落库的协议变更回报成保存失败。
+      // 放到 waitUntil 里异步执行，notifyAgreementUpdate 自身也吞掉所有异常。
+      const notifyPayload: Array<[string, string]> = [[settingKey, ({ user: '用户协议', rental: '租赁协议', service: '服务条款', privacy: '隐私政策', software: '软件使用协议', copyright: '退款政策' } as any)[kind]]]
+      const companyDetails = getSystemSettings().companyDetails
+      const dispatch = () => notifyAgreementUpdate(c, notifyPayload, companyDetails).catch((error) => console.error('notifyAgreementUpdate dispatch failed:', error))
+      try { c.executionCtx.waitUntil(dispatch()) } catch (_) { await dispatch() }
+    }
     return contentType.includes('application/json') ? c.json({ success: true }) : c.redirect(`/admin/templates/${kind}`)
   } catch (error: any) {
     return c.json({ success: false, error: error?.message || '协议保存失败' }, 400)
@@ -4358,7 +4365,7 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob, deliverPendingAgreementEmails } = await import('./site')
     ctx.waitUntil(
       (async () => {
         // Each step below runs through runScheduledJob so it's isolated: a step
@@ -4416,6 +4423,7 @@ export default {
         await runScheduledJob(c, 'cancel_expired_pending_payments', () => cancelExpiredPendingPaymentOrders(c))
         await runScheduledJob(c, 'create_due_date_notifications', () => createDueDateNotifications(c))
         await runScheduledJob(c, 'notify_overdue_payment_proofs', () => notifyOverduePaymentProofs(c))
+        await runScheduledJob(c, 'deliver_pending_agreement_emails', () => deliverPendingAgreementEmails(c))
         await runScheduledJob(c, 'purge_old_device_inspections', async () => {
           const result = await env.RENT.prepare("DELETE FROM device_inspections WHERE created_at < datetime('now', '-1 year')").run()
           return Number(result.meta?.changes || 0)
