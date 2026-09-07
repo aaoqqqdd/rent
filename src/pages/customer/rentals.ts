@@ -34,7 +34,7 @@ export async function renderCustomerRentals(c: Context, user: any) {
         <span class="section-note">查看您的当前和历史租赁记录。</span>
       </div>
 
-      <h3>📦 当前租赁中</h3>
+      <h3>当前租赁中</h3>
       ${rentals.filter(r => r.status === 'active').length > 0 ? `
         <table>
           <thead>
@@ -63,7 +63,7 @@ export async function renderCustomerRentals(c: Context, user: any) {
         </table>
       ` : '<p style="color: var(--text-secondary); padding: 20px; text-align: center;">您当前没有正在租赁的设备。</p>'}
 
-      <h3 style="margin-top: 32px;">📋 租赁历史记录</h3>
+      <h3 style="margin-top: 32px;">租赁历史记录</h3>
       ${rentals.filter(r => r.status !== 'active').length > 0 ? `
         <table>
           <thead>

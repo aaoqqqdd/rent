@@ -105,7 +105,7 @@ import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createStripeCheckout, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import siteStyles from './styles.css'
@@ -348,7 +348,7 @@ app.use('*', async (c, next) => {
   c.header('Cross-Origin-Opener-Policy', 'same-origin')
   c.header('Cross-Origin-Resource-Policy', 'same-origin')
   if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-  c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'")
+  c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'")
 });
 
 app.use('*', async (c, next) => {
@@ -766,7 +766,9 @@ app.get('/customer/balance/top-up', async (c) => {
   if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.redirect('/login')
   await loadSystemSettingsFromDB(c)
   const pending = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE user_id = ? AND status = 'awaiting_transfer' ORDER BY created_at DESC LIMIT 1").bind(user.id).first()
-  return c.html(pages.renderCustomerBalanceTopUp(c, user, '', pending))
+  const payId = String(c.req.query('pay') || '').trim()
+  const payTopup = payId ? await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND payment_method = 'card' AND status = 'pending'").bind(payId, user.id).first() : null
+  return c.html(pages.renderCustomerBalanceTopUp(c, user, '', pending, payTopup, c.req.query('success') === '1'))
 })
 
 app.get('/api/payment/aud-cny', async (c) => {
@@ -795,12 +797,19 @@ app.post('/customer/balance/top-up', async (c) => {
     await c.env.RENT.prepare("UPDATE balance_topups SET status = 'awaiting_transfer' WHERE id = ?").bind(id).run()
     return c.redirect('/customer/balance/top-up')
   }
+  // 信用卡充值：站内 Payment Element。先落一条 pending 记录，再跳到带 pay 参数的
+  // 充值页，由页面拉取 client_secret 就地收款。
+  return c.redirect(`/customer/balance/top-up?pay=${encodeURIComponent(id)}`)
+})
+
+app.post('/customer/balance/top-up/:id/intent', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.json({ error: '无权访问' }, 403)
   try {
-    const { createBalanceTopUpCheckout } = await import('./actions/stripePayments')
-    return await createBalanceTopUpCheckout(c, user, id)
+    const result = await createBalanceTopUpIntent(c, user, c.req.param('id'))
+    return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
   } catch (error: any) {
-    await c.env.RENT.prepare("UPDATE balance_topups SET status = 'failed' WHERE id = ?").bind(id).run()
-    return c.html(pages.renderCustomerBalanceTopUp(c, user, error.message || '无法创建信用卡支付'), 502)
+    return c.json({ error: error?.message || '无法创建信用卡支付' }, 400)
   }
 })
 
@@ -1101,7 +1110,7 @@ app.get('/admin/notifications', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
   const notifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
-  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(item.type || 'SYSTEM', 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(item.created_at, 80)}</small></div><b aria-hidden="true">→</b></a>`).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
+  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(item.type || 'SYSTEM', 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(item.created_at, 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>`).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
   return c.html(buildLayout('管理员通知中心', body, user))
 })
 
@@ -1972,6 +1981,23 @@ app.get('/api/contract-sign/coupon-preview', async (c) => {
   return c.json({ ok: true, discount, total: Number((base - discount).toFixed(2)), message: `已优惠 AUD$${discount.toFixed(2)}` })
 })
 
+// 签约「异步 Stripe」等待面板轮询用：只读返回一笔订单的支付状态。
+app.get('/api/payment/status', async (c) => {
+  const user = c.get('user') as any
+  if (!user) return c.json({ error: 'unauthorized' }, 401)
+  const orderId = String(c.req.query('orderId') || '')
+  if (!orderId) return c.json({ error: 'missing orderId' }, 400)
+  const order = await getOrderById(c, orderId) as any
+  if (!order) return c.json({ error: 'not found' }, 404)
+  const ownsOrder = order.userId === user.id ||
+    (user.accountType === 'guest' && String(user.guestOrderId || '') === orderId)
+  if (!ownsOrder) return c.json({ error: 'forbidden' }, 403)
+  const paymentMethod = String(order.paymentMethod ?? 'card')
+  const payment = await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod).first() as any
+  const state = pages.paymentResultState(order, payment, false)
+  return c.json({ state, orderNo: order.orderNo || null, redirectTarget: `/customer/orders/${order.id}` }, 200, { 'Cache-Control': 'no-store' })
+})
+
 app.post('/contract/sign', async (c) => {
   const token = c.req.query('token') || c.req.query('number') || '';
   const step = Number(c.req.query('step') || '1');
@@ -2121,13 +2147,15 @@ app.get('/orders/:id/invoice/print', async (c) => {
   return c.html(await pages.renderInvoice(c, user, c.req.param('id'), true))
 })
 
-app.post('/customer/orders/:id/stripe/checkout', async (c) => {
+app.post('/customer/orders/:id/stripe/intent', async (c) => {
   const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
   try {
-    return await createStripeCheckout(c, user, c.req.param('id'))
+    const result = await createOrderPaymentIntent(c, user, c.req.param('id'))
+    if (result.alreadyPaid) return c.json({ alreadyPaid: true })
+    return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
   } catch (error: any) {
-    return c.text(error.message || '无法创建 Stripe 支付', 502)
+    return c.json({ error: error?.message || '无法创建 Stripe 支付' }, 400)
   }
 })
 

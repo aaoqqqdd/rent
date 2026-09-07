@@ -23,10 +23,12 @@
       <div class="user-block">{{USER_BLOCK}}</div>
     </header>
     <header class="mobile-header">
+      {{MOBILE_NAV_TOGGLE}}
       <a href="/" class="logo"><span class="logo-mark">PR</span><span class="logo-copy">PC Rental</span></a>
       <span class="mobile-header__label">{{MOBILE_LABEL}}</span>
       <div class="user-block">{{MOBILE_USER_BLOCK}}</div>
     </header>
+    <div class="mobile-nav-scrim" aria-hidden="true"></div>
     <div class="container">
       {{SIDEBAR}}
       <main class="content" id="main-content" tabindex="-1">{{CONTENT}}</main>
@@ -124,7 +126,7 @@
       window.siteConfirm(message, function () { form.requestSubmit(); });
     }, true);
 
-    // 页面动画统一由 runSiteAnimations 管理，避免重复创建 GSAP timeline。
+    // 表单提交时的加载指示；页面入场动画见 styles.css 的 site-enter。
     document.addEventListener('DOMContentLoaded', function () {
       const showNavigationLoading = function () {
         if (document.getElementById('navigation-loading')) return;
@@ -235,6 +237,26 @@
       });
     });
 
+    // 移动端导航抽屉：汉堡按钮滑出侧栏，点遮罩 / 链接 / Esc 关闭。
+    document.addEventListener('DOMContentLoaded', function () {
+      const body = document.body;
+      const toggle = document.querySelector('.mobile-nav-toggle');
+      const scrim = document.querySelector('.mobile-nav-scrim');
+      const sidebar = document.getElementById('app-sidebar');
+      if (!toggle || !sidebar) return;
+      const setOpen = function (open) {
+        body.classList.toggle('is-nav-open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+        if (scrim) scrim.setAttribute('aria-hidden', String(!open));
+      };
+      toggle.addEventListener('click', function () { setOpen(!body.classList.contains('is-nav-open')); });
+      if (scrim) scrim.addEventListener('click', function () { setOpen(false); });
+      sidebar.addEventListener('click', function (event) { if (event.target.closest('a')) setOpen(false); });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && body.classList.contains('is-nav-open')) setOpen(false);
+      });
+    });
+
     document.addEventListener('DOMContentLoaded', function () {
       document.querySelectorAll('textarea.markdown-editor').forEach(function (editor) {
         if (editor.dataset.markdownReady === 'true') return;
@@ -264,82 +286,6 @@
           toolbar.appendChild(button);
         });
         editor.parentNode.insertBefore(toolbar, editor);
-      });
-    });
-
-    document.addEventListener('DOMContentLoaded', function () {
-      if (!window.gsap) return;
-      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const gsap = window.gsap;
-      if (window.ScrollTrigger) gsap.registerPlugin(window.ScrollTrigger);
-      const root = document.querySelector('.content') || document.body;
-      const pageHeader = root.querySelector('.page-header, .entity-header, .signing-page-header');
-      const panels = Array.from(root.querySelectorAll('.panel, .card')).filter((item) => !item.closest('.a4-document, .official-document'));
-      const rows = Array.from(root.querySelectorAll('tbody tr')).slice(0, 30);
-      const buttons = root.querySelectorAll('.button, .link-button');
-
-      if (reduceMotion) {
-        gsap.set([pageHeader, ...panels, ...rows], { clearProps: 'all' });
-        return;
-      }
-
-      gsap.set([pageHeader, ...panels, ...rows].filter(Boolean), { autoAlpha: 0, y: 14 });
-      const intro = gsap.timeline({ defaults: { ease: 'power3.out' } });
-      if (pageHeader) intro.to(pageHeader, { autoAlpha: 1, y: 0, duration: .55 });
-      if (panels.length) intro.to(panels.slice(0, 3), { autoAlpha: 1, y: 0, duration: .45, stagger: .07 }, '-=.28');
-      if (rows.length) intro.to(rows, { autoAlpha: 1, y: 0, duration: .28, stagger: .025 }, '-=.18');
-
-      if (window.ScrollTrigger) {
-        root.querySelectorAll('.panel, .card, .record-panel, .official-document').forEach((element) => {
-          if (element === pageHeader || element.closest('.a4-document')) return;
-          gsap.fromTo(element, { autoAlpha: 0, y: 18 }, {
-            autoAlpha: 1, y: 0, duration: .55, ease: 'power3.out',
-            scrollTrigger: { trigger: element, start: 'top 88%', once: true }
-          });
-        });
-      }
-
-      const mobileMotion = gsap.matchMedia();
-      mobileMotion.add('(max-width: 640px)', () => {
-        const mobileHeader = document.querySelector('.mobile-header');
-        const bottomNav = document.querySelector('.mobile-bottom-nav');
-        const mobileCards = root.querySelectorAll('.panel, .card, tbody tr');
-        const mobileTimeline = gsap.timeline({ defaults: { ease: 'power3.out' } });
-        if (mobileHeader) mobileTimeline.fromTo(mobileHeader, { y: -18, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .42 });
-        if (bottomNav) mobileTimeline.fromTo(bottomNav, { y: 30, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .42 }, '-=.18');
-        if (mobileCards.length) mobileTimeline.fromTo(mobileCards, { y: 14, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .32, stagger: .035 }, '-=.18');
-        return () => mobileTimeline.kill();
-      });
-
-      const desktopMotion = gsap.matchMedia();
-      desktopMotion.add('(min-width: 641px)', () => {
-        const desktopHeader = document.querySelector('.desktop-header');
-        const sidebar = document.querySelector('.sidebar');
-        const navLinks = document.querySelectorAll('.desktop-header .main-nav a, .sidebar-section a');
-        const navGroups = document.querySelectorAll('.sidebar-nav-group');
-        const desktopCards = root.querySelectorAll('.panel, .card, .stats-card, .metric-card');
-        const statusBadges = root.querySelectorAll('.badge-success, .badge-warning, .badge-info, .badge-primary');
-        const timeline = gsap.timeline({ defaults: { ease: 'power3.out' } });
-        if (desktopHeader) timeline.fromTo(desktopHeader, { y: -16, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .48 });
-        if (sidebar) timeline.fromTo(sidebar, { x: -18, autoAlpha: 0 }, { x: 0, autoAlpha: 1, duration: .5 }, '-=.28');
-        if (navGroups.length) timeline.fromTo(navGroups, { y: 7, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .24, stagger: .06 }, '-=.28');
-        if (navLinks.length) timeline.fromTo(navLinks, { y: -8, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .28, stagger: .035 }, '-=.25');
-        if (desktopCards.length) timeline.fromTo(desktopCards, { y: 16, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .38, stagger: .045 }, '-=.18');
-        statusBadges.forEach((badge) => {
-          gsap.to(badge, { boxShadow: '0 0 0 5px rgba(36, 99, 235, .08)', duration: 1.8, repeat: -1, yoyo: true, ease: 'sine.inOut' });
-        });
-        desktopCards.forEach((card) => {
-          card.addEventListener('mouseenter', () => gsap.to(card, { y: -3, duration: .24, ease: 'power2.out', overwrite: 'auto' }));
-          card.addEventListener('mouseleave', () => gsap.to(card, { y: 0, duration: .28, ease: 'power2.out', overwrite: 'auto' }));
-        });
-        return () => { timeline.kill(); gsap.killTweensOf(statusBadges); };
-      });
-
-      buttons.forEach((button) => {
-        button.addEventListener('pointerenter', () => gsap.to(button, { y: -2, duration: .18, ease: 'power2.out', overwrite: 'auto' }));
-        button.addEventListener('pointerleave', () => gsap.to(button, { y: 0, duration: .22, ease: 'power2.out', overwrite: 'auto' }));
-        button.addEventListener('pointerdown', () => gsap.to(button, { scale: .97, duration: .1, overwrite: 'auto' }));
-        button.addEventListener('pointerup', () => gsap.to(button, { scale: 1, duration: .2, ease: 'back.out(1.4)', overwrite: 'auto' }));
       });
     });
 
@@ -401,7 +347,7 @@
           const parsed = new DOMParser().parseFromString(html, 'text/html');
           const nextContent = parsed.querySelector('.content');
           if (!nextContent) throw new Error('content missing');
-          // 保留轻量过渡，避免切换过硬；不隐藏到 0，防止长表格页面出现白闪。
+          // 轻量淡出/淡入过渡由 CSS 处理（body.is-navigating .content），不隐藏到 0，避免长表格页面白闪。
           const swap = function () {
             document.body.classList.add('has-navigated');
             content.replaceChildren(...Array.from(nextContent.childNodes));
@@ -410,17 +356,16 @@
             setActiveLink(url.pathname);
             if (window.runFilterTabMotion) window.runFilterTabMotion();
           };
-          if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-            await new Promise(function (resolve) { window.gsap.to(content, { autoAlpha: .92, duration: .12, ease: 'power1.out', onComplete: resolve }); });
-            swap();
-            window.gsap.to(content, { autoAlpha: 1, duration: .28, ease: 'power2.out', overwrite: 'auto' });
-          } else {
-            swap();
+          if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            document.body.classList.add('is-navigating');
+            await new Promise(function (resolve) { window.setTimeout(resolve, 120); });
           }
+          swap();
+          document.body.classList.remove('is-navigating');
           if (addHistory) window.history.pushState({}, '', url.href);
         } catch (error) {
           // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。
-          if (window.gsap) window.gsap.to(content, { autoAlpha: 1, y: 0, duration: .2, overwrite: 'auto' });
+          document.body.classList.remove('is-navigating');
           console.error('局部页面切换失败:', error);
         } finally {
           document.getElementById('navigation-loading')?.remove();
@@ -500,91 +445,44 @@
 })();
 </script>
 <script>
+  // 站点动画以 CSS 为主（styles.css 的 site-enter 入场、hover/焦点过渡、加载帘幕）。
+  // 这里只做纯 CSS 无法表达的轻量增强：成功/错误提示的状态图标、筛选标签的滑动指示条。
   window.runSiteAnimations = function () {
-    if (!window.gsap) return;
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const content = document.querySelector('.content');
+    var content = document.querySelector('.content');
     if (!content) return;
-    // 局部导航后的页面不重复播放整页入场动画。
-    if (document.body.classList.contains('has-navigated')) return;
-    if (window.ScrollTrigger) window.ScrollTrigger.getAll().forEach(function (trigger) { trigger.kill(); });
-    const motionItems = '.page-header, .entity-header, .panel, .card, .stat-card, .review-stat, .error-page, .signing-shell, .payment-result-card, .contract-viewer, .legal-document';
-    if (reduceMotion) { window.gsap.set(content.querySelectorAll(motionItems), { clearProps: 'all' }); return; }
-    const items = content.querySelectorAll(motionItems);
-    window.gsap.fromTo(items, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.42, ease: 'power2.out', stagger: 0.055, overwrite: 'auto' });
-    window.gsap.fromTo(content.querySelectorAll('tbody tr'), { autoAlpha: 0, y: 6 }, { autoAlpha: 1, y: 0, duration: 0.28, ease: 'power1.out', stagger: 0.035, delay: 0.12, overwrite: 'auto' });
-    const notices = content.querySelectorAll('.page-notification--success, .alert-success, .page-notification--error, .alert-error');
+    var notices = content.querySelectorAll('.page-notification--success, .alert-success, .page-notification--error, .alert-error');
     notices.forEach(function (notice) {
-      if (!notice.querySelector('.motion-status-icon')) {
-        const icon = document.createElement('span');
-        icon.className = 'motion-status-icon';
-        icon.textContent = notice.classList.contains('page-notification--success') || notice.classList.contains('alert-success') ? '✓' : '×';
-        icon.setAttribute('aria-hidden', 'true');
-        notice.prepend(icon);
-      }
-    });
-    window.gsap.fromTo(content.querySelectorAll('.motion-status-icon'), { autoAlpha: 0, scale: 0.45, rotation: -18 }, { autoAlpha: 1, scale: 1, rotation: 0, duration: 0.38, ease: 'back.out(1.7)', stagger: 0.06, overwrite: 'auto' });
-    window.gsap.fromTo('.sidebar', { autoAlpha: 0, x: -18 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: 'power3.out', overwrite: 'auto' });
-    window.gsap.fromTo(content.querySelectorAll('.page-header h2, .page-header .section-code'), { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.55, ease: 'power3.out', stagger: 0.07, overwrite: 'auto' });
-    window.gsap.fromTo(content.querySelectorAll('.error-card, .payment-result-card, .signing-shell .contract-toolbar, .signing-shell .record-actions, .legal-document__content'), { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: .42, ease: 'power3.out', stagger: .06, delay: .12, overwrite: 'auto' });
-    if (window.ScrollTrigger) {
-      window.gsap.utils.toArray(content.querySelectorAll('.stat-card, .device-catalog-card, .payment-option, .record-section, .finance-card')).forEach(function (item) {
-        window.gsap.fromTo(item, { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.65, ease: 'power3.out', scrollTrigger: { trigger: item, start: 'top 88%', once: true } });
-      });
-    }
-    content.querySelectorAll('.card, .stat-card, .device-catalog-card, .payment-option').forEach(function (card) {
-      if (card.dataset.motionHover) return;
-      card.dataset.motionHover = '1';
-      card.addEventListener('mouseenter', function () { window.gsap.to(card, { y: -3, duration: 0.2, ease: 'power2.out', overwrite: 'auto' }); });
-      card.addEventListener('mouseleave', function () { window.gsap.to(card, { y: 0, duration: 0.22, ease: 'power3.out', overwrite: 'auto' }); });
+      if (notice.querySelector('.motion-status-icon')) return;
+      var icon = document.createElement('span');
+      icon.className = 'motion-status-icon';
+      var isSuccess = notice.classList.contains('page-notification--success') || notice.classList.contains('alert-success');
+      icon.innerHTML = isSuccess
+        ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+        : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+      icon.setAttribute('aria-hidden', 'true');
+      notice.prepend(icon);
     });
   };
   window.runFilterTabMotion = function () {
-    const tabs = document.querySelectorAll('.filter-tabs');
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    tabs.forEach(function (group) {
-      const active = group.querySelector('.button-primary');
+    document.querySelectorAll('.filter-tabs').forEach(function (group) {
+      var active = group.querySelector('.button-primary');
       if (!active) return;
       group.classList.add('has-indicator');
-      const move = function () {
-        const groupRect = group.getBoundingClientRect();
-        const rect = active.getBoundingClientRect();
+      var move = function () {
+        var groupRect = group.getBoundingClientRect();
+        var rect = active.getBoundingClientRect();
         group.style.setProperty('--filter-indicator-x', (rect.left - groupRect.left) + 'px');
         group.style.setProperty('--filter-indicator-width', rect.width + 'px');
       };
       move();
-      if (!reduceMotion && window.gsap) {
-        window.gsap.fromTo(active, { color: '#fff' }, { color: '#fff', duration: .35, ease: 'power2.out', overwrite: 'auto' });
-      }
       if (group.dataset.indicatorReady !== '1') {
         group.dataset.indicatorReady = '1';
         window.addEventListener('resize', move, { passive: true });
       }
     });
   };
-  window.runNavigationMotion = function () {
-    const content = document.querySelector('.content');
-    if (!content || !window.gsap || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const heading = content.querySelector('.page-header, .entity-header, .panel > .section-title');
-    const panels = Array.from(content.querySelectorAll('.panel, .card, .record-panel, .error-card, .payment-result-card, .signing-shell, .contract-viewer, .legal-document')).filter(function (item) { return !item.closest('.a4-document, .official-document'); }).slice(0, 8);
-    const rows = Array.from(content.querySelectorAll('tbody tr')).slice(0, 24);
-    window.gsap.set([heading, ...panels, ...rows].filter(Boolean), { autoAlpha: 0, y: 14 });
-    const timeline = window.gsap.timeline({ defaults: { ease: 'power3.out' } });
-    if (heading) timeline.to(heading, { autoAlpha: 1, y: 0, duration: .42 });
-    if (panels.length) timeline.to(panels, { autoAlpha: 1, y: 0, duration: .38, stagger: .045 }, '-=.22');
-    if (rows.length) timeline.to(rows, { autoAlpha: 1, y: 0, duration: .24, stagger: .018 }, '-=.2');
-  };
   window.addEventListener('load', window.runSiteAnimations);
   window.addEventListener('load', window.runFilterTabMotion);
-  document.addEventListener('mouseover', function (event) {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !window.gsap) return;
-    const button = event.target.closest('.button');
-    if (button && !button.dataset.motionReady) {
-      button.dataset.motionReady = '1';
-      button.addEventListener('mouseenter', () => window.gsap.to(button, { y: -2, duration: 0.18, ease: 'power2.out', overwrite: 'auto' }));
-      button.addEventListener('mouseleave', () => window.gsap.to(button, { y: 0, duration: 0.2, ease: 'power2.out', overwrite: 'auto' }));
-    }
-  });
 </script>
 </body>
 

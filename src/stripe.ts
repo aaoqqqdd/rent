@@ -110,6 +110,14 @@ export async function getStripeRuntimeConfig(c: Context) {
   }
 }
 
+// 站内 Payment Element 需要在页面上用可公开的 publishable key 初始化 Stripe.js。
+// 只读取明文 publishable key，不解密任何私密字段。
+export async function getStripePublishableKey(c: Context): Promise<string> {
+  const stored = await readStoredConfig(c)
+  if (!stored?.publishableKey) throw new Error('管理员尚未配置 Stripe')
+  return stored.publishableKey
+}
+
 export async function stripeRequest(c: Context, path: string, params?: URLSearchParams, idempotencyKey?: string) {
   const { secretKey } = await getStripeRuntimeConfig(c)
   const response = await fetch(`https://api.stripe.com/v1/${path}`, {

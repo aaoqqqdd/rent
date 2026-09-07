@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency } from '../../site';
+import { formatCurrency } from '../../site';
 import { Context } from 'hono';
 
 function getStatusLabel(status: string) {
@@ -21,7 +21,10 @@ function getStatusLabel(status: string) {
   }
 }
 
-export async function renderAdminWithdrawals(c: Context, user: any) {
+/**
+ * 佣金提现审核板块。作为「推荐奖励与佣金提现」合并页的一部分渲染，返回内容片段而非整页。
+ */
+export async function renderWithdrawalsPanel(c: Context): Promise<string> {
   const tableInfo = await c.env.RENT.prepare('PRAGMA table_info(commission_withdrawals)').all() as any;
   const withdrawalColumns = (tableInfo.results || []).map((column: any) => column.name);
   const hasAccountNameColumn = withdrawalColumns.includes('account_name') || withdrawalColumns.includes('accountName');
@@ -88,10 +91,10 @@ export async function renderAdminWithdrawals(c: Context, user: any) {
     `;
   }).join('');
 
-  const body = `
-    <div class="panel">
+  return `
+    <section class="panel" id="withdrawals">
       <div class="section-title">
-        <h2>佣金提现审核</h2>
+        <h3>佣金提现审核</h3>
         <span class="section-note">查看银行转账提现申请并人工处理状态。</span>
       </div>
 
@@ -139,8 +142,6 @@ export async function renderAdminWithdrawals(c: Context, user: any) {
           <tbody>${rows}</tbody>
         </table>
       `}
-    </div>
+    </section>
   `;
-
-  return buildLayout('佣金提现审核 - 电脑租赁管理系统', body, user);
 }

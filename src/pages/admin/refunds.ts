@@ -89,7 +89,6 @@ export async function renderAdminRefunds(c: Context, user: any) {
         ${totalPages > 1 ? `<div class="record-actions" style="justify-content:center;align-items:center;margin-top:20px;"><a class="button button-secondary ${currentPage <= 1 ? 'disabled' : ''}" href="/admin/refunds?page=${currentPage - 1}" ${currentPage <= 1 ? 'aria-disabled="true"' : ''}>上一页</a><span class="section-note">第 ${currentPage} / ${totalPages} 页，共 ${total} 条</span><a class="button button-secondary ${currentPage >= totalPages ? 'disabled' : ''}" href="/admin/refunds?page=${currentPage + 1}" ${currentPage >= totalPages ? 'aria-disabled="true"' : ''}>下一页</a></div>` : ''}
       ` : `
         <div style="text-align: center; padding: 60px 20px;">
-          <div style="font-size: 48px; margin-bottom: 16px;">🎉</div>
           <h3 style="margin-bottom: 8px;">暂无待退款订单</h3>
           <p style="color: var(--text-secondary);">所有退款请求都已处理完毕！</p>
         </div>

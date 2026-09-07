@@ -192,7 +192,6 @@ export async function renderAdminOrders(c: Context, user: any) {
 
       ${filteredOrders.length === 0 ? `
         <div style="text-align: center; padding: 48px 24px; color: var(--text-secondary);">
-          <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">📋</div>
           <h3>暂无订单</h3>
           <p>${userIdFilter ? '当前用户暂无相关订单记录' : '没有符合筛选条件的订单记录'}</p>
         </div>

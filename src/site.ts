@@ -3373,8 +3373,8 @@ export const systemSettings = {
 
 您的租赁合同已成功签署，以下是合同详情：
 
-📋 合同编号：{contract_number}
-📅 签署时间：{sign_time}
+合同编号：{contract_number}
+签署时间：{sign_time}
 
 租赁信息：
 ┌─────────────────────────────────────┐
@@ -3391,7 +3391,7 @@ export const systemSettings = {
 
 您的合同PDF已附件发送，请妥善保存。
 
-📌 重要提醒：
+重要提醒：
 • 请在 {payment_deadline} 日内完成支付
 • 支付完成后，我们将安排设备配送
 • 租赁到期前3天，您将收到续租提醒
@@ -4180,11 +4180,11 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/customer/dashboard': '⌂', '/customer/rentals': '▤', '/customer/orders': '▦',
     '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣', '/customer/balance': '◌', '/customer/guest': '▰', '/customer/guest/upgrade': '↥',
     '/staff/dashboard': '◍', '/staff/orders': '◓', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
-    '/staff/contracts/new': '+', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
+    '/staff/contracts/new': '+', '/staff/contracts?status=pending_sign': '✍', '/staff/inspections': '◈', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
-    '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/finance': '$',
+    '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙',
-    '/admin/devices/reports': 'chart', '/admin/reports': 'chart', '/admin/data-retention': '⧗', '/admin/backup': '⤓', '/admin/monitoring': 'activity', '/admin/agents': '♟', '/admin/referrals': 'gift'
+    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/backup': '⤓', '/admin/monitoring': 'activity', '/admin/agents': '⚑', '/admin/referrals': 'gift'
   }
 
   const navIconSvg = (kind: string) => {
@@ -4231,6 +4231,13 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       , '◓': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4v16a8 8 0 0 0 0-16Z"></path>'
       , '◒': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4a8 8 0 0 0 0 16Z"></path>'
       , '⌘': '<path d="M7 5a3 3 0 1 0 0 6h10a3 3 0 1 0 0-6 3 3 0 1 0-5 2 3 3 0 1 0-5-2Z"></path><path d="M7 13a3 3 0 1 0 0 6 3 3 0 1 0 5-2 3 3 0 1 0 5 2 3 3 0 1 0 0-6Z"></path>'
+      , '✍': '<path d="M4 20h4L18.5 9.5a2 2 0 0 0-3-3L5 17Z"></path><path d="M13.5 6.5l3 3"></path><path d="M4 20l1-3"></path>'
+      , '▧': '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M4 9h16"></path><path d="M10 9v11"></path>'
+      , 'trend': '<path d="M4 18l6-6 4 4 6-7"></path><path d="M15 9h5v5"></path><path d="M3 21h18"></path>'
+      , '⧗': '<path d="M6 4h12M6 20h12"></path><path d="M7 4c0 4 10 5 10 8s-10 4-10 8"></path><path d="M17 4c0 4-10 5-10 8"></path>'
+      , '⤓': '<ellipse cx="12" cy="5.5" rx="7" ry="3"></ellipse><path d="M5 5.5v13c0 1.7 3.1 3 7 3s7-1.3 7-3v-13"></path><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path>'
+      , 'activity': '<path d="M3 12h4l3 8 4-16 3 8h4"></path>'
+      , '⚑': '<path d="M6 3v18"></path><path d="M6 4h11l-2.5 4L17 12H6"></path>'
     }
     return `<svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || paths['▣']}</svg>`
   }
@@ -4238,7 +4245,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     const icon = navIcons[href] || navIcons[href.split('?')[0]] || '▣'
     return `<a href="${href}"><span class="nav-icon">${navIconSvg(icon)}</span>${text}</a>`
   }
-  const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group" open><summary>${label}<span aria-hidden="true">⌄</span></summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
+  const chevronSvg = '<span class="nav-group-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>'
+  const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group" open><summary>${label}${chevronSvg}</summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
   const mobileLinks = currentUser?.role === 'ADMIN'
     ? [['/admin/dashboard', '控制台', '◉'], ['/notifications', '通知', 'N'], ['/admin/orders', '订单', '▦'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
@@ -4251,8 +4259,12 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
   const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${getAvatarInitials(currentUser.name)}</span>` : ''
 
+  const mobileNavToggle = currentUser
+    ? `<button class="mobile-nav-toggle" type="button" aria-label="打开导航菜单" aria-expanded="false" aria-controls="app-sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>`
+    : ''
+
   const sidebar = currentUser
-    ? `<aside class="sidebar">
+    ? `<aside class="sidebar" id="app-sidebar">
         <div class="sidebar-section">
           <h3>导航</h3>
           ${currentUser.role === 'CUSTOMER' ? `
@@ -4296,6 +4308,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     TOP_NAV: topNav,
     USER_BLOCK: userBlockHtml,
     MOBILE_NAV: mobileNav,
+    MOBILE_NAV_TOGGLE: mobileNavToggle,
     MOBILE_LABEL: mobileLabel,
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,

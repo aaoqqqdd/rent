@@ -5,6 +5,7 @@
 
 import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance } from '../../site';
 import { Context } from 'hono';
+import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
 
 export function readContractSignDraft(cookieHeader: string | undefined, token: string): Record<string, string> {
   const encoded = cookieHeader?.match(/(?:^|;\s*)contract_sign_draft=([^;]*)/)?.[1]
@@ -258,6 +259,34 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       // 在步骤3中获取订单和设备信息
 
       content = `
+        <style>
+          .payment-wait { text-align: center; padding: 24px 8px 8px; }
+          .payment-wait h2 { margin: 20px 0 8px; }
+          .payment-wait p { color: var(--text-secondary); line-height: 1.6; }
+          .payment-wait .record-actions { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; justify-content: center; }
+          .payment-wait .record-actions .button { flex: 0 0 auto; width: auto; }
+          .payment-wait .guest-credential-card { text-align: left; margin: 18px auto 0; max-width: 460px; }
+          .payment-wait__toast { margin-top: 14px; color: var(--warning, #b45309); font-size: .9rem; }
+          .payment-wait .pr-spinner { position: relative; display: block; width: 44px; height: 44px; margin: 0 auto; color: #0369a1; animation: pr-spin 1s linear infinite; }
+          .payment-wait .pr-spinner i { position: absolute; inset: 0; margin: auto; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+          .payment-wait .pr-spinner i:nth-child(1) { transform: rotate(0deg) translateY(-16px); opacity: 1; }
+          .payment-wait .pr-spinner i:nth-child(2) { transform: rotate(60deg) translateY(-16px); opacity: .78; }
+          .payment-wait .pr-spinner i:nth-child(3) { transform: rotate(120deg) translateY(-16px); opacity: .58; }
+          .payment-wait .pr-spinner i:nth-child(4) { transform: rotate(180deg) translateY(-16px); opacity: .42; }
+          .payment-wait .pr-spinner i:nth-child(5) { transform: rotate(240deg) translateY(-16px); opacity: .28; }
+          .payment-wait .pr-spinner i:nth-child(6) { transform: rotate(300deg) translateY(-16px); opacity: .16; }
+          @keyframes pr-spin { to { transform: rotate(360deg); } }
+          .payment-wait .icon-wrapper { position: relative; width: 72px; height: 72px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--success-light); color: var(--success); animation: pr-pop .5s cubic-bezier(.16,1,.3,1) both; }
+          .payment-wait .icon-wrapper svg { width: 34px; height: 34px; }
+          .payment-wait .icon-wrapper svg polyline { stroke-dasharray: 48; stroke-dashoffset: 48; animation: pr-draw .5s .18s cubic-bezier(.65,0,.35,1) forwards; }
+          @keyframes pr-pop { from { opacity: 0; transform: scale(.8); } to { opacity: 1; transform: scale(1); } }
+          @keyframes pr-draw { to { stroke-dashoffset: 0; } }
+          @media (prefers-reduced-motion: reduce) {
+            .payment-wait .pr-spinner { animation-duration: 1.8s; }
+            .payment-wait .icon-wrapper { animation: none; }
+            .payment-wait .icon-wrapper svg polyline { stroke-dashoffset: 0; animation: none; }
+          }
+        </style>
         <div class="panel">
           ${progressBar}
           <h2>${title}</h2>
@@ -278,7 +307,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
-                <span><strong>信用卡支付（Stripe）</strong><small>支付 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，包含 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（2.5%）手续费。Stripe 安全处理付款，网站不保存卡号、有效期或安全码。</small></span>
+                <span><strong>信用卡支付（Stripe）</strong><small>支付 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，包含 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（2.5%）手续费。</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -301,7 +330,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">2.5%</span></div>
-              <p>选择 Stripe 信用卡支付时，将在租金和押金合计金额上加收由支付提供商收取的手续费。付款由 Stripe 安全处理，本网站不保存任何信息。</p>
+              <p>选择 Stripe 信用卡支付时，将在租金和押金合计金额上加收由支付提供商收取的手续费。</p>
+              <small class="form-text">付款全程由 Stripe 安全处理，本网站不保存卡号、有效期或安全码。</small>
               <dl>
                 <div><dt>订单本金（含押金）</dt><dd data-price="orderTotal">${formatCurrency(order.totalAmount)}</dd></div>
                 <div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div>
@@ -415,6 +445,165 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               update();
             })();
           </script>
+          <script>
+            (() => {
+              const ORDER_ID = ${JSON.stringify(String(order.id))};
+              const STEP4_URL = ${JSON.stringify(`/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4`)};
+              const RESULT_URL = '/payment/result?orderId=' + encodeURIComponent(ORDER_ID);
+              const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+              const panel = document.querySelector('form[action*="step=4"]')?.closest('.panel');
+              if (!panel) return;
+              const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+              let ctx = null, pollTimer = null, pollFails = 0, resolved = false;
+              const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+
+              const startPoll = () => {
+                stopPoll();
+                pollTimer = setInterval(() => {
+                  fetch('/api/payment/status?orderId=' + encodeURIComponent(ORDER_ID), { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' })
+                    .then(r => { if (!r.ok) throw 0; return r.json(); })
+                    .then(d => { pollFails = 0; if (d.state === 'success') handleResult('success'); else if (d.state === 'fail') handleResult('fail'); })
+                    .catch(() => { if (++pollFails >= 4) stopPoll(); });
+                }, 5000);
+              };
+
+              const toast = msg => {
+                const wrap = panel.querySelector('.payment-wait');
+                if (!wrap) return;
+                let t = wrap.querySelector('.payment-wait__toast');
+                if (!t) { t = document.createElement('p'); t.className = 'payment-wait__toast'; wrap.appendChild(t); }
+                t.textContent = msg;
+              };
+
+              const checkNow = fromUser => {
+                fetch('/api/payment/status?orderId=' + encodeURIComponent(ORDER_ID), { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' })
+                  .then(r => r.json())
+                  .then(d => {
+                    if (d.state === 'success') return handleResult('success');
+                    if (d.state === 'fail') return handleResult('fail');
+                    if (fromUser) toast('尚未收到支付确认，完成付款后请稍候再试。');
+                  })
+                  .catch(() => { if (fromUser) toast('网络异常，请稍后重试。'); });
+              };
+
+              const showWaiting = popupBlocked => {
+                stopPoll();
+                panel.innerHTML =
+                  '<div class="payment-wait">'
+                  + '<span class="pr-spinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>'
+                  + '<h2>正在等待支付完成</h2>'
+                  + '<p>已在新标签页打开支付页面，完成付款后回到此页即可，我们会自动核对。</p>'
+                  + (popupBlocked && ctx && ctx.stripeUrl ? '<p><a class="button" target="_blank" rel="noopener" href="' + esc(ctx.stripeUrl) + '">打开支付页面</a></p>' : '')
+                  + '<div class="record-actions" style="justify-content:center;margin-top:18px">'
+                  + '<button type="button" class="button button-secondary" data-wait-fail>支付失败 / 重新选择</button>'
+                  + '<button type="button" class="button" data-wait-done>我已完成支付</button>'
+                  + '</div></div>';
+                panel.querySelector('[data-wait-done]').addEventListener('click', () => checkNow(true));
+                panel.querySelector('[data-wait-fail]').addEventListener('click', () => handleResult('fail'));
+                startPoll();
+              };
+
+              // 3DS 需要跳转时，Stripe 会带回 return_url(RESULT_URL) 或由结果页 postMessage 回传结果。
+              window.addEventListener('message', e => {
+                if (e.origin !== window.location.origin || !ctx) return;
+                const d = e.data || {};
+                if (d.type !== 'payment-result' || String(d.orderId) !== String(ORDER_ID)) return;
+                handleResult(d.state === 'success' ? 'success' : 'fail');
+              });
+
+              function handleResult(state) {
+                if (resolved || (state !== 'success' && state !== 'fail')) return;
+                resolved = true;
+                stopPoll();
+                document.querySelector('.site-confirm-overlay')?.remove();
+                if (state === 'fail') {
+                  window.location.href = STEP4_URL + '&error=' + encodeURIComponent('支付未完成，请重新选择支付方式');
+                  return;
+                }
+                const isGuest = !!(ctx && ctx.guest);
+                const target = (ctx && ctx.redirectTarget) || RESULT_URL;
+                panel.innerHTML =
+                  '<div class="payment-wait payment-wait--done">'
+                  + '<span class="icon-wrapper" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></span>'
+                  + '<h2>支付成功！</h2>'
+                  + (isGuest
+                    ? '<p>你的临时账户已可登录。请立即保存以下资料，密码离开本页后不再显示。</p>'
+                      + '<div class="panel guest-credential-card"><div class="grid grid-2">'
+                      + '<div><span class="section-note">登录账号</span><strong class="guest-credential-value">' + esc(ctx.guest.email) + '</strong></div>'
+                      + '<div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">' + esc(ctx.guest.password) + '</strong></div>'
+                      + '</div></div>'
+                    : '<p>订单已完成付款，正在带你前往订单详情…</p>')
+                  + '<div class="record-actions" style="justify-content:center;margin-top:18px">'
+                  + '<a class="button" href="' + esc(target) + '">查看订单详情</a>'
+                  + '<a class="button button-secondary" href="' + (isGuest ? '/customer/guest' : '/customer/dashboard') + '">返回客户中心</a>'
+                  + '</div></div>';
+                if (!isGuest) window.setTimeout(() => { window.location.href = target; }, 2500);
+              }
+
+              const form = document.querySelector('form[action*="step=4"]');
+              form.addEventListener('submit', event => {
+                if (resolved || ctx) { event.preventDefault(); return; }
+                const method = form.querySelector('input[name="paymentMethod"]:checked')?.value;
+                if (method !== 'stripe') return;
+                event.preventDefault();
+                const submitBtn = form.querySelector('button[type="submit"]');
+                if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '处理中…'; }
+                const restoreBtn = () => { if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '确认并完成签约'; } };
+                const fd = new FormData(form);
+                fd.set('asyncStripe', '1');
+                fetch(form.action, { method: 'POST', body: fd, headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+                  .then(r => r.json().then(d => ({ ok: r.ok, d })))
+                  .then(({ ok, d }) => {
+                    if (!ok || !d || !d.ok) {
+                      restoreBtn();
+                      let n = form.querySelector('[data-async-error]');
+                      if (!n) { n = document.createElement('div'); n.className = 'page-notification page-notification--error'; n.setAttribute('data-async-error', ''); form.prepend(n); }
+                      n.textContent = (d && d.error) || '提交失败，请重试。';
+                      return;
+                    }
+                    ctx = { guest: d.guest || null, redirectTarget: d.redirectTarget || RESULT_URL };
+                    if (d.stripe && d.stripe.clientSecret) { showStripeForm(d.stripe); }
+                    else { showWaiting(false); }
+                  })
+                  .catch(() => { restoreBtn(); });
+              });
+
+              function showStripeForm(stripe) {
+                stopPoll();
+                panel.innerHTML =
+                  '<div class="payment-wait" style="max-width:520px">'
+                  + '<h2>信用卡支付</h2>'
+                  + '<p>卡信息由 Stripe 处理，本站不保存卡号、有效期或安全码。</p>'
+                  + '<div id="sign-stripe-element" style="margin:14px 0;min-height:44px;text-align:left"></div>'
+                  + '<p id="sign-stripe-error" role="alert" style="color:#b42318;display:none;margin:8px 0"></p>'
+                  + '<div class="record-actions" style="justify-content:center;margin-top:6px">'
+                  + '<button type="button" class="button button-secondary" data-stripe-cancel>放弃 / 重新选择</button>'
+                  + '<button type="button" class="button button-primary" data-stripe-pay disabled>确认支付</button>'
+                  + '</div></div>';
+                var errEl = panel.querySelector('#sign-stripe-error');
+                var payBtn = panel.querySelector('[data-stripe-pay]');
+                var showErr = function (msg) { errEl.textContent = msg || ''; errEl.style.display = msg ? 'block' : 'none'; };
+                panel.querySelector('[data-stripe-cancel]').addEventListener('click', function () { handleResult('fail'); });
+                var handle;
+                try {
+                  handle = window.__mountStripePayment(panel.querySelector('#sign-stripe-element'), {
+                    clientSecret: stripe.clientSecret, publishableKey: stripe.publishableKey, returnUrl: RESULT_URL
+                  });
+                } catch (e) { showErr((e && e.message) || '支付组件加载失败，请刷新重试。'); return; }
+                handle.ready.then(function () { payBtn.disabled = false; });
+                startPoll();
+                payBtn.addEventListener('click', function () {
+                  showErr(''); payBtn.disabled = true; payBtn.textContent = '处理中…';
+                  handle.confirm().then(function (out) {
+                    if (out.ok) { handleResult('success'); return; }
+                    showErr(out.error); payBtn.disabled = false; payBtn.textContent = '确认支付';
+                  });
+                });
+              }
+            })();
+          </script>
+          ${stripeJsTag()}
+          ${stripePaymentHelperScript()}
         </div>
       `;
       break;

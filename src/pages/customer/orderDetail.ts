@@ -5,6 +5,7 @@
 
 import { buildLayout, getOrderById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, systemSettings, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS } from '../../site';
 import { Context } from 'hono';
+import { renderStripePaymentBox } from '../partials/stripePaymentSection';
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   stripe: '信用卡（Stripe）', card: '信用卡（Stripe）', bank_transfer: '银行转账', alipay: '支付宝', wechat: '微信',
@@ -98,7 +99,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}
 
       ${order.status === 'pending_payment' ? `
-        ${transferProof ? `<div class="payment-review-status payment-review-status--${transferProof.status === 'submitted' ? 'pending' : transferProof.status === 'rejected' ? 'failed' : 'success'}"><span class="payment-review-status__icon" aria-hidden="true">${transferProof.status === 'submitted' ? '⌛' : transferProof.status === 'rejected' ? '❌' : '✅'}</span><div><strong>${transferProof.status === 'submitted' ? '转账凭证待审核' : transferProof.status === 'rejected' ? '转账审核未通过' : '转账审核已通过'}</strong><p>${transferProof.status === 'submitted' ? '管理员正在核对付款信息，请耐心等待。' : transferProof.status === 'rejected' ? `已驳回（${String(transferProof.rejection_reason || '').replace(/[&<>"']/g, '')}）` : '付款已确认，订单正在继续处理。'}</p></div></div>` : ''}
+        ${transferProof ? `<div class="payment-review-status payment-review-status--${transferProof.status === 'submitted' ? 'pending' : transferProof.status === 'rejected' ? 'failed' : 'success'}"><span class="payment-review-status__icon" aria-hidden="true"></span><div><strong>${transferProof.status === 'submitted' ? '转账凭证待审核' : transferProof.status === 'rejected' ? '转账审核未通过' : '转账审核已通过'}</strong><p>${transferProof.status === 'submitted' ? '管理员正在核对付款信息，请耐心等待。' : transferProof.status === 'rejected' ? `已驳回（${String(transferProof.rejection_reason || '').replace(/[&<>"']/g, '')}）` : '付款已确认，订单正在继续处理。'}</p></div></div>` : ''}
         <div class="section-title" style="margin-top: 24px;"><h3>支付信息</h3></div>
         <div class="alert"><strong>收款明细：</strong>租金 ${formatCurrency(Number(order.totalAmount) - Number(order.depositAmount) - Number(order.serviceFee || order.service_fee || 0))} ＋ 押金 ${formatCurrency(order.depositAmount)} ＋ 时段服务费 ${formatCurrency(order.serviceFee || order.service_fee || 0)} ＝ 订单本金 ${formatCurrency(order.totalAmount)}。Stripe 付款另收手续费 ${formatCurrency(stripeFee)}，合计 ${formatCurrency(stripeTotal)}。</div>
         <div class="payment-options" style="display: flex; gap: 20px; margin-top: 16px;">
@@ -108,7 +109,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
             <p><strong>BSB:</strong> ${systemSettings.bankDetails.bsb}</p>
             <p><strong>账号:</strong> ${systemSettings.bankDetails.account}</p>
             <p>请转账 ${formatCurrency(order.totalAmount)} 到以上账户，并在备注中填写合同编号 ${contract?.contractNumber || order.contractId}。</p>
-            ${transferProof?.status === 'submitted' ? '<div class="payment-waiting-note"><span class="payment-hourglass" aria-hidden="true">⌛</span><span>转账信息已提交，正在等待管理员审核</span></div>' : `<form method="post" action="/customer/orders/${order.id}/bank-transfer-proof">
+            ${transferProof?.status === 'submitted' ? '<div class="payment-waiting-note"><span>转账信息已提交，正在等待管理员审核</span></div>' : `<form method="post" action="/customer/orders/${order.id}/bank-transfer-proof">
               <label class="form-label" for="referenceNumber">银行 Reference</label>
               <input class="form-control" id="referenceNumber" name="referenceNumber" maxlength="100" required>
               <label class="form-label" for="proofImageUrl">转账凭证图片链接</label>
@@ -122,11 +123,14 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p id="rmb-order-summary">提交付款凭证前获取实时汇率并计算人民币金额。</p><img src="${order.paymentMethod === 'alipay' ? systemSettings.rmbPayment.alipayQrUrl : systemSettings.rmbPayment.wechatQrUrl}" alt="${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}收款码" loading="lazy" style="max-width:240px;display:block;margin:12px 0"><form method="POST" action="/customer/orders/${order.id}/bank-transfer-proof"><label class="form-label">付款 Reference</label><input class="form-control" name="referenceNumber" maxlength="100" required><label class="form-label">付款凭证图片链接</label><input class="form-control" type="url" name="imageUrl" placeholder="https://..." required><label class="form-label">备注（选填）</label><textarea class="form-control" name="note" maxlength="500"></textarea><button class="button" type="submit" style="margin-top:12px">提交付款凭证</button></form><script>(()=>{const s=document.getElementById('rmb-order-summary');fetch('/api/payment/aud-cny?amount=${encodeURIComponent(String(order.totalAmount))}').then(r=>r.ok?r.json():Promise.reject()).then(d=>{s.innerHTML='请支付 <strong>CNY '+Number(d.cnyAmount).toFixed(2)+'</strong>，1 AUD = '+Number(d.rate).toFixed(6)+' CNY，金额按两位小数上舍入。'}).catch(()=>{s.textContent='暂时无法获取实时汇率，请稍后重试。'})})()</script></div>` : ''}
           ${systemSettings.paymentMethods.stripe ? `<div class="payment-card">
             <h4>信用卡支付（Stripe）</h4>
-            <p>前往 Stripe 安全结账页面完成支付，本站不会接触您的卡号。</p>
-            <p>订单本金 ${formatCurrency(order.totalAmount)} ＋ 2.5% 支付手续费 ${formatCurrency(stripeFee)}。仅退还押金时退回相应手续费，其他退款不退手续费。</p>
-            <form method="POST" action="/customer/orders/${order.id}/stripe/checkout">
-              <button class="button button-primary" type="submit">支付 ${formatCurrency(stripeTotal)}</button>
-            </form>
+            <p>在本页安全填写卡信息完成支付，卡号由 Stripe 处理，本站不保存卡号、有效期或安全码。</p>
+            <dl class="data-list" style="margin:8px 0">
+              <div><dt>订单本金（含押金）</dt><dd>${formatCurrency(order.totalAmount)}</dd></div>
+              <div><dt>Stripe 支付手续费（2.5%）</dt><dd>${formatCurrency(stripeFee)}</dd></div>
+              <div><dt><strong>信用卡最终扣款</strong></dt><dd><strong>${formatCurrency(stripeTotal)}</strong></dd></div>
+            </dl>
+            <p class="form-text">仅退还押金时退回相应手续费，其他退款不退手续费。</p>
+            ${renderStripePaymentBox({ intentUrl: `/customer/orders/${order.id}/stripe/intent`, returnUrl: `/payment/result?orderId=${encodeURIComponent(order.id)}`, buttonLabel: `支付 ${formatCurrency(stripeTotal)}`, domId: 'order-stripe-pay' })}
           </div>` : ''}
         </div>
       ` : ''}

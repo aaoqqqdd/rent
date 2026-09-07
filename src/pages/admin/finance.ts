@@ -84,32 +84,32 @@ export function renderAdminFinance(user: any, orders: any[] = [], refunds: any[]
 
       <div class="finance-sections">
         <div class="finance-section">
-          <h4>📊 收入统计</h4>
+          <h4>收入统计</h4>
           <p>查看订单收入和租赁交易明细。</p>
           <a href="/admin/revenue-stats" class="button button-sm">查看收入统计</a>
         </div>
         <div class="finance-section">
-          <h4>💸 退款处理</h4>
+          <h4>退款处理</h4>
           <p>查看和处理已支付订单的退款记录。</p>
           <a href="/admin/refunds" class="button button-sm">查看退款</a>
         </div>
         <div class="finance-section">
-          <h4>⚖️ 支付争议</h4>
+          <h4>支付争议</h4>
           <p>处理 Stripe 拒付、举证进度和最终财务影响。</p>
           <a href="/admin/finance/payment-disputes" class="button button-sm">管理支付争议</a>
         </div>
         <div class="finance-section">
-          <h4>⚠️ 异常订单</h4>
+          <h4>异常订单</h4>
           <p>系统检测到异常后自动暂停，等待管理员审核恢复或确认暂停。</p>
           <a href="/admin/finance/anomalous-orders" class="button button-sm">审核异常订单</a>
         </div>
         <div class="finance-section">
-          <h4>✅ 佣金提现</h4>
+          <h4>佣金提现</h4>
           <p>查看佣金发放与提现审核记录。</p>
           <a href="/admin/withdrawals" class="button button-sm">查看提现</a>
         </div>
         <div class="finance-section">
-          <h4>👥 用户管理</h4>
+          <h4>用户管理</h4>
           <p>查看用户余额和平台客户账户状态。</p>
           <a href="/admin/users" class="button button-sm">查看用户</a>
         </div>

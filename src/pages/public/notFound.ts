@@ -10,7 +10,7 @@ const errorStyles = `
   <style>
     .error-page { display: flex; justify-content: center; align-items: center; min-height: calc(100vh - 60px); padding: 40px 20px; }
     .error-card { text-align: center; max-width: 440px; width: 100%; background: var(--surface); border-radius: var(--radius-lg); padding: 48px 40px; border: 1px solid var(--border); box-shadow: var(--shadow-lg); position: relative; overflow: hidden; }
-    .error-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+    .error-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; transform: scaleX(0); transform-origin: 50% 50%; }
     .error-warning::before { background: var(--warning); }
     .error-danger::before { background: var(--danger); }
     .error-info::before { background: var(--info); }
@@ -24,6 +24,41 @@ const errorStyles = `
     .error-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 24px; }
     .error-details { padding-top: 20px; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-tertiary); }
     @media (max-width: 480px) { .error-card { padding: 36px 24px; } .error-code { font-size: 3.5rem; } .error-title { font-size: 1.25rem; } }
+
+    /* —— 丝滑编排：卡片作为一整块滑入，内部元素在原位依次解析出现 —— */
+    .error-card { animation: err-card 0.75s var(--ease-silk, cubic-bezier(0.32,0.72,0,1)) 0.04s both; }
+    .error-card::before { animation: err-bar 0.7s var(--ease-silk, cubic-bezier(0.32,0.72,0,1)) 0.34s both; }
+    .error-card > .error-title,
+    .error-card > .error-desc,
+    .error-card > .error-actions,
+    .error-card > .error-details { animation: err-fade 0.6s var(--ease-silk, cubic-bezier(0.32,0.72,0,1)) both; }
+    .error-card > .error-code { animation: err-code 0.9s var(--ease-silk, cubic-bezier(0.32,0.72,0,1)) 0.12s both; }
+    .error-card > .error-icon { animation: err-icon 0.7s var(--ease-silk, cubic-bezier(0.32,0.72,0,1)) 0.28s both, err-float 4.5s ease-in-out 1.4s infinite; }
+    .error-card > .error-title { animation-delay: 0.36s; }
+    .error-card > .error-desc { animation-delay: 0.44s; }
+    .error-card > .error-actions { animation-delay: 0.52s; }
+    .error-card > .error-details { animation-delay: 0.6s; }
+    /* 图标线条自绘：先描出外形轮廓，眼睛/嘴/内部细节随后补上。 */
+    .error-icon svg rect,
+    .error-icon svg polygon,
+    .error-icon svg path { stroke-dasharray: 300; stroke-dashoffset: 300; animation: err-draw 1s var(--ease-silk, cubic-bezier(0.32,0.72,0,1)) 0.5s forwards; }
+    .error-icon svg path { animation-delay: 0.95s; animation-duration: 0.7s; }
+    .error-icon svg circle { transform-box: fill-box; transform-origin: center; opacity: 0; animation: err-pop 0.4s var(--ease-silk, cubic-bezier(0.32,0.72,0,1)) 1.05s both; }
+    @keyframes err-card { from { opacity: 0; transform: translateY(22px) scale(0.986); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes err-bar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @keyframes err-fade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes err-code { from { opacity: 0; filter: blur(9px); transform: translateY(6px); } to { opacity: 1; filter: blur(0); transform: translateY(0); } }
+    @keyframes err-icon { from { opacity: 0; transform: scale(0.82); } to { opacity: 0.8; transform: scale(1); } }
+    @keyframes err-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+    @keyframes err-draw { to { stroke-dashoffset: 0; } }
+    @keyframes err-pop { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
+    @media (prefers-reduced-motion: reduce) {
+      .error-card, .error-card::before, .error-card > *, .error-code, .error-icon { animation: none !important; }
+      .error-card::before { transform: scaleX(1); }
+      .error-icon svg rect, .error-icon svg polygon, .error-icon svg path, .error-icon svg circle {
+        stroke-dashoffset: 0 !important; opacity: 1 !important; animation: none !important;
+      }
+    }
   </style>
 `;
 

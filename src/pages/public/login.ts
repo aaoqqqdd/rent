@@ -27,7 +27,7 @@ export function renderLogin(errorMessage?: string, showTestAccounts = false) {
             ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
             ${showTestAccounts ? `<div class="alert alert-info">
               <div>
-                <strong style="display:block; margin-bottom:6px;">📋 测试账号</strong>
+                <strong style="display:block; margin-bottom:6px;">测试账号</strong>
                 <div class="mono" style="font-size:0.8rem; line-height:1.8;">
                   管理员: admin@example.com / Admin123<br>
                   员工: staff@example.com / Staff123<br>

@@ -12,13 +12,15 @@ import {
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
-import { createStripeCheckout } from '../stripePayments';
+import { createOrderPaymentIntent } from '../stripePayments';
 import { getStripeRuntimeConfig } from '../../stripe';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
   const token = identifier; // 明确定义 token
   const currentUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null)
+  // 「异步 Stripe」模式：前端第 3 步选 Stripe 时用 fetch 提交，期望拿到 JSON（含 Stripe 链接）而非整页跳转。
+  const wantsJson = (c.req.header('accept') || '').includes('application/json') || String((body as any).asyncStripe || '') === '1'
 
   // 记录进入签约流程的日志
   await logError(c, 'DEBUG', `Entering contract signing process`, undefined, {
@@ -512,14 +514,12 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             await Promise.all((admins as any[]).map(admin => createNotification(c, { recipientId: admin.id, type: 'payment_review_submitted', title: '新的付款凭证待审核', message: `客户已提交订单 ${order.orderNo || order.id} 的付款凭证，请及时审核。`, orderId: order.id })))
           }
         }
-        let stripeResponse: Response | null = null
+        let stripePayment: { clientSecret: string; publishableKey: string } | null = null
         if (paymentMethod === 'stripe') {
           const stripeUser = await getUserById(c, userId)
           if (!stripeUser) throw new Error('无法读取付款用户信息')
-          stripeResponse = await createStripeCheckout(c, stripeUser, contract.rentalId)
-          if (stripeResponse.status < 300 || stripeResponse.status >= 400) {
-            throw new Error((await stripeResponse.text()) || 'Stripe 无法创建付款页面')
-          }
+          const intent = await createOrderPaymentIntent(c, stripeUser, contract.rentalId)
+          if (!intent.alreadyPaid) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
         }
         if (paymentMethod === 'balance') {
           await ensureOrderNumber(c, contract.rentalId)
@@ -590,19 +590,40 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         signingCompleted = true;
         await logError(c, 'INFO', `Sign session deleted after successful completion`, undefined, { token });
 
+        const draftCookie = 'contract_sign_draft=; Path=/contract/sign; Max-Age=0; SameSite=Lax'
+        const secure = new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''
+        // 异步 Stripe 模式：返回 JSON，前端负责新标签页打开 Stripe、原地展示等待面板。
+        if (wantsJson) {
+          const res = c.json({
+            ok: true,
+            stripe: stripePayment,
+            orderId: contract.rentalId,
+            contractNumber: signedContractNumber,
+            guest: guestPassword ? { email: userInfo.email, password: guestPassword } : null,
+            redirectTarget: `/customer/orders/${contract.rentalId}`,
+            resultUrl: `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`,
+          })
+          res.headers.append('Set-Cookie', draftCookie)
+          if (guestPassword) {
+            const session = await createAuthSession(c, userId)
+            res.headers.append('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${secure}`)
+          }
+          return res
+        }
         if (guestPassword) {
-          const paymentUrl = stripeResponse?.headers.get('Location') || `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
-          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${stripeResponse ? '继续前往 Stripe 支付' : '查看付款结果'}</a></div></div>`
+          const paymentUrl = stripePayment ? `/customer/orders/${encodeURIComponent(contract.rentalId)}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
+          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${stripePayment ? '前往付款' : '查看付款结果'}</a></div></div>`
           const response = c.html(buildLayout('保存访客登录资料', guestPage))
-          response.headers.append('Set-Cookie', 'contract_sign_draft=; Path=/contract/sign; Max-Age=0; SameSite=Lax')
+          response.headers.append('Set-Cookie', draftCookie)
           const session = await createAuthSession(c, userId)
-          response.headers.append('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
+          response.headers.append('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${secure}`)
           return response
         }
-        if (stripeResponse) {
-          const headers = new Headers(stripeResponse.headers)
-          headers.append('Set-Cookie', 'contract_sign_draft=; Path=/contract/sign; Max-Age=0; SameSite=Lax')
-          return new Response(stripeResponse.body, { status: stripeResponse.status, statusText: stripeResponse.statusText, headers })
+        if (stripePayment) {
+          // 无 JS 兜底：跳到订单详情页，那里有站内 Payment Element 收款盒子。
+          const response = c.redirect(`/customer/orders/${contract.rentalId}`, 303)
+          response.headers.append('Set-Cookie', draftCookie)
+          return response
         }
         redirectUrl = `/payment/result?orderId=${contract.rentalId}`;
         await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, {
@@ -625,6 +646,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
       errorMessage
     });
 
+    // 异步 Stripe 提交出错：返回 JSON，前端就地提示，不整页跳错误页。
+    if (wantsJson) {
+      return c.json({ ok: false, error: errorMessage || '提交失败，请重试' }, 400)
+    }
     // 如果出错，重定向回当前步骤并显示错误消息
         const stepToRedirect = (step > 1 && step <= 5) ? step : 1;
     redirectUrl = `/contract/sign?token=${token}&step=${stepToRedirect}&error=${encodeURIComponent(errorMessage || '')}`;

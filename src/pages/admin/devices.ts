@@ -42,7 +42,6 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
       </div>
       ${devices.length === 0 ? `
         <div class="empty-state">
-          <div class="empty-state-icon">💻</div>
           <h3>暂无设备</h3>
           <p>点击右上角"添加入库设备"添加第一台设备</p>
         </div>

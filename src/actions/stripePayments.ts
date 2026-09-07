@@ -6,7 +6,7 @@
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
 import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus } from '../site'
-import { stripeRequest, verifyStripeWebhook } from '../stripe'
+import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
 
 function cents(value: number): number {
@@ -28,20 +28,111 @@ export function getStripeProcessingFeeRate(): number {
   return Math.min(1, Math.max(0, Number(getSystemSettings().paymentMethods.processingFeeRate ?? STRIPE_PROCESSING_FEE_RATE)))
 }
 
-export async function createBalanceTopUpCheckout(c: Context, user: any, topUpId: string): Promise<Response> {
+// 余额充值改用站内 Payment Element：创建（或按金额变化更新）一个 PaymentIntent，
+// 返回 client_secret + publishable key 给页面初始化 Stripe.js，不再跳转 Stripe 托管页。
+export async function createBalanceTopUpIntent(c: Context, user: any, topUpId: string): Promise<{ clientSecret: string; publishableKey: string; amountCents: number }> {
   await loadSystemSettingsFromDB(c)
   if (!getSystemSettings().paymentMethods.stripe) throw new Error('信用卡支付当前未启用')
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND status = 'pending'").bind(topUpId, user.id).first() as any
   if (!topup) throw new Error('充值记录不存在或已处理')
-  const baseCents = cents(Number(topup.amount)); const feeCents = Math.round(baseCents * getStripeProcessingFeeRate())
-  const origin = new URL(c.req.url).origin
-  const params = new URLSearchParams({ mode: 'payment', customer_email: user.email, success_url: `${origin}/customer/balance/top-up?success=1`, cancel_url: `${origin}/customer/balance/top-up?cancelled=1`, 'metadata[topup_id]': topUpId, 'metadata[customer_id]': user.id })
-  params.set('line_items[0][price_data][currency]', 'aud'); params.set('line_items[0][price_data][unit_amount]', String(baseCents)); params.set('line_items[0][price_data][product_data][name]', '账户余额充值'); params.set('line_items[0][quantity]', '1')
-  params.set('line_items[1][price_data][currency]', 'aud'); params.set('line_items[1][price_data][unit_amount]', String(feeCents)); params.set('line_items[1][price_data][product_data][name]', `信用卡支付手续费（${(getStripeProcessingFeeRate() * 100).toFixed(2)}%）`); params.set('line_items[1][quantity]', '1')
-  const session = await stripeRequest(c, 'checkout/sessions', params, `balance-topup-${topUpId}`)
-  if (!session.id || !session.url) throw new Error('Stripe 未返回有效支付链接')
-  await c.env.RENT.prepare('UPDATE balance_topups SET stripe_checkout_session_id = ?, processing_fee = ?, status = \'pending\', updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(session.id, feeCents / 100, topUpId).run()
-  return c.redirect(session.url, 303)
+  const baseCents = cents(Number(topup.amount))
+  const feeCents = Math.round(baseCents * getStripeProcessingFeeRate())
+  const chargedCents = baseCents + feeCents
+  if (!Number.isInteger(chargedCents) || chargedCents <= 0) throw new Error('充值金额无效')
+
+  const intent = await upsertPaymentIntent(c, {
+    existingIntentId: topup.stripe_payment_intent_id ? String(topup.stripe_payment_intent_id) : '',
+    amountCents: chargedCents,
+    receiptEmail: user.email,
+    metadata: {
+      topup_id: topUpId,
+      customer_id: String(user.id),
+      processing_fee: String(feeCents),
+    },
+    idempotencyKey: `topup-pi-${topUpId}`,
+  })
+  await c.env.RENT.prepare("UPDATE balance_topups SET stripe_payment_intent_id = ?, processing_fee = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .bind(intent.id, feeCents / 100, topUpId).run()
+  return { clientSecret: intent.client_secret as string, publishableKey: await getStripePublishableKey(c), amountCents: chargedCents }
+}
+
+// 创建或复用一个处于可支付状态的 PaymentIntent。金额可能因优惠码 / 时段服务费在
+// 签约那一步发生变化，所以已存在的 PI 会先尝试改金额；若它已经进入处理 / 成功等
+// 不可改状态，则新建一个。
+async function upsertPaymentIntent(c: Context, opts: {
+  existingIntentId?: string
+  amountCents: number
+  receiptEmail?: string
+  metadata: Record<string, string>
+  idempotencyKey: string
+}): Promise<any> {
+  const reusableStatuses = ['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing']
+  if (opts.existingIntentId) {
+    const current = await stripeRequest(c, `payment_intents/${opts.existingIntentId}`).catch(() => null)
+    if (current && reusableStatuses.includes(String(current.status)) && String(current.status) !== 'processing') {
+      const params = new URLSearchParams({ amount: String(opts.amountCents), currency: 'aud' })
+      Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
+      if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
+      const updated = await stripeRequest(c, `payment_intents/${opts.existingIntentId}`, params)
+      if (updated?.client_secret) return updated
+    } else if (current && current.status === 'succeeded') {
+      // 已经付过款：直接返回，调用方据此判断无需再收款。
+      return current
+    }
+  }
+  const params = new URLSearchParams({
+    amount: String(opts.amountCents),
+    currency: 'aud',
+    'automatic_payment_methods[enabled]': 'true',
+  })
+  if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
+  Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
+  const created = await stripeRequest(c, 'payment_intents', params, `${opts.idempotencyKey}-${nanoid(8)}`)
+  if (!created?.client_secret) throw new Error('Stripe 未返回有效支付凭据')
+  return created
+}
+
+// 订单支付（自助结账 + 签约付款步骤共用）：为一笔待付款订单创建 / 更新 PaymentIntent，
+// 并把 payments 行的金额、手续费、stripe_payment_intent_id 落库为 pending。
+export async function createOrderPaymentIntent(c: Context, user: any, orderId: string): Promise<{ clientSecret: string; publishableKey: string; amountCents: number; alreadyPaid?: boolean }> {
+  await loadSystemSettingsFromDB(c)
+  if (!getSystemSettings().paymentMethods.stripe) throw new Error('Stripe 支付当前未启用')
+  const order = await getOrderById(c, orderId)
+  if (!order || order.userId !== user.id) throw new Error('订单不存在或无权访问')
+  if (order.status === 'paid') return { clientSecret: '', publishableKey: '', amountCents: 0, alreadyPaid: true }
+  if (order.status !== 'pending_payment') throw new Error('该订单当前不能支付')
+
+  const { baseCents, feeCents, chargedCents } = stripePaymentAmounts(order.totalAmount)
+  if (!Number.isInteger(baseCents) || baseCents <= 0) throw new Error('订单金额无效')
+
+  const existing = await c.env.RENT.prepare("SELECT id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+
+  const intent = await upsertPaymentIntent(c, {
+    existingIntentId: existing?.stripe_payment_intent_id ? String(existing.stripe_payment_intent_id) : '',
+    amountCents: chargedCents,
+    receiptEmail: user.email,
+    metadata: {
+      order_id: order.id,
+      customer_id: String(user.id),
+      processing_fee: String(feeCents),
+      rental_amount: String(cents(order.totalAmount - order.depositAmount)),
+      deposit_amount: String(cents(order.depositAmount)),
+    },
+    idempotencyKey: `order-pi-${order.id}`,
+  })
+  if (intent.status === 'succeeded') return { clientSecret: '', publishableKey: '', amountCents: chargedCents, alreadyPaid: true }
+  if (!intent.client_secret) throw new Error('Stripe 未返回有效支付凭据')
+
+  if (existing) {
+    await c.env.RENT.prepare("UPDATE payments SET stripe_payment_intent_id = ?, amount = ?, processing_fee = ?, deposit_amount = ?, rental_amount = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(intent.id, chargedCents / 100, feeCents / 100, order.depositAmount, order.totalAmount - order.depositAmount, existing.id).run()
+  } else {
+    await c.env.RENT.prepare(`
+      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, processing_fee, currency, status, stripe_payment_intent_id)
+      VALUES (?, ?, ?, 'card', ?, ?, ?, ?, 'AUD', 'pending', ?)
+    `).bind(`p-${nanoid(12)}`, order.id, user.id, chargedCents / 100, order.depositAmount, order.totalAmount - order.depositAmount, feeCents / 100, intent.id).run()
+  }
+  return { clientSecret: intent.client_secret as string, publishableKey: await getStripePublishableKey(c), amountCents: chargedCents }
 }
 
 export function stripePaymentAmounts(orderTotal: number): { baseCents: number; feeCents: number; chargedCents: number } {
@@ -83,50 +174,6 @@ function melbourneDate(): string {
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
   const value = Object.fromEntries(parts.map(part => [part.type, part.value]))
   return `${value.year}-${value.month}-${value.day}`
-}
-
-export async function createStripeCheckout(c: Context, user: any, orderId: string): Promise<Response> {
-  await loadSystemSettingsFromDB(c)
-  if (!getSystemSettings().paymentMethods.stripe) return c.text('Stripe 支付当前未启用', 400)
-  const order = await getOrderById(c, orderId)
-  if (!order || order.userId !== user.id) return c.text('订单不存在或无权访问', 404)
-  if (order.status !== 'pending_payment') return c.text('该订单当前不能支付', 409)
-
-  const { baseCents, feeCents, chargedCents } = stripePaymentAmounts(order.totalAmount)
-  if (!Number.isInteger(baseCents) || baseCents <= 0) return c.text('订单金额无效', 400)
-  const origin = new URL(c.req.url).origin
-  const params = new URLSearchParams({
-    mode: 'payment',
-    customer_email: user.email,
-    success_url: `${origin}/payment/result?orderId=${encodeURIComponent(order.id)}&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}/payment/result?orderId=${encodeURIComponent(order.id)}&cancelled=1`,
-    'metadata[order_id]': order.id,
-    'metadata[customer_id]': user.id,
-    'metadata[rental_amount]': String(cents(order.totalAmount - order.depositAmount)),
-    'metadata[deposit_amount]': String(cents(order.depositAmount)),
-    'metadata[processing_fee]': String(feeCents),
-    'payment_intent_data[metadata][order_id]': order.id,
-  })
-  stripeCheckoutItems(order).forEach((item, index) => {
-    params.set(`line_items[${index}][price_data][currency]`, 'aud')
-    params.set(`line_items[${index}][price_data][unit_amount]`, String(item.amountCents))
-    params.set(`line_items[${index}][price_data][product_data][name]`, item.name)
-    params.set(`line_items[${index}][quantity]`, '1')
-  })
-  const session = await stripeRequest(c, 'checkout/sessions', params, `checkout-v2-${order.id}-${nanoid(12)}`)
-  if (!session.id || !session.url) return c.text('Stripe 未返回有效支付链接', 502)
-
-  const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-  if (existing) {
-    await c.env.RENT.prepare("UPDATE payments SET stripe_checkout_session_id = ?, amount = ?, processing_fee = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .bind(session.id, chargedCents / 100, feeCents / 100, existing.id).run()
-  } else {
-    await c.env.RENT.prepare(`
-      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, processing_fee, currency, status, stripe_checkout_session_id)
-      VALUES (?, ?, ?, 'card', ?, ?, ?, ?, 'AUD', 'pending', ?)
-    `).bind(`p-${nanoid(12)}`, order.id, user.id, chargedCents / 100, order.depositAmount, order.totalAmount - order.depositAmount, feeCents / 100, session.id).run()
-  }
-  return c.redirect(session.url, 303)
 }
 
 export async function handleStripeWebhook(c: Context): Promise<Response> {
@@ -187,6 +234,48 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     const failedOrderId = String(session?.metadata?.order_id || '')
     statements.push(
       c.env.RENT.prepare("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE stripe_checkout_session_id = ? AND status = 'pending'").bind(session.id),
+    )
+  } else if (event.type === 'payment_intent.succeeded') {
+    // 站内 Payment Element 路径：付款对象是 PaymentIntent（session 即该对象），
+    // 按 stripe_payment_intent_id 匹配落库的 pending 记录。
+    const topupId = String(session?.metadata?.topup_id || '')
+    const paidCents = Number(session?.amount_received ?? session?.amount ?? 0)
+    if (session?.status !== 'succeeded' || String(session?.currency).toLowerCase() !== 'aud') return c.text('Stripe 支付状态无效', 400)
+    if (topupId) {
+      const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND stripe_payment_intent_id = ? AND status = 'pending'").bind(topupId, session.id).first() as any
+      const customerId = String(session?.metadata?.customer_id || '')
+      const expected = topup ? cents(topup.amount) + Math.round(cents(topup.amount) * getStripeProcessingFeeRate()) : 0
+      if (!topup || topup.user_id !== customerId || paidCents !== expected) return c.text('Stripe 充值数据不匹配', 400)
+      const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(customerId).first() as any
+      const next = Number((Number(user?.balance || 0) + Number(topup.amount)).toFixed(2))
+      statements.push(
+        c.env.RENT.prepare("UPDATE balance_topups SET status = 'paid', transaction_id = ?, paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(String(session.id), topupId),
+        c.env.RENT.prepare('UPDATE users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, customerId),
+        c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, 'top_up_card', ?, NULL)").bind(`bt-${nanoid(12)}`, customerId, topup.amount, next, `信用卡充值（含手续费 ${Number(topup.processing_fee || 0).toFixed(2)} AUD）`),
+      )
+    } else {
+      const orderId = String(session?.metadata?.order_id || '')
+      const customerId = String(session?.metadata?.customer_id || '')
+      const order = await getOrderById(c, orderId)
+      paidOrderId = orderId
+      const payment = await c.env.RENT.prepare('SELECT rental_id, customer_id, amount, processing_fee FROM payments WHERE stripe_payment_intent_id = ?').bind(session.id).first() as any
+      // 不是本站站内 Payment Element 建的 PI（例如历史 Checkout 流程遗留），静默确认，
+      // 交给对应的 checkout.session.* 事件处理，避免 Stripe 反复重投。
+      if (!payment) { paidOrderId = ''; return c.json({ received: true, ignored: true }) }
+      const expected = order ? stripePaymentAmounts(order.totalAmount) : null
+      if (!order || !expected || payment.rental_id !== order.id || payment.customer_id !== customerId || cents(payment.amount) !== expected.chargedCents || cents(payment.processing_fee) !== expected.feeCents || order.userId !== customerId || paidCents !== expected.chargedCents) {
+        return c.text('Stripe 支付数据与订单不匹配', 400)
+      }
+      statements.push(
+        c.env.RENT.prepare(`UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE stripe_payment_intent_id = ? AND status != 'paid'`)
+          .bind(generateReferenceNumber('TXN'), session.id),
+        c.env.RENT.prepare("UPDATE orders SET status = 'paid', paymentMethod = 'card', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
+      )
+    }
+  } else if (event.type === 'payment_intent.payment_failed') {
+    statements.push(
+      c.env.RENT.prepare("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE stripe_payment_intent_id = ? AND status = 'pending'").bind(session.id),
+      c.env.RENT.prepare("UPDATE balance_topups SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE stripe_payment_intent_id = ? AND status = 'pending'").bind(session.id),
     )
   } else if (event.type === 'charge.dispute.created') {
     const dispute = session

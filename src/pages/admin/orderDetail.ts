@@ -42,35 +42,34 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
 
   const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
-    'pending': { label: '待处理', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
-    'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '⏳' },
-    'awaiting_signature': { label: '待签合同', color: '#7c3aed', bg: '#ede9fe', icon: '✍️' },
-    'paid': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '💳' },
-    'approved': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '✅' },
-    'pending_pickup': { label: '待取货', color: '#0891b2', bg: '#cffafe', icon: '📦' },
-    'active': { label: '租赁中', color: '#2563eb', bg: '#dbeafe', icon: '📦' },
-    'extended': { label: '已延期 / 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '🔁' },
-    'overdue': { label: '已逾期', color: '#dc2626', bg: '#fee2e2', icon: '⚠️' },
-    'suspended': { label: '已暂停', color: '#6b7280', bg: '#f3f4f6', icon: '⏸️' },
-    'pending_return': { label: '待归还', color: '#d97706', bg: '#fef3c7', icon: '↩️' },
-    'returned': { label: '已归还', color: '#0891b2', bg: '#cffafe', icon: '📥' },
-    'completed': { label: '已完成', color: '#0891b2', bg: '#cffafe', icon: '✅' },
-    'cancelled': { label: '已取消', color: '#dc2626', bg: '#fee2e2', icon: '❌' }
+    'pending': { label: '待处理', color: '#d97706', bg: '#fef3c7', icon: '' },
+    'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '' },
+    'awaiting_signature': { label: '待签合同', color: '#7c3aed', bg: '#ede9fe', icon: '' },
+    'paid': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '' },
+    'approved': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '' },
+    'pending_pickup': { label: '待取货', color: '#0891b2', bg: '#cffafe', icon: '' },
+    'active': { label: '租赁中', color: '#2563eb', bg: '#dbeafe', icon: '' },
+    'extended': { label: '已延期 / 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '' },
+    'overdue': { label: '已逾期', color: '#dc2626', bg: '#fee2e2', icon: '' },
+    'suspended': { label: '已暂停', color: '#6b7280', bg: '#f3f4f6', icon: '' },
+    'pending_return': { label: '待归还', color: '#d97706', bg: '#fef3c7', icon: '' },
+    'returned': { label: '已归还', color: '#0891b2', bg: '#cffafe', icon: '' },
+    'completed': { label: '已完成', color: '#0891b2', bg: '#cffafe', icon: '' },
+    'cancelled': { label: '已取消', color: '#dc2626', bg: '#fee2e2', icon: '' }
   };
-  const currentStatus = statusLabels[order.status] || { label: order.status, color: '#6b7280', bg: '#f3f4f6', icon: '❓' };
+  const currentStatus = statusLabels[order.status] || { label: order.status, color: '#6b7280', bg: '#f3f4f6', icon: '' };
   const refundStatusLabel = completedRefund?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : completedRefund?.status === 'succeeded' ? (Number(completedRefund.refund_amount || 0) < Number(completedRefund.refundable_amount || completedRefund.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : '';
 
   const body = `
     <div class="panel hero order-detail-shell admin-order-detail" style="padding: 32px; margin-bottom: 24px;">
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px;">
         <div style="display: flex; align-items: center; gap: 16px;">
-          <div style="width: 64px; height: 64px; background: rgba(255,255,255,0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 32px;">📋</div>
           <div>
             <h2 style="margin: 0 0 8px 0;">订单详情 - ${order.orderNo}</h2>
             <p style="margin: 0; opacity: 0.9;">查看和管理订单的详细信息</p>
           </div>
         </div>
-        <span style="padding: 10px 20px; border-radius: 9999px; font-weight: 600; font-size: 1rem; background: ${currentStatus.bg}; color: ${currentStatus.color}; display: inline-flex; align-items: center; gap: 8px;">${currentStatus.icon} ${currentStatus.label}</span>
+        <span style="padding: 10px 20px; border-radius: 9999px; font-weight: 600; font-size: 1rem; background: ${currentStatus.bg}; color: ${currentStatus.color}; display: inline-flex; align-items: center; gap: 8px;">${currentStatus.label}</span>
       </div>
     </div>
 
@@ -97,7 +96,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
-          <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">📦 订单基本信息</h3>
+          <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">订单基本信息</h3>
         </div>
         <div style="display: grid; gap: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
@@ -126,12 +125,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
-          <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">🔗 关联信息</h3>
+          <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">关联信息</h3>
         </div>
         <div style="display: grid; gap: 16px;">
           <div style="padding: 16px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-radius: 12px;">
             <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-              <span style="width: 40px; height: 40px; background: white; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px;">👤</span>
               <div>
                 <div style="font-size: 0.85rem; color: #3b82f6; font-weight: 500;">客户信息</div>
                 <div style="font-weight: 600;">${customer?.name || 'N/A'}</div>
@@ -141,7 +139,6 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           </div>
           <div style="padding: 16px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 12px;">
             <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-              <span style="width: 40px; height: 40px; background: white; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px;">💻</span>
               <div>
                 <div style="font-size: 0.85rem; color: #16a34a; font-weight: 500;">租赁设备</div>
                 <div style="font-weight: 600;">${device?.name || 'N/A'}</div>
@@ -155,11 +152,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
     <div class="panel">
       <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 24px;">
-        <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">⚙️ 订单管理操作</h3>
+        <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">订单管理操作</h3>
       </div>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;">
         ${canModifyOrder ? `<div style="padding:24px;background:linear-gradient(135deg,#eef2ff 0%,#e0e7ff 100%);border-radius:16px">
-          <h4 style="margin:0 0 12px 0;color:#4338ca;display:flex;align-items:center;gap:8px">📝 订单修改</h4>
+          <h4 style="margin:0 0 12px 0;color:#4338ca;display:flex;align-items:center;gap:8px">订单修改</h4>
           <p class="section-note">调整关键字段会记录到订单修改历史并写入审计日志；换机与改期会自动做库存冲突检查。</p>
           <form method="POST" action="/admin/orders/${order.id}/changes" class="js-order-change-form" style="display:flex;flex-direction:column;gap:12px">
             <div>
@@ -216,7 +213,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         ${order.paymentMethod === 'bank_transfer' && String(order.status) !== 'active' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>银行转账审核</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>备注：${escapeHtml(transferProof.note || '-')}</p>${proofImage ? `<a href="${escapeHtml(proofImage)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(proofImage)}" alt="转账凭证" loading="lazy" referrerpolicy="no-referrer" style="max-width:100%;max-height:320px;border-radius:8px"></a>` : '<p class="alert">凭证图片链接缺失或无效</p>'}<p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交转账 Reference。</p>'}</div>` : ''}
         ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}付款审核</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交付款凭证。</p>'}</div>` : ''}
         <div style="padding: 24px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 16px;">
-          <h4 style="margin: 0 0 16px 0; color: #1e40af; display: flex; align-items: center; gap: 8px;">🔄 更新订单状态</h4>
+          <h4 style="margin: 0 0 16px 0; color: #1e40af; display: flex; align-items: center; gap: 8px;">更新订单状态</h4>
           <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; flex-direction: column; gap: 16px;">
             <div>
               <label for="status" style="display: block; margin-bottom: 8px; font-weight: 500; color: #374151;">选择新状态</label>
@@ -225,18 +222,18 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
                 <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
               </select>
             </div>
-            <button type="submit" class="button button-primary" style="padding: 14px; border-radius: 12px; font-weight: 600; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 4px 14px 0 rgba(59,130,246,0.4);">💾 更新状态</button>
+            <button type="submit" class="button button-primary" style="padding: 14px; border-radius: 12px; font-weight: 600; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 4px 14px 0 rgba(59,130,246,0.4);">更新状态</button>
           </form>
           ${['active', 'pending_return'].includes(String(order.status)) ? `<form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form force-complete-form" data-force-confirm="true" style="margin-top: 12px;">
             <input type="hidden" name="status" value="completed">
             <input type="hidden" name="force" value="1">
-            <button type="submit" class="button button-warning" style="width: 100%;">⚠️ 强制标记为已完成</button>
+            <button type="submit" class="button button-warning" style="width: 100%;">强制标记为已完成</button>
             <small class="form-text">跳过归还验机，仅在设备已实际归还但无法完成验机时使用。</small>
           </form>` : ''}
         </div>
 
         <div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
-          <h4 style="margin: 0 0 16px 0; color: #c2410c;">💸 退款处理</h4>
+          <h4 style="margin: 0 0 16px 0; color: #c2410c;">退款处理</h4>
           <p class="section-note">管理员可选择本次退款方式，提交后按所选方式处理。</p>
           ${completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${depositSettlement && completedRefund?.status !== 'succeeded' ? `<div class="alert">结算单 ${escapeHtml(depositSettlement.settlement_number)}：${escapeHtml(depositSettlement.status)}${depositSettlement.review_note ? ` · ${escapeHtml(depositSettlement.review_note)}` : ''}</div>` : ''}

@@ -98,7 +98,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           <!-- 银行转账账户信息设置 -->
           <div style="margin-top: 24px; padding: 24px; background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 12px; border: 1px solid #bae6fd;">
             <h4 style="margin: 0 0 20px 0; color: #0369a1; display: flex; align-items: center; gap: 8px;">
-              🏦 银行转账账户信息
+              银行转账账户信息
             </h4>
             <div class="grid grid-2">
               <div>
@@ -119,7 +119,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
               </div>
             </div>
             <p style="margin: 16px 0 0 0; color: #0c4a6e; font-size: 0.9rem;">
-              💡 这些银行账户信息将会在用户选择银行转账时显示，供客户转账使用。
+              这些银行账户信息将会在用户选择银行转账时显示，供客户转账使用。
             </p>
           </div>
           <div style="margin-top: 18px; padding: 18px; background: #fff7ed; border-radius: 12px; border: 1px solid #fed7aa;">
