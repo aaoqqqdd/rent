@@ -356,6 +356,34 @@
         active.classList.add('active');
         active.setAttribute('aria-current', 'page');
       }
+
+      // 分组多的侧栏（管理端 7 组）默认折叠：只展开当前所在分组，或本次会话中用户手动展开过的分组。
+      // 否则导航整体高度会远超可视区，把末尾入口（“数据保留策略”“备份与恢复”）挤到看不见、点不到的位置。
+      const groups = Array.from(document.querySelectorAll('.sidebar-nav-group'));
+      if (groups.length >= 5) {
+        let store = null;
+        try { store = window.sessionStorage; } catch (e) { store = null; }
+        const keyFor = function (group) {
+          const summary = group.querySelector('summary');
+          return 'navgroup:' + ((summary && summary.textContent || '').replace(/\s+/g, ' ').trim());
+        };
+        groups.forEach(function (group) {
+          const hasActive = active && group.contains(active);
+          let remembered = null;
+          try { remembered = store && store.getItem(keyFor(group)); } catch (e) { remembered = null; }
+          group.open = hasActive || remembered === 'open';
+          let ready = false;
+          requestAnimationFrame(function () { ready = true; });
+          group.addEventListener('toggle', function () {
+            if (!ready || !store) return;
+            try { store.setItem(keyFor(group), group.open ? 'open' : 'closed'); } catch (e) {}
+          });
+        });
+      }
+
+      if (active && active.scrollIntoView) {
+        try { active.scrollIntoView({ block: 'nearest' }); } catch (e) { active.scrollIntoView(); }
+      }
     })();
 
     (function () {
@@ -409,11 +437,18 @@
             runScripts(content);
             setActiveLink(url.pathname);
             if (window.runFilterTabMotion) window.runFilterTabMotion();
+            window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
           };
-          if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-            await new Promise(function (resolve) { window.gsap.to(content, { autoAlpha: .92, duration: .12, ease: 'power1.out', onComplete: resolve }); });
+          const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          if (!reduceMotion && typeof document.startViewTransition === 'function') {
+            // 浏览器原生视图过渡：新旧内容交叉淡入淡出，替代早已停用的 gsap 过渡。
+            await document.startViewTransition(swap).updateCallbackDone;
+          } else if (!reduceMotion) {
             swap();
-            window.gsap.to(content, { autoAlpha: 1, duration: .28, ease: 'power2.out', overwrite: 'auto' });
+            content.classList.add('is-swapping');
+            requestAnimationFrame(function () {
+              requestAnimationFrame(function () { content.classList.remove('is-swapping'); });
+            });
           } else {
             swap();
           }
@@ -451,13 +486,23 @@
     })();
   </script>
   <script>
-    window.addEventListener('load', function () {
+    (function () {
       const curtain = document.querySelector('.initial-load-curtain');
       if (!curtain) return;
-      curtain.classList.add('initial-load-complete');
-      curtain.setAttribute('aria-hidden', 'true');
-      window.setTimeout(function () { curtain.remove(); }, 420);
-    }, { once: true });
+      const done = function () {
+        curtain.classList.add('initial-load-complete');
+        curtain.setAttribute('aria-hidden', 'true');
+        window.setTimeout(function () { curtain.remove(); }, 420);
+      };
+      let seen = false;
+      try {
+        seen = window.sessionStorage.getItem('rent-shell-loaded') === '1';
+        window.sessionStorage.setItem('rent-shell-loaded', '1');
+      } catch (e) { /* 隐私模式下退化为每次都播放开场 */ }
+      // 首次进入播放完整开场动画；同一会话内的后续整页加载直接收起，避免每次跳转都闪一下黑屏。
+      if (seen) done();
+      else window.addEventListener('load', done, { once: true });
+    })();
   </script>
   <script>
     document.addEventListener('DOMContentLoaded', function () {
