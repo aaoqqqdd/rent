@@ -4313,7 +4313,18 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
-    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/user-terms">用户协议</a><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/cookies">Cookie 政策</a><a href="/refund-policy">退款政策</a><a href="/consumer-rights">消费者权利</a><a href="/complaints">投诉与争议</a><a href="/acceptable-use">可接受使用</a><a href="/software-terms">软件协议</a></nav></footer>`
+    FOOTER: (() => {
+      const year = new Date().getFullYear()
+      const companyName = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
+      const copyright = `<span class="legal-footer__copyright">© ${year} ${companyName}</span>`
+      // 登录后的后台界面只保留最核心的几条法律链接，避免整排链接喧宾夺主；
+      // 面向访客的公开页 / 登录页仍展示完整的合规链接。
+      const links = currentUser
+        ? [['/service-terms', '服务条款'], ['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策']]
+        : [['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'], ['/complaints', '投诉与争议'], ['/acceptable-use', '可接受使用'], ['/software-terms', '软件协议']]
+      const nav = `<nav aria-label="网站法律信息">${links.map(([href, label]) => `<a href="${href}">${label}</a>`).join('')}</nav>`
+      return `<footer class="legal-footer">${copyright}${nav}</footer>`
+    })()
   })
 }
 
