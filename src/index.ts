@@ -218,12 +218,10 @@ app.get('/api/monitor', async (c) => {
 
   try {
     const databaseStartedAt = Date.now()
-    const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+    const tokenValid = await hasValidMonitorApiToken(c)
     const latencyMs = Date.now() - databaseStartedAt
     checks.database = { ok: true, status: latencyMs >= 1000 ? 'degraded' : 'ok', latencyMs }
-    const providedToken = parseBearerToken(c.req.header('Authorization'))
-    const providedHash = await hashAgentValue(providedToken || '')
-    if (!providedToken || !tokenRow?.value || !timingSafeEqualStr(providedHash, String(tokenRow.value))) {
+    if (!tokenValid) {
       return c.json({ status: 'unauthorized', error: 'Valid monitor token required' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="monitor"' })
     }
   } catch (error: any) {
@@ -4291,6 +4289,13 @@ async function hashAgentValue(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((item) => item.toString(16).padStart(2, '0')).join('')
 }
 
+async function hasValidMonitorApiToken(c: any): Promise<boolean> {
+  const providedToken = parseBearerToken(c.req.header('Authorization'))
+  const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  const providedHash = await hashAgentValue(providedToken || '')
+  return Boolean(providedToken && tokenRow?.value && timingSafeEqualStr(providedHash, String(tokenRow.value)))
+}
+
 async function getAgentDevice(c: any): Promise<any | null> {
   const header = String(c.req.header('Authorization') || '')
   if (!header.startsWith('Bearer ')) return null
@@ -4355,10 +4360,19 @@ app.post('/api/device-agent/inspection', async (c) => {
 })
 
 app.get('/api/device-agent/state', async (c) => {
-  const device = await getAgentDevice(c)
-  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
-  const rental = await c.env.RENT.prepare(`SELECT o.id, o.startDate AS start_date, o.endDate AS end_date, o.status, COALESCE(o.rental_status, CASE o.status WHEN 'active' THEN 'ACTIVE' WHEN 'paid' THEN 'CONFIRMED' ELSE o.status END) AS rental_status, COALESCE(o.payment_status, CASE WHEN o.status IN ('paid', 'active') THEN 'PAID' ELSE 'UNPAID' END) AS payment_status, u.name AS customer_name FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.deviceId = ? AND o.status IN ('paid', 'active', 'pending_pickup', 'pending_return') ORDER BY CASE o.status WHEN 'active' THEN 0 WHEN 'pending_return' THEN 1 WHEN 'pending_pickup' THEN 2 ELSE 3 END, o.endDate DESC LIMIT 1`).bind(device.id).first()
-  return c.json({ ok: true, serverTime: new Date().toISOString(), inspectionRequested: Boolean(device.inspection_requested_at), deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental })
+  try {
+    const device = await getAgentDevice(c)
+    if (!device) {
+      if (!await hasValidMonitorApiToken(c)) return c.json({ ok: false, error: 'Invalid token' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="device-agent-state"' })
+      const row = await c.env.RENT.prepare('SELECT COUNT(*) AS bound_devices FROM devices WHERE agent_token_hash IS NOT NULL').first() as any
+      return c.json({ ok: true, status: 'ok', service: 'device-agent-state', boundDevices: Number(row?.bound_devices || 0), checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
+    }
+    const rental = await c.env.RENT.prepare(`SELECT o.id, o.startDate AS start_date, o.endDate AS end_date, o.status, COALESCE(o.rental_status, CASE o.status WHEN 'active' THEN 'ACTIVE' WHEN 'paid' THEN 'CONFIRMED' ELSE o.status END) AS rental_status, COALESCE(o.payment_status, CASE WHEN o.status IN ('paid', 'active') THEN 'PAID' ELSE 'UNPAID' END) AS payment_status, u.name AS customer_name FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.deviceId = ? AND o.status IN ('paid', 'active', 'pending_pickup', 'pending_return') ORDER BY CASE o.status WHEN 'active' THEN 0 WHEN 'pending_return' THEN 1 WHEN 'pending_pickup' THEN 2 ELSE 3 END, o.endDate DESC LIMIT 1`).bind(device.id).first()
+    return c.json({ ok: true, serverTime: new Date().toISOString(), inspectionRequested: Boolean(device.inspection_requested_at), deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental }, 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    console.error('Device agent state monitor failed:', error?.message || error)
+    return c.json({ ok: false, status: 'down', error: 'state service unavailable' }, 503, { 'Cache-Control': 'no-store' })
+  }
 })
 
 app.get('/api/device-agent/commands', async (c) => {

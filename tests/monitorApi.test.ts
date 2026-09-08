@@ -19,6 +19,8 @@ function monitorDb(tokenHash: string) {
         bind() { return this },
         async first() {
           if (sql.includes("key = 'monitorApiTokenHash'")) return { value: tokenHash }
+          if (sql.includes('SELECT * FROM devices WHERE agent_token_hash')) return null
+          if (sql.includes('COUNT(*) AS bound_devices')) return { bound_devices: 2 }
           if (sql.includes('FROM error_logs')) return { total: 0, critical: 0 }
           if (sql.includes('FROM scheduled_job_runs')) return { failures: 0, stuck: 0, last_run: new Date().toISOString().replace('T', ' ').replace('Z', '') }
           if (sql.includes('FROM email_events')) return { failures: 0, stuck: 0 }
@@ -51,4 +53,25 @@ test('Monitorflare endpoint requires its configured Bearer token', async () => {
   const body = await response.json() as any
   assert.equal(body.status, 'ok')
   assert.equal(body.checks.deviceAgentChannel, undefined)
+})
+
+test('device agent state endpoint also supports the Monitorflare token', async () => {
+  const token = 'monitor-test-token'
+  const env = { RENT: monitorDb(await sha256(token)) } as any
+
+  const unauthorized = await worker.fetch(new Request('https://rent.example/api/device-agent/state', {
+    headers: { Authorization: 'Bearer wrong-token' },
+  }), env)
+  assert.equal(unauthorized.status, 401)
+
+  const response = await worker.fetch(new Request('https://rent.example/api/device-agent/state', {
+    headers: { Authorization: `Bearer ${token}` },
+  }), env)
+  const body = await response.json() as any
+  assert.equal(response.status, 200)
+  assert.equal(body.ok, true)
+  assert.equal(body.status, 'ok')
+  assert.equal(body.service, 'device-agent-state')
+  assert.equal(body.boundDevices, 2)
+  assert.match(body.checkedAt, /^\d{4}-\d{2}-\d{2}T/)
 })
