@@ -69,7 +69,6 @@ export * from './admin/referrals';
 export * from './admin/deviceReports';
 export * from './admin/operationsReport';
 export * from './admin/dataRetention';
-export * from './admin/backup';
 export * from './admin/agents';
 export * from './admin/monitoring';
 export * from './admin/userNew';

@@ -22,7 +22,7 @@ import { getAccessLevel, canManageUser, canUseAccountBalance } from './lib/acces
 import type { Role, AccessLevel } from './lib/access'
 import { formatCurrency, formatMelbourneDateTime, formatDate } from './lib/format'
 import { hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword } from './lib/password'
-import { timingSafeEqualStr, fnv1aHex } from './lib/checksum'
+import { timingSafeEqualStr } from './lib/checksum'
 import { parseCookie } from './lib/cookie'
 import { generateUserId, generateReferralCode } from './lib/userId'
 import { validateHostedImageUrls } from './lib/hostedImages'
@@ -35,7 +35,7 @@ export {
   getAccessLevel, canManageUser, canUseAccountBalance,
   formatCurrency, formatMelbourneDateTime, formatDate,
   hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword,
-  timingSafeEqualStr, fnv1aHex,
+  timingSafeEqualStr,
   parseCookie,
   generateUserId, generateReferralCode,
   validateHostedImageUrls,
@@ -77,8 +77,6 @@ import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
 } from './domain/dataRetention'
 import type { RetentionAction, RetentionPolicyLike } from './domain/dataRetention'
-import { backupHealth, restoreTestOverdue } from './domain/backup'
-import type { BackupHealthStatus } from './domain/backup'
 import { rateHealth, worstHealthLevel } from './domain/monitoring'
 import type { HealthLevel, MonitorMetric } from './domain/monitoring'
 import { agentCommission } from './domain/agentProgram'
@@ -101,7 +99,6 @@ export {
   isRiskFlagCurrentlyActive, findBlockingRiskFlag,
   deviceUtilisationRate, paymentMethodBreakdown,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
-  backupHealth, restoreTestOverdue,
   rateHealth, worstHealthLevel,
   agentCommission,
   buildRefundAllocation, evaluatePaymentReconciliation,
@@ -109,7 +106,7 @@ export {
 export type {
   OrderChangeType, OrderChangePlan, DeviceCommandState, PaymentDisputeState,
   RiskFlagType, RiskFlagLike, PaymentMethodRow, PaymentMethodShare,
-  RetentionAction, RetentionPolicyLike, BackupHealthStatus, HealthLevel, MonitorMetric,
+  RetentionAction, RetentionPolicyLike, HealthLevel, MonitorMetric,
   RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
 }
 
@@ -1943,7 +1940,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙',
-    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/backup': '⤓', '/admin/monitoring': 'activity', '/admin/agents': '⚑', '/admin/referrals': 'gift'
+    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/agents': '⚑', '/admin/referrals': 'gift'
   }
 
   const navIconSvg = (kind: string) => {
@@ -1994,7 +1991,6 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       , '▧': '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M4 9h16"></path><path d="M10 9v11"></path>'
       , 'trend': '<path d="M4 18l6-6 4 4 6-7"></path><path d="M15 9h5v5"></path><path d="M3 21h18"></path>'
       , '⧗': '<path d="M6 4h12M6 20h12"></path><path d="M7 4c0 4 10 5 10 8s-10 4-10 8"></path><path d="M17 4c0 4-10 5-10 8"></path>'
-      , '⤓': '<ellipse cx="12" cy="5.5" rx="7" ry="3"></ellipse><path d="M5 5.5v13c0 1.7 3.1 3 7 3s7-1.3 7-3v-13"></path><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path>'
       , 'activity': '<path d="M3 12h4l3 8 4-16 3 8h4"></path>'
       , '⚑': '<path d="M6 3v18"></path><path d="M6 4h11l-2.5 4L17 12H6"></path>'
     }
@@ -2049,7 +2045,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/agents', '代理计划'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
-            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略'], ['/admin/backup', '备份与恢复']])}
+            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">
@@ -2060,6 +2056,23 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
         </div>
       </aside>`
     : ''
+
+  const footerLinks: Array<[string, string]> = [
+    ['/user-terms', '用户协议'],
+    ['/service-terms', '服务条款'],
+    ['/privacy', '隐私政策'],
+    ['/cookies', 'Cookie 政策'],
+    ['/refund-policy', '退款政策'],
+    ['/consumer-rights', '消费者权利'],
+    ['/complaints', '投诉与争议'],
+    ['/acceptable-use', '可接受使用'],
+    ['/software-terms', '软件协议'],
+  ]
+  const footerNav = footerLinks
+    .map(([href, text]) => `<a href="${href}">${text}</a>`)
+    .join('<span class="legal-footer__sep" aria-hidden="true">·</span>')
+  const footerCompany = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
+  const footerHtml = `<footer class="legal-footer"><nav aria-label="网站法律信息">${footerNav}</nav><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany} · 保留所有权利</span></footer>`
 
   return renderLayoutTemplate({
     TITLE: normalizedTitle,
@@ -2072,7 +2085,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
-    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/user-terms">用户协议</a><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/cookies">Cookie 政策</a><a href="/refund-policy">退款政策</a><a href="/consumer-rights">消费者权利</a><a href="/complaints">投诉与争议</a><a href="/acceptable-use">可接受使用</a><a href="/software-terms">软件协议</a></nav></footer>`
+    FOOTER: footerHtml
   })
 }
 

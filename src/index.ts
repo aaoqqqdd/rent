@@ -49,7 +49,6 @@ import {
   RISK_FLAG_TYPES,
   findBlockingRiskFlag,
   timingSafeEqualStr,
-  fnv1aHex,
   collectMonitoringMetrics,
   canTransitionDeviceLifecycle,
   MAINTENANCE_CHECK_TYPES,
@@ -3422,96 +3421,6 @@ app.post('/admin/data-retention/:category', async (c) => {
     .bind(retentionDays, action, basis, notes, enabled, admin.id, category).run()
   await createAuditLog(c, { actor: admin, action: 'DATA_RETENTION_POLICY_UPDATED', targetType: 'DATA_RETENTION_POLICY', targetId: category, before: { retentionDays: existing.retention_days, action: existing.action, enabled: existing.enabled }, after: { retentionDays, action, enabled }, reason: notes || basis })
   return c.redirect('/admin/data-retention', 303)
-})
-
-// 备份与恢复（完善.md §26, §39 / P4 #19, #20）
-const BACKUP_EXPORT_TABLES = ['contracts', 'payments', 'payment_refunds', 'financial_ledger_entries', 'balance_transactions', 'audit_logs', 'invoices']
-
-app.get('/admin/backup', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const [policy, runs, tests] = await Promise.all([
-    c.env.RENT.prepare('SELECT * FROM backup_policy WHERE id = 1').first(),
-    c.env.RENT.prepare('SELECT * FROM backup_runs ORDER BY created_at DESC LIMIT 30').all().then(r => r.results || []),
-    c.env.RENT.prepare('SELECT * FROM restore_tests ORDER BY created_at DESC LIMIT 30').all().then(r => r.results || []),
-  ])
-  return c.html(pages.renderAdminBackup(user, policy, runs as any[], tests as any[]))
-})
-
-app.get('/admin/backup/export.json', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const snapshot: Record<string, any> = { generatedAt: new Date().toISOString(), generatedBy: user.id, tables: {} }
-  const rowCounts: Record<string, number> = {}
-  for (const table of BACKUP_EXPORT_TABLES) {
-    try {
-      const rows = (await c.env.RENT.prepare(`SELECT * FROM ${table}`).all()).results || []
-      snapshot.tables[table] = rows
-      rowCounts[table] = rows.length
-    } catch (error: any) {
-      snapshot.tables[table] = { error: String(error?.message || error) }
-    }
-  }
-  const serialised = JSON.stringify(snapshot)
-  const checksum = fnv1aHex(serialised)
-  snapshot.checksum = checksum
-  const body = JSON.stringify(snapshot, null, 2)
-  await c.env.RENT.prepare('INSERT INTO backup_runs (id, scope, status, row_counts_json, checksum, byte_size, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(`bkp-${nanoid(12)}`, `离线 JSON 快照：${BACKUP_EXPORT_TABLES.join(', ')}`, 'SUCCESS', JSON.stringify(rowCounts), checksum, body.length, user.id).run()
-  await createAuditLog(c, { actor: user, action: 'BACKUP_EXPORTED', targetType: 'BACKUP', targetId: checksum, after: { rowCounts, bytes: body.length }, reason: '下载离线 JSON 快照' })
-  return new Response(body, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="rent-backup-${new Date().toISOString().slice(0, 10)}-${checksum}.json"` } })
-})
-
-app.post('/admin/backup/runs', async (c) => {
-  const admin = c.get('user')
-  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
-  const counts: Record<string, number> = {}
-  for (const table of BACKUP_EXPORT_TABLES) {
-    try { counts[table] = Number((await c.env.RENT.prepare(`SELECT COUNT(*) AS v FROM ${table}`).first<{ v: number }>())?.v || 0) } catch { /* skip */ }
-  }
-  await c.env.RENT.prepare('INSERT INTO backup_runs (id, scope, status, row_counts_json, created_by) VALUES (?, ?, ?, ?, ?)')
-    .bind(`bkp-${nanoid(12)}`, '手动记录（外部备份已完成）', 'SUCCESS', JSON.stringify(counts), admin.id).run()
-  await createAuditLog(c, { actor: admin, action: 'BACKUP_RUN_RECORDED', targetType: 'BACKUP', targetId: 'manual', after: { rowCounts: counts }, reason: '手动记录一次备份执行' })
-  return c.redirect('/admin/backup', 303)
-})
-
-app.post('/admin/backup/policy', async (c) => {
-  const admin = c.get('user')
-  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
-  const form = await c.req.parseBody()
-  const rpoMinutes = Math.round(Number(form.rpoMinutes))
-  const rtoMinutes = Math.round(Number(form.rtoMinutes))
-  const scheduleNote = sanitizePlainText(String(form.scheduleNote || ''), 300).trim()
-  const scopeNote = sanitizePlainText(String(form.scopeNote || ''), 300).trim()
-  if (![rpoMinutes, rtoMinutes].every(n => Number.isFinite(n) && n >= 1 && n <= 43200)) return c.text('RPO / RTO 必须是 1–43200 分钟', 400)
-  if (!scheduleNote || !scopeNote) return c.text('备份计划与覆盖范围说明必填', 400)
-  const before = await c.env.RENT.prepare('SELECT rpo_minutes, rto_minutes FROM backup_policy WHERE id = 1').first() as any
-  await c.env.RENT.prepare('UPDATE backup_policy SET rpo_minutes = ?, rto_minutes = ?, schedule_note = ?, scope_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1')
-    .bind(rpoMinutes, rtoMinutes, scheduleNote, scopeNote, admin.id).run()
-  await createAuditLog(c, { actor: admin, action: 'BACKUP_POLICY_UPDATED', targetType: 'BACKUP_POLICY', targetId: '1', before, after: { rpoMinutes, rtoMinutes }, reason: '更新备份策略' })
-  return c.redirect('/admin/backup', 303)
-})
-
-app.post('/admin/backup/restore-tests', async (c) => {
-  const admin = c.get('user')
-  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
-  const form = await c.req.parseBody()
-  const scope = sanitizePlainText(String(form.scope || ''), 120).trim()
-  const outcome = String(form.outcome || '')
-  const durationText = String(form.durationMinutes || '').trim()
-  const durationMinutes = durationText === '' ? null : Math.round(Number(durationText))
-  const notes = sanitizePlainText(String(form.notes || ''), 500).trim() || null
-  if (!scope) return c.text('必须填写演练范围', 400)
-  if (!['PASS', 'FAIL'].includes(outcome)) return c.text('结果无效', 400)
-  if (durationMinutes !== null && (!Number.isFinite(durationMinutes) || durationMinutes < 0 || durationMinutes > 10080)) return c.text('耗时无效', 400)
-  await c.env.RENT.batch([
-    c.env.RENT.prepare('INSERT INTO restore_tests (id, scope, outcome, duration_minutes, notes, created_by) VALUES (?, ?, ?, ?, ?, ?)')
-      .bind(`rst-${nanoid(12)}`, scope, outcome, durationMinutes, notes, admin.id),
-    c.env.RENT.prepare("UPDATE backup_policy SET last_restore_test_at = CURRENT_TIMESTAMP, last_restore_test_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1")
-      .bind(`${outcome}${notes ? ` · ${notes}` : ''}`, admin.id),
-  ])
-  await createAuditLog(c, { actor: admin, action: 'RESTORE_TEST_RECORDED', targetType: 'BACKUP', targetId: 'restore-test', after: { scope, outcome, durationMinutes }, reason: notes || `恢复演练 ${outcome}` })
-  return c.redirect('/admin/backup', 303)
 })
 
 // 系统健康监控（完善.md §30, §48 / P8 #32, #33）
