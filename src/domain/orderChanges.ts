@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 订单修改历史 (TODO.md P1 #5 / 完善.md §34)
+// 订单修改历史 (TODO.md P1 #5 / 完善.md)
 //
 // 任何已创建订单的关键字段都不能被静默修改：每次调整都要落一条
 // order_change_history，记录改了什么、为什么、谁改的，并保持库存一致。

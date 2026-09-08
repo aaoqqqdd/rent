@@ -5,6 +5,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import styles from '../src/styles.css'
 import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
@@ -326,6 +327,10 @@ test('data retention controls stay in their matching table columns and submit on
   assert.match(html, /class="retention-policy-period"><input[^>]+form="retention-policy-0"[^>]+name="retentionDays"/)
   assert.match(html, /class="retention-policy-action"><select[^>]+form="retention-policy-0"[^>]+name="action"/)
   assert.match(html, /<button[^>]+form="retention-policy-0"[^>]+type="submit">保存<\/button>/)
+})
+
+test('button shine is contained by the button instead of the whole page', () => {
+  assert.match(styles, /\.button\s*\{[^}]*position:\s*relative;[^}]*overflow:\s*hidden;/)
 })
 
 test('site layout loads the external stylesheet and resolves template slots', () => {

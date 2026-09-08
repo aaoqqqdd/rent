@@ -109,7 +109,7 @@ export const CONTRACT_VARIABLE_GROUPS = [
 
 // 证件号码在任何非本人视图里默认脱敏；只有 MANAGER/ADMIN 主动“显示完整证件”
 // （经 sensitive_data_access_logs + 审计）或客户查看本人合同时才展示完整值。
-// 完善.md §18 — 普通 STAFF 不得查看完整证件号码。
+// 完善.md — 普通 STAFF 不得查看完整证件号码。
 export const SENSITIVE_CONTRACT_FIELDS = new Set(['customer_id_number'])
 
 export async function logSensitiveDataAccess(

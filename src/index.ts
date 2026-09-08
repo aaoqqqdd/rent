@@ -2989,7 +2989,7 @@ app.post('/admin/orders/:id/changes', async (c) => {
   ])
   if (type === 'DEVICE_SWAP') { await releaseDeviceIfUnbooked(c, before.deviceId); await recordDeviceLifecycle(c, after.deviceId, 'RESERVED', { orderId: order.id, reason: '订单换机', changedBy: admin.id }) }
 
-  // 设计文档/优惠码 §37：改租期 / 换机 / 改价后，若可打折基数跌破优惠码最低消费，
+  // 设计文档/优惠码：改租期 / 换机 / 改价后，若可打折基数跌破优惠码最低消费，
   // 该优惠码不再成立——释放名额、移除折扣、把折扣额加回订单总价，并留痕。
   if (['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT'].includes(type) && (order as any).coupon_id && Number(after.discountAmount || 0) > 0) {
     const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ?').bind((order as any).coupon_id).first() as any
@@ -3335,7 +3335,7 @@ app.get('/admin/revenue-stats', async (c) => {
   return c.html(pages.renderAdminRevenueStats(user, await pages.getRevenueData(c)))
 })
 
-// 运营分析报表（完善.md §23, §40）——金额一律从 Ledger / Payment / Refund 明细汇总。
+// 运营分析报表（完善.md）——金额一律从 Ledger / Payment / Refund 明细汇总。
 app.get('/admin/reports', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -3378,7 +3378,7 @@ app.get('/admin/reports', async (c) => {
   }))
 })
 
-// 数据保留策略（完善.md §25, §37 / P3 #18）
+// 数据保留策略（完善.md / P3 #18）
 const RETENTION_PREVIEW_SOURCES: Record<string, { table: string; dateCol: string }> = {
   CONTRACTS: { table: 'contracts', dateCol: 'createdAt' },
   FINANCIAL_RECORDS: { table: 'financial_ledger_entries', dateCol: 'created_at' },
@@ -3425,7 +3425,7 @@ app.post('/admin/data-retention/:category', async (c) => {
   return c.redirect('/admin/data-retention', 303)
 })
 
-// 系统健康监控（完善.md §30, §48 / P8 #32, #33）
+// 系统健康监控（完善.md / P8 #32, #33）
 app.get('/admin/monitoring', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -3436,7 +3436,7 @@ app.get('/admin/monitoring', async (c) => {
   return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[]))
 })
 
-// 代理计划（完善.md §29，预留未启用）
+// 代理计划（完善.md，预留未启用）
 app.get('/admin/agents', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -3678,7 +3678,7 @@ app.post('/admin/maintenance/:id/advance', async (c) => {
   if (!record) return c.text('维护记录不存在或已结束', 409)
   // CLIENT_CHECK is the last phase; completing it manually is only allowed once
   // every one of the ten return-preparation checks has been recorded as passed
-  // (完善.md §16 — "完成维护前禁止进入 READY").
+  // (完善.md — "完成维护前禁止进入 READY").
   if (record.status === 'CLIENT_CHECK') {
     const passed = await c.env.RENT.prepare('SELECT COUNT(*) AS n FROM maintenance_preparation_checks WHERE maintenance_id = ? AND passed = 1').bind(record.id).first() as any
     if (Number(passed?.n || 0) < 10) return c.text(`还有 ${10 - Number(passed?.n || 0)} 项设备验证未通过，不能完成维护`, 409)
@@ -3773,7 +3773,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   if (form.lifecycleStatus && !['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'].includes(form.lifecycleStatus)) return c.text('设备生命周期状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
   if (!['normal', 'return', 'maintenance', 'lost'].includes(form.deviceMode || 'normal')) return c.text('客户设备状态无效', 400)
-  // 完善.md §16：设备还有未完成的维护记录时，不能被标记为可用 / READY。
+  // 完善.md：设备还有未完成的维护记录时，不能被标记为可用 / READY。
   if ((form.status === 'available' || form.lifecycleStatus === 'READY')) {
     const openMaintenance = await c.env.RENT.prepare("SELECT id FROM maintenance_records WHERE device_id = ? AND status IN ('OPEN','IN_PROGRESS','DATA_CLEAN','SYSTEM_RESET','CLIENT_CHECK') LIMIT 1").bind(c.req.param('id')).first()
     if (openMaintenance) return c.text('该设备还有未完成的维护记录，完成维护后才能标记为可用', 409)

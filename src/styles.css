@@ -3615,7 +3615,7 @@ tr:hover td {
 
 /* Quiet, material-like feedback for the operations console controls.
    合成层交由浏览器按需创建：不再对每个 button/card/panel 强制 translateZ(0) 提层。 */
-.button { overflow: hidden; isolation: isolate; }
+.button { position: relative; overflow: hidden; isolation: isolate; }
 .button::after {
   content: '';
   position: absolute;

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 系统健康监控 (完善.md §30, §48 / P8 #32, #33)
+// 系统健康监控 (完善.md / P8 #32, #33)
 //
 // 把“分子 / 分母”比率按阈值分级。分母为 0（没有样本）时记 OK 而非报警。
 

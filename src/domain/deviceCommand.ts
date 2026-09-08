@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 远程设备命令状态机 (TODO.md P1 #3 / 完善.md §23)
+// 远程设备命令状态机 (TODO.md P1 #3 / 完善.md)
 //
 //   QUEUED → SENT → ACKNOWLEDGED → RUNNING → SUCCESS
 //   QUEUED/SENT/ACKNOWLEDGED/RUNNING → FAILED

@@ -13,7 +13,7 @@ function cents(value: number): number {
   return Math.round(Number(value) * 100)
 }
 
-// 完善.md §31 —— 一笔付款只要还有未结案的拒付争议，就不允许再走任何正常退款。
+// 完善.md —— 一笔付款只要还有未结案的拒付争议，就不允许再走任何正常退款。
 // 所有退款入口（押金退款、提前归还退款、取消退款、银行转账补款）统一调用。
 export async function hasOpenPaymentDispute(c: Context, paymentId: string): Promise<boolean> {
   if (!paymentId) return false
@@ -336,7 +336,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     }
   }
   if (disputedCustomerId && disputedStripeId) {
-    // Chargeback 自动升起 CHARGEBACK 风险标记（完善.md §21/§32），阻止该客户继续自助下单。
+    // Chargeback 自动升起 CHARGEBACK 风险标记（完善.md），阻止该客户继续自助下单。
     try {
       const existing = await c.env.RENT.prepare("SELECT id FROM risk_flags WHERE customer_id = ? AND flag_type = 'CHARGEBACK' AND status = 'ACTIVE' LIMIT 1").bind(disputedCustomerId).first() as any
       let flagId = existing?.id as string | undefined

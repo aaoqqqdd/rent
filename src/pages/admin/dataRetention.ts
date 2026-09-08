@@ -35,7 +35,7 @@ export function renderAdminDataRetention(user: any, policies: any[] = [], previe
     <div class="table-wrapper retention-policy-table"><table><thead><tr><th>数据类别</th><th>策略</th><th>保留期</th><th>到期动作</th><th>预览 / 更新</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty-state">尚未初始化策略</td></tr>'}</tbody></table></div>
   </div>
   <div class="panel">
-    <p class="section-note">实际的到期数据清理由后台调度任务执行（见 §26 备份恢复 / §30 异常自动化）；本页仅负责定义策略与预览影响面。删除类动作不适用于合同与财务记录。</p>
+    <p class="section-note">实际的到期数据清理由后台调度任务执行（见备份恢复 / 异常自动化）；本页仅负责定义策略与预览影响面。删除类动作不适用于合同与财务记录。</p>
   </div>`
   return buildLayout('数据保留策略 - 电脑租赁管理系统', body, user)
 }

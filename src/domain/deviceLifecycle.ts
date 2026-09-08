@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 设备生命周期状态机 (TODO.md P1 #4 / 完善.md §13, §16)
+// 设备生命周期状态机 (TODO.md P1 #4 / 完善.md)
 //
 //   RESERVED → RENTED
 //   RENTED → RETURNED → INSPECTION → MAINTENANCE → READY
@@ -31,5 +31,5 @@ export const MAINTENANCE_OPEN_STATES = new Set(['OPEN', 'IN_PROGRESS', 'DATA_CLE
 export const MAINTENANCE_ADVANCE_NEXT: Record<string, string> = {
   OPEN: 'IN_PROGRESS', IN_PROGRESS: 'DATA_CLEAN', DATA_CLEAN: 'SYSTEM_RESET', SYSTEM_RESET: 'CLIENT_CHECK',
 }
-// 归还后设备准备的十项验证（完善.md §16）——全部通过才允许维护记录 COMPLETED、设备回到 READY。
+// 归还后设备准备的十项验证（完善.md）——全部通过才允许维护记录 COMPLETED、设备回到 READY。
 export const MAINTENANCE_CHECK_TYPES = ['DATA_WIPE', 'SYSTEM_RESET', 'WINDOWS_BOOT', 'AGENT_INSTALLED', 'AGENT_VERSION', 'DEVICE_SERIAL', 'DISK_HEALTH', 'NETWORK', 'HARDWARE', 'ACCESSORIES'] as const

@@ -34,7 +34,7 @@ export async function renderContractView(c: Context, contractId: string, user: a
   const renderedContract = trimContractLeadingWhitespace(renderContractVariables(contractSource, contract, order, device, customer, await getContractVariableData(c, contract, order), internalViewer, revealSensitive))
   const returnUrl = user.role === 'ADMIN' ? '/admin/contracts' : user.role === 'STAFF' ? '/staff/contracts' : order ? `/customer/orders/${order.id}` : '/customer/dashboard'
 
-  // 公开验证链接（完善.md §24/§36）：仅对已定稿且有令牌的合同展示，供合同持有人对外核验。
+  // 公开验证链接（完善.md）：仅对已定稿且有令牌的合同展示，供合同持有人对外核验。
   const verificationToken = String((contract as any).verification_token || '')
   const verifyUrl = verificationToken && contract.contractNumber
     ? `${new URL(c.req.url).origin}/verify?number=${encodeURIComponent(contract.contractNumber)}&token=${encodeURIComponent(verificationToken)}`

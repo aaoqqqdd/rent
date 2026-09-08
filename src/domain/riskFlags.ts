@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 风险标记与黑名单 (完善.md §22, §32 / TODO.md P2 #10)
+// 风险标记与黑名单 (完善.md / TODO.md P2 #10)
 //
 // 不是一个 is_blacklisted 布尔，而是带类型 / 严重程度 / 证据 / 过期时间的标记表。
 // “高风险客户禁止自动创建新租赁”：任意 HIGH 级标记，或命中硬拦截类型
