@@ -4,54 +4,48 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
-import sanitizeHtml from 'sanitize-html'
 import layoutTemplate from './layout.html'
-import { customAlphabet, nanoid } from 'nanoid'
+import { nanoid } from 'nanoid'
 
-const referenceCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
-export function generateReferenceNumber(prefix: 'OD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD' | 'CN', at = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(at)
-  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
-  return `${prefix}-${values.year}${values.month}${values.day}-${referenceCode()}`
+// ---------------------------------------------------------------------------
+// 通用工具函数已拆分到 src/lib/*。这里 import 供本文件内部使用，并在文件内
+// 统一 re-export，让既有 `import { ... } from './site'`（页面 / action / 测试）
+// 保持零改动。
+// ---------------------------------------------------------------------------
+import { generateReferenceNumber, generateContractNumber } from './lib/reference'
+import {
+  sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
+  renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
+} from './lib/html'
+import { splitPersonName, combinePersonName, getAvatarInitials } from './lib/personName'
+import { getAccessLevel, canManageUser, canUseAccountBalance } from './lib/access'
+import type { Role, AccessLevel } from './lib/access'
+import { formatCurrency, formatMelbourneDateTime, formatDate } from './lib/format'
+import { hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword } from './lib/password'
+import { timingSafeEqualStr, fnv1aHex } from './lib/checksum'
+import { parseCookie } from './lib/cookie'
+import { generateUserId, generateReferralCode } from './lib/userId'
+import { validateHostedImageUrls } from './lib/hostedImages'
+
+export {
+  generateReferenceNumber, generateContractNumber,
+  sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
+  renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
+  splitPersonName, combinePersonName, getAvatarInitials,
+  getAccessLevel, canManageUser, canUseAccountBalance,
+  formatCurrency, formatMelbourneDateTime, formatDate,
+  hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword,
+  timingSafeEqualStr, fnv1aHex,
+  parseCookie,
+  generateUserId, generateReferralCode,
+  validateHostedImageUrls,
 }
-export function generateContractNumber(at = new Date()): string {
-  return generateReferenceNumber('CTR', at)
-}
+export type { Role, AccessLevel }
 
 function renderLayoutTemplate(values: Record<string, string>): string {
   return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? values[key] : placeholder
   )
-}
-
-export function sanitizeRichHtml(value: unknown): string {
-  return sanitizeHtml(String(value ?? ''), {
-    allowedTags: ['h1', 'h2', 'h3', 'h4', 'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ol', 'ul', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'blockquote', 'a', 'span', 'div', 'hr', 'code', 'pre', 'img'],
-    allowedAttributes: { a: ['href', 'target', 'rel'], img: ['src', 'alt'], '*': ['class', 'style'] },
-    allowedSchemes: ['http', 'https', 'mailto', 'data'],
-    allowedSchemesByTag: { a: ['http', 'https', 'mailto'], img: ['data'] },
-    allowedStyles: {
-      '*': {
-        color: [/^#[0-9a-f]{3,8}$/i, /^rgb\([\d\s,.%]+\)$/i],
-        'background-color': [/^#[0-9a-f]{3,8}$/i, /^rgb\([\d\s,.%]+\)$/i],
-        'text-align': [/^(left|right|center|justify)$/],
-        'font-weight': [/^(normal|bold|[1-9]00)$/],
-        width: [/^\d+(\.\d+)?(%|px)$/],
-        margin: [/^[\d\s.%px-]+$/], padding: [/^[\d\s.%px-]+$/],
-        border: [/^[\d\s.#a-z()-]+$/i], 'border-collapse': [/^(collapse|separate)$/],
-        'page-break-after': [/^(always|avoid|auto|left|right)$/],
-        'break-after': [/^(auto|avoid|always|page|column|region)$/],
-      },
-    },
-    transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer' }, true) },
-  })
-}
-
-// 把未被填充的 `${token}` / `{token}` 占位符替换为可读的空位标记。
-// 用于把含合同变量的模板（如 rentalTerms）作为「范本」公开展示：读者看到结构，
-// 未知字段显示为 —— 而不是花括号变量名。
-export function neutralizeTemplateTokens(html: string, placeholder = '<span class="doc-blank">——</span>'): string {
-  return String(html ?? '').replace(/\$?\{[a-z0-9_]+\}/gi, placeholder)
 }
 
 export function renderSiteVariables(content: string, currentUser: any = {}, extraValues: Record<string, unknown> = {}): string {
@@ -89,76 +83,6 @@ export function renderSiteVariables(content: string, currentUser: any = {}, extr
   }, String(content ?? ''))
 
   return sanitizeRichHtml(filled)
-}
-
-export function sanitizePlainText(value: unknown, maxLength = 500): string {
-  return sanitizeHtml(String(value ?? ''), { allowedTags: [], allowedAttributes: {} })
-    .trim()
-    .slice(0, maxLength)
-}
-
-export function renderNotificationMarkdown(value: unknown): string {
-  return sanitizeRichHtml(String(value ?? '').slice(0, 20000))
-}
-
-export function renderFlexibleContent(value: unknown, format?: unknown): string {
-  return sanitizeRichHtml(String(value ?? '').slice(0, 20000))
-}
-
-export function renderEmailNotificationHtml(title: unknown, content: unknown, companyName = 'PC Rental', themeColor = '#f0a35b'): string {
-  const safeTitle = sanitizePlainText(title, 200)
-  const safeCompany = sanitizePlainText(companyName, 120)
-  const accent = /^#[0-9a-f]{6}$/i.test(String(themeColor)) ? String(themeColor) : '#f0a35b'
-  const messageHtml = renderFlexibleContent(content)
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title></head><body style="margin:0;background:#e9eef1;color:#172331;font-family:Arial,'Noto Sans SC',sans-serif;"><div style="padding:32px 16px;background:#e9eef1;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #cbd7df;box-shadow:0 12px 32px rgba(23,35,49,.12);"><tr><td style="padding:28px 32px;background:#172331;color:#f5f8fa;border-bottom:5px solid ${accent};"><div style="font:700 12px/1.2 Arial,sans-serif;letter-spacing:2px;color:${accent};">PR / PC RENTAL</div><div style="margin-top:14px;font-size:12px;letter-spacing:1.5px;color:#aebdca;">ASSET OPS · CUSTOMER NOTICE</div></td></tr><tr><td style="padding:36px 32px 30px;"><div style="font:700 11px/1.2 Arial,sans-serif;letter-spacing:1.8px;color:${accent};text-transform:uppercase;">${safeCompany} / MESSAGE</div><h1 style="margin:12px 0 22px;font-size:28px;line-height:1.25;color:#172331;">${safeTitle}</h1><div style="height:1px;background:#d7e0e6;margin-bottom:24px;"></div><div style="font-size:16px;line-height:1.8;color:#40515e;">${messageHtml}</div></td></tr><tr><td style="padding:20px 32px;background:#f5f8fa;border-top:1px solid #d7e0e6;color:#71818d;font:11px/1.7 monospace;">${safeCompany}<br>这是一封系统通知邮件，请勿直接回复。</td></tr></table></div></body></html>`
-}
-
-export function createPageBreakHtml(): string {
-  return '<div class="page-break" style="page-break-after: always; break-after: page;"></div><p><br></p>'
-}
-
-export function splitPersonName(value: unknown): { firstName: string; lastName: string } {
-  const name = sanitizePlainText(value, 200).trim()
-  const parts = name.split(/\s+/).filter(Boolean)
-  if (parts.length > 1) return { firstName: parts.slice(0, -1).join(' '), lastName: parts.at(-1) || '' }
-  if (/^[\p{Script=Han}]{2,}$/u.test(name)) return { firstName: name.slice(1), lastName: name.slice(0, 1) }
-  return { firstName: name, lastName: '' }
-}
-
-export function combinePersonName(firstName: unknown, lastName: unknown): string {
-  return `${sanitizePlainText(firstName, 100).trim()} ${sanitizePlainText(lastName, 100).trim()}`.trim()
-}
-
-export function getAvatarInitials(name: unknown): string {
-  const value = sanitizePlainText(name, 200).trim()
-  if (!value) return '?'
-  const compactValue = value.replace(/\s+/g, '')
-  if (/^[\p{Script=Han}]+$/u.test(compactValue)) {
-    return compactValue.slice(0, 1)
-  }
-  const parts = value.split(/\s+/).filter(Boolean)
-  if (parts.length === 1) return Array.from(parts[0] || '').slice(0, 2).join('').toUpperCase() || '?'
-  return `${Array.from(parts[0])[0] || ''}${Array.from(parts.at(-1) || '')[0] || ''}`.toUpperCase()
-}
-
-export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
-export type AccessLevel = 'CUSTOMER' | 'STAFF' | 'MANAGER' | 'ADMIN'
-
-export function getAccessLevel(user: any): AccessLevel {
-  const value = String(user?.accessLevel ?? user?.access_level ?? user?.role ?? 'CUSTOMER').toUpperCase()
-  return ['CUSTOMER', 'STAFF', 'MANAGER', 'ADMIN'].includes(value) ? value as AccessLevel : 'CUSTOMER'
-}
-
-export function canManageUser(actor: any, target: any): boolean {
-  const actorLevel = getAccessLevel(actor)
-  const targetLevel = getAccessLevel(target)
-  return actorLevel === 'ADMIN' || (actorLevel === 'MANAGER' && targetLevel === 'STAFF')
-}
-
-export function canUseAccountBalance(user: any): boolean {
-  const role = String(user?.role || '').trim().toUpperCase()
-  const accountType = String(user?.accountType ?? user?.account_type ?? 'formal').trim().toLowerCase()
-  return Boolean(user && role === 'CUSTOMER' && accountType === 'formal')
 }
 
 export interface User {
@@ -713,29 +637,6 @@ export function isContractFinalized(contract: Contract | null | undefined): bool
   return Boolean(contract && ['signed', 'completed'].includes(contract.status) && contract.signedAt && contract.signed_content)
 }
 
-// 生成一个随机的盐值
-function generateSalt(length: number = 16): string {
-  const randomBytes = new Uint8Array(length);
-  crypto.getRandomValues(randomBytes);
-  return Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-const PBKDF2_ITERATIONS = 100000
-
-export async function generateReferralCode(length: number = 6): Promise<string> {
-  const { customAlphabet } = await import('nanoid');
-  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const nanoid = customAlphabet(alphabet, length);
-  return nanoid();
-}
-
-export function generateUserId(role: 'ADMIN' | 'STAFF' | 'CUSTOMER', accountType: 'formal' | 'guest' = 'formal'): string {
-  const prefix = accountType === 'guest' ? 'VS' : role === 'ADMIN' ? 'AD' : role === 'STAFF' ? 'ST' : 'US'
-  const bytes = new Uint8Array(8)
-  crypto.getRandomValues(bytes)
-  return `${prefix}-${Array.from(bytes, byte => String(byte % 10)).join('')}`
-}
-
 export async function generateUniqueUserId(c: Context, role: 'ADMIN' | 'STAFF' | 'CUSTOMER', accountType: 'formal' | 'guest' = 'formal'): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const id = generateUserId(role, accountType)
@@ -743,77 +644,6 @@ export async function generateUniqueUserId(c: Context, role: 'ADMIN' | 'STAFF' |
     if (!existing) return id
   }
   throw new Error('无法生成唯一用户 ID，请稍后重试')
-}
-
-export async function hashPassword(password: string): Promise<string> {
-  const iterations = PBKDF2_ITERATIONS
-  const salt = generateSalt()
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations }, key, 256)
-  const hash = Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('')
-  return `pbkdf2$${iterations}$${salt}$${hash}`
-}
-
-export function isStrongPassword(password: unknown): boolean {
-  return /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{8,}$/.test(String(password ?? ''))
-}
-
-export function generateTemporaryPassword(): string {
-  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
-  const lower = 'abcdefghijkmnopqrstuvwxyz'
-  const digits = '23456789'
-  const alphabet = upper + lower + digits
-  const bytes = new Uint8Array(8)
-  crypto.getRandomValues(bytes)
-  const password = [
-    upper[bytes[0] % upper.length],
-    lower[bytes[1] % lower.length],
-    digits[bytes[2] % digits.length],
-    ...Array.from(bytes.slice(3), byte => alphabet[byte % alphabet.length]),
-  ]
-  // Fisher-Yates shuffle so the required character classes are not fixed in position.
-  for (let index = password.length - 1; index > 0; index -= 1) {
-    const swapIndex = bytes[index] % (index + 1)
-      ;[password[index], password[swapIndex]] = [password[swapIndex], password[index]]
-  }
-  return password.join('')
-}
-
-export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  if (storedHash.startsWith('pbkdf2$')) {
-    const [, iterationText, salt, expected] = storedHash.split('$')
-    const iterations = Number(iterationText)
-    if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_ITERATIONS || !salt || !expected) return false
-    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
-    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations }, key, 256)
-    const actual = Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('')
-    if (actual.length !== expected.length) return false
-    let difference = 0
-    for (let i = 0; i < actual.length; i++) difference |= actual.charCodeAt(i) ^ expected.charCodeAt(i)
-    return difference === 0
-  }
-  const parts = storedHash.split('$');
-  if (parts.length !== 2) {
-    // 如果存储的哈希值格式不正确，则验证失败
-    return false;
-  }
-  const salt = parts[0];
-  const hash = parts[1];
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + salt); // 使用存储的盐值和用户输入的密码进行哈希
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const newHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
-
-  return newHash === hash; // 比较新生成的哈希值与存储的哈希值
-}
-
-// 旧的 SHA-256 散列函数 (无盐值)
-async function oldSha256Hash(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export async function getUserById(cOrContext: Context | string, id?: string): Promise<User | null> {
@@ -1830,14 +1660,6 @@ export function paymentMethodBreakdown(rows: Array<PaymentMethodRow | null | und
   return withShare
 }
 
-// 定长时间字符串比较——用于合同验证码 / 令牌校验，避免按字符提前返回的计时侧信道。
-export function timingSafeEqualStr(a: string, b: string): boolean {
-  const x = String(a ?? '')
-  const y = String(b ?? '')
-  let diff = x.length ^ y.length
-  for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i % (y.length || 1))
-  return diff === 0
-}
 
 // ---------------------------------------------------------------------------
 // 数据保留策略 (完善.md §25, §37 / P3 #18)
@@ -1896,15 +1718,6 @@ export function restoreTestOverdue(lastTestAt: string | number | Date | null | u
   return (now.getTime() - t) > Math.max(1, maxIntervalDays) * 86400000
 }
 
-// 轻量校验和（FNV-1a 32 位十六进制），用于给离线快照留一个可比对指纹。
-export function fnv1aHex(input: string): string {
-  let hash = 0x811c9dc5
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i)
-    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0
-  }
-  return hash.toString(16).padStart(8, '0')
-}
 
 // ---------------------------------------------------------------------------
 // 系统健康监控 (完善.md §30, §48 / P8 #32, #33)
@@ -2056,19 +1869,6 @@ export async function reconcileOrderPayments(c: Context, orderId: string): Promi
     refundRows.length ? db.prepare(`SELECT refund_id, payment_id, amount FROM refund_allocations WHERE refund_id IN (${refundRows.map(() => '?').join(',')})`).bind(...refundRows.map((r: any) => r.id)).all().then((r: any) => (r.results || []) as any[]) : Promise.resolve([] as any[]),
   ])
   return evaluatePaymentReconciliation({ payments: paymentRows, paymentAllocations, refunds: refundRows, refundAllocations })
-}
-
-export function validateHostedImageUrls(value: unknown, maxUrls = 5): string[] {
-  const urls = String(value || '').split(/[\n,]+/).map(item => item.trim()).filter(Boolean)
-  if (!urls.length || urls.length > maxUrls) throw new Error(`请提供 1-${maxUrls} 个图片链接`)
-  return urls.map(raw => {
-    let parsed: URL
-    try { parsed = new URL(raw) } catch { throw new Error('图片链接格式不正确') }
-    const host = parsed.hostname.toLowerCase()
-    const privateHost = host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || privateHost) throw new Error('图片必须使用公开的 HTTPS 图床链接')
-    return parsed.toString()
-  })
 }
 
 export async function updateOrder(c: Context, order: Order): Promise<void> {
@@ -3890,36 +3690,6 @@ export async function updateContractTemplate(c: Context, newTemplate: { id: stri
     .bind(newTemplate.id, String(newTemplate.name || '').slice(0, 100), sanitizeRichHtml(newTemplate.content))
     .run();
   return getContractTemplate(c);
-}
-
-export function formatCurrency(value: number | undefined | null): string {
-  if (value === undefined || value === null || isNaN(value)) {
-    return `AUD$0.00`
-  }
-  return `AUD$${value.toFixed(2)}`
-}
-
-export function formatMelbourneDateTime(value: string | Date | null | undefined): string {
-  if (!value) return ''
-  const raw = value instanceof Date ? value.toISOString() : String(value)
-  const timestamp = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? `${raw.replace(' ', 'T')}Z` : raw)
-  if (Number.isNaN(timestamp.getTime())) return raw
-  return new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', dateStyle: 'medium', timeStyle: 'medium', hour12: false }).format(timestamp)
-}
-
-export function formatDate(value: string): string {
-  return value
-}
-
-export function parseCookie(cookieHeader: string | null): Record<string, string> {
-  const result: Record<string, string> = {}
-  if (!cookieHeader) return result
-  for (const item of cookieHeader.split(';')) {
-    const [rawName, ...rawValue] = item.trim().split('=')
-    if (!rawName) continue
-    result[rawName] = rawValue.join('=')
-  }
-  return result
 }
 
 let dbInstance: any = null
