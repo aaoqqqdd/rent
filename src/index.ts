@@ -26,6 +26,7 @@ import {
   updateDevice,
   deleteDevice,
   getOrdersAsync,
+  getOrdersForUser,
   getDevicesAsync,
   getStaffDashboardData,
   hashPassword,
@@ -78,6 +79,7 @@ import {
   buildLayout,
   getSystemSettings,
   loadSystemSettingsFromDB,
+  invalidateSystemSettingsCache,
   updateSystemSettings,
   combinePersonName,
   isStrongPassword,
@@ -110,7 +112,8 @@ import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibi
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, parseBearerToken } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
-import siteStyles from './styles.css'
+import { styleSheetText as siteStyles, styleSheetVersion, appScriptText, appScriptVersion } from './lib/assetVersion'
+import { getTableColumns as getCachedTableColumns } from './db/client'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
   const form: Record<string, string> = {}
@@ -182,17 +185,37 @@ function shouldShowTestAccounts(c: any): boolean {
 async function getTableColumns(c: any, tableName: string): Promise<string[]> {
   const allowedTables = new Set(['users', 'commission_withdrawals'])
   if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
-  const result = await c.env.RENT.prepare(`PRAGMA table_info(${tableName})`).all() as any
-  return (result.results || []).map((column: any) => column.name)
+  // 表结构运行期不变，走 isolate 级缓存，避免每次都发 PRAGMA。
+  return Array.from(await getCachedTableColumns(c.env.RENT, tableName))
 }
 
 const app = new Hono()
 
 app.get('/styles.css', (c) => {
   c.header('Content-Type', 'text/css; charset=utf-8')
-  c.header('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400')
+  // 带版本号请求（layout 里注入的 /styles.css?v=<hash>）可安全长期缓存；
+  // 无版本号的历史链接退回到较短的缓存，避免部署后长期拿到旧样式。
+  const versioned = c.req.query('v') === styleSheetVersion
+  c.header('Cache-Control', versioned
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=3600, stale-while-revalidate=86400')
+  c.header('ETag', `"${styleSheetVersion}"`)
   c.header('X-Content-Type-Options', 'nosniff')
+  if (c.req.header('If-None-Match') === `"${styleSheetVersion}"`) return c.body(null, 304)
   return c.body(siteStyles)
+})
+
+app.get('/app.js', (c) => {
+  c.header('Content-Type', 'text/javascript; charset=utf-8')
+  // 与 /styles.css 同策略：带正确版本号即长期 immutable，否则短缓存。
+  const versioned = c.req.query('v') === appScriptVersion
+  c.header('Cache-Control', versioned
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=3600, stale-while-revalidate=86400')
+  c.header('ETag', `"${appScriptVersion}"`)
+  c.header('X-Content-Type-Options', 'nosniff')
+  if (c.req.header('If-None-Match') === `"${appScriptVersion}"`) return c.body(null, 304)
+  return c.body(appScriptText)
 })
 
 app.get('/api/system-status', async (c) => {
@@ -380,7 +403,7 @@ function errorDetails(error: unknown) {
 
 app.use('*', async (c, next) => {
   // 静态资源不需要鉴权，避免每次加载 CSS 都额外查询 D1 会话表。
-  if (c.req.path === '/styles.css') return next()
+  if (c.req.path === '/styles.css' || c.req.path === '/app.js') return next()
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     c.set('user', user)
@@ -416,7 +439,7 @@ app.use('*', async (c, next) => {
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
-    const permitted = allowedExact.has(path) || path.startsWith('/notifications/') || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css'
+    const permitted = allowedExact.has(path) || path.startsWith('/notifications/') || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css' || path === '/app.js'
     if (!permitted && path.startsWith('/customer/')) return c.redirect('/customer/guest')
   }
   await next()
@@ -849,8 +872,8 @@ app.get('/customer/dashboard', async (c) => {
   if (user.role !== 'CUSTOMER') {
     return c.html(renderForbidden(), 403)
   }
-  const orders = await getOrdersAsync(c)
-  const devices = await getDevicesAsync(c)
+  // 客户端控制台只需要当前用户自己的订单；过去 getOrdersAsync 会把整张 orders 表拉回来再在内存里 filter。
+  const [orders, devices] = await Promise.all([getOrdersForUser(c, user.id), getDevicesAsync(c)])
   await ensureNotificationsTable(c)
   const announcementPageSize = 10
   const announcementPageCount = Math.max(1, Math.ceil(Number(((await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type = 'announcement' AND deleted_at IS NULL").bind(user.id).first()) as any)?.count || 0) / announcementPageSize))
@@ -2476,15 +2499,14 @@ app.post('/customer/security', async (c) => {
 })
 
 app.get('/admin/dashboard', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  const user = c.get('user')
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  const { getOrdersAsync, getDevicesAsync } = await import('./site')
-  const [orders, users, devices, opsCounts] = await Promise.all([
-    getOrdersAsync(c),
-    getUsers(c),
-    getDevicesAsync(c),
+  // 以前这里拉 orders / users / devices 三张整表回内存做统计；改用数据库侧聚合。
+  const { getAdminDashboardData } = await import('./services/adminDashboard')
+  const [data, opsCounts] = await Promise.all([
+    getAdminDashboardData(c),
     Promise.all([
       c.env.RENT.prepare("SELECT COUNT(*) AS count FROM payments WHERE status = 'failed' AND created_at > datetime('now', '-7 days')").first(),
       c.env.RENT.prepare("SELECT COUNT(*) AS count FROM device_commands WHERE status = 'FAILED' AND created_at > datetime('now', '-7 days')").first(),
@@ -2495,7 +2517,7 @@ app.get('/admin/dashboard', async (c) => {
       pendingDamage: Number((pendingDamage as any)?.count || 0),
     })),
   ])
-  return c.html(pages.renderAdminDashboard(user, orders, users, devices, opsCounts))
+  return c.html(pages.renderAdminDashboard(user, data, opsCounts))
 })
 
 app.get('/admin/devices/reports', async (c) => {
@@ -4069,6 +4091,7 @@ app.post('/admin/templates/:kind', async (c) => {
     ])
     const saved = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
     if (String(saved?.value ?? '') !== content) throw new Error('协议保存校验失败，请重试')
+    invalidateSystemSettingsCache()
     await loadSystemSettingsFromDB(c)
     if (before !== content) {
       // 通知/邮件是「保存成功之后的事」，不能让它把已经落库的协议变更回报成保存失败。

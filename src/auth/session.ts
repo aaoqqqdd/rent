@@ -39,7 +39,23 @@ async function ensureAuthSessionsSchema(c: Context): Promise<void> {
   }
 }
 
+// 请求级缓存：同一个请求里 middleware + 各路由处理器会反复调用 findUserBySession，
+// 每次都是 3 条串行 D1 查询。用 Request 对象做 key 把一次请求内的结果收敛成一次。
+const perRequestSessionUser = new WeakMap<object, Promise<User | null>>()
+
 export async function findUserBySession(c: Context, cookieHeader: string | null): Promise<User | null> {
+  const requestKey = (c.req as any)?.raw
+  if (requestKey) {
+    const cached = perRequestSessionUser.get(requestKey)
+    if (cached) return cached
+    const pending = resolveUserBySession(c, cookieHeader)
+    perRequestSessionUser.set(requestKey, pending)
+    return pending
+  }
+  return resolveUserBySession(c, cookieHeader)
+}
+
+async function resolveUserBySession(c: Context, cookieHeader: string | null): Promise<User | null> {
   const db = getDB(c)
   const cookies = parseCookie(cookieHeader)
   const token = cookies.session || ''

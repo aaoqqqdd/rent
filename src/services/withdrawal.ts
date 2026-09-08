@@ -9,14 +9,12 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { getDB } from '../db/client'
+import { getDB, getTableColumns as getCachedTableColumns } from '../db/client'
 
 async function getTableColumns(c: Context, tableName: string): Promise<string[]> {
   const allowedTables = new Set(['commission_withdrawals'])
   if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
-  const db = getDB(c)
-  const result = await db.prepare(`PRAGMA table_info(${tableName})`).all() as any
-  return (result.results || []).map((column: any) => column.name)
+  return Array.from(await getCachedTableColumns(getDB(c), tableName))
 }
 
 export interface WithdrawableReward { id: string; amount: number }

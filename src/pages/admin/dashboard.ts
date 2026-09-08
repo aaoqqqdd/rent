@@ -4,36 +4,14 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, formatCurrency } from '../../site';
+import type { AdminDashboardData } from '../../services/adminDashboard';
 
-export function renderAdminDashboard(user: any, orders: any[], users: any[], devices: any[], opsCounts?: { failedPayments: number; failedCommands: number; pendingDamage: number }) {
-  const today = new Date()
-  const todayStr = today.toISOString().slice(0, 10)
-  const totalRevenue = orders.filter(o => o.status === 'completed' || o.status === 'paid' || o.status === 'active').reduce((sum, order) => sum + (order.total_amount || order.totalAmount || 0), 0)
-
-  // 活跃租赁：状态为active且当前日期在租期内
-  const activeRentals = orders.filter(o => {
-    if (o.status !== 'active' && o.status !== 'paid') return false
-    const start = new Date(o.start_date || o.startDate)
-    const end = new Date(o.end_date || o.endDate)
-    return today >= start && today <= end
-  }).length
-
-  const pendingOrders = orders.filter(o => o.status === 'pending_approval' || o.status === 'pending_payment').length
-  const availableDevices = devices.filter(d => d.status === 'available').length
-  const totalUsers = users.filter((account: any) => account.status === 'active' && account.accountType !== 'deleted_guest' && account.account_type !== 'deleted_guest').length;
-
-  const todayPickups = orders.filter(o => (o.start_date || o.startDate) === todayStr && ['approved', 'paid', 'pending_pickup'].includes(o.status)).length
-  const todayReturns = orders.filter(o => (o.end_date || o.endDate) === todayStr && ['active', 'extended', 'overdue'].includes(o.status)).length
-  const overdueRentals = orders.filter(o => ['active', 'extended', 'overdue', 'pending_return'].includes(o.status) && (o.end_date || o.endDate) < todayStr).length
-  const pendingDeposits = orders.filter(o => (o.deposit_status || o.depositStatus) === 'HELD').length
-  const deviceCounts = devices.reduce((acc: Record<string, number>, d: any) => {
-    const key = d.lifecycle_status || d.status || 'unknown'
-    acc[key] = (acc[key] || 0) + 1
-    return acc
-  }, {})
-  const reservedDevices = (deviceCounts.RESERVED || 0)
-  const maintenanceDevices = (deviceCounts.MAINTENANCE || 0)
-  const damagedDevices = (deviceCounts.DAMAGED || 0)
+export function renderAdminDashboard(
+  user: any,
+  data: AdminDashboardData,
+  opsCounts?: { failedPayments: number; failedCommands: number; pendingDamage: number }
+) {
+  const { stats, recentOrders, recentDevices } = data
 
   const statusMap: Record<string, { text: string; class: string }> = {
     'pending_approval': { text: '待审核', class: 'badge-warning' },
@@ -60,39 +38,39 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
     <div class="stats-grid">
       <div class="stat-card primary">
         <h3>总收入</h3>
-        <div class="value">${formatCurrency(totalRevenue)}</div>
+        <div class="value">${formatCurrency(stats.totalRevenue)}</div>
         <div class="trend">↑ 已支付/租赁中/已完成订单，不含已取消</div>
       </div>
       <div class="stat-card success">
         <h3>活跃租赁</h3>
-        <div class="value">${activeRentals} 笔</div>
+        <div class="value">${stats.activeRentals} 笔</div>
         <div class="trend">正在进行中的订单</div>
       </div>
       <div class="stat-card warning">
         <h3>待处理订单</h3>
-        <div class="value">${pendingOrders} 笔</div>
+        <div class="value">${stats.pendingOrders} 笔</div>
         <div class="trend">需要处理的订单</div>
       </div>
       <div class="stat-card info">
         <h3>可用设备</h3>
-        <div class="value">${availableDevices}/${devices.length}</div>
+        <div class="value">${stats.availableDevices}/${stats.totalDevices}</div>
         <div class="trend">可租赁的设备数量</div>
       </div>
       <div class="stat-card" style="margin-top: 0;">
         <h3>注册用户</h3>
-        <div class="value">${totalUsers} 人</div>
+        <div class="value">${stats.totalUsers} 人</div>
         <div class="trend">有效用户数（不含已删除访客账户）</div>
       </div>
     </div>
     <div class="section-title" style="margin-top:24px"><h3>今日运营</h3></div>
     <div class="stats-grid">
-      <div class="stat-card"><h3>今日取货</h3><div class="value">${todayPickups}</div></div>
-      <div class="stat-card"><h3>今日归还</h3><div class="value">${todayReturns}</div></div>
-      <div class="stat-card ${overdueRentals ? 'warning' : ''}"><h3>逾期租赁</h3><div class="value">${overdueRentals}</div></div>
-      <div class="stat-card ${pendingDeposits ? 'warning' : ''}"><h3>待结算押金</h3><div class="value">${pendingDeposits}</div></div>
-      <div class="stat-card"><h3>预留设备</h3><div class="value">${reservedDevices}</div></div>
-      <div class="stat-card ${maintenanceDevices ? 'warning' : ''}"><h3>维护中设备</h3><div class="value">${maintenanceDevices}</div></div>
-      <div class="stat-card ${damagedDevices ? 'warning' : ''}"><h3>损坏设备</h3><div class="value">${damagedDevices}</div></div>
+      <div class="stat-card"><h3>今日取货</h3><div class="value">${stats.todayPickups}</div></div>
+      <div class="stat-card"><h3>今日归还</h3><div class="value">${stats.todayReturns}</div></div>
+      <div class="stat-card ${stats.overdueRentals ? 'warning' : ''}"><h3>逾期租赁</h3><div class="value">${stats.overdueRentals}</div></div>
+      <div class="stat-card ${stats.pendingDeposits ? 'warning' : ''}"><h3>待结算押金</h3><div class="value">${stats.pendingDeposits}</div></div>
+      <div class="stat-card"><h3>预留设备</h3><div class="value">${stats.reservedDevices}</div></div>
+      <div class="stat-card ${stats.maintenanceDevices ? 'warning' : ''}"><h3>维护中设备</h3><div class="value">${stats.maintenanceDevices}</div></div>
+      <div class="stat-card ${stats.damagedDevices ? 'warning' : ''}"><h3>损坏设备</h3><div class="value">${stats.damagedDevices}</div></div>
       <div class="stat-card ${opsCounts?.failedPayments ? 'warning' : ''}"><h3>近7日失败付款</h3><div class="value">${opsCounts?.failedPayments ?? '-'}</div></div>
       <div class="stat-card ${opsCounts?.failedCommands ? 'warning' : ''}"><h3>近7日失败远程命令</h3><div class="value">${opsCounts?.failedCommands ?? '-'}</div></div>
       <div class="stat-card ${opsCounts?.pendingDamage ? 'warning' : ''}"><h3>待处理损坏记录</h3><div class="value">${opsCounts?.pendingDamage ?? '-'}</div></div>
@@ -102,15 +80,13 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
         <h3>最新订单</h3>
         <span class="section-note">最近的5条租赁记录</span>
       </div>
-      ${orders.length === 0 ? `
+      ${recentOrders.length === 0 ? `
         <div style="text-align: center; padding: 32px; color: var(--text-secondary);">暂无订单</div>
       ` : `
       <table><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        ${orders.slice(0, 5).map((order) => {
-    const customer = users.find(u => u.id === (order.userId))
-    const device = devices.find(d => d.id === (order.device_id || order.deviceId))
+        ${recentOrders.map((order) => {
     const status = statusMap[order.status] || { text: order.status, class: 'badge-info' }
-    return `<tr><td style="font-family: monospace;">${order.id}</td><td>${customer?.name ?? '未知用户'}</td><td>${device?.name ?? '未知设备'}</td><td>${formatCurrency(order.total_amount || order.totalAmount || 0)}</td><td><span class="badge ${status.class}">${status.text}</span></td><td><a class="link-button" href="/admin/orders/${order.id}">查看详情</a></td></tr>`
+    return `<tr><td style="font-family: monospace;">${order.id}</td><td>${order.customerName ?? '未知用户'}</td><td>${order.deviceName ?? '未知设备'}</td><td>${formatCurrency(order.totalAmount)}</td><td><span class="badge ${status.class}">${status.text}</span></td><td><a class="link-button" href="/admin/orders/${order.id}">查看详情</a></td></tr>`
   }).join('')}
       </tbody></table>
       `}
@@ -120,15 +96,13 @@ export function renderAdminDashboard(user: any, orders: any[], users: any[], dev
         <h3>设备概览</h3>
         <span class="section-note">最近的5台设备状态</span>
       </div>
-      ${devices.length === 0 ? `
+      ${recentDevices.length === 0 ? `
         <div style="text-align: center; padding: 32px; color: var(--text-secondary);">暂无设备</div>
       ` : `
       <table><thead><tr><th>设备名称</th><th>型号</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
-        ${devices.slice(0, 5).map((device) => {
-    const currentOrder = orders.find(o => (o.device_id || o.deviceId) === device.id && (o.status === 'active' || o.status === 'paid'))
-    const customer = currentOrder ? users.find(u => u.id === (currentOrder.userId)) : null
+        ${recentDevices.map((device) => {
     const deviceStatus = deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
-    return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${customer?.name ?? '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">远程操作</a></td></tr>`
+    return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${device.customerName ?? '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">远程操作</a></td></tr>`
   }).join('')}
       </tbody></table>
       `}
