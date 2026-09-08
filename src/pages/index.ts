@@ -71,6 +71,7 @@ export * from './admin/operationsReport';
 export * from './admin/dataRetention';
 export * from './admin/agents';
 export * from './admin/monitoring';
+export * from './admin/connectivity';
 export * from './admin/userNew';
 export * from './admin/userEdit';
 export * from './admin/refunds';

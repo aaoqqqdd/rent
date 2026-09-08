@@ -109,6 +109,7 @@ import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, parseBearerToken } from './domain/monitoring'
+import { runConnectivityProbes } from './services/connectivity'
 import siteStyles from './styles.css'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
@@ -437,7 +438,8 @@ app.use('*', async (c, next) => {
         : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
           : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
             : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
-            : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
+              : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
+                : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
@@ -3474,6 +3476,24 @@ app.get('/admin/monitoring', async (c) => {
     c.env.RENT.prepare('SELECT job_name, status, started_at, completed_at, error_message, result_summary FROM scheduled_job_runs ORDER BY started_at DESC LIMIT 25').all().then(r => r.results || []),
   ])
   return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[]))
+})
+
+app.get('/admin/connectivity', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(pages.renderAdminConnectivity(user))
+})
+
+app.post('/admin/connectivity/check', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ error: '无权限执行检测' }, 403)
+  const input = await c.req.json().catch(() => ({})) as any
+  try {
+    const results = await runConnectivityProbes(c, String(input.target || 'all'))
+    return c.json({ results }, 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    return c.json({ error: String(error?.message || '检测失败').slice(0, 160) }, 400, { 'Cache-Control': 'no-store' })
+  }
 })
 
 // 代理计划（完善.md，预留未启用）

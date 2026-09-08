@@ -1265,7 +1265,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙',
-    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/agents': '⚑', '/admin/referrals': 'gift'
+    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/agents': '⚑', '/admin/referrals': 'gift'
   }
 
   const navIconSvg = (kind: string) => {
@@ -1370,7 +1370,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/agents', '代理计划'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
-            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
+            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">
