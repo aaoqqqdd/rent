@@ -42,6 +42,77 @@ export {
 }
 export type { Role, AccessLevel }
 
+// ---------------------------------------------------------------------------
+// 纯业务逻辑 / 状态机已拆分到 src/domain/*（均有独立单元测试）。同样 import
+// 供本文件使用并统一 re-export。
+// ---------------------------------------------------------------------------
+import { canTransitionOrder } from './domain/orderStatus'
+import {
+  ORDER_CHANGE_TYPES, ORDER_CHANGE_TYPE_LABELS,
+  orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan,
+} from './domain/orderChanges'
+import type { OrderChangeType, OrderChangePlan } from './domain/orderChanges'
+import {
+  DEVICE_COMMAND_STATES, DEVICE_COMMAND_TERMINAL_STATES,
+  canTransitionDeviceCommand, HIGH_RISK_DEVICE_COMMANDS, isHighRiskDeviceCommand,
+} from './domain/deviceCommand'
+import type { DeviceCommandState } from './domain/deviceCommand'
+import {
+  DEVICE_LIFECYCLE_FLOW, canTransitionDeviceLifecycle,
+  MAINTENANCE_OPEN_STATES, MAINTENANCE_ADVANCE_NEXT, MAINTENANCE_CHECK_TYPES,
+} from './domain/deviceLifecycle'
+import {
+  PAYMENT_DISPUTE_STATES, PAYMENT_DISPUTE_OPEN_STATES, PAYMENT_DISPUTE_TERMINAL_STATES,
+  canTransitionPaymentDispute, isPaymentDisputeOpen, paymentsBlockedByDispute, mapStripeDisputeStatus,
+} from './domain/paymentDispute'
+import type { PaymentDisputeState } from './domain/paymentDispute'
+import {
+  RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
+  isRiskFlagCurrentlyActive, findBlockingRiskFlag,
+} from './domain/riskFlags'
+import type { RiskFlagType, RiskFlagLike } from './domain/riskFlags'
+import { deviceUtilisationRate, paymentMethodBreakdown } from './domain/operationsReport'
+import type { PaymentMethodRow, PaymentMethodShare } from './domain/operationsReport'
+import {
+  RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
+} from './domain/dataRetention'
+import type { RetentionAction, RetentionPolicyLike } from './domain/dataRetention'
+import { backupHealth, restoreTestOverdue } from './domain/backup'
+import type { BackupHealthStatus } from './domain/backup'
+import { rateHealth, worstHealthLevel } from './domain/monitoring'
+import type { HealthLevel, MonitorMetric } from './domain/monitoring'
+import { agentCommission } from './domain/agentProgram'
+import { buildRefundAllocation, evaluatePaymentReconciliation } from './domain/refundAllocation'
+import type {
+  RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
+} from './domain/refundAllocation'
+
+export {
+  canTransitionOrder,
+  ORDER_CHANGE_TYPES, ORDER_CHANGE_TYPE_LABELS,
+  orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan,
+  DEVICE_COMMAND_STATES, DEVICE_COMMAND_TERMINAL_STATES,
+  canTransitionDeviceCommand, HIGH_RISK_DEVICE_COMMANDS, isHighRiskDeviceCommand,
+  DEVICE_LIFECYCLE_FLOW, canTransitionDeviceLifecycle,
+  MAINTENANCE_OPEN_STATES, MAINTENANCE_ADVANCE_NEXT, MAINTENANCE_CHECK_TYPES,
+  PAYMENT_DISPUTE_STATES, PAYMENT_DISPUTE_OPEN_STATES, PAYMENT_DISPUTE_TERMINAL_STATES,
+  canTransitionPaymentDispute, isPaymentDisputeOpen, paymentsBlockedByDispute, mapStripeDisputeStatus,
+  RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
+  isRiskFlagCurrentlyActive, findBlockingRiskFlag,
+  deviceUtilisationRate, paymentMethodBreakdown,
+  RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
+  backupHealth, restoreTestOverdue,
+  rateHealth, worstHealthLevel,
+  agentCommission,
+  buildRefundAllocation, evaluatePaymentReconciliation,
+}
+export type {
+  OrderChangeType, OrderChangePlan, DeviceCommandState, PaymentDisputeState,
+  RiskFlagType, RiskFlagLike, PaymentMethodRow, PaymentMethodShare,
+  RetentionAction, RetentionPolicyLike, BackupHealthStatus, HealthLevel, MonitorMetric,
+  RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
+}
+
 function renderLayoutTemplate(values: Record<string, string>): string {
   return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? values[key] : placeholder
@@ -1257,172 +1328,6 @@ export async function hasDeviceBookingConflict(c: Context, deviceId: string, sta
   return Boolean(row)
 }
 
-const ORDER_TRANSITIONS: Record<string, string[]> = {
-  pending_approval: ['approved', 'awaiting_signature', 'cancelled'],
-  approved: ['pending_payment', 'paid', 'cancelled'],
-  draft: ['pending_payment', 'cancelled'],
-  pending_payment: ['paid', 'cancelled'],
-  paid: ['pending_pickup', 'active', 'cancelled'],
-  pending_pickup: ['active', 'pending_return', 'cancelled'],
-  awaiting_signature: ['paid', 'pending_payment', 'cancelled'],
-  active: ['extended', 'overdue', 'suspended', 'pending_return', 'completed'],
-  extended: ['active', 'overdue', 'suspended', 'pending_return', 'completed'],
-  overdue: ['active', 'suspended', 'pending_return', 'completed'],
-  suspended: ['active', 'pending_return', 'cancelled'],
-  pending_return: ['returned', 'completed'],
-  returned: ['completed'],
-  completed: [], cancelled: [],
-}
-
-export function canTransitionOrder(from: string, to: string): boolean {
-  return from === to || Boolean(ORDER_TRANSITIONS[from]?.includes(to))
-}
-
-// ---------------------------------------------------------------------------
-// 订单修改历史 (TODO.md P1 #5 / 完善.md §34)
-//
-// 任何已创建订单的关键字段都不能被静默修改：每次调整都要落一条
-// order_change_history，记录改了什么、为什么、谁改的，并保持库存一致。
-// 下面是纯函数部分（无 DB），供路由与单元测试共用；设备是否存在、租期是否
-// 冲突等依赖 DB 的检查由调用方在拿到 patch 后执行。
-// ---------------------------------------------------------------------------
-
-export const ORDER_CHANGE_TYPES = ['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT', 'LOCATION_CHANGE'] as const
-export type OrderChangeType = typeof ORDER_CHANGE_TYPES[number]
-
-export const ORDER_CHANGE_TYPE_LABELS: Record<string, string> = {
-  EXTENSION: '调整租期',
-  DEVICE_SWAP: '更换设备',
-  PRICE_ADJUSTMENT: '调整价格 / 押金',
-  LOCATION_CHANGE: '修改取还地点',
-  CANCELLATION: '取消订单',
-  INVENTORY_RELEASE: '释放库存',
-}
-
-const ORDER_CHANGE_FIELD_LABELS: Record<string, string> = {
-  deviceId: '设备',
-  startDate: '起租日期',
-  endDate: '归还日期',
-  rentalPeriod: '租期天数',
-  totalAmount: '订单总额',
-  depositAmount: '押金',
-  discountAmount: '优惠金额',
-  pickupLocation: '取货地点',
-  returnLocation: '归还地点',
-  deliveryMethod: '配送方式',
-  status: '订单状态',
-}
-
-const ORDER_CHANGE_DELIVERY_METHODS = ['Pickup', 'Delivery']
-
-// 订单被追踪的关键字段快照，作为 before/after JSON 的统一结构。
-export function orderChangeSnapshot(order: any): Record<string, any> {
-  return {
-    deviceId: order.deviceId ?? order.device_id ?? '',
-    startDate: order.startDate ?? order.start_date ?? '',
-    endDate: order.endDate ?? order.end_date ?? '',
-    rentalPeriod: Number(order.rentalPeriod ?? order.rental_period ?? 0),
-    totalAmount: Number(order.totalAmount ?? order.total_amount ?? 0),
-    depositAmount: Number(order.depositAmount ?? order.deposit_amount ?? 0),
-    discountAmount: Number(order.discountAmount ?? order.discount_amount ?? 0),
-    pickupLocation: order.pickupLocation ?? order.pickup_location ?? '',
-    returnLocation: order.returnLocation ?? order.return_location ?? '',
-    deliveryMethod: order.deliveryMethod ?? order.delivery_method ?? 'Pickup',
-  }
-}
-
-// 两个快照之间发生变化的字段列表，用于渲染修改历史的可读对照。
-export function diffOrderSnapshots(
-  before: Record<string, any> | null | undefined,
-  after: Record<string, any> | null | undefined,
-): { field: string; label: string; before: any; after: any }[] {
-  const keys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]
-  const changes: { field: string; label: string; before: any; after: any }[] = []
-  for (const key of keys) {
-    const a = (before as any)?.[key] ?? null
-    const b = (after as any)?.[key] ?? null
-    if (String(a ?? '') === String(b ?? '')) continue
-    changes.push({ field: key, label: ORDER_CHANGE_FIELD_LABELS[key] || key, before: a, after: b })
-  }
-  return changes
-}
-
-function daysBetween(startDate: string, endDate: string): number {
-  return Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000)
-}
-
-export interface OrderChangePlan {
-  patch: Record<string, any>
-  // 目标设备（换机时为新设备，其它类型为原设备）在新租期内需要做冲突检查
-  bookingCheck?: { deviceId: string; startDate: string; endDate: string }
-  // 需要确认该设备存在且状态可租
-  deviceAvailabilityCheck?: string
-}
-
-// 纯校验 + patch 构造。返回 { error } 表示输入不合法；否则返回需要写回订单的
-// 字段补丁以及调用方还需执行的 DB 依赖检查。
-export function buildOrderChangePlan(
-  type: string,
-  before: Record<string, any>,
-  input: Record<string, string | undefined>,
-): OrderChangePlan | { error: string } {
-  switch (type) {
-    case 'EXTENSION': {
-      const startDate = (input.startDate ?? '').trim() || before.startDate
-      const endDate = (input.endDate ?? '').trim() || before.endDate
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return { error: '日期格式无效' }
-      if (endDate <= startDate) return { error: '归还日期必须晚于起租日期' }
-      if (startDate === before.startDate && endDate === before.endDate) return { error: '租期没有变化' }
-      return {
-        patch: { startDate, endDate, rentalPeriod: daysBetween(startDate, endDate) },
-        bookingCheck: { deviceId: before.deviceId, startDate, endDate },
-      }
-    }
-    case 'DEVICE_SWAP': {
-      const deviceId = (input.deviceId ?? '').trim()
-      if (!deviceId) return { error: '请选择替换设备' }
-      if (deviceId === before.deviceId) return { error: '替换设备与当前设备相同' }
-      return {
-        patch: { deviceId },
-        deviceAvailabilityCheck: deviceId,
-        bookingCheck: { deviceId, startDate: before.startDate, endDate: before.endDate },
-      }
-    }
-    case 'PRICE_ADJUSTMENT': {
-      const totalAmount = Number(input.totalAmount)
-      const depositAmount = Number(input.depositAmount)
-      const discountAmount = input.discountAmount === undefined || input.discountAmount === ''
-        ? Number(before.discountAmount || 0)
-        : Number(input.discountAmount)
-      if (![totalAmount, depositAmount, discountAmount].every(Number.isFinite)) return { error: '金额必须是数字' }
-      if (totalAmount < 0 || depositAmount < 0 || discountAmount < 0) return { error: '金额不能为负' }
-      if (depositAmount > totalAmount) return { error: '押金不能超过订单总额' }
-      const patch = {
-        totalAmount: Number(totalAmount.toFixed(2)),
-        depositAmount: Number(depositAmount.toFixed(2)),
-        discountAmount: Number(discountAmount.toFixed(2)),
-      }
-      const unchanged = patch.totalAmount === Number(before.totalAmount)
-        && patch.depositAmount === Number(before.depositAmount)
-        && patch.discountAmount === Number(before.discountAmount || 0)
-      if (unchanged) return { error: '价格没有变化' }
-      return { patch }
-    }
-    case 'LOCATION_CHANGE': {
-      const pickupLocation = (input.pickupLocation ?? before.pickupLocation ?? '').trim().slice(0, 200)
-      const returnLocation = (input.returnLocation ?? before.returnLocation ?? '').trim().slice(0, 200)
-      const deliveryMethod = (input.deliveryMethod ?? before.deliveryMethod ?? 'Pickup').trim()
-      if (!ORDER_CHANGE_DELIVERY_METHODS.includes(deliveryMethod)) return { error: '配送方式无效' }
-      const unchanged = pickupLocation === (before.pickupLocation || '')
-        && returnLocation === (before.returnLocation || '')
-        && deliveryMethod === (before.deliveryMethod || 'Pickup')
-      if (unchanged) return { error: '取还信息没有变化' }
-      return { patch: { pickupLocation, returnLocation, deliveryMethod } }
-    }
-    default:
-      return { error: '不支持的订单修改类型' }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // 通用 Webhook 幂等 (TODO.md P7 / 完善.md §43)
@@ -1472,386 +1377,6 @@ export async function markWebhookFailed(c: Context, recordId: string, reason: st
   ).bind(String(reason || '').slice(0, 500), recordId).run()
 }
 
-// ---------------------------------------------------------------------------
-// 远程设备命令状态机 (TODO.md P1 #3 / 完善.md §23)
-//
-//   QUEUED → SENT → ACKNOWLEDGED → RUNNING → SUCCESS
-//   QUEUED/SENT/ACKNOWLEDGED/RUNNING → FAILED
-//   QUEUED → EXPIRED | CANCELLED
-// 终态命令不可再流转；客户端重复上报同一终态视为幂等成功。
-// ---------------------------------------------------------------------------
-
-export const DEVICE_COMMAND_STATES = ['QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED'] as const
-export type DeviceCommandState = typeof DEVICE_COMMAND_STATES[number]
-
-export const DEVICE_COMMAND_TERMINAL_STATES = new Set<DeviceCommandState>(['SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED'])
-
-const DEVICE_COMMAND_TRANSITIONS: Record<DeviceCommandState, DeviceCommandState[]> = {
-  QUEUED: ['SENT', 'EXPIRED', 'CANCELLED', 'FAILED'],
-  SENT: ['ACKNOWLEDGED', 'RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED'],
-  ACKNOWLEDGED: ['RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED'],
-  RUNNING: ['SUCCESS', 'FAILED', 'EXPIRED'],
-  SUCCESS: [], FAILED: [], EXPIRED: [], CANCELLED: [],
-}
-
-export function canTransitionDeviceCommand(from: string, to: string): boolean {
-  return Boolean(DEVICE_COMMAND_TRANSITIONS[from as DeviceCommandState]?.includes(to as DeviceCommandState))
-}
-
-// 高风险远程命令：需要 MANAGER 及以上、二次确认并写审计日志。
-export const HIGH_RISK_DEVICE_COMMANDS = new Set(['LOCK_DEVICE', 'REBOOT', 'DATA_WIPE', 'SYSTEM_RESET', 'REREGISTER_AGENT', 'DELETE_RENTAL_USER'])
-
-export function isHighRiskDeviceCommand(type: string): boolean {
-  return HIGH_RISK_DEVICE_COMMANDS.has(String(type || '').trim().toUpperCase())
-}
-
-// ---------------------------------------------------------------------------
-// 设备生命周期状态机 (TODO.md P1 #4 / 完善.md §13, §16)
-//
-//   RESERVED → RENTED
-//   RENTED → RETURNED → INSPECTION → MAINTENANCE → READY
-//   INSPECTION → DAMAGED → MAINTENANCE → READY
-//   MAINTENANCE / DAMAGED → RETIRED
-// 这是推荐流转；管理员在设备编辑页仍可手动纠正，但“存在未完成维护时不得置为
-// READY / 可用”是硬性规则，由路由单独强制。
-// ---------------------------------------------------------------------------
-
-export const DEVICE_LIFECYCLE_FLOW: Record<string, string[]> = {
-  RESERVED: ['READY', 'RENTED'],
-  READY: ['RESERVED', 'RENTED', 'MAINTENANCE', 'RETIRED'],
-  RENTED: ['RETURNED', 'INSPECTION', 'READY'],
-  RETURNED: ['INSPECTION', 'MAINTENANCE', 'READY'],
-  INSPECTION: ['MAINTENANCE', 'DAMAGED', 'RETURNED', 'READY'],
-  DAMAGED: ['MAINTENANCE', 'RETIRED'],
-  MAINTENANCE: ['READY', 'DAMAGED', 'RETIRED'],
-  RETIRED: [],
-}
-
-export function canTransitionDeviceLifecycle(from: string, to: string): boolean {
-  return from === to || Boolean(DEVICE_LIFECYCLE_FLOW[from]?.includes(to))
-}
-
-export const MAINTENANCE_OPEN_STATES = new Set(['OPEN', 'IN_PROGRESS', 'DATA_CLEAN', 'SYSTEM_RESET', 'CLIENT_CHECK'])
-export const MAINTENANCE_ADVANCE_NEXT: Record<string, string> = {
-  OPEN: 'IN_PROGRESS', IN_PROGRESS: 'DATA_CLEAN', DATA_CLEAN: 'SYSTEM_RESET', SYSTEM_RESET: 'CLIENT_CHECK',
-}
-// 归还后设备准备的十项验证（完善.md §16）——全部通过才允许维护记录 COMPLETED、设备回到 READY。
-export const MAINTENANCE_CHECK_TYPES = ['DATA_WIPE', 'SYSTEM_RESET', 'WINDOWS_BOOT', 'AGENT_INSTALLED', 'AGENT_VERSION', 'DEVICE_SERIAL', 'DISK_HEALTH', 'NETWORK', 'HARDWARE', 'ACCESSORIES'] as const
-
-// ---------------------------------------------------------------------------
-// 支付争议 / Chargeback 状态机 (完善.md §21, §31 / TODO.md P2 #9)
-//
-//   DISPUTE_OPENED → DISPUTE_UNDER_REVIEW → DISPUTE_WON | DISPUTE_LOST | DISPUTE_CLOSED
-//   DISPUTE_OPENED → DISPUTE_WON | DISPUTE_LOST | DISPUTE_CLOSED（Stripe 直接结案）
-// 终态不可再流转。争议处于 OPENED / UNDER_REVIEW 时，对应付款禁止任何正常退款，
-// 避免同一笔钱既被拒付又被主动退款（完善.md §31“防止争议金额被再次正常退款”）。
-// ---------------------------------------------------------------------------
-
-export const PAYMENT_DISPUTE_STATES = ['DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'] as const
-export type PaymentDisputeState = typeof PAYMENT_DISPUTE_STATES[number]
-
-export const PAYMENT_DISPUTE_OPEN_STATES = new Set<PaymentDisputeState>(['DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW'])
-export const PAYMENT_DISPUTE_TERMINAL_STATES = new Set<PaymentDisputeState>(['DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'])
-
-const PAYMENT_DISPUTE_TRANSITIONS: Record<PaymentDisputeState, PaymentDisputeState[]> = {
-  DISPUTE_OPENED: ['DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'],
-  DISPUTE_UNDER_REVIEW: ['DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'],
-  DISPUTE_WON: [], DISPUTE_LOST: [], DISPUTE_CLOSED: [],
-}
-
-export function canTransitionPaymentDispute(from: string, to: string): boolean {
-  return Boolean(PAYMENT_DISPUTE_TRANSITIONS[from as PaymentDisputeState]?.includes(to as PaymentDisputeState))
-}
-
-export function isPaymentDisputeOpen(status: string): boolean {
-  return PAYMENT_DISPUTE_OPEN_STATES.has(String(status || '').trim().toUpperCase() as PaymentDisputeState)
-}
-
-// 一笔付款只要还有未结案的争议，就不允许再走正常退款流程。
-export function paymentsBlockedByDispute(disputes: Array<{ status?: string } | null | undefined>): boolean {
-  return (disputes || []).some(row => row && isPaymentDisputeOpen(String(row.status || '')))
-}
-
-// 把 Stripe 的 dispute.status / 结案原因映射到内部状态机。
-// https://stripe.com/docs/api/disputes/object#dispute_object-status
-export function mapStripeDisputeStatus(stripeStatus: string): PaymentDisputeState {
-  switch (String(stripeStatus || '').trim().toLowerCase()) {
-    case 'warning_needs_response':
-    case 'needs_response':
-      return 'DISPUTE_OPENED'
-    case 'warning_under_review':
-    case 'under_review':
-      return 'DISPUTE_UNDER_REVIEW'
-    case 'won':
-      return 'DISPUTE_WON'
-    case 'lost':
-      return 'DISPUTE_LOST'
-    case 'warning_closed':
-    case 'charge_refunded':
-    default:
-      return 'DISPUTE_CLOSED'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 风险标记与黑名单 (完善.md §22, §32 / TODO.md P2 #10)
-//
-// 不是一个 is_blacklisted 布尔，而是带类型 / 严重程度 / 证据 / 过期时间的标记表。
-// “高风险客户禁止自动创建新租赁”：任意 HIGH 级标记，或命中硬拦截类型
-// （拒付、疑似欺诈、设备未归还、付款风险）时阻止客户继续自助下单；
-// 过期标记（expires_at 已过）视为失效，不再拦截，也不再显示为有效提示。
-// ---------------------------------------------------------------------------
-
-export const RISK_FLAG_TYPES = ['PAYMENT_RISK', 'IDENTITY_RISK', 'DEVICE_NOT_RETURNED', 'SERIOUS_DAMAGE', 'CHARGEBACK', 'ABUSE', 'FRAUD_SUSPECTED', 'MANUAL_REVIEW'] as const
-export type RiskFlagType = typeof RISK_FLAG_TYPES[number]
-export const RISK_FLAG_SEVERITIES = ['LOW', 'MEDIUM', 'HIGH'] as const
-
-export const ORDER_BLOCKING_RISK_FLAG_TYPES = new Set<RiskFlagType>(['PAYMENT_RISK', 'DEVICE_NOT_RETURNED', 'CHARGEBACK', 'FRAUD_SUSPECTED'])
-
-export interface RiskFlagLike { flag_type?: string; severity?: string; status?: string; expires_at?: string | null }
-
-export function isRiskFlagCurrentlyActive(flag: RiskFlagLike | null | undefined, now: Date = new Date()): boolean {
-  if (!flag || String(flag.status || '').toUpperCase() !== 'ACTIVE') return false
-  if (!flag.expires_at) return true
-  const expiry = new Date(String(flag.expires_at).replace(' ', 'T'))
-  return Number.isNaN(expiry.getTime()) ? true : expiry.getTime() > now.getTime()
-}
-
-// 返回第一条会阻止客户自助下单的有效标记；没有则返回 null。
-export function findBlockingRiskFlag<T extends RiskFlagLike>(flags: Array<T | null | undefined>, now: Date = new Date()): T | null {
-  for (const flag of flags || []) {
-    if (!isRiskFlagCurrentlyActive(flag, now)) continue
-    const severity = String(flag!.severity || '').toUpperCase()
-    const type = String(flag!.flag_type || '').toUpperCase() as RiskFlagType
-    if (severity === 'HIGH' || ORDER_BLOCKING_RISK_FLAG_TYPES.has(type)) return flag as T
-  }
-  return null
-}
-
-// ---------------------------------------------------------------------------
-// 运营分析报表 (完善.md §23, §40)
-//
-// 金额只从 Ledger / Payment / Refund 明细汇总，不从订单 UI 状态推算。
-// 这里放两个纯函数：车队利用率、支付方式占比——其余聚合在路由里用 SQL 完成。
-// ---------------------------------------------------------------------------
-
-// 车队利用率 = 统计窗口内被租出的“设备·天” / （可租设备数 × 窗口天数），夹在 0..1。
-export function deviceUtilisationRate(rentedDeviceDays: number, fleetSize: number, windowDays: number): number {
-  const capacity = Math.max(0, Number(fleetSize) || 0) * Math.max(0, Number(windowDays) || 0)
-  if (capacity <= 0) return 0
-  const used = Math.max(0, Number(rentedDeviceDays) || 0)
-  return Math.min(1, Math.max(0, used / capacity))
-}
-
-export interface PaymentMethodRow { method: string; amount: number; count?: number }
-export interface PaymentMethodShare { method: string; amount: number; count: number; share: number }
-
-// 各支付方式金额占比（百分比，保留两位，误差补到最大的一档，合计恰为 100）。
-export function paymentMethodBreakdown(rows: Array<PaymentMethodRow | null | undefined>): PaymentMethodShare[] {
-  const clean = (rows || []).filter((r): r is PaymentMethodRow => Boolean(r) && Number(r!.amount) > 0)
-    .map(r => ({ method: String(r.method || 'unknown'), amount: Number(r.amount) || 0, count: Number(r.count) || 0 }))
-  const total = clean.reduce((sum, r) => sum + r.amount, 0)
-  if (total <= 0) return clean.map(r => ({ ...r, share: 0 }))
-  const withShare = clean
-    .map(r => ({ ...r, share: Math.round((r.amount / total) * 10000) / 100 }))
-    .sort((a, b) => b.amount - a.amount)
-  const drift = Number((100 - withShare.reduce((sum, r) => sum + r.share, 0)).toFixed(2))
-  if (withShare.length && drift !== 0) withShare[0].share = Number((withShare[0].share + drift).toFixed(2))
-  return withShare
-}
-
-
-// ---------------------------------------------------------------------------
-// 数据保留策略 (完善.md §25, §37 / P3 #18)
-//
-// 每类数据配置：保留天数 + 到期动作。RETAIN = 永久保留（合同 / 财务 / 审计），
-// ARCHIVE / DELETE / ANONYMISE = 到期后可被清理任务处理。这里只放纯判定，
-// 实际清理由调度任务执行。
-// ---------------------------------------------------------------------------
-
-export const RETENTION_ACTIONS = ['RETAIN', 'ARCHIVE', 'DELETE', 'ANONYMISE'] as const
-export type RetentionAction = typeof RETENTION_ACTIONS[number]
-
-export interface RetentionPolicyLike { retention_days?: number; action?: string; enabled?: number | boolean }
-
-// 保留期截止时间：早于该时刻的记录已过保留期。
-export function retentionCutoffDate(retentionDays: number, now: Date = new Date()): Date {
-  const days = Math.max(0, Math.floor(Number(retentionDays) || 0))
-  return new Date(now.getTime() - days * 86400000)
-}
-
-export function isPastRetention(recordDate: string | number | Date, retentionDays: number, now: Date = new Date()): boolean {
-  const t = recordDate instanceof Date ? recordDate.getTime() : new Date(String(recordDate).replace(' ', 'T')).getTime()
-  if (Number.isNaN(t)) return false
-  return t <= retentionCutoffDate(retentionDays, now).getTime()
-}
-
-// 该策略是否会真正清理数据（启用且动作不是 RETAIN）。
-export function retentionSweepActionable(policy: RetentionPolicyLike | null | undefined): boolean {
-  if (!policy) return false
-  const enabled = policy.enabled === true || Number(policy.enabled) === 1
-  return enabled && String(policy.action || '').toUpperCase() !== 'RETAIN' && RETENTION_ACTIONS.includes(String(policy.action || '').toUpperCase() as RetentionAction)
-}
-
-// ---------------------------------------------------------------------------
-// 备份与恢复 (完善.md §26, §39 / P4 #19, #20)
-// ---------------------------------------------------------------------------
-
-export type BackupHealthStatus = 'OK' | 'WARN' | 'STALE' | 'NONE'
-
-// 依据 RPO 目标评估最近一次备份的新鲜度：超过 RPO 记 WARN，超过 2×RPO 记 STALE。
-export function backupHealth(lastBackupAt: string | number | Date | null | undefined, rpoMinutes: number, now: Date = new Date()): { status: BackupHealthStatus; ageMinutes: number | null } {
-  if (!lastBackupAt) return { status: 'NONE', ageMinutes: null }
-  const t = lastBackupAt instanceof Date ? lastBackupAt.getTime() : new Date(String(lastBackupAt).replace(' ', 'T')).getTime()
-  if (Number.isNaN(t)) return { status: 'NONE', ageMinutes: null }
-  const ageMinutes = Math.max(0, Math.round((now.getTime() - t) / 60000))
-  const rpo = Math.max(1, Number(rpoMinutes) || 0)
-  const status: BackupHealthStatus = ageMinutes > rpo * 2 ? 'STALE' : ageMinutes > rpo ? 'WARN' : 'OK'
-  return { status, ageMinutes }
-}
-
-// 恢复演练是否已超期（默认要求至少每 90 天演练一次）。
-export function restoreTestOverdue(lastTestAt: string | number | Date | null | undefined, maxIntervalDays = 90, now: Date = new Date()): boolean {
-  if (!lastTestAt) return true
-  const t = lastTestAt instanceof Date ? lastTestAt.getTime() : new Date(String(lastTestAt).replace(' ', 'T')).getTime()
-  if (Number.isNaN(t)) return true
-  return (now.getTime() - t) > Math.max(1, maxIntervalDays) * 86400000
-}
-
-
-// ---------------------------------------------------------------------------
-// 系统健康监控 (完善.md §30, §48 / P8 #32, #33)
-//
-// 把“分子 / 分母”比率按阈值分级。分母为 0（没有样本）时记 OK 而非报警。
-// ---------------------------------------------------------------------------
-export type HealthLevel = 'OK' | 'WARN' | 'CRITICAL'
-
-export interface MonitorMetric { key: string; label: string; numerator: number; denominator: number; rate: number; level: HealthLevel; note?: string }
-
-export function rateHealth(numerator: number, denominator: number, warnRate: number, critRate: number): { rate: number; level: HealthLevel } {
-  const n = Math.max(0, Number(numerator) || 0)
-  const d = Math.max(0, Number(denominator) || 0)
-  if (d <= 0) return { rate: 0, level: 'OK' }
-  const rate = n / d
-  const level: HealthLevel = rate >= critRate ? 'CRITICAL' : rate >= warnRate ? 'WARN' : 'OK'
-  return { rate: Math.round(rate * 10000) / 10000, level }
-}
-
-// 一组指标里最差的级别，作为系统整体健康度。
-export function worstHealthLevel(metrics: Array<{ level: HealthLevel }>): HealthLevel {
-  if (metrics.some(m => m.level === 'CRITICAL')) return 'CRITICAL'
-  if (metrics.some(m => m.level === 'WARN')) return 'WARN'
-  return 'OK'
-}
-
-// ---------------------------------------------------------------------------
-// Agent Program（预留，完善.md §29）——佣金计算纯函数，尚未接入任何结算流程。
-// ---------------------------------------------------------------------------
-export function agentCommission(orderSubtotal: number, rate: number, maxPerOrder?: number | null): number {
-  const base = Math.max(0, Number(orderSubtotal) || 0)
-  const r = Math.min(1, Math.max(0, Number(rate) || 0))
-  let commission = Math.round(base * r * 100) / 100
-  if (maxPerOrder != null && Number.isFinite(Number(maxPerOrder))) commission = Math.min(commission, Math.max(0, Number(maxPerOrder)))
-  return commission
-}
-
-// ---------------------------------------------------------------------------
-// 混合付款 / 退款分配引擎 (TODO.md P1 #6 / 完善.md §28, §29)
-//
-// 一笔订单可能由多个来源结算（Stripe + 余额 + 押金 + 调整）。退款时必须把退款
-// 额分摊到各来源，且任一来源的累计退款不得超过该来源实付、订单累计退款不得超过
-// 订单实付。分摊策略：
-//   proportional —— 按各来源“剩余可退”比例分摊（默认）
-//   priority     —— 按传入顺序优先退（§29“优先原支付方式”）
-// 分币误差统一由排在前面的来源逐分吸收。
-// ---------------------------------------------------------------------------
-
-const toCents = (value: number) => Math.round(Number(value) * 100)
-
-export interface RefundSource { id: string; amount: number; refunded?: number; method?: string }
-export interface RefundAllocationLine { id: string; amount: number; method?: string }
-
-export function buildRefundAllocation(
-  sources: RefundSource[],
-  refundAmount: number,
-  strategy: 'proportional' | 'priority' = 'proportional',
-): RefundAllocationLine[] {
-  const requested = toCents(refundAmount)
-  const rows = sources.map(s => ({ id: s.id, method: s.method, remaining: Math.max(0, toCents(s.amount) - toCents(s.refunded || 0)) }))
-  const capacity = rows.reduce((sum, r) => sum + r.remaining, 0)
-  if (!Number.isInteger(requested) || requested <= 0) throw new Error('退款金额必须大于 0')
-  if (requested > capacity) throw new Error('退款金额超过原始付款可退余额')
-
-  const assigned = new Map<string, number>()
-  if (strategy === 'priority') {
-    let left = requested
-    for (const r of rows) {
-      if (left <= 0) break
-      const take = Math.min(left, r.remaining)
-      if (take > 0) { assigned.set(r.id, take); left -= take }
-    }
-  } else {
-    let running = 0
-    for (const r of rows) {
-      const share = capacity ? Math.floor(requested * r.remaining / capacity) : 0
-      assigned.set(r.id, share)
-      running += share
-    }
-    // Distribute the rounding remainder one cent at a time, earliest source first.
-    let leftover = requested - running
-    for (const r of rows) {
-      if (leftover <= 0) break
-      const cur = assigned.get(r.id) || 0
-      if (cur < r.remaining) { assigned.set(r.id, cur + 1); leftover-- }
-    }
-  }
-  return rows
-    .filter(r => (assigned.get(r.id) || 0) > 0)
-    .map(r => ({ id: r.id, method: r.method, amount: (assigned.get(r.id) || 0) / 100 }))
-}
-
-export interface ReconInput {
-  payments: { id: string; amount: number; status: string }[]
-  paymentAllocations: { payment_id: string; amount: number }[]
-  refunds: { id: string; payment_id: string | null; refund_amount: number; status: string }[]
-  refundAllocations: { refund_id: string; payment_id: string; amount: number }[]
-}
-export interface ReconIssue { code: string; detail: string }
-export interface ReconResult { ok: boolean; paidTotal: number; refundedTotal: number; issues: ReconIssue[] }
-
-// 纯函数对账：给定订单的付款 / 分配 / 退款行，找出账目不一致。
-export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
-  const issues: ReconIssue[] = []
-  const EPS = 1 // 1 分容差
-  const paidPayments = input.payments.filter(p => p.status === 'paid' || p.status === 'refunded')
-  const paidTotalC = paidPayments.reduce((s, p) => s + toCents(p.amount), 0)
-  const paymentIds = new Set(input.payments.map(p => p.id))
-
-  for (const p of paidPayments) {
-    const allocC = input.paymentAllocations.filter(a => a.payment_id === p.id).reduce((s, a) => s + toCents(a.amount), 0)
-    if (allocC > 0 && Math.abs(allocC - toCents(p.amount)) > EPS) {
-      issues.push({ code: 'ALLOCATION_MISMATCH', detail: `付款 ${p.id} 金额 ${p.amount} 与拆分合计 ${(allocC / 100).toFixed(2)} 不符` })
-    }
-    const refundedC = input.refundAllocations.filter(r => r.payment_id === p.id).reduce((s, r) => s + toCents(r.amount), 0)
-    if (refundedC - toCents(p.amount) > EPS) {
-      issues.push({ code: 'OVER_REFUND_SOURCE', detail: `付款 ${p.id} 已退 ${(refundedC / 100).toFixed(2)} 超过实付 ${p.amount}` })
-    }
-  }
-
-  const succeededRefunds = input.refunds.filter(r => r.status === 'succeeded')
-  const refundedTotalC = succeededRefunds.reduce((s, r) => s + toCents(r.refund_amount), 0)
-  if (refundedTotalC - paidTotalC > EPS) {
-    issues.push({ code: 'OVER_REFUND_ORDER', detail: `订单累计退款 ${(refundedTotalC / 100).toFixed(2)} 超过累计实付 ${(paidTotalC / 100).toFixed(2)}` })
-  }
-  for (const ra of input.refundAllocations) {
-    if (!paymentIds.has(ra.payment_id)) issues.push({ code: 'ORPHAN_REFUND_ALLOCATION', detail: `退款分配 ${ra.refund_id} 指向的付款 ${ra.payment_id} 不属于本订单` })
-  }
-  for (const r of succeededRefunds) {
-    const hasAlloc = input.refundAllocations.some(ra => ra.refund_id === r.id)
-    if (!hasAlloc) issues.push({ code: 'UNALLOCATED_REFUND', detail: `退款 ${r.id}（${r.refund_amount}）没有对应的来源分配` })
-  }
-  return { ok: issues.length === 0, paidTotal: paidTotalC / 100, refundedTotal: refundedTotalC / 100, issues }
-}
 
 // D1 包装：读取订单相关行并跑纯对账。
 export async function reconcileOrderPayments(c: Context, orderId: string): Promise<ReconResult> {
