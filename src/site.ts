@@ -4,54 +4,137 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
-import sanitizeHtml from 'sanitize-html'
 import layoutTemplate from './layout.html'
-import { customAlphabet, nanoid } from 'nanoid'
+import { nanoid } from 'nanoid'
 
-const referenceCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
-export function generateReferenceNumber(prefix: 'OD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD' | 'CN', at = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(at)
-  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
-  return `${prefix}-${values.year}${values.month}${values.day}-${referenceCode()}`
+// ---------------------------------------------------------------------------
+// 通用工具函数已拆分到 src/lib/*。这里 import 供本文件内部使用，并在文件内
+// 统一 re-export，让既有 `import { ... } from './site'`（页面 / action / 测试）
+// 保持零改动。
+// ---------------------------------------------------------------------------
+import { generateReferenceNumber, generateContractNumber } from './lib/reference'
+import {
+  sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
+  renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
+} from './lib/html'
+import { splitPersonName, combinePersonName, getAvatarInitials } from './lib/personName'
+import { getAccessLevel, canManageUser, canUseAccountBalance } from './lib/access'
+import type { Role, AccessLevel } from './lib/access'
+import { formatCurrency, formatMelbourneDateTime, formatDate } from './lib/format'
+import { hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword } from './lib/password'
+import { timingSafeEqualStr, fnv1aHex } from './lib/checksum'
+import { parseCookie } from './lib/cookie'
+import { generateUserId, generateReferralCode } from './lib/userId'
+import { validateHostedImageUrls } from './lib/hostedImages'
+
+export {
+  generateReferenceNumber, generateContractNumber,
+  sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
+  renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
+  splitPersonName, combinePersonName, getAvatarInitials,
+  getAccessLevel, canManageUser, canUseAccountBalance,
+  formatCurrency, formatMelbourneDateTime, formatDate,
+  hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword,
+  timingSafeEqualStr, fnv1aHex,
+  parseCookie,
+  generateUserId, generateReferralCode,
+  validateHostedImageUrls,
 }
-export function generateContractNumber(at = new Date()): string {
-  return generateReferenceNumber('CTR', at)
+export type { Role, AccessLevel }
+
+// ---------------------------------------------------------------------------
+// 纯业务逻辑 / 状态机已拆分到 src/domain/*（均有独立单元测试）。同样 import
+// 供本文件使用并统一 re-export。
+// ---------------------------------------------------------------------------
+import { canTransitionOrder } from './domain/orderStatus'
+import {
+  ORDER_CHANGE_TYPES, ORDER_CHANGE_TYPE_LABELS,
+  orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan,
+} from './domain/orderChanges'
+import type { OrderChangeType, OrderChangePlan } from './domain/orderChanges'
+import {
+  DEVICE_COMMAND_STATES, DEVICE_COMMAND_TERMINAL_STATES,
+  canTransitionDeviceCommand, HIGH_RISK_DEVICE_COMMANDS, isHighRiskDeviceCommand,
+} from './domain/deviceCommand'
+import type { DeviceCommandState } from './domain/deviceCommand'
+import {
+  DEVICE_LIFECYCLE_FLOW, canTransitionDeviceLifecycle,
+  MAINTENANCE_OPEN_STATES, MAINTENANCE_ADVANCE_NEXT, MAINTENANCE_CHECK_TYPES,
+} from './domain/deviceLifecycle'
+import {
+  PAYMENT_DISPUTE_STATES, PAYMENT_DISPUTE_OPEN_STATES, PAYMENT_DISPUTE_TERMINAL_STATES,
+  canTransitionPaymentDispute, isPaymentDisputeOpen, paymentsBlockedByDispute, mapStripeDisputeStatus,
+} from './domain/paymentDispute'
+import type { PaymentDisputeState } from './domain/paymentDispute'
+import {
+  RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
+  isRiskFlagCurrentlyActive, findBlockingRiskFlag,
+} from './domain/riskFlags'
+import type { RiskFlagType, RiskFlagLike } from './domain/riskFlags'
+import { deviceUtilisationRate, paymentMethodBreakdown } from './domain/operationsReport'
+import type { PaymentMethodRow, PaymentMethodShare } from './domain/operationsReport'
+import {
+  RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
+} from './domain/dataRetention'
+import type { RetentionAction, RetentionPolicyLike } from './domain/dataRetention'
+import { backupHealth, restoreTestOverdue } from './domain/backup'
+import type { BackupHealthStatus } from './domain/backup'
+import { rateHealth, worstHealthLevel } from './domain/monitoring'
+import type { HealthLevel, MonitorMetric } from './domain/monitoring'
+import { agentCommission } from './domain/agentProgram'
+import { buildRefundAllocation, evaluatePaymentReconciliation } from './domain/refundAllocation'
+import type {
+  RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
+} from './domain/refundAllocation'
+
+export {
+  canTransitionOrder,
+  ORDER_CHANGE_TYPES, ORDER_CHANGE_TYPE_LABELS,
+  orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan,
+  DEVICE_COMMAND_STATES, DEVICE_COMMAND_TERMINAL_STATES,
+  canTransitionDeviceCommand, HIGH_RISK_DEVICE_COMMANDS, isHighRiskDeviceCommand,
+  DEVICE_LIFECYCLE_FLOW, canTransitionDeviceLifecycle,
+  MAINTENANCE_OPEN_STATES, MAINTENANCE_ADVANCE_NEXT, MAINTENANCE_CHECK_TYPES,
+  PAYMENT_DISPUTE_STATES, PAYMENT_DISPUTE_OPEN_STATES, PAYMENT_DISPUTE_TERMINAL_STATES,
+  canTransitionPaymentDispute, isPaymentDisputeOpen, paymentsBlockedByDispute, mapStripeDisputeStatus,
+  RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
+  isRiskFlagCurrentlyActive, findBlockingRiskFlag,
+  deviceUtilisationRate, paymentMethodBreakdown,
+  RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
+  backupHealth, restoreTestOverdue,
+  rateHealth, worstHealthLevel,
+  agentCommission,
+  buildRefundAllocation, evaluatePaymentReconciliation,
 }
+export type {
+  OrderChangeType, OrderChangePlan, DeviceCommandState, PaymentDisputeState,
+  RiskFlagType, RiskFlagLike, PaymentMethodRow, PaymentMethodShare,
+  RetentionAction, RetentionPolicyLike, BackupHealthStatus, HealthLevel, MonitorMetric,
+  RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
+}
+
+// ---------------------------------------------------------------------------
+// 数据库句柄与领域实体类型已拆到 src/db/*。同样 import 使用并 re-export，
+// 让既有 `import { getDB, type User, ... } from './site'` 保持不变。
+// ---------------------------------------------------------------------------
+import { getDB } from './db/client'
+import type { User, Device, DeviceLifecycleStatus, Order, Contract, ContractTemplate } from './db/types'
+export { getDB }
+export type { User, Device, DeviceLifecycleStatus, Order, Contract, ContractTemplate }
+
+// ---------------------------------------------------------------------------
+// 系统设置的内存默认值 + 访问器已拆到 src/settings/*。loadSystemSettingsFromDB /
+// updateSystemSettings 仍在本文件，就地读写导入的 systemSettings（同一引用）。
+// ---------------------------------------------------------------------------
+import { systemSettings, getSystemSettings, rentalTerms } from './settings/systemSettings'
+import type { SystemSettingsKey } from './settings/systemSettings'
+export { systemSettings, getSystemSettings, rentalTerms }
+export type { SystemSettingsKey }
 
 function renderLayoutTemplate(values: Record<string, string>): string {
   return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? values[key] : placeholder
   )
-}
-
-export function sanitizeRichHtml(value: unknown): string {
-  return sanitizeHtml(String(value ?? ''), {
-    allowedTags: ['h1', 'h2', 'h3', 'h4', 'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ol', 'ul', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'blockquote', 'a', 'span', 'div', 'hr', 'code', 'pre', 'img'],
-    allowedAttributes: { a: ['href', 'target', 'rel'], img: ['src', 'alt'], '*': ['class', 'style'] },
-    allowedSchemes: ['http', 'https', 'mailto', 'data'],
-    allowedSchemesByTag: { a: ['http', 'https', 'mailto'], img: ['data'] },
-    allowedStyles: {
-      '*': {
-        color: [/^#[0-9a-f]{3,8}$/i, /^rgb\([\d\s,.%]+\)$/i],
-        'background-color': [/^#[0-9a-f]{3,8}$/i, /^rgb\([\d\s,.%]+\)$/i],
-        'text-align': [/^(left|right|center|justify)$/],
-        'font-weight': [/^(normal|bold|[1-9]00)$/],
-        width: [/^\d+(\.\d+)?(%|px)$/],
-        margin: [/^[\d\s.%px-]+$/], padding: [/^[\d\s.%px-]+$/],
-        border: [/^[\d\s.#a-z()-]+$/i], 'border-collapse': [/^(collapse|separate)$/],
-        'page-break-after': [/^(always|avoid|auto|left|right)$/],
-        'break-after': [/^(auto|avoid|always|page|column|region)$/],
-      },
-    },
-    transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer' }, true) },
-  })
-}
-
-// 把未被填充的 `${token}` / `{token}` 占位符替换为可读的空位标记。
-// 用于把含合同变量的模板（如 rentalTerms）作为「范本」公开展示：读者看到结构，
-// 未知字段显示为 —— 而不是花括号变量名。
-export function neutralizeTemplateTokens(html: string, placeholder = '<span class="doc-blank">——</span>'): string {
-  return String(html ?? '').replace(/\$?\{[a-z0-9_]+\}/gi, placeholder)
 }
 
 export function renderSiteVariables(content: string, currentUser: any = {}, extraValues: Record<string, unknown> = {}): string {
@@ -91,168 +174,6 @@ export function renderSiteVariables(content: string, currentUser: any = {}, extr
   return sanitizeRichHtml(filled)
 }
 
-export function sanitizePlainText(value: unknown, maxLength = 500): string {
-  return sanitizeHtml(String(value ?? ''), { allowedTags: [], allowedAttributes: {} })
-    .trim()
-    .slice(0, maxLength)
-}
-
-export function renderNotificationMarkdown(value: unknown): string {
-  return sanitizeRichHtml(String(value ?? '').slice(0, 20000))
-}
-
-export function renderFlexibleContent(value: unknown, format?: unknown): string {
-  return sanitizeRichHtml(String(value ?? '').slice(0, 20000))
-}
-
-export function renderEmailNotificationHtml(title: unknown, content: unknown, companyName = 'PC Rental', themeColor = '#f0a35b'): string {
-  const safeTitle = sanitizePlainText(title, 200)
-  const safeCompany = sanitizePlainText(companyName, 120)
-  const accent = /^#[0-9a-f]{6}$/i.test(String(themeColor)) ? String(themeColor) : '#f0a35b'
-  const messageHtml = renderFlexibleContent(content)
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title></head><body style="margin:0;background:#e9eef1;color:#172331;font-family:Arial,'Noto Sans SC',sans-serif;"><div style="padding:32px 16px;background:#e9eef1;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #cbd7df;box-shadow:0 12px 32px rgba(23,35,49,.12);"><tr><td style="padding:28px 32px;background:#172331;color:#f5f8fa;border-bottom:5px solid ${accent};"><div style="font:700 12px/1.2 Arial,sans-serif;letter-spacing:2px;color:${accent};">PR / PC RENTAL</div><div style="margin-top:14px;font-size:12px;letter-spacing:1.5px;color:#aebdca;">ASSET OPS · CUSTOMER NOTICE</div></td></tr><tr><td style="padding:36px 32px 30px;"><div style="font:700 11px/1.2 Arial,sans-serif;letter-spacing:1.8px;color:${accent};text-transform:uppercase;">${safeCompany} / MESSAGE</div><h1 style="margin:12px 0 22px;font-size:28px;line-height:1.25;color:#172331;">${safeTitle}</h1><div style="height:1px;background:#d7e0e6;margin-bottom:24px;"></div><div style="font-size:16px;line-height:1.8;color:#40515e;">${messageHtml}</div></td></tr><tr><td style="padding:20px 32px;background:#f5f8fa;border-top:1px solid #d7e0e6;color:#71818d;font:11px/1.7 monospace;">${safeCompany}<br>这是一封系统通知邮件，请勿直接回复。</td></tr></table></div></body></html>`
-}
-
-export function createPageBreakHtml(): string {
-  return '<div class="page-break" style="page-break-after: always; break-after: page;"></div><p><br></p>'
-}
-
-export function splitPersonName(value: unknown): { firstName: string; lastName: string } {
-  const name = sanitizePlainText(value, 200).trim()
-  const parts = name.split(/\s+/).filter(Boolean)
-  if (parts.length > 1) return { firstName: parts.slice(0, -1).join(' '), lastName: parts.at(-1) || '' }
-  if (/^[\p{Script=Han}]{2,}$/u.test(name)) return { firstName: name.slice(1), lastName: name.slice(0, 1) }
-  return { firstName: name, lastName: '' }
-}
-
-export function combinePersonName(firstName: unknown, lastName: unknown): string {
-  return `${sanitizePlainText(firstName, 100).trim()} ${sanitizePlainText(lastName, 100).trim()}`.trim()
-}
-
-export function getAvatarInitials(name: unknown): string {
-  const value = sanitizePlainText(name, 200).trim()
-  if (!value) return '?'
-  const compactValue = value.replace(/\s+/g, '')
-  if (/^[\p{Script=Han}]+$/u.test(compactValue)) {
-    return compactValue.slice(0, 1)
-  }
-  const parts = value.split(/\s+/).filter(Boolean)
-  if (parts.length === 1) return Array.from(parts[0] || '').slice(0, 2).join('').toUpperCase() || '?'
-  return `${Array.from(parts[0])[0] || ''}${Array.from(parts.at(-1) || '')[0] || ''}`.toUpperCase()
-}
-
-export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
-export type AccessLevel = 'CUSTOMER' | 'STAFF' | 'MANAGER' | 'ADMIN'
-
-export function getAccessLevel(user: any): AccessLevel {
-  const value = String(user?.accessLevel ?? user?.access_level ?? user?.role ?? 'CUSTOMER').toUpperCase()
-  return ['CUSTOMER', 'STAFF', 'MANAGER', 'ADMIN'].includes(value) ? value as AccessLevel : 'CUSTOMER'
-}
-
-export function canManageUser(actor: any, target: any): boolean {
-  const actorLevel = getAccessLevel(actor)
-  const targetLevel = getAccessLevel(target)
-  return actorLevel === 'ADMIN' || (actorLevel === 'MANAGER' && targetLevel === 'STAFF')
-}
-
-export function canUseAccountBalance(user: any): boolean {
-  const role = String(user?.role || '').trim().toUpperCase()
-  const accountType = String(user?.accountType ?? user?.account_type ?? 'formal').trim().toLowerCase()
-  return Boolean(user && role === 'CUSTOMER' && accountType === 'formal')
-}
-
-export interface User {
-  id: string
-  name: string
-  email: string
-  passwordHash?: string
-  password_salt?: string // 添加 password_salt 字段
-  password?: string // 添加password属性以兼容旧代码
-  role: Role
-  accessLevel?: AccessLevel
-  access_level?: AccessLevel
-  phone?: string
-  bsb?: string
-  account?: string
-  account_number?: string
-  accountNumber?: string // camelCase兼容前端代码
-  balance: number
-  status?: 'active' | 'inactive'
-  accountStatus?: 'active' | 'banned' | 'inactive' | 'departed'
-  account_status?: 'active' | 'banned' | 'inactive' | 'departed'
-  commissionRate?: number
-  referrerId?: string
-  referralCode?: string
-  registrationDate?: string
-
-  // camelCase
-  createdAt?: string
-  commissionBalance: number
-
-  // snake_case 兼容旧页面
-  created_at?: string
-  commission_balance?: number
-
-  pendingCommission?: number
-  withdrawnCommission?: number
-  referredUsers?: Array<Record<string, any>>
-
-  // staff 相关旧代码可能依赖
-  staffId?: string
-  staff_id?: string
-  accountType?: 'formal' | 'guest' | 'deleted_guest'
-  account_type?: 'formal' | 'guest' | 'deleted_guest'
-  guestOrderId?: string | null
-  guest_order_id?: string | null
-  guestExpiresAt?: string | null
-  guest_expires_at?: string | null
-  deletedAt?: string | null
-  deleted_at?: string | null
-  deletionRequestedAt?: string | null
-  deletionScheduledAt?: string | null
-}
-
-export interface Device {
-  id: string
-  name: string
-  brand?: string
-  model: string
-  assetTag?: string
-  asset_tag?: string
-  serialNumber: string
-  serial_number?: string
-  cpu?: string
-  ram?: string
-  storage?: string
-  gpu?: string
-  os?: string
-
-  // camelCase
-  pricePerDay: number
-  dailyRate?: number
-  depositAmount: number
-
-  // snake_case 兼容旧页面
-  price_per_day?: number
-  deposit_amount?: number
-
-  status: 'available' | 'rented' | 'maintenance' | 'retired'
-  lifecycleStatus?: DeviceLifecycleStatus
-  lifecycle_status?: DeviceLifecycleStatus
-  description: string
-  deviceMode?: 'normal' | 'return' | 'maintenance' | 'lost'
-  device_mode?: 'normal' | 'return' | 'maintenance' | 'lost'
-  agent_status?: string
-  agent_hostname?: string
-  agent_os_version?: string
-  agent_cpu?: string
-  agent_memory_mb?: number
-  agent_storage_free_bytes?: number
-  agent_version?: string
-  agent_detected_serial?: string
-}
-
-export type DeviceLifecycleStatus = 'RESERVED' | 'READY' | 'RENTED' | 'RETURNED' | 'INSPECTION' | 'MAINTENANCE' | 'DAMAGED' | 'RETIRED'
 
 const DEVICE_LIFECYCLE_STATES = new Set<DeviceLifecycleStatus>(['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'])
 
@@ -261,68 +182,6 @@ function legacyDeviceStatusForLifecycle(status: DeviceLifecycleStatus): Device['
   if (status === 'MAINTENANCE' || status === 'DAMAGED') return 'maintenance'
   if (status === 'RETIRED') return 'retired'
   return 'rented'
-}
-
-export interface Order {
-  id: string
-  orderNo: string | null
-  userId: string
-  deviceId: string
-  deviceName?: string
-  startDate: string
-  endDate: string
-  startPeriod?: 'AM' | 'PM'
-  endPeriod?: 'AM' | 'PM'
-  pickupTimeSlot?: string
-  returnTimeSlot?: string
-  pickupLocation?: string
-  returnLocation?: string
-  deliveryMethod?: 'Pickup' | 'Delivery' | string
-  delivery_method?: string
-  deliveryFee?: number
-  delivery_fee?: number
-  serviceFee?: number
-  service_fee?: number
-  rentalPeriod?: number
-  orderDate?: string
-  status: string
-  order_status?: string
-  payment_status?: string
-  rental_status?: string
-  amount_due?: number
-  handover_completed_at?: string | null
-  handover_by?: string | null
-  return_received_at?: string | null
-  return_received_by?: string | null
-  early_return_requested_at?: string | null
-  early_return_requested_by?: string | null
-  early_return_approved_at?: string | null
-  early_return_approved_by?: string | null
-  paymentMethod: 'card' | 'bank_transfer' | 'alipay' | 'wechat' | 'balance'
-  totalAmount: number
-  depositAmount: number
-  couponCode?: string | null
-  discountAmount?: number
-  dailyRate: number
-  contractId: string
-  signedAt: string | null
-  createdAt: string
-
-  // snake_case 兼容旧页面
-  device_id?: string
-  start_date?: string
-  end_date?: string
-  rental_period?: number
-  total_amount?: number
-  deposit_amount?: number
-  created_at?: string
-
-  // refunds 旧逻辑
-  needsRefund?: boolean
-  refundMethod?: 'balance' | 'original'
-  refundBsb?: string
-  refundAccountNumber?: string
-  refundAccountName?: string
 }
 
 export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string }): Promise<void> {
@@ -653,53 +512,6 @@ export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
   return notified
 }
 
-export interface Contract {
-  id: string
-  rentalId: string
-  contractNumber: string
-  content: string
-  signedAt: string | null
-  createdAt?: string
-  signToken?: string
-  status: 'draft' | 'pending_sign' | 'signed' | 'completed' | 'cancelled' | 'expired'
-  validFrom?: string | null // New field for contract validity start date
-  validUntil?: string | null // New field for contract validity end date
-  valid_until?: string | null
-  signExpiresAt?: string | null
-  sign_expires_at?: string | null
-  created_by?: string | null // 记录合同创建人ID
-  createdBy?: string | null // camelCase 兼容：合同创建人ID
-  deleted_at?: string | null // 软删除时间戳
-
-  // snake_case 兼容旧页面
-  rental_id?: string
-  device_condition?: string | null
-  device_accessories?: string | null
-  late_fee_per_day?: number
-  repair_cost?: number | null
-  pickup_location?: string | null
-  return_location?: string | null
-  customer_id_type?: string | null
-  customer_id_number?: string | null
-  esign_ip?: string | null
-  esign_device?: string | null
-  contract_data?: string | Record<string, unknown> | null
-  signed_content?: string | null
-  content_hash?: string | null
-  privacy_policy_accepted?: boolean | number | null
-  privacy_policy_version?: string | null
-  privacy_policy_accepted_at?: string | null
-  privacy_policy_accepted_ip?: string | null
-}
-
-export interface ContractTemplate {
-  id: string
-  name: string
-  content: string
-  createdAt?: string
-  updatedAt?: string
-}
-
 export function isContractExpired(contract: Contract, now = Date.now()): boolean {
   if ((contract.status as string) === 'expired') return true
   if (!['draft', 'pending_sign'].includes(contract.status)) return false
@@ -713,29 +525,6 @@ export function isContractFinalized(contract: Contract | null | undefined): bool
   return Boolean(contract && ['signed', 'completed'].includes(contract.status) && contract.signedAt && contract.signed_content)
 }
 
-// 生成一个随机的盐值
-function generateSalt(length: number = 16): string {
-  const randomBytes = new Uint8Array(length);
-  crypto.getRandomValues(randomBytes);
-  return Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-const PBKDF2_ITERATIONS = 100000
-
-export async function generateReferralCode(length: number = 6): Promise<string> {
-  const { customAlphabet } = await import('nanoid');
-  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const nanoid = customAlphabet(alphabet, length);
-  return nanoid();
-}
-
-export function generateUserId(role: 'ADMIN' | 'STAFF' | 'CUSTOMER', accountType: 'formal' | 'guest' = 'formal'): string {
-  const prefix = accountType === 'guest' ? 'VS' : role === 'ADMIN' ? 'AD' : role === 'STAFF' ? 'ST' : 'US'
-  const bytes = new Uint8Array(8)
-  crypto.getRandomValues(bytes)
-  return `${prefix}-${Array.from(bytes, byte => String(byte % 10)).join('')}`
-}
-
 export async function generateUniqueUserId(c: Context, role: 'ADMIN' | 'STAFF' | 'CUSTOMER', accountType: 'formal' | 'guest' = 'formal'): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const id = generateUserId(role, accountType)
@@ -743,77 +532,6 @@ export async function generateUniqueUserId(c: Context, role: 'ADMIN' | 'STAFF' |
     if (!existing) return id
   }
   throw new Error('无法生成唯一用户 ID，请稍后重试')
-}
-
-export async function hashPassword(password: string): Promise<string> {
-  const iterations = PBKDF2_ITERATIONS
-  const salt = generateSalt()
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations }, key, 256)
-  const hash = Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('')
-  return `pbkdf2$${iterations}$${salt}$${hash}`
-}
-
-export function isStrongPassword(password: unknown): boolean {
-  return /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{8,}$/.test(String(password ?? ''))
-}
-
-export function generateTemporaryPassword(): string {
-  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
-  const lower = 'abcdefghijkmnopqrstuvwxyz'
-  const digits = '23456789'
-  const alphabet = upper + lower + digits
-  const bytes = new Uint8Array(8)
-  crypto.getRandomValues(bytes)
-  const password = [
-    upper[bytes[0] % upper.length],
-    lower[bytes[1] % lower.length],
-    digits[bytes[2] % digits.length],
-    ...Array.from(bytes.slice(3), byte => alphabet[byte % alphabet.length]),
-  ]
-  // Fisher-Yates shuffle so the required character classes are not fixed in position.
-  for (let index = password.length - 1; index > 0; index -= 1) {
-    const swapIndex = bytes[index] % (index + 1)
-      ;[password[index], password[swapIndex]] = [password[swapIndex], password[index]]
-  }
-  return password.join('')
-}
-
-export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  if (storedHash.startsWith('pbkdf2$')) {
-    const [, iterationText, salt, expected] = storedHash.split('$')
-    const iterations = Number(iterationText)
-    if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_ITERATIONS || !salt || !expected) return false
-    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
-    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations }, key, 256)
-    const actual = Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('')
-    if (actual.length !== expected.length) return false
-    let difference = 0
-    for (let i = 0; i < actual.length; i++) difference |= actual.charCodeAt(i) ^ expected.charCodeAt(i)
-    return difference === 0
-  }
-  const parts = storedHash.split('$');
-  if (parts.length !== 2) {
-    // 如果存储的哈希值格式不正确，则验证失败
-    return false;
-  }
-  const salt = parts[0];
-  const hash = parts[1];
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + salt); // 使用存储的盐值和用户输入的密码进行哈希
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const newHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
-
-  return newHash === hash; // 比较新生成的哈希值与存储的哈希值
-}
-
-// 旧的 SHA-256 散列函数 (无盐值)
-async function oldSha256Hash(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export async function getUserById(cOrContext: Context | string, id?: string): Promise<User | null> {
@@ -1427,172 +1145,6 @@ export async function hasDeviceBookingConflict(c: Context, deviceId: string, sta
   return Boolean(row)
 }
 
-const ORDER_TRANSITIONS: Record<string, string[]> = {
-  pending_approval: ['approved', 'awaiting_signature', 'cancelled'],
-  approved: ['pending_payment', 'paid', 'cancelled'],
-  draft: ['pending_payment', 'cancelled'],
-  pending_payment: ['paid', 'cancelled'],
-  paid: ['pending_pickup', 'active', 'cancelled'],
-  pending_pickup: ['active', 'pending_return', 'cancelled'],
-  awaiting_signature: ['paid', 'pending_payment', 'cancelled'],
-  active: ['extended', 'overdue', 'suspended', 'pending_return', 'completed'],
-  extended: ['active', 'overdue', 'suspended', 'pending_return', 'completed'],
-  overdue: ['active', 'suspended', 'pending_return', 'completed'],
-  suspended: ['active', 'pending_return', 'cancelled'],
-  pending_return: ['returned', 'completed'],
-  returned: ['completed'],
-  completed: [], cancelled: [],
-}
-
-export function canTransitionOrder(from: string, to: string): boolean {
-  return from === to || Boolean(ORDER_TRANSITIONS[from]?.includes(to))
-}
-
-// ---------------------------------------------------------------------------
-// 订单修改历史 (TODO.md P1 #5 / 完善.md §34)
-//
-// 任何已创建订单的关键字段都不能被静默修改：每次调整都要落一条
-// order_change_history，记录改了什么、为什么、谁改的，并保持库存一致。
-// 下面是纯函数部分（无 DB），供路由与单元测试共用；设备是否存在、租期是否
-// 冲突等依赖 DB 的检查由调用方在拿到 patch 后执行。
-// ---------------------------------------------------------------------------
-
-export const ORDER_CHANGE_TYPES = ['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT', 'LOCATION_CHANGE'] as const
-export type OrderChangeType = typeof ORDER_CHANGE_TYPES[number]
-
-export const ORDER_CHANGE_TYPE_LABELS: Record<string, string> = {
-  EXTENSION: '调整租期',
-  DEVICE_SWAP: '更换设备',
-  PRICE_ADJUSTMENT: '调整价格 / 押金',
-  LOCATION_CHANGE: '修改取还地点',
-  CANCELLATION: '取消订单',
-  INVENTORY_RELEASE: '释放库存',
-}
-
-const ORDER_CHANGE_FIELD_LABELS: Record<string, string> = {
-  deviceId: '设备',
-  startDate: '起租日期',
-  endDate: '归还日期',
-  rentalPeriod: '租期天数',
-  totalAmount: '订单总额',
-  depositAmount: '押金',
-  discountAmount: '优惠金额',
-  pickupLocation: '取货地点',
-  returnLocation: '归还地点',
-  deliveryMethod: '配送方式',
-  status: '订单状态',
-}
-
-const ORDER_CHANGE_DELIVERY_METHODS = ['Pickup', 'Delivery']
-
-// 订单被追踪的关键字段快照，作为 before/after JSON 的统一结构。
-export function orderChangeSnapshot(order: any): Record<string, any> {
-  return {
-    deviceId: order.deviceId ?? order.device_id ?? '',
-    startDate: order.startDate ?? order.start_date ?? '',
-    endDate: order.endDate ?? order.end_date ?? '',
-    rentalPeriod: Number(order.rentalPeriod ?? order.rental_period ?? 0),
-    totalAmount: Number(order.totalAmount ?? order.total_amount ?? 0),
-    depositAmount: Number(order.depositAmount ?? order.deposit_amount ?? 0),
-    discountAmount: Number(order.discountAmount ?? order.discount_amount ?? 0),
-    pickupLocation: order.pickupLocation ?? order.pickup_location ?? '',
-    returnLocation: order.returnLocation ?? order.return_location ?? '',
-    deliveryMethod: order.deliveryMethod ?? order.delivery_method ?? 'Pickup',
-  }
-}
-
-// 两个快照之间发生变化的字段列表，用于渲染修改历史的可读对照。
-export function diffOrderSnapshots(
-  before: Record<string, any> | null | undefined,
-  after: Record<string, any> | null | undefined,
-): { field: string; label: string; before: any; after: any }[] {
-  const keys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]
-  const changes: { field: string; label: string; before: any; after: any }[] = []
-  for (const key of keys) {
-    const a = (before as any)?.[key] ?? null
-    const b = (after as any)?.[key] ?? null
-    if (String(a ?? '') === String(b ?? '')) continue
-    changes.push({ field: key, label: ORDER_CHANGE_FIELD_LABELS[key] || key, before: a, after: b })
-  }
-  return changes
-}
-
-function daysBetween(startDate: string, endDate: string): number {
-  return Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000)
-}
-
-export interface OrderChangePlan {
-  patch: Record<string, any>
-  // 目标设备（换机时为新设备，其它类型为原设备）在新租期内需要做冲突检查
-  bookingCheck?: { deviceId: string; startDate: string; endDate: string }
-  // 需要确认该设备存在且状态可租
-  deviceAvailabilityCheck?: string
-}
-
-// 纯校验 + patch 构造。返回 { error } 表示输入不合法；否则返回需要写回订单的
-// 字段补丁以及调用方还需执行的 DB 依赖检查。
-export function buildOrderChangePlan(
-  type: string,
-  before: Record<string, any>,
-  input: Record<string, string | undefined>,
-): OrderChangePlan | { error: string } {
-  switch (type) {
-    case 'EXTENSION': {
-      const startDate = (input.startDate ?? '').trim() || before.startDate
-      const endDate = (input.endDate ?? '').trim() || before.endDate
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return { error: '日期格式无效' }
-      if (endDate <= startDate) return { error: '归还日期必须晚于起租日期' }
-      if (startDate === before.startDate && endDate === before.endDate) return { error: '租期没有变化' }
-      return {
-        patch: { startDate, endDate, rentalPeriod: daysBetween(startDate, endDate) },
-        bookingCheck: { deviceId: before.deviceId, startDate, endDate },
-      }
-    }
-    case 'DEVICE_SWAP': {
-      const deviceId = (input.deviceId ?? '').trim()
-      if (!deviceId) return { error: '请选择替换设备' }
-      if (deviceId === before.deviceId) return { error: '替换设备与当前设备相同' }
-      return {
-        patch: { deviceId },
-        deviceAvailabilityCheck: deviceId,
-        bookingCheck: { deviceId, startDate: before.startDate, endDate: before.endDate },
-      }
-    }
-    case 'PRICE_ADJUSTMENT': {
-      const totalAmount = Number(input.totalAmount)
-      const depositAmount = Number(input.depositAmount)
-      const discountAmount = input.discountAmount === undefined || input.discountAmount === ''
-        ? Number(before.discountAmount || 0)
-        : Number(input.discountAmount)
-      if (![totalAmount, depositAmount, discountAmount].every(Number.isFinite)) return { error: '金额必须是数字' }
-      if (totalAmount < 0 || depositAmount < 0 || discountAmount < 0) return { error: '金额不能为负' }
-      if (depositAmount > totalAmount) return { error: '押金不能超过订单总额' }
-      const patch = {
-        totalAmount: Number(totalAmount.toFixed(2)),
-        depositAmount: Number(depositAmount.toFixed(2)),
-        discountAmount: Number(discountAmount.toFixed(2)),
-      }
-      const unchanged = patch.totalAmount === Number(before.totalAmount)
-        && patch.depositAmount === Number(before.depositAmount)
-        && patch.discountAmount === Number(before.discountAmount || 0)
-      if (unchanged) return { error: '价格没有变化' }
-      return { patch }
-    }
-    case 'LOCATION_CHANGE': {
-      const pickupLocation = (input.pickupLocation ?? before.pickupLocation ?? '').trim().slice(0, 200)
-      const returnLocation = (input.returnLocation ?? before.returnLocation ?? '').trim().slice(0, 200)
-      const deliveryMethod = (input.deliveryMethod ?? before.deliveryMethod ?? 'Pickup').trim()
-      if (!ORDER_CHANGE_DELIVERY_METHODS.includes(deliveryMethod)) return { error: '配送方式无效' }
-      const unchanged = pickupLocation === (before.pickupLocation || '')
-        && returnLocation === (before.returnLocation || '')
-        && deliveryMethod === (before.deliveryMethod || 'Pickup')
-      if (unchanged) return { error: '取还信息没有变化' }
-      return { patch: { pickupLocation, returnLocation, deliveryMethod } }
-    }
-    default:
-      return { error: '不支持的订单修改类型' }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // 通用 Webhook 幂等 (TODO.md P7 / 完善.md §43)
@@ -1642,403 +1194,6 @@ export async function markWebhookFailed(c: Context, recordId: string, reason: st
   ).bind(String(reason || '').slice(0, 500), recordId).run()
 }
 
-// ---------------------------------------------------------------------------
-// 远程设备命令状态机 (TODO.md P1 #3 / 完善.md §23)
-//
-//   QUEUED → SENT → ACKNOWLEDGED → RUNNING → SUCCESS
-//   QUEUED/SENT/ACKNOWLEDGED/RUNNING → FAILED
-//   QUEUED → EXPIRED | CANCELLED
-// 终态命令不可再流转；客户端重复上报同一终态视为幂等成功。
-// ---------------------------------------------------------------------------
-
-export const DEVICE_COMMAND_STATES = ['QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED'] as const
-export type DeviceCommandState = typeof DEVICE_COMMAND_STATES[number]
-
-export const DEVICE_COMMAND_TERMINAL_STATES = new Set<DeviceCommandState>(['SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED'])
-
-const DEVICE_COMMAND_TRANSITIONS: Record<DeviceCommandState, DeviceCommandState[]> = {
-  QUEUED: ['SENT', 'EXPIRED', 'CANCELLED', 'FAILED'],
-  SENT: ['ACKNOWLEDGED', 'RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED'],
-  ACKNOWLEDGED: ['RUNNING', 'SUCCESS', 'FAILED', 'EXPIRED'],
-  RUNNING: ['SUCCESS', 'FAILED', 'EXPIRED'],
-  SUCCESS: [], FAILED: [], EXPIRED: [], CANCELLED: [],
-}
-
-export function canTransitionDeviceCommand(from: string, to: string): boolean {
-  return Boolean(DEVICE_COMMAND_TRANSITIONS[from as DeviceCommandState]?.includes(to as DeviceCommandState))
-}
-
-// 高风险远程命令：需要 MANAGER 及以上、二次确认并写审计日志。
-export const HIGH_RISK_DEVICE_COMMANDS = new Set(['LOCK_DEVICE', 'REBOOT', 'DATA_WIPE', 'SYSTEM_RESET', 'REREGISTER_AGENT', 'DELETE_RENTAL_USER'])
-
-export function isHighRiskDeviceCommand(type: string): boolean {
-  return HIGH_RISK_DEVICE_COMMANDS.has(String(type || '').trim().toUpperCase())
-}
-
-// ---------------------------------------------------------------------------
-// 设备生命周期状态机 (TODO.md P1 #4 / 完善.md §13, §16)
-//
-//   RESERVED → RENTED
-//   RENTED → RETURNED → INSPECTION → MAINTENANCE → READY
-//   INSPECTION → DAMAGED → MAINTENANCE → READY
-//   MAINTENANCE / DAMAGED → RETIRED
-// 这是推荐流转；管理员在设备编辑页仍可手动纠正，但“存在未完成维护时不得置为
-// READY / 可用”是硬性规则，由路由单独强制。
-// ---------------------------------------------------------------------------
-
-export const DEVICE_LIFECYCLE_FLOW: Record<string, string[]> = {
-  RESERVED: ['READY', 'RENTED'],
-  READY: ['RESERVED', 'RENTED', 'MAINTENANCE', 'RETIRED'],
-  RENTED: ['RETURNED', 'INSPECTION', 'READY'],
-  RETURNED: ['INSPECTION', 'MAINTENANCE', 'READY'],
-  INSPECTION: ['MAINTENANCE', 'DAMAGED', 'RETURNED', 'READY'],
-  DAMAGED: ['MAINTENANCE', 'RETIRED'],
-  MAINTENANCE: ['READY', 'DAMAGED', 'RETIRED'],
-  RETIRED: [],
-}
-
-export function canTransitionDeviceLifecycle(from: string, to: string): boolean {
-  return from === to || Boolean(DEVICE_LIFECYCLE_FLOW[from]?.includes(to))
-}
-
-export const MAINTENANCE_OPEN_STATES = new Set(['OPEN', 'IN_PROGRESS', 'DATA_CLEAN', 'SYSTEM_RESET', 'CLIENT_CHECK'])
-export const MAINTENANCE_ADVANCE_NEXT: Record<string, string> = {
-  OPEN: 'IN_PROGRESS', IN_PROGRESS: 'DATA_CLEAN', DATA_CLEAN: 'SYSTEM_RESET', SYSTEM_RESET: 'CLIENT_CHECK',
-}
-// 归还后设备准备的十项验证（完善.md §16）——全部通过才允许维护记录 COMPLETED、设备回到 READY。
-export const MAINTENANCE_CHECK_TYPES = ['DATA_WIPE', 'SYSTEM_RESET', 'WINDOWS_BOOT', 'AGENT_INSTALLED', 'AGENT_VERSION', 'DEVICE_SERIAL', 'DISK_HEALTH', 'NETWORK', 'HARDWARE', 'ACCESSORIES'] as const
-
-// ---------------------------------------------------------------------------
-// 支付争议 / Chargeback 状态机 (完善.md §21, §31 / TODO.md P2 #9)
-//
-//   DISPUTE_OPENED → DISPUTE_UNDER_REVIEW → DISPUTE_WON | DISPUTE_LOST | DISPUTE_CLOSED
-//   DISPUTE_OPENED → DISPUTE_WON | DISPUTE_LOST | DISPUTE_CLOSED（Stripe 直接结案）
-// 终态不可再流转。争议处于 OPENED / UNDER_REVIEW 时，对应付款禁止任何正常退款，
-// 避免同一笔钱既被拒付又被主动退款（完善.md §31“防止争议金额被再次正常退款”）。
-// ---------------------------------------------------------------------------
-
-export const PAYMENT_DISPUTE_STATES = ['DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'] as const
-export type PaymentDisputeState = typeof PAYMENT_DISPUTE_STATES[number]
-
-export const PAYMENT_DISPUTE_OPEN_STATES = new Set<PaymentDisputeState>(['DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW'])
-export const PAYMENT_DISPUTE_TERMINAL_STATES = new Set<PaymentDisputeState>(['DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'])
-
-const PAYMENT_DISPUTE_TRANSITIONS: Record<PaymentDisputeState, PaymentDisputeState[]> = {
-  DISPUTE_OPENED: ['DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'],
-  DISPUTE_UNDER_REVIEW: ['DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'],
-  DISPUTE_WON: [], DISPUTE_LOST: [], DISPUTE_CLOSED: [],
-}
-
-export function canTransitionPaymentDispute(from: string, to: string): boolean {
-  return Boolean(PAYMENT_DISPUTE_TRANSITIONS[from as PaymentDisputeState]?.includes(to as PaymentDisputeState))
-}
-
-export function isPaymentDisputeOpen(status: string): boolean {
-  return PAYMENT_DISPUTE_OPEN_STATES.has(String(status || '').trim().toUpperCase() as PaymentDisputeState)
-}
-
-// 一笔付款只要还有未结案的争议，就不允许再走正常退款流程。
-export function paymentsBlockedByDispute(disputes: Array<{ status?: string } | null | undefined>): boolean {
-  return (disputes || []).some(row => row && isPaymentDisputeOpen(String(row.status || '')))
-}
-
-// 把 Stripe 的 dispute.status / 结案原因映射到内部状态机。
-// https://stripe.com/docs/api/disputes/object#dispute_object-status
-export function mapStripeDisputeStatus(stripeStatus: string): PaymentDisputeState {
-  switch (String(stripeStatus || '').trim().toLowerCase()) {
-    case 'warning_needs_response':
-    case 'needs_response':
-      return 'DISPUTE_OPENED'
-    case 'warning_under_review':
-    case 'under_review':
-      return 'DISPUTE_UNDER_REVIEW'
-    case 'won':
-      return 'DISPUTE_WON'
-    case 'lost':
-      return 'DISPUTE_LOST'
-    case 'warning_closed':
-    case 'charge_refunded':
-    default:
-      return 'DISPUTE_CLOSED'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 风险标记与黑名单 (完善.md §22, §32 / TODO.md P2 #10)
-//
-// 不是一个 is_blacklisted 布尔，而是带类型 / 严重程度 / 证据 / 过期时间的标记表。
-// “高风险客户禁止自动创建新租赁”：任意 HIGH 级标记，或命中硬拦截类型
-// （拒付、疑似欺诈、设备未归还、付款风险）时阻止客户继续自助下单；
-// 过期标记（expires_at 已过）视为失效，不再拦截，也不再显示为有效提示。
-// ---------------------------------------------------------------------------
-
-export const RISK_FLAG_TYPES = ['PAYMENT_RISK', 'IDENTITY_RISK', 'DEVICE_NOT_RETURNED', 'SERIOUS_DAMAGE', 'CHARGEBACK', 'ABUSE', 'FRAUD_SUSPECTED', 'MANUAL_REVIEW'] as const
-export type RiskFlagType = typeof RISK_FLAG_TYPES[number]
-export const RISK_FLAG_SEVERITIES = ['LOW', 'MEDIUM', 'HIGH'] as const
-
-export const ORDER_BLOCKING_RISK_FLAG_TYPES = new Set<RiskFlagType>(['PAYMENT_RISK', 'DEVICE_NOT_RETURNED', 'CHARGEBACK', 'FRAUD_SUSPECTED'])
-
-export interface RiskFlagLike { flag_type?: string; severity?: string; status?: string; expires_at?: string | null }
-
-export function isRiskFlagCurrentlyActive(flag: RiskFlagLike | null | undefined, now: Date = new Date()): boolean {
-  if (!flag || String(flag.status || '').toUpperCase() !== 'ACTIVE') return false
-  if (!flag.expires_at) return true
-  const expiry = new Date(String(flag.expires_at).replace(' ', 'T'))
-  return Number.isNaN(expiry.getTime()) ? true : expiry.getTime() > now.getTime()
-}
-
-// 返回第一条会阻止客户自助下单的有效标记；没有则返回 null。
-export function findBlockingRiskFlag<T extends RiskFlagLike>(flags: Array<T | null | undefined>, now: Date = new Date()): T | null {
-  for (const flag of flags || []) {
-    if (!isRiskFlagCurrentlyActive(flag, now)) continue
-    const severity = String(flag!.severity || '').toUpperCase()
-    const type = String(flag!.flag_type || '').toUpperCase() as RiskFlagType
-    if (severity === 'HIGH' || ORDER_BLOCKING_RISK_FLAG_TYPES.has(type)) return flag as T
-  }
-  return null
-}
-
-// ---------------------------------------------------------------------------
-// 运营分析报表 (完善.md §23, §40)
-//
-// 金额只从 Ledger / Payment / Refund 明细汇总，不从订单 UI 状态推算。
-// 这里放两个纯函数：车队利用率、支付方式占比——其余聚合在路由里用 SQL 完成。
-// ---------------------------------------------------------------------------
-
-// 车队利用率 = 统计窗口内被租出的“设备·天” / （可租设备数 × 窗口天数），夹在 0..1。
-export function deviceUtilisationRate(rentedDeviceDays: number, fleetSize: number, windowDays: number): number {
-  const capacity = Math.max(0, Number(fleetSize) || 0) * Math.max(0, Number(windowDays) || 0)
-  if (capacity <= 0) return 0
-  const used = Math.max(0, Number(rentedDeviceDays) || 0)
-  return Math.min(1, Math.max(0, used / capacity))
-}
-
-export interface PaymentMethodRow { method: string; amount: number; count?: number }
-export interface PaymentMethodShare { method: string; amount: number; count: number; share: number }
-
-// 各支付方式金额占比（百分比，保留两位，误差补到最大的一档，合计恰为 100）。
-export function paymentMethodBreakdown(rows: Array<PaymentMethodRow | null | undefined>): PaymentMethodShare[] {
-  const clean = (rows || []).filter((r): r is PaymentMethodRow => Boolean(r) && Number(r!.amount) > 0)
-    .map(r => ({ method: String(r.method || 'unknown'), amount: Number(r.amount) || 0, count: Number(r.count) || 0 }))
-  const total = clean.reduce((sum, r) => sum + r.amount, 0)
-  if (total <= 0) return clean.map(r => ({ ...r, share: 0 }))
-  const withShare = clean
-    .map(r => ({ ...r, share: Math.round((r.amount / total) * 10000) / 100 }))
-    .sort((a, b) => b.amount - a.amount)
-  const drift = Number((100 - withShare.reduce((sum, r) => sum + r.share, 0)).toFixed(2))
-  if (withShare.length && drift !== 0) withShare[0].share = Number((withShare[0].share + drift).toFixed(2))
-  return withShare
-}
-
-// 定长时间字符串比较——用于合同验证码 / 令牌校验，避免按字符提前返回的计时侧信道。
-export function timingSafeEqualStr(a: string, b: string): boolean {
-  const x = String(a ?? '')
-  const y = String(b ?? '')
-  let diff = x.length ^ y.length
-  for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i % (y.length || 1))
-  return diff === 0
-}
-
-// ---------------------------------------------------------------------------
-// 数据保留策略 (完善.md §25, §37 / P3 #18)
-//
-// 每类数据配置：保留天数 + 到期动作。RETAIN = 永久保留（合同 / 财务 / 审计），
-// ARCHIVE / DELETE / ANONYMISE = 到期后可被清理任务处理。这里只放纯判定，
-// 实际清理由调度任务执行。
-// ---------------------------------------------------------------------------
-
-export const RETENTION_ACTIONS = ['RETAIN', 'ARCHIVE', 'DELETE', 'ANONYMISE'] as const
-export type RetentionAction = typeof RETENTION_ACTIONS[number]
-
-export interface RetentionPolicyLike { retention_days?: number; action?: string; enabled?: number | boolean }
-
-// 保留期截止时间：早于该时刻的记录已过保留期。
-export function retentionCutoffDate(retentionDays: number, now: Date = new Date()): Date {
-  const days = Math.max(0, Math.floor(Number(retentionDays) || 0))
-  return new Date(now.getTime() - days * 86400000)
-}
-
-export function isPastRetention(recordDate: string | number | Date, retentionDays: number, now: Date = new Date()): boolean {
-  const t = recordDate instanceof Date ? recordDate.getTime() : new Date(String(recordDate).replace(' ', 'T')).getTime()
-  if (Number.isNaN(t)) return false
-  return t <= retentionCutoffDate(retentionDays, now).getTime()
-}
-
-// 该策略是否会真正清理数据（启用且动作不是 RETAIN）。
-export function retentionSweepActionable(policy: RetentionPolicyLike | null | undefined): boolean {
-  if (!policy) return false
-  const enabled = policy.enabled === true || Number(policy.enabled) === 1
-  return enabled && String(policy.action || '').toUpperCase() !== 'RETAIN' && RETENTION_ACTIONS.includes(String(policy.action || '').toUpperCase() as RetentionAction)
-}
-
-// ---------------------------------------------------------------------------
-// 备份与恢复 (完善.md §26, §39 / P4 #19, #20)
-// ---------------------------------------------------------------------------
-
-export type BackupHealthStatus = 'OK' | 'WARN' | 'STALE' | 'NONE'
-
-// 依据 RPO 目标评估最近一次备份的新鲜度：超过 RPO 记 WARN，超过 2×RPO 记 STALE。
-export function backupHealth(lastBackupAt: string | number | Date | null | undefined, rpoMinutes: number, now: Date = new Date()): { status: BackupHealthStatus; ageMinutes: number | null } {
-  if (!lastBackupAt) return { status: 'NONE', ageMinutes: null }
-  const t = lastBackupAt instanceof Date ? lastBackupAt.getTime() : new Date(String(lastBackupAt).replace(' ', 'T')).getTime()
-  if (Number.isNaN(t)) return { status: 'NONE', ageMinutes: null }
-  const ageMinutes = Math.max(0, Math.round((now.getTime() - t) / 60000))
-  const rpo = Math.max(1, Number(rpoMinutes) || 0)
-  const status: BackupHealthStatus = ageMinutes > rpo * 2 ? 'STALE' : ageMinutes > rpo ? 'WARN' : 'OK'
-  return { status, ageMinutes }
-}
-
-// 恢复演练是否已超期（默认要求至少每 90 天演练一次）。
-export function restoreTestOverdue(lastTestAt: string | number | Date | null | undefined, maxIntervalDays = 90, now: Date = new Date()): boolean {
-  if (!lastTestAt) return true
-  const t = lastTestAt instanceof Date ? lastTestAt.getTime() : new Date(String(lastTestAt).replace(' ', 'T')).getTime()
-  if (Number.isNaN(t)) return true
-  return (now.getTime() - t) > Math.max(1, maxIntervalDays) * 86400000
-}
-
-// 轻量校验和（FNV-1a 32 位十六进制），用于给离线快照留一个可比对指纹。
-export function fnv1aHex(input: string): string {
-  let hash = 0x811c9dc5
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i)
-    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0
-  }
-  return hash.toString(16).padStart(8, '0')
-}
-
-// ---------------------------------------------------------------------------
-// 系统健康监控 (完善.md §30, §48 / P8 #32, #33)
-//
-// 把“分子 / 分母”比率按阈值分级。分母为 0（没有样本）时记 OK 而非报警。
-// ---------------------------------------------------------------------------
-export type HealthLevel = 'OK' | 'WARN' | 'CRITICAL'
-
-export interface MonitorMetric { key: string; label: string; numerator: number; denominator: number; rate: number; level: HealthLevel; note?: string }
-
-export function rateHealth(numerator: number, denominator: number, warnRate: number, critRate: number): { rate: number; level: HealthLevel } {
-  const n = Math.max(0, Number(numerator) || 0)
-  const d = Math.max(0, Number(denominator) || 0)
-  if (d <= 0) return { rate: 0, level: 'OK' }
-  const rate = n / d
-  const level: HealthLevel = rate >= critRate ? 'CRITICAL' : rate >= warnRate ? 'WARN' : 'OK'
-  return { rate: Math.round(rate * 10000) / 10000, level }
-}
-
-// 一组指标里最差的级别，作为系统整体健康度。
-export function worstHealthLevel(metrics: Array<{ level: HealthLevel }>): HealthLevel {
-  if (metrics.some(m => m.level === 'CRITICAL')) return 'CRITICAL'
-  if (metrics.some(m => m.level === 'WARN')) return 'WARN'
-  return 'OK'
-}
-
-// ---------------------------------------------------------------------------
-// Agent Program（预留，完善.md §29）——佣金计算纯函数，尚未接入任何结算流程。
-// ---------------------------------------------------------------------------
-export function agentCommission(orderSubtotal: number, rate: number, maxPerOrder?: number | null): number {
-  const base = Math.max(0, Number(orderSubtotal) || 0)
-  const r = Math.min(1, Math.max(0, Number(rate) || 0))
-  let commission = Math.round(base * r * 100) / 100
-  if (maxPerOrder != null && Number.isFinite(Number(maxPerOrder))) commission = Math.min(commission, Math.max(0, Number(maxPerOrder)))
-  return commission
-}
-
-// ---------------------------------------------------------------------------
-// 混合付款 / 退款分配引擎 (TODO.md P1 #6 / 完善.md §28, §29)
-//
-// 一笔订单可能由多个来源结算（Stripe + 余额 + 押金 + 调整）。退款时必须把退款
-// 额分摊到各来源，且任一来源的累计退款不得超过该来源实付、订单累计退款不得超过
-// 订单实付。分摊策略：
-//   proportional —— 按各来源“剩余可退”比例分摊（默认）
-//   priority     —— 按传入顺序优先退（§29“优先原支付方式”）
-// 分币误差统一由排在前面的来源逐分吸收。
-// ---------------------------------------------------------------------------
-
-const toCents = (value: number) => Math.round(Number(value) * 100)
-
-export interface RefundSource { id: string; amount: number; refunded?: number; method?: string }
-export interface RefundAllocationLine { id: string; amount: number; method?: string }
-
-export function buildRefundAllocation(
-  sources: RefundSource[],
-  refundAmount: number,
-  strategy: 'proportional' | 'priority' = 'proportional',
-): RefundAllocationLine[] {
-  const requested = toCents(refundAmount)
-  const rows = sources.map(s => ({ id: s.id, method: s.method, remaining: Math.max(0, toCents(s.amount) - toCents(s.refunded || 0)) }))
-  const capacity = rows.reduce((sum, r) => sum + r.remaining, 0)
-  if (!Number.isInteger(requested) || requested <= 0) throw new Error('退款金额必须大于 0')
-  if (requested > capacity) throw new Error('退款金额超过原始付款可退余额')
-
-  const assigned = new Map<string, number>()
-  if (strategy === 'priority') {
-    let left = requested
-    for (const r of rows) {
-      if (left <= 0) break
-      const take = Math.min(left, r.remaining)
-      if (take > 0) { assigned.set(r.id, take); left -= take }
-    }
-  } else {
-    let running = 0
-    for (const r of rows) {
-      const share = capacity ? Math.floor(requested * r.remaining / capacity) : 0
-      assigned.set(r.id, share)
-      running += share
-    }
-    // Distribute the rounding remainder one cent at a time, earliest source first.
-    let leftover = requested - running
-    for (const r of rows) {
-      if (leftover <= 0) break
-      const cur = assigned.get(r.id) || 0
-      if (cur < r.remaining) { assigned.set(r.id, cur + 1); leftover-- }
-    }
-  }
-  return rows
-    .filter(r => (assigned.get(r.id) || 0) > 0)
-    .map(r => ({ id: r.id, method: r.method, amount: (assigned.get(r.id) || 0) / 100 }))
-}
-
-export interface ReconInput {
-  payments: { id: string; amount: number; status: string }[]
-  paymentAllocations: { payment_id: string; amount: number }[]
-  refunds: { id: string; payment_id: string | null; refund_amount: number; status: string }[]
-  refundAllocations: { refund_id: string; payment_id: string; amount: number }[]
-}
-export interface ReconIssue { code: string; detail: string }
-export interface ReconResult { ok: boolean; paidTotal: number; refundedTotal: number; issues: ReconIssue[] }
-
-// 纯函数对账：给定订单的付款 / 分配 / 退款行，找出账目不一致。
-export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
-  const issues: ReconIssue[] = []
-  const EPS = 1 // 1 分容差
-  const paidPayments = input.payments.filter(p => p.status === 'paid' || p.status === 'refunded')
-  const paidTotalC = paidPayments.reduce((s, p) => s + toCents(p.amount), 0)
-  const paymentIds = new Set(input.payments.map(p => p.id))
-
-  for (const p of paidPayments) {
-    const allocC = input.paymentAllocations.filter(a => a.payment_id === p.id).reduce((s, a) => s + toCents(a.amount), 0)
-    if (allocC > 0 && Math.abs(allocC - toCents(p.amount)) > EPS) {
-      issues.push({ code: 'ALLOCATION_MISMATCH', detail: `付款 ${p.id} 金额 ${p.amount} 与拆分合计 ${(allocC / 100).toFixed(2)} 不符` })
-    }
-    const refundedC = input.refundAllocations.filter(r => r.payment_id === p.id).reduce((s, r) => s + toCents(r.amount), 0)
-    if (refundedC - toCents(p.amount) > EPS) {
-      issues.push({ code: 'OVER_REFUND_SOURCE', detail: `付款 ${p.id} 已退 ${(refundedC / 100).toFixed(2)} 超过实付 ${p.amount}` })
-    }
-  }
-
-  const succeededRefunds = input.refunds.filter(r => r.status === 'succeeded')
-  const refundedTotalC = succeededRefunds.reduce((s, r) => s + toCents(r.refund_amount), 0)
-  if (refundedTotalC - paidTotalC > EPS) {
-    issues.push({ code: 'OVER_REFUND_ORDER', detail: `订单累计退款 ${(refundedTotalC / 100).toFixed(2)} 超过累计实付 ${(paidTotalC / 100).toFixed(2)}` })
-  }
-  for (const ra of input.refundAllocations) {
-    if (!paymentIds.has(ra.payment_id)) issues.push({ code: 'ORPHAN_REFUND_ALLOCATION', detail: `退款分配 ${ra.refund_id} 指向的付款 ${ra.payment_id} 不属于本订单` })
-  }
-  for (const r of succeededRefunds) {
-    const hasAlloc = input.refundAllocations.some(ra => ra.refund_id === r.id)
-    if (!hasAlloc) issues.push({ code: 'UNALLOCATED_REFUND', detail: `退款 ${r.id}（${r.refund_amount}）没有对应的来源分配` })
-  }
-  return { ok: issues.length === 0, paidTotal: paidTotalC / 100, refundedTotal: refundedTotalC / 100, issues }
-}
 
 // D1 包装：读取订单相关行并跑纯对账。
 export async function reconcileOrderPayments(c: Context, orderId: string): Promise<ReconResult> {
@@ -2056,19 +1211,6 @@ export async function reconcileOrderPayments(c: Context, orderId: string): Promi
     refundRows.length ? db.prepare(`SELECT refund_id, payment_id, amount FROM refund_allocations WHERE refund_id IN (${refundRows.map(() => '?').join(',')})`).bind(...refundRows.map((r: any) => r.id)).all().then((r: any) => (r.results || []) as any[]) : Promise.resolve([] as any[]),
   ])
   return evaluatePaymentReconciliation({ payments: paymentRows, paymentAllocations, refunds: refundRows, refundAllocations })
-}
-
-export function validateHostedImageUrls(value: unknown, maxUrls = 5): string[] {
-  const urls = String(value || '').split(/[\n,]+/).map(item => item.trim()).filter(Boolean)
-  if (!urls.length || urls.length > maxUrls) throw new Error(`请提供 1-${maxUrls} 个图片链接`)
-  return urls.map(raw => {
-    let parsed: URL
-    try { parsed = new URL(raw) } catch { throw new Error('图片链接格式不正确') }
-    const host = parsed.hostname.toLowerCase()
-    const privateHost = host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || privateHost) throw new Error('图片必须使用公开的 HTTPS 图床链接')
-    return parsed.toString()
-  })
 }
 
 export async function updateOrder(c: Context, order: Order): Promise<void> {
@@ -2398,8 +1540,6 @@ export async function getOrdersAsync(c: Context): Promise<any[]> {
 
 
 
-export type SystemSettingsKey = 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'softwareTerms' | 'copyrightNotice' | 'cookiePolicy' | 'complaintsPolicy' | 'acceptableUsePolicy' | 'consumerRights' | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings' | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata'
-
 function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined
   try {
@@ -2407,10 +1547,6 @@ function safeJsonParse<T>(value: string | null | undefined): T | undefined {
   } catch {
     return undefined
   }
-}
-
-export function getSystemSettings(): typeof systemSettings {
-  return systemSettings
 }
 
 export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
@@ -3165,265 +2301,6 @@ export async function getStaffDashboardData(c: Context, staffId?: string): Promi
   };
 }
 
-export const rentalTerms = `## 电脑租赁协议条款
-
-尊敬的 {customer_name}：
-
-感谢您选择PC Rental电脑租赁服务，在签署合同前请仔细阅读以下租赁条款：
-
-### 一、租赁基本信息
-- 租赁设备：{device_name} ({device_model})
-- 设备序列号：{device_sn}
-- 租赁期限：从 {start_date} 至 {end_date}，共 {rental_days} 天
-- 日租金：AUD$ {daily_rate}/天，租金总额：AUD$ {total_rent}
-- 押金金额：AUD$ {deposit_amount}
-
-### 二、租客责任
-1. 妥善保管租赁设备，不得转借、转租或抵押给第三方
-2. 按时支付租金及押金，逾期未付将按日租金的 {overdue_rate} 倍收取逾期费用
-3. 设备仅用于合法办公用途，不得用于任何违法活动
-4. 租赁到期前3天需联系客服确认是否续租，逾期未归还将自动收取逾期费用
-
-### 三、设备维护
-1. 租赁期间设备正常损耗由出租方承担
-2. 因人为损坏造成的维修费用由承租方承担
-3. 不得自行拆卸、改装设备，否则需承担全部赔偿责任
-
-### 四、付款信息
-请将租金及押金支付至以下账户：
-- 开户行BSB：{bank_bsb}
-- 账号：{bank_account}
-- 账户名：{account_name}
-
-### 五、联系方式
-如有任何问题，请联系我们的客服团队：
-- 电话：{company_phone}
-- 邮箱：{company_email}
-- 地址：{company_address}
-
-PC Rental电脑租赁团队
-{register_time}`;
-
-export const systemSettings = {
-  companyDetails: {
-    name: 'PC Rental',
-    abn: '',
-    gstIncluded: true,
-    address: '',
-    phone: '',
-    email: '',
-    contact: '',
-    website: '',
-    logo: '',
-    pickupLocations: [] as string[],
-  },
-  rentalRules: {
-    unavailableDates: [] as string[],
-    unavailableTimeSlots: {} as Record<string, string[]>,
-    minimumRentalDays: 1,
-    bufferDays: 0,
-  },
-  bankDetails: {
-    bankName: '',
-    bsb: '062-001',
-    account: '87654321',
-    accountName: '账户名',
-  },
-  softwareTerms: `<h1>软件使用协议</h1>
-<p>本软件用于连接出租设备与 PC Rental 管理平台。安装、运行或使用本软件即表示您同意遵守本协议。</p>
-<h2>授权与用途</h2><p>本软件仅限授权设备和授权用户使用，不得复制、反向工程、绕过授权或用于违法用途。</p>
-<h2>设备连接</h2><p>软件会按平台要求发送设备状态、硬件信息和租期相关信息，用于设备管理、技术支持和履行租赁服务。</p>
-<h2>更新与停止</h2><p>软件可能自动检查并安装安全更新。平台可以因安全、服务或协议原因暂停软件连接。</p>
-<h2>协议更新</h2><p>更新后的软件使用协议将在本页面公布。</p>`,
-  userTerms: `<h1>用户协议</h1>
-<p>欢迎使用 PC Rental 电脑租赁服务。注册或使用本网站即表示您同意遵守本协议。</p>
-<h2>账户与资料</h2>
-<p>您应提供真实、准确且完整的资料，并妥善保管账户登录信息。</p>
-<h2>服务使用</h2>
-<p>您不得利用本服务从事违法活动、干扰平台运行或侵犯他人合法权益。</p>
-<h2>协议更新</h2>
-<p>更新后的协议将在本页面公布。继续使用服务即表示接受更新后的内容。</p>`,
-  serviceTerms: `<h1>服务条款</h1>
-<p>欢迎访问 PC Rental。使用本网站、提交租赁申请或使用相关服务，即表示您同意本服务条款。</p>
-<h2>服务范围</h2><p>本网站提供设备信息展示、租赁合同签署、付款、订单与售后管理服务。具体租赁权利义务以双方签署的租赁协议和合同为准。</p>
-<h2>合理使用</h2><p>您不得干扰网站运行、绕过安全措施、冒用他人身份或利用本网站从事违法活动。</p>
-<h2>信息准确性</h2><p>您应确保提交的联系、身份、交付及付款资料真实准确，并及时更新发生变化的信息。</p>
-<h2>服务变更</h2><p>我们可基于运营、安全或法律要求调整网站功能，并会在适当位置公布重要变化。</p>`,
-  privacyPolicy: `<h1>隐私政策</h1>
-<p>PC Rental 重视您的个人信息与隐私。本政策说明我们在提供设备租赁服务时如何处理信息。</p>
-<h2>收集的信息</h2><p>我们可能收集账户资料、联系方式、身份核验资料、租赁与付款记录、电子签署记录以及保障网站安全所需的技术信息。</p>
-<h2>使用目的</h2><p>信息用于创建和履行租赁合同、处理付款和退款、交付设备、客户支持、防止欺诈及履行法律义务。</p>
-<h2>付款资料</h2><p>信用卡付款由第三方支付服务商处理，本网站不保存完整信用卡号码或安全码。</p>
-<h2>保存与权利</h2><p>我们仅在提供服务或法律要求所需期限内保存信息。您可以联系我们申请查阅或更正个人资料。</p>`,
-  copyrightNotice: `<h1>退款政策</h1>
-<p>本政策说明 PC Rental 在订单取消、押金退还和提前归还情况下的退款处理方式。</p>
-<h2>订单取消</h2><p>订单在付款前取消时不会产生退款；已经付款的订单按照订单状态和实际产生的费用处理。</p>
-<h2>押金退还</h2><p>设备完成归还验机后，管理员会根据设备状况处理押金。正常归还时退还可退金额；如有损坏、缺件或逾期费用，将先扣除相应费用并说明原因。</p>
-<h2>退款方式</h2><p>客户可以按照订单页面提供的选项选择退回账户余额或原支付方式。银行转账退款可能需要额外处理时间。</p>
-<h2>申请与联系</h2><p>如对退款金额或处理结果有疑问，请通过订单详情联系管理员，并提供订单编号。</p>`,
-  cookiePolicy: `<h1>Cookie 政策</h1>
-<p>本 Cookie 政策说明 {company_name}（ABN {company_abn}）在您访问本网站时如何使用 Cookie 及类似技术。本政策与<a href="/privacy">《隐私政策》</a>一并阅读。</p>
-<p><strong>版本：</strong>{cookie_policy_version}　<strong>最后更新：</strong>{cookie_policy_last_updated_date}</p>
-<h2>一、什么是 Cookie</h2><p>Cookie 是网站存放在您设备上的小型文本文件，用于让网站正常运行、记住您的选择并了解网站使用情况。类似技术包括 localStorage 与会话存储。</p>
-<h2>二、我们使用的 Cookie</h2>
-<ul>
-<li><strong>必要 Cookie</strong>：用于登录会话保持（<code>session</code>）、安全校验与表单防伪。缺少这些 Cookie 网站无法正常工作，因此不需要征得同意。</li>
-<li><strong>功能 Cookie</strong>：记住推荐码（<code>referral_code</code>，最长保留 30 天）等偏好，使体验更顺畅。</li>
-<li><strong>安全与风控</strong>：用于人机验证（Cloudflare Turnstile）及防止欺诈与滥用。</li>
-</ul>
-<p>本网站目前不投放第三方广告 Cookie，也不用于跨站行为跟踪。</p>
-<h2>三、如何管理 Cookie</h2><p>您可以通过浏览器设置查看、删除或阻止 Cookie。请注意，禁用必要 Cookie 后将无法登录或完成下单。</p>
-<h2>四、政策更新</h2><p>我们可能不时更新本政策，更新后的版本将在本页面公布并注明更新日期。</p>
-<h2>五、联系我们</h2><p>{company_name}<br>地址：{company_address}<br>电话：{company_phone}<br>邮箱：{company_email}</p>`,
-  complaintsPolicy: `<h1>投诉与争议解决政策</h1>
-<p>{company_name}（ABN {company_abn}）致力于公平、及时地处理客户投诉。本政策说明投诉的提出方式、处理流程以及外部升级渠道。</p>
-<p><strong>版本：</strong>{complaints_policy_version}　<strong>最后更新：</strong>{complaints_policy_last_updated_date}</p>
-<h2>一、如何提出投诉</h2><p>请通过邮箱 {company_email} 或电话 {company_phone} 联系我们，并提供订单编号、事情经过及您期望的解决方案。如投诉涉及某笔订单，也可在订单详情页留言。</p>
-<h2>二、处理流程与时限</h2>
-<ul>
-<li>我们在收到投诉后 <strong>3 个工作日内</strong>确认收悉。</li>
-<li>通常在 <strong>15 个工作日内</strong>给出书面处理结果；情况复杂时会告知您预计所需时间并保持进度更新。</li>
-<li>处理结果将说明我们的结论、依据以及可采取的补救措施。</li>
-</ul>
-<h2>三、内部升级</h2><p>如您对处理结果不满意，可要求将投诉升级至管理层复核。</p>
-<h2>四、外部争议解决</h2>
-<p>如经上述流程仍未能解决，您可向以下机构寻求协助（不影响您的其他法定权利）：</p>
-<ul>
-<li>您所在州或领地的消费者事务或公平交易部门，例如维多利亚州消费者事务局（Consumer Affairs Victoria）、新南威尔士州公平交易厅（NSW Fair Trading）等；</li>
-<li>澳大利亚竞争与消费者委员会（ACCC）；</li>
-<li>如争议涉及个人信息处理，可向澳大利亚信息专员办公室（OAIC）投诉。</li>
-</ul>
-<h2>五、消费者保障</h2><p>本政策不排除、不限制您在《澳大利亚消费者法》下享有的消费者保障权利。</p>
-<h2>六、联系我们</h2><p>{company_name}<br>地址：{company_address}<br>电话：{company_phone}<br>邮箱：{company_email}</p>`,
-  acceptableUsePolicy: `<h1>可接受使用政策</h1>
-<p>本可接受使用政策（下称「本政策」）适用于所有向 {company_name}（ABN {company_abn}）租用设备或使用其设备管理软件的用户，是《用户协议》与《设备租赁协议》的组成部分。</p>
-<p><strong>版本：</strong>{acceptable_use_policy_version}　<strong>最后更新：</strong>{acceptable_use_policy_last_updated_date}</p>
-<h2>一、允许的用途</h2><p>租赁设备供承租方在租期内用于合法的个人或商业办公用途。</p>
-<h2>二、禁止的行为</h2>
-<ul>
-<li>用于任何违反澳大利亚联邦、州或领地法律的活动，包括侵犯知识产权、传播非法内容或进行欺诈；</li>
-<li>存储、发布或传播含有儿童性虐待、恐怖主义、暴力煽动或非法色情的材料；</li>
-<li>发送垃圾邮件或违反 2003 年《反垃圾邮件法》（Spam Act 2003）的商业电子信息；</li>
-<li>未经授权访问他人系统、进行网络攻击、端口扫描、分发恶意软件或加密勒索；</li>
-<li>利用设备进行加密货币挖矿或其他导致硬件异常损耗、过度耗电或散热风险的高负载作业；</li>
-<li>转租、转借、出售、抵押设备，或将设备移出澳大利亚境内而未事先获得书面同意；</li>
-<li>拆解、改装设备，移除或篡改资产标签、管理软件或操作系统安全设置；</li>
-<li>绕过、禁用或干扰用于设备管理的软件及其状态上报功能。</li>
-</ul>
-<h2>三、数据与备份</h2><p>承租方应对设备上自有数据的合法性与备份负责。设备归还前请自行清除个人数据；归还后设备会被重置，我们不对由此造成的数据丢失负责。</p>
-<h2>四、违反后果</h2><p>违反本政策可能导致远程锁定设备、提前终止租赁、追偿相关费用与损失，并在法律要求时向执法机关报告。我们在采取措施前会尽合理努力通知承租方，但紧急或涉及安全与违法的情形除外。</p>
-<h2>五、举报</h2><p>如发现违反本政策的行为，请联系 {company_email}。</p>
-<h2>六、联系我们</h2><p>{company_name}<br>地址：{company_address}<br>电话：{company_phone}<br>邮箱：{company_email}</p>`,
-  consumerRights: `<h1>澳大利亚消费者法下的权利</h1>
-<p>本页面概述您在向 {company_name}（ABN {company_abn}）租用设备时，依据《澳大利亚消费者法》（Australian Consumer Law，《2010 年竞争与消费者法》附表 2）享有的权利。本页面仅为说明，不构成法律建议，也不取代法律条文。</p>
-<p><strong>版本：</strong>{consumer_rights_version}　<strong>最后更新：</strong>{consumer_rights_last_updated_date}</p>
-<h2>一、不可排除的消费者保障</h2>
-<p>我们提供的商品与服务附带无法排除、限制或修改的消费者保障（consumer guarantees），包括：</p>
-<ul>
-<li>商品与其描述相符、品质可接受、适合明示或已知的特定用途；</li>
-<li>服务以合理的谨慎与技能提供，并在合理时间内完成；</li>
-<li>就租赁（bailment）而言，您在租期内享有对设备的安宁占有（quiet possession）。</li>
-</ul>
-<h2>二、出现问题时的补救</h2>
-<ul>
-<li><strong>轻微问题</strong>：我们可选择在合理时间内维修、更换设备或退还相应费用。</li>
-<li><strong>重大问题</strong>：您可以解除该次租赁并要求退还未使用租期的费用，或要求赔偿因此造成的可合理预见的损失。设备重大故障且非您造成的，租期内不因维修停机而计费。</li>
-</ul>
-<h2>三、价格与税费</h2><p>网站展示的价格均为含商品及服务税（GST）的澳元单一价格。押金、逾期费、损坏赔偿等费用会在下单或结算时单独、清晰列示。</p>
-<h2>四、不公平合同条款</h2><p>我们的标准格式合同受不公平合同条款制度约束。若某项条款被认定为不公平，该条款对您不具约束力，合同其余部分在可行范围内继续有效。</p>
-<h2>五、押金</h2><p>押金用于担保设备按约归还且无超出正常损耗的损坏。正常归还后，押金在验机完成后退还；任何扣款都会书面说明原因和金额。详见<a href="/refund-policy">《退款政策》</a>。</p>
-<h2>六、如何主张权利</h2><p>请先通过 {company_email} 或 {company_phone} 联系我们，并参阅<a href="/complaints">《投诉与争议解决政策》</a>。您也可以联系所在州或领地的公平交易机构或 ACCC。</p>
-<h2>七、联系我们</h2><p>{company_name}<br>地址：{company_address}<br>电话：{company_phone}<br>邮箱：{company_email}</p>`,
-  rentalTerms,
-  priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
-  paymentMethods: {
-    stripe: true,
-    bankTransfer: true,
-    balancePayment: true,
-    processingFeeRate: 0.025,
-    alipay: false,
-    wechat: false,
-  },
-  rmbPayment: {
-    alipayQrUrl: '',
-    wechatQrUrl: '',
-  },
-  registrationSettings: {
-    requireEmailVerification: false,
-  },
-  legalMetadata: {
-    software: { version: '1.0', lastUpdatedDate: '' },
-    user: { version: '1.0', lastUpdatedDate: '' },
-    rental: { version: '1.0', lastUpdatedDate: '' },
-    service: { version: '1.0', lastUpdatedDate: '' },
-    privacy: { version: '1.0', lastUpdatedDate: '' },
-    copyright: { version: '1.0', lastUpdatedDate: '' },
-    cookie: { version: '1.0', lastUpdatedDate: '' },
-    complaints: { version: '1.0', lastUpdatedDate: '' },
-    aup: { version: '1.0', lastUpdatedDate: '' },
-    consumer: { version: '1.0', lastUpdatedDate: '' },
-    contract: { version: '1.0', lastUpdatedDate: '' },
-  },
-  /* legacy email templates are managed in email_templates */
-  /*
-
-尊敬的 {customer_name}：
-
-感谢您选择PC Rental电脑租赁服务！
-
-您的租赁合同已成功签署，以下是合同详情：
-
-合同编号：{contract_number}
-签署时间：{sign_time}
-
-租赁信息：
-┌─────────────────────────────────────┐
-│  设备名称：{device_name}            │
-│  设备型号：{device_model}           │
-│  设备序列号：{device_sn}            │
-│  租赁开始：{start_date}             │
-│  租赁结束：{end_date}               │
-│  租赁天数：{rental_days} 天         │
-│  租金总额：AUD$ {total_rent}        │
-│  押金：AUD$ {deposit_amount}         │
-│  支付方式：{payment_method}          │
-└─────────────────────────────────────┘
-
-您的合同PDF已附件发送，请妥善保存。
-
-重要提醒：
-• 请在 {payment_deadline} 日内完成支付
-• 支付完成后，我们将安排设备配送
-• 租赁到期前3天，您将收到续租提醒
-
-查看您的合同详情：
-{contract_view_link}
-
-如有任何疑问，请联系我们的客服团队。
-
-PC Rental电脑租赁团队
-{company_phone} | {company_email}`,
-  */
-  referralSettings: {
-    defaultRate: 10,
-    levelLimit: 3,
-    settlementPeriod: 30,
-  },
-}
-
-// Legal documents must come from D1. Empty defaults prevent an unsaved edit
-// from being mistaken for a persisted document after a Worker restart.
-systemSettings.userTerms = ''
-systemSettings.rentalTerms = ''
-systemSettings.serviceTerms = ''
-systemSettings.privacyPolicy = ''
-systemSettings.softwareTerms = ''
-systemSettings.copyrightNotice = ''
-systemSettings.cookiePolicy = ''
-systemSettings.complaintsPolicy = ''
-systemSettings.acceptableUsePolicy = ''
-systemSettings.consumerRights = ''
-
 function escapeContractValue(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
 }
@@ -3890,48 +2767,6 @@ export async function updateContractTemplate(c: Context, newTemplate: { id: stri
     .bind(newTemplate.id, String(newTemplate.name || '').slice(0, 100), sanitizeRichHtml(newTemplate.content))
     .run();
   return getContractTemplate(c);
-}
-
-export function formatCurrency(value: number | undefined | null): string {
-  if (value === undefined || value === null || isNaN(value)) {
-    return `AUD$0.00`
-  }
-  return `AUD$${value.toFixed(2)}`
-}
-
-export function formatMelbourneDateTime(value: string | Date | null | undefined): string {
-  if (!value) return ''
-  const raw = value instanceof Date ? value.toISOString() : String(value)
-  const timestamp = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? `${raw.replace(' ', 'T')}Z` : raw)
-  if (Number.isNaN(timestamp.getTime())) return raw
-  return new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', dateStyle: 'medium', timeStyle: 'medium', hour12: false }).format(timestamp)
-}
-
-export function formatDate(value: string): string {
-  return value
-}
-
-export function parseCookie(cookieHeader: string | null): Record<string, string> {
-  const result: Record<string, string> = {}
-  if (!cookieHeader) return result
-  for (const item of cookieHeader.split(';')) {
-    const [rawName, ...rawValue] = item.trim().split('=')
-    if (!rawName) continue
-    result[rawName] = rawValue.join('=')
-  }
-  return result
-}
-
-let dbInstance: any = null
-
-export function getDB(c?: Context): any {
-  if (c) {
-    dbInstance = c.env.RENT
-  }
-  if (!dbInstance) {
-    throw new Error('Database connection is not initialized. Ensure the request context is available.')
-  }
-  return dbInstance
 }
 
 function toNumber(value: any): number {

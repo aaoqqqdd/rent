@@ -208,6 +208,44 @@ app.get('/api/system-status', async (c) => {
   }
 })
 
+// Lightweight probe for an external uptime monitor ("检测站"). Unauthenticated,
+// never cached, tiny payload. Returns 200 when the site and the website<->agent
+// channel are healthy, 503 when a core dependency is down, so a monitor can
+// alert on the status code alone.
+app.get('/api/monitor', async (c) => {
+  const startedAt = Date.now()
+  const checks: Record<string, any> = {}
+  let down = false
+
+  try {
+    await c.env.RENT.prepare('SELECT 1 AS ok').first()
+    checks.database = { ok: true }
+  } catch (error: any) {
+    checks.database = { ok: false, error: String(error?.message || error).slice(0, 200) }
+    down = true
+  }
+
+  try {
+    const row = await c.env.RENT.prepare(
+      "SELECT COUNT(*) AS total, SUM(CASE WHEN agent_status = 'online' THEN 1 ELSE 0 END) AS online, MAX(agent_last_seen_at) AS last_seen FROM devices WHERE agent_token_hash IS NOT NULL"
+    ).first() as any
+    const total = Number(row?.total || 0)
+    const online = Number(row?.online || 0)
+    const lastSeenMs = row?.last_seen ? Date.parse(String(row.last_seen).replace(' ', 'T') + 'Z') : NaN
+    const lastHeartbeatAgeSeconds = Number.isFinite(lastSeenMs) ? Math.max(0, Math.round((Date.now() - lastSeenMs) / 1000)) : null
+    checks.deviceAgentChannel = { ok: true, registered: total, online, offline: total - online, lastHeartbeatAgeSeconds }
+  } catch (error: any) {
+    checks.deviceAgentChannel = { ok: false, error: String(error?.message || error).slice(0, 200) }
+    down = true
+  }
+
+  return c.json(
+    { status: down ? 'down' : 'ok', checks, latencyMs: Date.now() - startedAt, checkedAt: new Date().toISOString() },
+    down ? 503 : 200,
+    { 'Cache-Control': 'no-store' },
+  )
+})
+
 app.get('/downloads/RentDeviceAgent-Setup.exe', async (c) => {
   return c.redirect('https://github.com/aaoqqqdd/rent-app/releases/latest/download/RentDeviceAgent-Setup.exe', 302)
 })
@@ -216,10 +254,35 @@ app.get('/downloads/RentDeviceAgent.exe', async (c) => {
   return c.redirect('https://github.com/aaoqqqdd/rent-app/releases/latest/download/RentDeviceAgent-x64.exe', 302)
 })
 
-app.get('/api/device-agent/update', (c) => c.json({
-  version: '0.6.2',
-  downloadUrl: 'https://github.com/aaoqqqdd/rent-app/releases/latest/download/RentDeviceAgent-x64.exe'
-}))
+const AGENT_REPO = 'aaoqqqdd/rent-app'
+// Pinned fallback used only when the GitHub Releases API is unreachable. Keep it
+// roughly current so an offline check still returns a plausible version.
+const AGENT_UPDATE_FALLBACK_VERSION = '1.7.4'
+
+app.get('/api/device-agent/update', async (c) => {
+  let version = AGENT_UPDATE_FALLBACK_VERSION
+  try {
+    // cf.cacheEverything edge-caches this subrequest so we stay well under
+    // GitHub's 60 req/hour unauthenticated limit no matter how many agents poll.
+    const res = await fetch(`https://api.github.com/repos/${AGENT_REPO}/releases/latest`, {
+      headers: { 'User-Agent': 'rent-device-agent-update-check', Accept: 'application/vnd.github+json' },
+      cf: { cacheTtl: 900, cacheEverything: true },
+    })
+    if (res.ok) {
+      const data = await res.json() as any
+      const tag = String(data?.tag_name || '').trim().replace(/^v/i, '')
+      if (/^\d+\.\d+\.\d+([-.].+)?$/.test(tag)) version = tag
+    }
+  } catch {
+    // Network failure: fall through to the pinned fallback version.
+  }
+  return c.json({
+    version,
+    downloadUrl: `https://github.com/${AGENT_REPO}/releases/latest/download/RentDeviceAgent-x64.exe`,
+    setupUrl: `https://github.com/${AGENT_REPO}/releases/latest/download/RentDeviceAgent-Setup.exe`,
+    releaseNotesUrl: `https://github.com/${AGENT_REPO}/releases/latest`,
+  }, 200, { 'Cache-Control': 'public, max-age=300' })
+})
 
 app.get('/api/device-agent/software-terms', async (c) => {
   const settings = await loadSystemSettingsFromDB(c)
