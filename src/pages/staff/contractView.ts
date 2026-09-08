@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractByOrderId, getOrderById, getUserById, getDeviceById, isContractFinalized, renderContractVariables, getContractVariableData, logSensitiveDataAccess, createAuditLog } from '../../site'
+import { buildLayout, getContractByOrderId, getOrderById, getUserById, getDeviceById, isContractFinalized, renderContractVariables, getContractVariableData, logSensitiveDataAccess, createAuditLog, formatMelbourneDateTime } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffContractView(c: Context, user: any, orderId: string) {
@@ -48,7 +48,7 @@ export async function renderStaffContractView(c: Context, user: any, orderId: st
       <div class="contract-header">
         <h3>合同编号: ${contract.contractNumber}</h3>
         <p>状态: ${contract.status === 'signed' ? '已签署' : '待签署'}</p>
-        <p>签署日期: ${contract.signedAt ? new Date(contract.signedAt).toLocaleString() : '未签署'}</p>
+        <p>签署日期（墨尔本）: ${contract.signedAt ? formatMelbourneDateTime(contract.signedAt) : '未签署'}</p>
       </div>
 
       <div class="contract-section">

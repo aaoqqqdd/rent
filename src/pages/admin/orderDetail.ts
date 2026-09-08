@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, formatCurrency, validateHostedImageUrls, isContractFinalized, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site';
+import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, formatCurrency, formatMelbourneDateTime, validateHostedImageUrls, isContractFinalized, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 
@@ -78,20 +78,20 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       ${['paid', 'pending_pickup'].includes(String(order.status)) ? `<form method="post" action="/staff/orders/${order.id}/pickup" style="display:inline" data-site-confirm="确认设备已经实际交付给客户吗？确认后订单将进入租赁中。"><button class="button button-primary" type="submit">确认设备已交付</button></form>` : ''}
       ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order">查看合同</a>` : ''}
     </div>
-    ${statusHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>租赁状态历史</h3><span class="section-note">最近 ${statusHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>状态变化</th><th>触发方式</th><th>原因</th></tr></thead><tbody>${statusHistory.results.map((item: any) => `<tr><td class="mono">${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.old_status || '—')} → <strong>${escapeHtml(item.new_status)}</strong></td><td>${escapeHtml(item.trigger_type)}${item.triggered_by ? ` · ${escapeHtml(item.triggered_by)}` : ''}</td><td>${escapeHtml(item.reason || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
+    ${statusHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>租赁状态历史</h3><span class="section-note">最近 ${statusHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>状态变化</th><th>触发方式</th><th>原因</th></tr></thead><tbody>${statusHistory.results.map((item: any) => `<tr><td class="mono">${escapeHtml(formatMelbourneDateTime(item.created_at))}</td><td>${escapeHtml(item.old_status || '—')} → <strong>${escapeHtml(item.new_status)}</strong></td><td>${escapeHtml(item.trigger_type)}${item.triggered_by ? ` · ${escapeHtml(item.triggered_by)}` : ''}</td><td>${escapeHtml(item.reason || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
     ${changeHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>订单修改历史</h3><span class="section-note">最近 ${changeHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>类型</th><th>变更内容</th><th>原因</th><th>操作人</th></tr></thead><tbody>${changeHistory.results.map((item: any) => {
       let before: any = {}; let after: any = {};
       try { before = JSON.parse(item.before_json || '{}') } catch { }
       try { after = JSON.parse(item.after_json || '{}') } catch { }
       const diffs = diffOrderSnapshots(before, after);
       const detail = diffs.length ? diffs.map(d => `<div>${escapeHtml(d.label)}：<span class="mono">${escapeHtml(String(d.before ?? '—'))}</span> → <strong class="mono">${escapeHtml(String(d.after ?? '—'))}</strong></div>`).join('') : '—';
-      return `<tr><td class="mono">${escapeHtml(item.created_at)}</td><td>${escapeHtml(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${escapeHtml(item.reason || '—')}</td><td class="mono">${escapeHtml(item.changed_by || '—')}</td></tr>`;
+      return `<tr><td class="mono">${escapeHtml(formatMelbourneDateTime(item.created_at))}</td><td>${escapeHtml(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${escapeHtml(item.reason || '—')}</td><td class="mono">${escapeHtml(item.changed_by || '—')}</td></tr>`;
     }).join('')}</tbody></table></div></section>` : ''}
     ${(paymentSources.length || refundRows.length) ? `<section class="panel" style="margin: 0 0 24px;">
       <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}</span></div>
       ${reconciliation.ok ? '<div class="alert" style="background:#ecfdf5;color:#065f46">账目一致：分配合计与实付/退款相符，无超退。</div>' : `<div class="alert" style="background:#fef2f2;color:#991b1b"><strong>发现 ${reconciliation.issues.length} 处账目异常：</strong><ul style="margin:6px 0 0;padding-left:18px">${reconciliation.issues.map((i: any) => `<li>[${escapeHtml(i.code)}] ${escapeHtml(i.detail)}</li>`).join('')}</ul></div>`}
       <div class="table-wrapper"><table><thead><tr><th>付款来源</th><th>方式</th><th>金额</th><th>手续费</th><th>状态</th></tr></thead><tbody>${paymentSources.map((p: any) => `<tr><td class="mono">${escapeHtml(p.id)}</td><td>${escapeHtml(p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${escapeHtml(p.status)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-state">无付款记录</td></tr>'}</tbody></table></div>
-      ${refundRows.length ? `<div class="table-wrapper" style="margin-top:12px"><table><thead><tr><th>退款单</th><th>对应付款</th><th>类型</th><th>金额</th><th>方式</th><th>状态</th><th>时间</th></tr></thead><tbody>${refundRows.map((r: any) => `<tr><td class="mono">${escapeHtml(r.id)}</td><td class="mono">${escapeHtml(r.payment_id || '—')}</td><td>${escapeHtml(r.type)}</td><td>${formatCurrency(r.refund_amount)}</td><td>${escapeHtml(r.refund_method || '—')}</td><td>${escapeHtml(r.status)}</td><td class="mono">${escapeHtml(String(r.created_at).slice(0, 16))}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${refundRows.length ? `<div class="table-wrapper" style="margin-top:12px"><table><thead><tr><th>退款单</th><th>对应付款</th><th>类型</th><th>金额</th><th>方式</th><th>状态</th><th>时间</th></tr></thead><tbody>${refundRows.map((r: any) => `<tr><td class="mono">${escapeHtml(r.id)}</td><td class="mono">${escapeHtml(r.payment_id || '—')}</td><td>${escapeHtml(r.type)}</td><td>${formatCurrency(r.refund_amount)}</td><td>${escapeHtml(r.refund_method || '—')}</td><td>${escapeHtml(r.status)}</td><td class="mono">${escapeHtml(formatMelbourneDateTime(r.created_at))}</td></tr>`).join('')}</tbody></table></div>` : ''}
     </section>` : ''}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
@@ -118,7 +118,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           ${refundStatusLabel ? `<div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #fff7ed; border-radius: 8px;"><span style="color: #6b7280;">退款状态</span><strong>${escapeHtml(refundStatusLabel)}</strong></div>` : ''}
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
             <span style="color: #6b7280;">下单日期</span>
-            <span style="font-weight: 500;">${order.createdAt}</span>
+            <span style="font-weight: 500;">${formatMelbourneDateTime(order.createdAt)}</span>
           </div>
         </div>
       </div>

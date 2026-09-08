@@ -1,4 +1,4 @@
-import { buildLayout, sanitizePlainText } from '../../site'
+import { buildLayout, sanitizePlainText, formatMelbourneDateTime } from '../../site'
 
 interface MaintenanceView {
   maintenance: any[]
@@ -12,8 +12,8 @@ export function renderAdminDeviceControl(user: any, device: any, commands: any[]
   const labels: Record<string, string> = { SYNC: '立即同步', REFRESH_DEVICE_INFO: '刷新设备信息', CHECK_UPDATE: '检查客户端更新', PAUSE_RENTAL: '暂停设备', RESUME_RENTAL: '恢复设备', SHOW_MESSAGE: '发送设备通知', CHECK_UPDATE_CLIENT: '检查客户端更新' }
   const isOnline = String(device.agent_status || device.agentStatus || '').toLowerCase() === 'online'
   const stateBadge = (status: string) => `badge ${['SUCCESS', 'SUCCEEDED', 'COMPLETED'].includes(status) ? 'badge-success' : ['FAILED', 'EXPIRED', 'CANCELLED'].includes(status) ? 'badge-danger' : 'badge-warning'}`
-  const timeline = (command: any) => [['已发送', command.sent_at], ['已确认', command.acknowledged_at], ['执行中', command.started_at], ['已结束', command.completed_at]].filter(([, at]) => at).map(([label, at]) => `${label} ${esc(String(at).slice(5, 16))}`).join(' → ') || '排队中'
-  const rows = commands.length ? commands.map(command => `<tr><td class="mono">${esc(command.created_at)}</td><td>${labels[command.command_type] || esc(command.command_type)}</td><td><span class="${stateBadge(String(command.status))}">${esc(command.status)}</span><div class="form-text mono">${timeline(command)}</div></td><td>${esc(command.result_message || command.error_message || '等待客户端执行')}${command.status === 'QUEUED' ? `<form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/commands/${encodeURIComponent(command.id)}/cancel" style="margin-top:6px" onsubmit="return confirm('取消这条尚未被设备领取的命令？')"><button class="button button-secondary" type="submit">取消命令</button></form>` : ''}</td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无远程命令记录</td></tr>'
+  const timeline = (command: any) => [['已发送', command.sent_at], ['已确认', command.acknowledged_at], ['执行中', command.started_at], ['已结束', command.completed_at]].filter(([, at]) => at).map(([label, at]) => `${label} ${esc(formatMelbourneDateTime(at))}`).join(' → ') || '排队中'
+  const rows = commands.length ? commands.map(command => `<tr><td class="mono">${esc(formatMelbourneDateTime(command.created_at))}</td><td>${labels[command.command_type] || esc(command.command_type)}</td><td><span class="${stateBadge(String(command.status))}">${esc(command.status)}</span><div class="form-text mono">${timeline(command)}</div></td><td>${esc(command.result_message || command.error_message || '等待客户端执行')}${command.status === 'QUEUED' ? `<form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/commands/${encodeURIComponent(command.id)}/cancel" style="margin-top:6px" onsubmit="return confirm('取消这条尚未被设备领取的命令？')"><button class="button button-secondary" type="submit">取消命令</button></form>` : ''}</td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无远程命令记录</td></tr>'
   const action = (type: string, text: string, className = 'button-secondary') => `<button class="button ${className}" name="commandType" value="${type}" type="submit" ${isOnline ? '' : 'disabled title="设备不在线，无法执行远程操作"'}>${text}</button>`
   const onlineNote = isOnline ? '设备在线，命令会由 Windows 客户端在下一次轮询时领取。' : '设备当前不在线，远程操作已禁用；设备上线后即可操作。'
 
@@ -32,7 +32,7 @@ export function renderAdminDeviceControl(user: any, device: any, commands: any[]
     const passedCount = (maint?.checksByRecord[record.id] || []).filter((c: any) => c.passed).length
     const isOpen = openStates.includes(record.status)
     return `<div class="panel" style="margin-bottom:12px">
-      <div class="section-title"><h4>${esc(record.maintenance_type)} · <span class="${stateBadge(String(record.status))}">${maintenanceLabels[record.status] || esc(record.status)}</span></h4><span class="section-note">${esc(String(record.started_at || '').slice(0, 16))}${record.completed_at ? ` → ${esc(String(record.completed_at).slice(0, 16))}` : ''}</span></div>
+      <div class="section-title"><h4>${esc(record.maintenance_type)} · <span class="${stateBadge(String(record.status))}">${maintenanceLabels[record.status] || esc(record.status)}</span></h4><span class="section-note">${esc(formatMelbourneDateTime(record.started_at))}${record.completed_at ? ` → ${esc(formatMelbourneDateTime(record.completed_at))}` : ''}</span></div>
       <p>${esc(record.description || '')}</p>
       <dl class="detail-grid">
         <div><dt>维修成本</dt><dd>${Number(record.cost || 0).toFixed(2)}</dd></div>

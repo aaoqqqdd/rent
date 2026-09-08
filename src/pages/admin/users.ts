@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAccessLevel, splitPersonName } from '../../site';
+import { buildLayout, getAccessLevel, splitPersonName, formatMelbourneDate } from '../../site';
 
 export async function renderAdminUsers(user: any, c: any) {
   const { getUsersAsync } = await import('../../site')
@@ -76,7 +76,7 @@ export async function renderAdminUsers(user: any, c: any) {
                 <td><span class="badge ${status.class}">${status.text}</span></td>
                 <td>AUD$${parseFloat(String(u.balance || 0)).toFixed(2)}</td>
                 <td>${u.createdAt
-                  ? new Date(u.createdAt as string).toLocaleDateString('zh-CN')
+                  ? formatMelbourneDate(u.createdAt as string)
                   : '-'
                 }</td>
                 <td>

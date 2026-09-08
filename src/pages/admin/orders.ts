@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrders, getDevices, getUsers, formatCurrency } from '../../site';
+import { buildLayout, getOrders, getDevices, getUsers, formatCurrency, formatMelbourneDate } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 
@@ -251,7 +251,7 @@ export async function renderAdminOrders(c: Context, user: any) {
                   <td><strong>${formatCurrency(totalAmount)}</strong></td>
                   <td><span class="badge ${status.class}">${status.text}</span></td>
                   <td>${startDate} ~ ${endDate}</td>
-                  <td>${createdAt ? new Date(createdAt).toLocaleDateString('zh-CN') : '-'}</td>
+                  <td>${createdAt ? formatMelbourneDate(createdAt) : '-'}</td>
                   <td>
                     <div style="display: flex; flex-direction: column; gap: 8px; min-width: 160px;">
                       <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; gap: 8px; align-items: center;">
