@@ -20,12 +20,13 @@ import {
 import { splitPersonName, combinePersonName, getAvatarInitials } from './lib/personName'
 import { getAccessLevel, canManageUser, canUseAccountBalance } from './lib/access'
 import type { Role, AccessLevel } from './lib/access'
-import { formatCurrency, formatMelbourneDateTime, formatDate } from './lib/format'
+import { formatCurrency, formatMelbourneDateTime, formatMelbourneDate, formatDate } from './lib/format'
 import { hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword } from './lib/password'
 import { timingSafeEqualStr } from './lib/checksum'
 import { parseCookie } from './lib/cookie'
 import { generateUserId, generateReferralCode } from './lib/userId'
 import { validateHostedImageUrls } from './lib/hostedImages'
+import { safeJsonParse } from './lib/json'
 
 export {
   generateReferenceNumber, generateContractNumber,
@@ -33,7 +34,7 @@ export {
   renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
   splitPersonName, combinePersonName, getAvatarInitials,
   getAccessLevel, canManageUser, canUseAccountBalance,
-  formatCurrency, formatMelbourneDateTime, formatDate,
+  formatCurrency, formatMelbourneDateTime, formatMelbourneDate, formatDate,
   hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword,
   timingSafeEqualStr,
   parseCookie,
@@ -184,6 +185,10 @@ import {
 import {
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
 } from './services/rentalProvisioning'
+import { issueInvoice, issueCreditNote } from './services/invoice'
+import { planWithdrawalConsumption, createWithdrawalRequest } from './services/withdrawal'
+import type { WithdrawableReward, WithdrawalPlan } from './services/withdrawal'
+import { getPendingOrdersWithDetails, getStaffDashboardData } from './services/staffDashboard'
 
 export {
   recordBalanceTransaction, recordFinancialLedgerEntry,
@@ -192,7 +197,11 @@ export {
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
+  issueInvoice, issueCreditNote,
+  planWithdrawalConsumption, createWithdrawalRequest,
+  getPendingOrdersWithDetails, getStaffDashboardData,
 }
+export type { WithdrawableReward, WithdrawalPlan }
 
 function renderLayoutTemplate(values: Record<string, string>): string {
   return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>
@@ -581,16 +590,6 @@ export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
   return ids.length + Number(purgeResult.meta?.changes ?? purgeResult.changes ?? 0)
 }
 
-// Compatibility alias expected by legacy code
-function safeJsonParse<T>(value: string | null | undefined): T | undefined {
-  if (!value) return undefined
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return undefined
-  }
-}
-
 export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
   const db = getDB(c)
   const rows = await db.prepare('SELECT key, value FROM systemSettings').all() as any
@@ -723,220 +722,6 @@ export async function updateContractTemplateInDB(c: Context, newTemplate: { id: 
 }
 
 
-
-async function getTableColumns(c: Context, tableName: string): Promise<string[]> {
-  const allowedTables = new Set(['commission_withdrawals'])
-  if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
-  const db = getDB(c)
-  const result = await db.prepare(`PRAGMA table_info(${tableName})`).all() as any
-  return (result.results || []).map((column: any) => column.name)
-}
-
-export interface WithdrawableReward { id: string; amount: number }
-export interface WithdrawalPlan {
-  eligible: boolean
-  fullyConsumedIds: string[]
-  // The boundary reward that only partly covers the request: mark it withdrawn
-  // for `withdrawnAmount` and leave a residual AVAILABLE reward for the rest.
-  split?: { id: string; withdrawnAmount: number; residualAmount: number }
-  total: number
-  shortfall: number
-}
-
-// FIFO 选出足以覆盖提现额的 AVAILABLE 推荐奖励。金额按分计算避免浮点误差；跨越提现
-// 额的那一笔奖励会被拆分，不整笔吞掉，避免"余额还在但没有可提现奖励"的死角。
-export function planWithdrawalConsumption(rewards: WithdrawableReward[], amount: number): WithdrawalPlan {
-  const targetC = Math.round(Number(amount) * 100)
-  let accC = 0
-  const fullyConsumedIds: string[] = []
-  let split: WithdrawalPlan['split']
-  for (const r of rewards) {
-    if (accC >= targetC) break
-    const c = Math.round(Number(r.amount || 0) * 100)
-    if (c <= 0) continue
-    if (accC + c <= targetC) {
-      fullyConsumedIds.push(r.id)
-      accC += c
-    } else {
-      const withdrawnC = targetC - accC
-      split = { id: r.id, withdrawnAmount: withdrawnC / 100, residualAmount: (c - withdrawnC) / 100 }
-      accC = targetC
-      break
-    }
-  }
-  const totalC = rewards.reduce((s, r) => s + Math.max(0, Math.round(Number(r.amount || 0) * 100)), 0)
-  return { eligible: accC >= targetC, fullyConsumedIds, split, total: totalC / 100, shortfall: Math.max(0, targetC - totalC) / 100 }
-}
-
-export async function createWithdrawalRequest(
-  c: Context,
-  userId: string,
-  amount: number,
-  withdrawMethod: 'balance' | 'bank_transfer',
-  bankDetails?: { bsb?: string; accountNumber?: string; accountName?: string }
-): Promise<{ success: boolean; message: string }> {
-  const db = getDB(c)
-  const { nanoid } = await import('nanoid')
-
-  const normalizedAmount = Number(amount)
-
-  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
-    return { success: false, message: '请输入正确的提现金额，金额必须大于 0' }
-  }
-
-  if (withdrawMethod === 'bank_transfer' && (!Number.isInteger(normalizedAmount) || normalizedAmount < 100)) {
-    return { success: false, message: '银行转账提现金额必须大于 100 且为整数' }
-  }
-
-  // D1 doesn't allow raw BEGIN/COMMIT; do all reads first, reserve the commission
-  // with one guarded atomic UPDATE, then apply the rest as a single batch and
-  // compensate (re-credit) if that batch fails.
-  const user = await db.prepare('SELECT commission_balance FROM users WHERE id = ?').bind(userId).first() as any
-  if (!user) return { success: false, message: '用户不存在' }
-  const currentCommissionBalance = Number(user.commission_balance ?? 0)
-  if (currentCommissionBalance < normalizedAmount) {
-    return { success: false, message: '提现金额不能超过可提现余额' }
-  }
-
-  // 唯一账本 referral_rewards：可提现 = 未被其它提现划走的 AVAILABLE 奖励。
-  const availableRewards = await db.prepare(`
-    SELECT id, reward_amount AS amount
-    FROM referral_rewards
-    WHERE customer_id = ? AND status = 'AVAILABLE' AND withdrawn_at IS NULL
-    ORDER BY COALESCE(available_at, created_at) ASC, created_at ASC
-  `).bind(userId).all() as any
-  const plan = planWithdrawalConsumption(
-    (availableRewards.results || []).map((r: any) => ({ id: String(r.id), amount: Number(r.amount || 0) })),
-    normalizedAmount,
-  )
-  if (!plan.eligible) {
-    return { success: false, message: '可提现的推荐奖励不足，请稍后再试' }
-  }
-
-  const withdrawalId = `w-${nanoid(8)}`
-  const consumeWithdrawalId = withdrawMethod === 'bank_transfer' ? withdrawalId : null
-
-  // Reserve: only proceeds if the balance is still there (guards double-spend).
-  const reserved = await db.prepare(
-    'UPDATE users SET commission_balance = ROUND(commission_balance - ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND commission_balance >= ? RETURNING commission_balance',
-  ).bind(normalizedAmount, userId, normalizedAmount).first()
-  if (!reserved) return { success: false, message: '可提现余额已变化，请刷新后重试' }
-
-  try {
-    const writes = plan.fullyConsumedIds.map(id => db.prepare(
-      'UPDATE referral_rewards SET withdrawn_at = CURRENT_TIMESTAMP, withdrawal_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND withdrawn_at IS NULL',
-    ).bind(consumeWithdrawalId, id))
-    if (plan.split) {
-      // Boundary reward: shrink the original to the residual, add a withdrawn
-      // sibling row for the consumed portion (same referral/order lineage).
-      writes.push(
-        db.prepare('UPDATE referral_rewards SET reward_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND withdrawn_at IS NULL').bind(plan.split.residualAmount, plan.split.id),
-        db.prepare(`INSERT INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_type, reward_amount, currency, status, available_at, withdrawn_at, withdrawal_id, reason, created_at, updated_at)
-          SELECT ?, ?, referral_id, customer_id, order_id, reward_type, ?, currency, 'AVAILABLE', available_at, CURRENT_TIMESTAMP, ?, '提现拆分', created_at, CURRENT_TIMESTAMP FROM referral_rewards WHERE id = ?`)
-          .bind(`rrw-${nanoid(14)}`, `RRW-SPLIT-${nanoid(10)}`, plan.split.withdrawnAmount, consumeWithdrawalId, plan.split.id),
-      )
-    }
-
-    if (withdrawMethod === 'balance') {
-      writes.push(db.prepare('UPDATE users SET balance = ROUND(balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalizedAmount, userId))
-      await db.batch(writes)
-      return { success: true, message: '提现成功！金额已划入您的账户余额' }
-    }
-
-    const withdrawalColumns = await getTableColumns(c, 'commission_withdrawals')
-    const accountNumberColumn = withdrawalColumns.includes('account_number') ? 'account_number' : withdrawalColumns.includes('accountNumber') ? 'accountNumber' : null
-    const accountNameColumn = withdrawalColumns.includes('account_name') ? 'account_name' : withdrawalColumns.includes('accountName') ? 'accountName' : null
-    const bsbColumn = withdrawalColumns.includes('bsb') ? 'bsb' : null
-
-    const insertColumns = ['id', 'user_id', 'amount']
-    const insertValues: any[] = [withdrawalId, userId, normalizedAmount]
-    if (bsbColumn) { insertColumns.push(bsbColumn); insertValues.push(bankDetails?.bsb ?? null) }
-    if (accountNumberColumn) { insertColumns.push(accountNumberColumn); insertValues.push(bankDetails?.accountNumber ?? null) }
-    if (accountNameColumn) { insertColumns.push(accountNameColumn); insertValues.push(bankDetails?.accountName ?? null) }
-    insertColumns.push('status'); insertValues.push('pending')
-
-    const placeholders = insertColumns.map(() => '?').join(', ')
-    writes.push(db.prepare(`INSERT INTO commission_withdrawals (${insertColumns.join(', ')}) VALUES (${placeholders})`).bind(...insertValues))
-    await db.batch(writes)
-    return { success: true, message: '提现申请已提交，预计2个工作日处理' }
-  } catch (error) {
-    // Reservation went through but the rest failed — put the commission back.
-    await db.prepare('UPDATE users SET commission_balance = ROUND(commission_balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalizedAmount, userId).run().catch(() => {})
-    console.error('Withdrawal failed after commission was reserved (refunded):', error)
-    return { success: false, message: '提现失败，请稍后重试' }
-  }
-}
-
-export async function getPendingOrdersWithDetails(c: Context, staffId?: string): Promise<any[]> {
-  const db = getDB(c);
-  const query = `
-    SELECT 
-      o.id, 
-      o.orderNo, 
-      o.startDate, 
-      o.endDate, 
-      o.totalAmount, 
-      o.status,
-      u.name as customerName,
-      d.name as deviceName
-    FROM orders o
-    JOIN users u ON o.userId = u.id
-    JOIN devices d ON o.deviceId = d.id
-    WHERE o.status = 'pending_approval' ${staffId ? 'AND u.staff_id = ?' : ''}
-    ORDER BY o.createdAt DESC
-  `;
-  const statement = db.prepare(query)
-  const result = staffId ? await statement.bind(staffId).all() : await statement.all();
-  return result.results || [];
-}
-
-export async function getStaffDashboardData(c: Context, staffId?: string): Promise<any> {
-  const db = getDB(c);
-
-  const statsQuery = `
-    SELECT
-      (SELECT SUM(totalAmount) FROM orders WHERE status IN ('paid', 'active', 'completed')) as totalRevenue,
-      (SELECT COUNT(*) FROM orders WHERE status = 'active' OR status = 'paid') as activeRentals,
-      (SELECT COUNT(*) FROM orders WHERE status = 'pending_approval' OR status = 'pending_payment') as pendingOrders,
-      (SELECT COUNT(*) FROM devices WHERE status = 'available') as availableDevices,
-      (SELECT COUNT(*) FROM devices) as totalDevices
-  `;
-
-  const recentOrdersQuery = `
-    SELECT o.id, o.orderNo, o.status, u.name as customerName, d.name as deviceName
-    FROM orders o
-    LEFT JOIN users u ON o.userId = u.id
-    LEFT JOIN devices d ON o.deviceId = d.id
-    ${staffId ? 'WHERE u.staff_id = ?' : ''}
-    ORDER BY o.createdAt DESC
-    LIMIT 5
-  `;
-
-  const recentDevicesQuery = `
-    SELECT d.id, d.name, d.status, u.name as customerName
-    FROM devices d
-    LEFT JOIN (
-      SELECT o.deviceId, o.userId FROM orders o JOIN users owner ON o.userId = owner.id WHERE (o.status = 'active' OR o.status = 'paid') ${staffId ? 'AND owner.staff_id = ?' : ''}
-    ) o ON d.id = o.deviceId
-    LEFT JOIN users u ON o.userId = u.id
-    ORDER BY d.createdAt DESC
-    LIMIT 5
-  `;
-
-  const recentOrdersStatement = db.prepare(recentOrdersQuery)
-  const recentDevicesStatement = db.prepare(recentDevicesQuery)
-  const [statsResult, recentOrdersResult, recentDevicesResult] = await Promise.all([
-    db.prepare(statsQuery).first(),
-    staffId ? recentOrdersStatement.bind(staffId).all() : recentOrdersStatement.all(),
-    staffId ? recentDevicesStatement.bind(staffId).all() : recentDevicesStatement.all()
-  ]);
-
-  return {
-    stats: statsResult,
-    recentOrders: recentOrdersResult.results || [],
-    recentDevices: recentDevicesResult.results || []
-  };
-}
 
 function escapeContractValue(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
@@ -1168,100 +953,6 @@ export async function getContractVariableData(c: Context, contract: Contract, or
     contract_url: `/contract/view/${contract.id}`,
     invoice_url: new URL(`/orders/${order.id}/invoice`, publicOrigin).toString(),
   }
-}
-
-export async function issueInvoice(c: Context, orderId: string): Promise<void> {
-  const order = await getOrderById(c, orderId)
-  if (!order) return
-  const contract = await getContractByOrderId(c, orderId)
-  const data = contract && typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : ((contract?.contract_data as Record<string, unknown>) || {})
-  // Keep the rental line at its original price. The coupon is shown as a
-  // separate deduction on the receipt, while the payable total stays lower.
-  const discountAmount = Math.max(0, Number((order as any).discountAmount || (order as any).discount_amount || 0))
-  const taxableGross = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount) + discountAmount)
-  const gstAmount = systemSettings.companyDetails.gstIncluded ? taxableGross / 11 : 0
-  const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
-  const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
-  const invoiceId = `inv-${order.id}`
-  const invoiceNumber = /^INV-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.invoice_number || '')) ? String(data.invoice_number) : generateReferenceNumber('INV')
-  const receiptNumber = /^RCP-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.receipt_number || '')) ? String(data.receipt_number) : generateReferenceNumber('RCP')
-  await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, receipt_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET invoice_number = excluded.invoice_number, receipt_number = excluded.receipt_number, subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
-    .bind(invoiceId, invoiceNumber, receiptNumber, order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
-  await ensureReceiptAndTransactions(c, order, invoiceId)
-}
-
-async function ensureFinanceTables(c: Context): Promise<void> {
-  await c.env.RENT.batch([
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS transactions (
-      id TEXT PRIMARY KEY NOT NULL, transaction_number TEXT NOT NULL UNIQUE,
-      order_id TEXT, customer_id TEXT, invoice_id TEXT, transaction_type TEXT NOT NULL,
-      payment_method TEXT NOT NULL, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'AUD',
-      status TEXT NOT NULL DEFAULT 'PENDING', provider TEXT, provider_transaction_id TEXT,
-      provider_reference TEXT, description TEXT, metadata TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, created_by TEXT
-    )`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS receipts (
-      id TEXT PRIMARY KEY NOT NULL, receipt_number TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL,
-      invoice_id TEXT, customer_id TEXT NOT NULL, currency TEXT NOT NULL DEFAULT 'AUD',
-      subtotal REAL NOT NULL DEFAULT 0, gst_amount REAL NOT NULL DEFAULT 0,
-      deposit_amount REAL NOT NULL DEFAULT 0, discount_amount REAL NOT NULL DEFAULT 0,
-      total_paid REAL NOT NULL DEFAULT 0, issued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      status TEXT NOT NULL DEFAULT 'issued', document_url TEXT, document_hash TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS receipt_transactions (
-      receipt_id TEXT NOT NULL, transaction_id TEXT NOT NULL,
-      PRIMARY KEY (receipt_id, transaction_id)
-    )`),
-  ])
-}
-
-function financePaymentMethod(method: unknown): string {
-  if (method === 'card') return 'CARD'
-  if (method === 'bank_transfer') return 'BANK_TRANSFER'
-  if (method === 'balance') return 'ACCOUNT_BALANCE'
-  return String(method || 'OTHER').toUpperCase()
-}
-
-async function ensureReceiptAndTransactions(c: Context, order: any, invoiceId: string): Promise<void> {
-  await ensureFinanceTables(c)
-  const invoice = await c.env.RENT.prepare('SELECT * FROM invoices WHERE id = ?').bind(invoiceId).first() as any
-  if (!invoice) return
-  const payments = (await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at ASC, created_at ASC").bind(order.id).all()).results as any[]
-  if (!payments.length) return
-  const receiptId = `rcpt-${order.id}`
-  const paidTotal = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
-  await c.env.RENT.prepare(`INSERT INTO receipts (id, receipt_number, order_id, invoice_id, customer_id, currency, subtotal, gst_amount, deposit_amount, discount_amount, total_paid, status, document_url)
-    VALUES (?, ?, ?, ?, ?, 'AUD', ?, ?, ?, ?, ?, 'issued', ?)
-    ON CONFLICT(id) DO UPDATE SET receipt_number = excluded.receipt_number, invoice_id = excluded.invoice_id,
-      subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount,
-      discount_amount = excluded.discount_amount, total_paid = excluded.total_paid, status = 'issued', document_url = excluded.document_url`)
-    .bind(receiptId, String(invoice.receipt_number), order.id, invoiceId, order.userId, Number(invoice.subtotal || 0), Number(invoice.gst_amount || 0), Number(invoice.deposit_amount || 0), Math.max(0, Number(order.discountAmount || order.discount_amount || 0)), paidTotal, `/orders/${order.id}/invoice`).run()
-
-  for (const payment of payments) {
-    const transactionNumber = /^TXN-[0-9]{8}-[A-Z0-9]{6}$/.test(String(payment.transaction_id || ''))
-      ? String(payment.transaction_id)
-      : generateReferenceNumber('TXN')
-    if (payment.transaction_id !== transactionNumber) {
-      await c.env.RENT.prepare('UPDATE payments SET transaction_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(transactionNumber, payment.id).run()
-    }
-    const transactionId = `txn-${payment.id}`
-    await c.env.RENT.prepare(`INSERT OR IGNORE INTO transactions
-      (id, transaction_number, order_id, customer_id, invoice_id, transaction_type, payment_method, amount, currency, status, provider, provider_transaction_id, description, completed_at)
-      VALUES (?, ?, ?, ?, ?, 'RENTAL_PAYMENT', ?, ?, ?, 'SUCCESS', ?, ?, ?, '租赁订单付款', CURRENT_TIMESTAMP)`)
-      .bind(transactionId, transactionNumber, order.id, order.userId, invoiceId, financePaymentMethod(payment.payment_method), Number(payment.amount || 0), String(payment.currency || 'AUD').toUpperCase(), payment.payment_method === 'card' ? 'STRIPE' : null, payment.stripe_payment_intent_id || null).run()
-    await c.env.RENT.prepare('INSERT OR IGNORE INTO receipt_transactions (receipt_id, transaction_id) VALUES (?, ?)').bind(receiptId, transactionId).run()
-  }
-}
-
-export async function issueCreditNote(c: Context, orderId: string, amount: number, refundedProcessingFee = 0, refundKey = orderId): Promise<void> {
-  const invoice = await c.env.RENT.prepare("SELECT id, invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice'").bind(orderId).first() as any
-  if (!invoice) return
-  const creditNoteNumber = generateReferenceNumber('CN')
-  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status, related_invoice_id) VALUES (?, ?, ?, 'credit_note', ?, 0, 0, ?, ?, 'AUD', 'issued', ?)`)
-    .bind(`cn-${refundKey}`, creditNoteNumber, orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
-  await c.env.RENT.prepare("UPDATE invoices SET invoice_number = ? WHERE id = ? AND type = 'credit_note' AND invoice_number LIKE 'CN-INV-%'")
-    .bind(creditNoteNumber, `cn-${refundKey}`).run()
 }
 
 export const DEFAULT_CONTRACT_TEMPLATE_HTML = `<h1>设备租赁合同</h1>
