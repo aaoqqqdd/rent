@@ -35,10 +35,10 @@ export async function renderAdminContracts(c: Context, user: any) {
               <input type="hidden" id="templateContent" name="templateContent">
               <small class="form-text text-muted">请输入 HTML，系统会在生成合同时替换变量。</small>
             </div>
+            <div id="templateSaveStatus" class="template-save-status is-success" role="status" aria-live="polite">已保存</div>
             <div class="form-actions form-actions-right">
               <button type="submit" class="button button-primary">保存模板</button>
             </div>
-            <div id="templateSaveStatus" class="template-save-status is-success" role="status" aria-live="polite">已保存</div>
           </form>
         </div>
 

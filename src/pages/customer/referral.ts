@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getUserById, formatCurrency } from '../../site';
+import { buildLayout, getUserById, formatCurrency, formatMelbourneDate } from '../../site';
 import { Context } from 'hono';
 
 function desensitizeName(name: string): string {
@@ -228,7 +228,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
               ${referredUsers.results.map((referredUser: any) => `
                 <tr>
                   <td>${desensitizeName(referredUser.name)}</td>
-                  <td>${referredUser.registeredAt}</td>
+                  <td>${formatMelbourneDate(referredUser.registeredAt)}</td>
                   <td>${referredUser.orderCount}</td>
                   <td>${formatCurrency(referredUser.contributedReward || 0)}</td>
                 </tr>

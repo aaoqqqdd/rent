@@ -3,12 +3,12 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 支付争议 / Chargeback 状态机 (完善.md §21, §31 / TODO.md P2 #9)
+// 支付争议 / Chargeback 状态机 (完善.md / TODO.md P2 #9)
 //
 //   DISPUTE_OPENED → DISPUTE_UNDER_REVIEW → DISPUTE_WON | DISPUTE_LOST | DISPUTE_CLOSED
 //   DISPUTE_OPENED → DISPUTE_WON | DISPUTE_LOST | DISPUTE_CLOSED（Stripe 直接结案）
 // 终态不可再流转。争议处于 OPENED / UNDER_REVIEW 时，对应付款禁止任何正常退款，
-// 避免同一笔钱既被拒付又被主动退款（完善.md §31“防止争议金额被再次正常退款”）。
+// 避免同一笔钱既被拒付又被主动退款（完善.md“防止争议金额被再次正常退款”）。
 
 export const PAYMENT_DISPUTE_STATES = ['DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW', 'DISPUTE_WON', 'DISPUTE_LOST', 'DISPUTE_CLOSED'] as const
 export type PaymentDisputeState = typeof PAYMENT_DISPUTE_STATES[number]

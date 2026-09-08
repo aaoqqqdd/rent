@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { formatCurrency } from '../../site';
+import { formatCurrency, formatMelbourneDateTime } from '../../site';
 import { Context } from 'hono';
 
 function getStatusLabel(status: string) {
@@ -64,7 +64,7 @@ export async function renderWithdrawalsPanel(c: Context): Promise<string> {
 
   const rows = withdrawals.map((withdrawal) => {
     const status = getStatusLabel(withdrawal.status);
-    const processedAt = withdrawal.processed_at ? new Date(withdrawal.processed_at).toLocaleString('zh-CN') : '-';
+    const processedAt = withdrawal.processed_at ? formatMelbourneDateTime(withdrawal.processed_at) : '-';
     return `
       <tr>
         <td>${withdrawal.user_name || withdrawal.user_id || '未知用户'}</td>
@@ -72,7 +72,7 @@ export async function renderWithdrawalsPanel(c: Context): Promise<string> {
         <td>${withdrawal.account_name || '未填写'}</td>
         <td>${withdrawal.bsb || '未填写'}</td>
         <td>${withdrawal.account_number || '未填写'}</td>
-        <td>${withdrawal.requested_at ? new Date(withdrawal.requested_at).toLocaleString('zh-CN') : '-'}</td>
+        <td>${withdrawal.requested_at ? formatMelbourneDateTime(withdrawal.requested_at) : '-'}</td>
         <td><span class="badge ${status.class}">${status.text}</span></td>
         <td>${processedAt}</td>
         <td>

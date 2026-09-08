@@ -20,12 +20,13 @@ import {
 import { splitPersonName, combinePersonName, getAvatarInitials } from './lib/personName'
 import { getAccessLevel, canManageUser, canUseAccountBalance } from './lib/access'
 import type { Role, AccessLevel } from './lib/access'
-import { formatCurrency, formatMelbourneDateTime, formatDate } from './lib/format'
+import { formatCurrency, formatMelbourneDateTime, formatMelbourneDate, formatDate } from './lib/format'
 import { hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword } from './lib/password'
-import { timingSafeEqualStr, fnv1aHex } from './lib/checksum'
+import { timingSafeEqualStr } from './lib/checksum'
 import { parseCookie } from './lib/cookie'
 import { generateUserId, generateReferralCode } from './lib/userId'
 import { validateHostedImageUrls } from './lib/hostedImages'
+import { safeJsonParse } from './lib/json'
 
 export {
   generateReferenceNumber, generateContractNumber,
@@ -33,9 +34,9 @@ export {
   renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
   splitPersonName, combinePersonName, getAvatarInitials,
   getAccessLevel, canManageUser, canUseAccountBalance,
-  formatCurrency, formatMelbourneDateTime, formatDate,
+  formatCurrency, formatMelbourneDateTime, formatMelbourneDate, formatDate,
   hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword,
-  timingSafeEqualStr, fnv1aHex,
+  timingSafeEqualStr,
   parseCookie,
   generateUserId, generateReferralCode,
   validateHostedImageUrls,
@@ -77,8 +78,6 @@ import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
 } from './domain/dataRetention'
 import type { RetentionAction, RetentionPolicyLike } from './domain/dataRetention'
-import { backupHealth, restoreTestOverdue } from './domain/backup'
-import type { BackupHealthStatus } from './domain/backup'
 import { rateHealth, worstHealthLevel } from './domain/monitoring'
 import type { HealthLevel, MonitorMetric } from './domain/monitoring'
 import { agentCommission } from './domain/agentProgram'
@@ -101,7 +100,6 @@ export {
   isRiskFlagCurrentlyActive, findBlockingRiskFlag,
   deviceUtilisationRate, paymentMethodBreakdown,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
-  backupHealth, restoreTestOverdue,
   rateHealth, worstHealthLevel,
   agentCommission,
   buildRefundAllocation, evaluatePaymentReconciliation,
@@ -109,7 +107,7 @@ export {
 export type {
   OrderChangeType, OrderChangePlan, DeviceCommandState, PaymentDisputeState,
   RiskFlagType, RiskFlagLike, PaymentMethodRow, PaymentMethodShare,
-  RetentionAction, RetentionPolicyLike, BackupHealthStatus, HealthLevel, MonitorMetric,
+  RetentionAction, RetentionPolicyLike, HealthLevel, MonitorMetric,
   RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
 }
 
@@ -130,6 +128,90 @@ import { systemSettings, getSystemSettings, rentalTerms } from './settings/syste
 import type { SystemSettingsKey } from './settings/systemSettings'
 export { systemSettings, getSystemSettings, rentalTerms }
 export type { SystemSettingsKey }
+
+// ---------------------------------------------------------------------------
+// 领域实体 CRUD（用户 / 订单 / 设备 / 合同）已拆到 src/db/repositories.ts。
+// 编排逻辑（updateOrderStatus、调度清理、webhook、对账）仍在本文件，从这里
+// import 需要的 CRUD。site.ts 统一 re-export，pages/actions/tests 零改动。
+// ---------------------------------------------------------------------------
+import {
+  normalizeUserRow, userHasColumn,
+  generateUniqueUserId, getUserById, findUserByEmail, verifyUserCredentials, findUserByReferralCode,
+  getUsers, getUsersByIds, getUsersAsync, insertUser, updateUser,
+  getOrderById, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
+  insertOrder, ensureOrderNumber, updateOrder, updateOrderInDB, hasDeviceBookingConflict,
+  getDeviceById, getDeviceBySerialNumber, getDevices, getDevicesByIds, getDevicesAsync,
+  insertDevice, updateDevice, deleteDevice, updateDeviceStatus, recordDeviceLifecycle, releaseDeviceIfUnbooked,
+  getContractById, getContractByOrderId, getAllContracts, getContractByContractNumber, getContractBySignToken,
+  insertContract, updateContractStatus, updateContractStatusInDB,
+} from './db/repositories'
+
+export {
+  generateUniqueUserId, getUserById, findUserByEmail, verifyUserCredentials, findUserByReferralCode,
+  getUsers, getUsersByIds, getUsersAsync, insertUser, updateUser,
+  getOrderById, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
+  insertOrder, ensureOrderNumber, updateOrder, updateOrderInDB, hasDeviceBookingConflict,
+  getDeviceById, getDeviceBySerialNumber, getDevices, getDevicesByIds, getDevicesAsync,
+  insertDevice, updateDevice, deleteDevice, updateDeviceStatus, recordDeviceLifecycle, releaseDeviceIfUnbooked,
+  getContractById, getContractByOrderId, getAllContracts, getContractByContractNumber, getContractBySignToken,
+  insertContract, updateContractStatus, updateContractStatusInDB,
+}
+
+// ---------------------------------------------------------------------------
+// 审计 / 错误日志已拆到 src/services/audit.ts（叶子层：仅依赖 db/client + nanoid）。
+// 拆在这里是为了让其它服务模块能 import logError 而不与 site.ts 形成循环依赖。
+// ---------------------------------------------------------------------------
+import { createAuditLog, logError, cleanupOldErrorLogs } from './services/audit'
+import type { ErrorLevel } from './services/audit'
+export { createAuditLog, logError, cleanupOldErrorLogs }
+export type { ErrorLevel }
+
+// ---------------------------------------------------------------------------
+// 业务服务已拆到 src/services/*：ledger（余额 / 财务台账）、notifications（站内
+// 通知 + cron 邮件）、referral（推荐计划）、rentalProvisioning（外部付款入账 +
+// Windows 账户命令）。依赖方向 services → db/lib/settings/audit，无回边。
+// site.ts 仅 import 自身编排逻辑（updateOrderStatus / issueInvoice 等）需要的，
+// 并统一 re-export。
+// ---------------------------------------------------------------------------
+import { recordBalanceTransaction, recordFinancialLedgerEntry } from './services/ledger'
+import {
+  ensureNotificationsTable, createNotification, getNotifications,
+  createDueDateNotifications, deliverPendingAgreementEmails, notifyOverduePaymentProofs,
+} from './services/notifications'
+import {
+  ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
+  revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
+} from './services/referral'
+import {
+  recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
+} from './services/rentalProvisioning'
+import { issueInvoice, issueCreditNote } from './services/invoice'
+import { planWithdrawalConsumption, createWithdrawalRequest } from './services/withdrawal'
+import type { WithdrawableReward, WithdrawalPlan } from './services/withdrawal'
+import { getPendingOrdersWithDetails, getStaffDashboardData } from './services/staffDashboard'
+
+export {
+  recordBalanceTransaction, recordFinancialLedgerEntry,
+  ensureNotificationsTable, createNotification, getNotifications,
+  createDueDateNotifications, deliverPendingAgreementEmails, notifyOverduePaymentProofs,
+  ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
+  revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
+  recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
+  issueInvoice, issueCreditNote,
+  planWithdrawalConsumption, createWithdrawalRequest,
+  getPendingOrdersWithDetails, getStaffDashboardData,
+}
+export type { WithdrawableReward, WithdrawalPlan }
+
+// ---------------------------------------------------------------------------
+// Cookie 会话 + 限流已拆到 src/auth/session.ts（依赖 db + lib/cookie）。
+// ---------------------------------------------------------------------------
+import {
+  findUserBySession, createAuthSession, revokeAllSessions, deleteAuthSession, enforceRateLimit,
+} from './auth/session'
+export {
+  findUserBySession, createAuthSession, revokeAllSessions, deleteAuthSession, enforceRateLimit,
+}
 
 function renderLayoutTemplate(values: Record<string, string>): string {
   return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>
@@ -175,343 +257,6 @@ export function renderSiteVariables(content: string, currentUser: any = {}, extr
 }
 
 
-const DEVICE_LIFECYCLE_STATES = new Set<DeviceLifecycleStatus>(['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'])
-
-function legacyDeviceStatusForLifecycle(status: DeviceLifecycleStatus): Device['status'] {
-  if (status === 'READY') return 'available'
-  if (status === 'MAINTENANCE' || status === 'DAMAGED') return 'maintenance'
-  if (status === 'RETIRED') return 'retired'
-  return 'rented'
-}
-
-export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string }): Promise<void> {
-  await ensureNotificationsTable(c)
-  const id = `nt-${crypto.randomUUID()}`
-  await c.env.RENT.prepare('INSERT INTO notifications (id, recipient_id, type, title, message, order_id, sender_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null).run()
-}
-
-export async function recordBalanceTransaction(c: Context, userId: string, amount: number, type: string, reason: string, createdBy?: string | null, balanceAfter?: number): Promise<void> {
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount REAL NOT NULL, balance_after REAL NOT NULL, type TEXT NOT NULL, reason TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
-  const current = balanceAfter ?? Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
-  const id = `bt-${crypto.randomUUID()}`
-  const value = Number(amount.toFixed(2))
-  await c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, userId, value, Number(current.toFixed(2)), type, reason, createdBy || null).run()
-  await recordFinancialLedgerEntry(c, { entryType: 'BALANCE', amount: value, customerId: userId, sourceType: 'BALANCE_TRANSACTION', sourceId: id, description: reason, createdBy, metadata: { type, balanceAfter: Number(current.toFixed(2)) } })
-}
-
-export async function recordFinancialLedgerEntry(c: Context, input: { entryType: 'PAYMENT' | 'REFUND' | 'BALANCE' | 'REFERRAL_REWARD' | 'COUPON_DISCOUNT'; amount: number; customerId?: string | null; orderId?: string | null; sourceType: string; sourceId: string; description: string; createdBy?: string | null; metadata?: unknown }): Promise<void> {
-  if (!Number.isFinite(input.amount)) throw new Error('财务流水金额无效')
-  await c.env.RENT.prepare(`INSERT OR IGNORE INTO financial_ledger_entries (id, entry_number, entry_type, amount, customer_id, order_id, source_type, source_id, description, metadata, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(`fle-${nanoid(16)}`, `FLE-${nanoid(12).toUpperCase()}`, input.entryType, Number(input.amount.toFixed(2)), input.customerId || null, input.orderId || null, input.sourceType, input.sourceId, input.description, JSON.stringify(input.metadata || {}), input.createdBy || null).run()
-}
-
-export async function ensureReferralProgram(c: Context): Promise<void> {
-  await c.env.RENT.batch([
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_codes (id TEXT PRIMARY KEY NOT NULL, customer_id TEXT NOT NULL, code TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'ACTIVE', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, disabled_at TEXT)`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referrals (id TEXT PRIMARY KEY NOT NULL, referral_number TEXT NOT NULL UNIQUE, referrer_customer_id TEXT NOT NULL, referee_customer_id TEXT NOT NULL UNIQUE, referral_code_id TEXT, status TEXT NOT NULL DEFAULT 'REGISTERED', attributed_at TEXT, registered_at TEXT, qualifying_order_id TEXT, qualified_at TEXT, rewarded_at TEXT, invalidated_at TEXT, invalid_reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_rewards (id TEXT PRIMARY KEY NOT NULL, reward_number TEXT NOT NULL UNIQUE, referral_id TEXT NOT NULL, customer_id TEXT NOT NULL, order_id TEXT, reward_type TEXT NOT NULL DEFAULT 'ACCOUNT_BALANCE', reward_amount REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'AUD', status TEXT NOT NULL DEFAULT 'PENDING', available_at TEXT, issued_at TEXT, cancelled_at TEXT, balance_transaction_id TEXT, reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_audit_logs (id TEXT PRIMARY KEY NOT NULL, referral_id TEXT NOT NULL, action TEXT NOT NULL, actor_id TEXT, reason TEXT, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
-  ])
-}
-
-// Walks the chain of referrers backward from referrerId; if refereeId shows up
-// anywhere in that ancestry, linking referrerId -> refereeId would close a
-// cycle (direct A<->B, or a longer A->B->C->A chain). Each person can only
-// ever be a referee once (unique constraint), so the ancestor chain has no
-// branching and this loop terminates quickly; the hop cap is just a safety
-// net against corrupt data forming an unexpected loop.
-async function wouldCreateReferralCycle(c: Context, referrerId: string, refereeId: string): Promise<boolean> {
-  let current = referrerId
-  for (let hop = 0; hop < 50; hop++) {
-    if (current === refereeId) return true
-    const row = await c.env.RENT.prepare('SELECT referrer_customer_id FROM referrals WHERE referee_customer_id = ?').bind(current).first() as any
-    if (!row?.referrer_customer_id) return false
-    current = String(row.referrer_customer_id)
-  }
-  return true
-}
-
-export async function lockReferralRelationship(c: Context, referrerId: string | null | undefined, refereeId: string, code?: string | null): Promise<void> {
-  if (!referrerId) return
-  await ensureReferralProgram(c)
-  if (referrerId === refereeId) {
-    await logError(c, 'INFO', 'Self-referral attempt blocked', undefined, { referrerId, refereeId })
-    return
-  }
-  if (await wouldCreateReferralCycle(c, referrerId, refereeId)) {
-    await logError(c, 'WARNING', 'Circular referral attempt blocked', undefined, { referrerId, refereeId })
-    return
-  }
-  const referrer = await c.env.RENT.prepare('SELECT referral_code FROM users WHERE id = ?').bind(referrerId).first() as any
-  if (!referrer) return
-  const referralCode = String(code || referrer.referral_code || '').trim().toUpperCase()
-  let codeRow: any = null
-  if (referralCode) {
-    await c.env.RENT.prepare("INSERT OR IGNORE INTO referral_codes (id, customer_id, code, status) VALUES (?, ?, ?, 'ACTIVE')").bind(`rfc-${nanoid(16)}`, referrerId, referralCode).run()
-    codeRow = await c.env.RENT.prepare("SELECT id FROM referral_codes WHERE code = ? AND status = 'ACTIVE'").bind(referralCode).first()
-  }
-  if (await c.env.RENT.prepare('SELECT id FROM referrals WHERE referee_customer_id = ?').bind(refereeId).first()) return
-  const id = `ref-${nanoid(16)}`
-  await c.env.RENT.batch([
-    c.env.RENT.prepare("INSERT INTO referrals (id, referral_number, referrer_customer_id, referee_customer_id, referral_code_id, status, attributed_at, registered_at) VALUES (?, ?, ?, ?, ?, 'REGISTERED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").bind(id, generateReferenceNumber('RFD').replace(/^RFD-/, 'REF-'), referrerId, refereeId, codeRow?.id || null),
-    c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, metadata) VALUES (?, ?, 'REGISTERED', ?)").bind(`rfa-${nanoid(16)}`, id, JSON.stringify({ source: 'registration' })),
-  ])
-}
-
-async function syncReferralOrderState(c: Context, orderId: string, rentalStatus: string): Promise<void> {
-  if (!['ACTIVE', 'COMPLETED', 'CANCELLED'].includes(rentalStatus)) return
-  await ensureReferralProgram(c)
-  const order = await c.env.RENT.prepare('SELECT id, userId, payment_status, totalAmount, depositAmount FROM orders WHERE id = ?').bind(orderId).first() as any
-  if (!order) return
-  const referral = await c.env.RENT.prepare("SELECT id FROM referrals WHERE referee_customer_id = ? AND status IN ('REGISTERED','QUALIFYING','QUALIFIED')").bind(order.userId).first() as any
-  if (!referral) return
-  if (rentalStatus === 'CANCELLED') {
-    await c.env.RENT.prepare("UPDATE referrals SET status = 'CANCELLED', invalid_reason = 'ORDER_CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(referral.id).run()
-    await revokeReferralRewardForOrder(c, orderId, '订单已取消')
-  } else if (order.payment_status === 'PAID' && rentalStatus === 'ACTIVE') {
-    await c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFYING', qualifying_order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id).run()
-  } else if (order.payment_status === 'PAID' && rentalStatus === 'COMPLETED') {
-    const rentAmount = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
-    const rate = Math.min(100, Math.max(0, Number(getSystemSettings().referralSettings.defaultRate || 0))) / 100
-    const rewardAmount = Number((rentAmount * rate).toFixed(2))
-    await c.env.RENT.batch([
-      c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFIED', qualifying_order_id = ?, qualified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id),
-      c.env.RENT.prepare("INSERT OR IGNORE INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_amount, status, reason) SELECT ?, ?, r.id, r.referrer_customer_id, ?, ?, 'PENDING', '订单已完成，等待结算期满后发放' FROM referrals r WHERE r.id = ?").bind(`rrw-${nanoid(16)}`, generateReferenceNumber('RFD').replace(/^RFD-/, 'RRW-'), orderId, rewardAmount, referral.id),
-    ])
-  }
-}
-
-// Reverses a reward that hasn't been paid out yet (PENDING) or claws back one
-// that already was (AVAILABLE, credited to commission_balance). Safe to call
-// on orders with no reward at all (no-op). Idempotent: a second call finds
-// the reward already CANCELLED and does nothing further. Uses 'CANCELLED'
-// (not e.g. 'REVOKED') to match the status values allowed by the CHECK
-// constraint in migrations/0079_referral_program.sql.
-export async function revokeReferralRewardForOrder(c: Context, orderId: string, reason: string): Promise<void> {
-  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, status, referral_id FROM referral_rewards WHERE order_id = ? AND status IN ('PENDING','AVAILABLE')").bind(orderId).first() as any
-  if (!reward) return
-  const wasAvailable = reward.status === 'AVAILABLE'
-  const result = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP, reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING','AVAILABLE')").bind(reason, reward.id).run() as any
-  if (!Number(result.meta?.changes ?? result.changes ?? 0)) return
-  if (wasAvailable) {
-    await c.env.RENT.prepare('UPDATE users SET commission_balance = MAX(0, commission_balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(reward.reward_amount, reward.customer_id).run()
-    await recordFinancialLedgerEntry(c, { entryType: 'REFERRAL_REWARD', amount: -Number(reward.reward_amount), customerId: reward.customer_id, sourceType: 'REFERRAL_REWARD', sourceId: reward.id, description: `推荐奖励撤销：${reason}`, createdBy: null })
-  }
-  await c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, reason, metadata) VALUES (?, ?, 'REWARD_REVOKED', ?, ?)").bind(`rfa-${nanoid(16)}`, reward.referral_id, reason, JSON.stringify({ rewardId: reward.id, amount: reward.reward_amount })).run()
-}
-
-// Moves rewards from PENDING to AVAILABLE once the qualifying order has
-// cleared the settlement/chargeback window (referralSettings.settlementPeriod
-// days past qualification), skipping any order with an open Stripe dispute.
-// Flips one PENDING reward to AVAILABLE and credits the referrer's commission
-// balance. Shared by the scheduled settlement job and the admin "release now"
-// override. Returns false if the reward wasn't PENDING (already handled).
-async function markReferralRewardAvailable(c: Context, reward: { id: string; customer_id: string; reward_amount: number; referral_id: string }, actorId?: string | null): Promise<boolean> {
-  const claimed = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'AVAILABLE', available_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'PENDING'").bind(reward.id).run() as any
-  if (!Number(claimed.meta?.changes ?? claimed.changes ?? 0)) return false
-  await c.env.RENT.prepare('UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(reward.reward_amount, reward.customer_id).run()
-  await recordFinancialLedgerEntry(c, { entryType: 'REFERRAL_REWARD', amount: Number(reward.reward_amount), customerId: reward.customer_id, sourceType: 'REFERRAL_REWARD', sourceId: reward.id, description: '推荐奖励结算到账', createdBy: actorId || null })
-  await c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, actor_id, metadata) VALUES (?, ?, 'REWARD_RELEASED', ?, ?)").bind(`rfa-${nanoid(16)}`, reward.referral_id, actorId || null, JSON.stringify({ rewardId: reward.id, amount: reward.reward_amount })).run()
-  return true
-}
-
-export async function releaseQualifiedReferralRewards(c: Context): Promise<number> {
-  const settlementDays = Math.max(1, Math.floor(Number(getSystemSettings().referralSettings.settlementPeriod || 30)))
-  const rows = (await c.env.RENT.prepare(`
-    SELECT rw.id, rw.customer_id, rw.reward_amount, rw.referral_id
-    FROM referral_rewards rw
-    JOIN referrals r ON r.id = rw.referral_id
-    WHERE rw.status = 'PENDING'
-      AND r.status = 'QUALIFIED'
-      AND r.qualified_at IS NOT NULL
-      AND datetime(r.qualified_at) <= datetime('now', ?)
-      AND NOT EXISTS (
-        SELECT 1 FROM payment_disputes pd
-        JOIN payments p ON p.id = pd.payment_id
-        WHERE p.rental_id = r.qualifying_order_id AND pd.status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW')
-      )
-  `).bind(`-${settlementDays} days`).all()).results || []
-  let released = 0
-  for (const row of rows as any[]) {
-    if (await markReferralRewardAvailable(c, row)) released++
-  }
-  return released
-}
-
-// Admin override: release a specific reward immediately, bypassing the
-// settlement-period wait (but not the open-dispute rule, callers should check
-// separately if they want to warn the admin about that).
-export async function releaseReferralRewardNow(c: Context, rewardId: string, actorId: string): Promise<boolean> {
-  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, referral_id FROM referral_rewards WHERE id = ? AND status = 'PENDING'").bind(rewardId).first() as any
-  if (!reward) return false
-  return markReferralRewardAvailable(c, reward, actorId)
-}
-
-export async function recordExternalRentalFlow(c: Context, userId: string, amount: number, method: string, createdBy?: string | null, orderId?: string): Promise<void> {
-  const value = Number(amount || 0)
-  if (value <= 0) return
-  const balance = Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
-  await recordBalanceTransaction(c, userId, value, 'rental_payment_credit', `${method}租赁付款入账`, createdBy, balance)
-  await recordBalanceTransaction(c, userId, -value, 'rental_payment_debit', `${method}租赁付款扣款`, createdBy, balance)
-  if (orderId) await recordFinancialLedgerEntry(c, { entryType: 'PAYMENT', amount: value, customerId: userId, orderId, sourceType: 'ORDER_PAYMENT', sourceId: orderId, description: `${method}租赁付款`, createdBy, metadata: { method } })
-}
-
-export async function enqueueRentalUserCreation(c: Context, order: any): Promise<void> {
-  const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
-  if (!contract?.contract_data) return
-  let data: any = {}
-  try { data = JSON.parse(contract.contract_data) } catch (_) { }
-  const password = String(data.windows_password || '')
-  if (!password || data.windows_account_created) return
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, command_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, claimed_at TEXT, completed_at TEXT, expires_at TEXT NOT NULL)`).run()
-  const username = String(data.windows_username || order.customer?.name || 'RentalUser')
-  await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CREATE_RENTAL_USER', ?, NULL, datetime('now', '+7 days'))").bind(`cmd-${crypto.randomUUID()}`, order.deviceId || order.device_id, JSON.stringify({ username, password })).run()
-  data.windows_account_created = true
-  await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
-}
-
-export async function enqueueRentalUserDeletion(c: Context, order: any): Promise<void> {
-  const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
-  if (!contract?.contract_data) return
-  let data: any = {}
-  try { data = JSON.parse(contract.contract_data) } catch (_) { }
-  if (data.windows_account_deleted) return
-  const username = String(data.windows_username || order.customer?.name || 'RentalUser')
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, command_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, claimed_at TEXT, completed_at TEXT, expires_at TEXT NOT NULL)`).run()
-  await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'DELETE_RENTAL_USER', ?, NULL, datetime('now', '+30 days'))").bind(`cmd-${crypto.randomUUID()}`, order.deviceId || order.device_id, JSON.stringify({ username })).run()
-  data.windows_account_deleted = true
-  await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
-}
-
-let notificationsSchemaReady: Promise<void> | null = null
-
-export async function ensureNotificationsTable(c: Context): Promise<void> {
-  if (!notificationsSchemaReady) notificationsSchemaReady = (async () => {
-    await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS notifications (
-    id TEXT PRIMARY KEY,
-    recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL,
-    title TEXT NOT NULL,
-    message TEXT NOT NULL,
-    order_id TEXT,
-    sender_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-    read_at TEXT,
-    deleted_at TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`).run()
-    try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN sender_id TEXT REFERENCES users(id) ON DELETE SET NULL').run() } catch (_) { /* column already exists */ }
-    try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN deleted_at TEXT').run() } catch (_) { /* column already exists */ }
-    await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created ON notifications(recipient_id, read_at, created_at DESC)').run()
-    await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_sender_created ON notifications(sender_id, deleted_at, created_at DESC)').run()
-  })()
-  try { await notificationsSchemaReady } catch (error) { notificationsSchemaReady = null; throw error }
-}
-
-export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
-  await ensureNotificationsTable(c)
-  const result = await c.env.RENT.prepare('SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 100').bind(recipientId).all()
-  return result.results || []
-}
-
-export async function createDueDateNotifications(c: Context): Promise<number> {
-  await ensureNotificationsTable(c)
-  const today = new Date()
-  const notices = [
-    { days: 3, type: 'due_soon_3d', title: '租赁即将到期', text: '您的设备租赁将在 3 天后到期，请提前安排归还或联系工作人员续租。' },
-    { days: 0, type: 'due_today', title: '租赁今日到期', text: '您的设备租赁今天到期，请尽快归还设备并等待验机。' },
-  ]
-  let created = 0
-  for (const notice of notices) {
-    const due = new Date(today)
-    due.setUTCDate(due.getUTCDate() + notice.days)
-    const date = due.toISOString().slice(0, 10)
-    const rows = await c.env.RENT.prepare(`
-      SELECT o.id, o.orderNo, o.userId, o.endDate, u.name
-      FROM orders o JOIN users u ON u.id = o.userId
-      WHERE o.endDate = ? AND o.status IN ('paid', 'active') AND u.role = 'CUSTOMER'
-        AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.recipient_id = o.userId AND n.order_id = o.id AND n.type = ?)
-    `).bind(date, notice.type).all()
-    for (const order of (rows.results || []) as any[]) {
-      await createNotification(c, { recipientId: order.userId, type: notice.type, title: notice.title, message: `${notice.text} 订单：${order.orderNo || order.id}。`, orderId: order.id })
-      created += 1
-    }
-  }
-  return created
-}
-
-// 投递 notifyAgreementUpdate 排入 email_events 队列的协议更新邮件。
-// 由 cron 触发，每次只处理一小批，避免一次调用里对外发起过多子请求；
-// 失败的行会在下一次 tick 自动重试，直到 max_attempts。
-export async function deliverPendingAgreementEmails(c: Context): Promise<number> {
-  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
-  if (!apiKey || !from) return 0
-  const rows = (((await c.env.RENT.prepare(
-    "SELECT id, recipient, subject, text_body, html_body FROM email_events WHERE event_type = 'AGREEMENT_UPDATE' AND status IN ('PENDING', 'FAILED') AND retry_count < max_attempts ORDER BY created_at LIMIT 90"
-  ).all()) as any).results || []) as any[]
-  let sent = 0
-  for (const row of rows) {
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, to: [row.recipient], subject: row.subject, text: row.text_body, html: row.html_body || undefined }),
-      })
-      const result = await response.json().catch(() => ({})) as any
-      await c.env.RENT.prepare(
-        "UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?"
-      ).bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status).slice(0, 500), response.ok ? 1 : 0, row.id).run()
-      if (response.ok) sent += 1
-    } catch (error: any) {
-      await c.env.RENT.prepare(
-        "UPDATE email_events SET status = 'FAILED', error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).bind(String(error?.message || error).slice(0, 500), row.id).run()
-    }
-  }
-  return sent
-}
-
-export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
-  await c.env.RENT.prepare('ALTER TABLE payment_proofs ADD COLUMN admin_notified_at TEXT').run().catch(() => undefined)
-  await ensureNotificationsTable(c)
-  const proofs = await c.env.RENT.prepare(`
-    SELECT pp.id, pp.payment_id, pp.uploaded_at, o.id AS order_id, o.orderNo, o.totalAmount,
-           p.payment_method, u.name AS customer_name
-    FROM payment_proofs pp
-    JOIN payments p ON p.id = pp.payment_id
-    JOIN orders o ON o.id = p.rental_id
-    LEFT JOIN users u ON u.id = o.userId
-    WHERE pp.status = 'submitted'
-      AND pp.admin_notified_at IS NULL
-      AND pp.uploaded_at <= datetime('now', '-1 hour')
-      AND p.payment_method IN ('bank_transfer', 'alipay', 'wechat')
-      AND o.status = 'pending_payment'
-    ORDER BY pp.uploaded_at ASC
-    LIMIT 100
-  `).all() as any
-  if (!(proofs.results || []).length) return 0
-  const admins = (await c.env.RENT.prepare("SELECT id, email, name FROM users WHERE role = 'ADMIN' AND status = 'active'").all() as any).results || []
-  if (!admins.length) return 0
-  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
-  let notified = 0
-  for (const proof of proofs.results as any[]) {
-    const method = proof.payment_method === 'alipay' ? '支付宝' : proof.payment_method === 'wechat' ? '微信' : '银行转账'
-    const orderLabel = proof.orderNo || proof.order_id
-    const title = `${method}付款待审核超过 1 小时`
-    const message = `订单 ${orderLabel} 的${method}付款凭证已提交超过 1 小时，客户：${proof.customer_name || '未填写'}，金额：AUD ${Number(proof.totalAmount || 0).toFixed(2)}。请尽快审核。`
-    await Promise.all(admins.map((admin: any) => createNotification(c, { recipientId: admin.id, type: 'payment_review_overdue', title, message, orderId: proof.order_id })))
-    if (apiKey && from) {
-      const html = renderEmailNotificationHtml(title, `<p>${message}</p><p><a href="${new URL(`/admin/orders/${proof.order_id}`, c.req.url).toString()}">打开订单审核</a></p>`, getSystemSettings().companyDetails.name)
-      await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: admins.map((admin: any) => admin.email).filter((email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)), subject: title, text: message, html }) })
-    }
-    await c.env.RENT.prepare('UPDATE payment_proofs SET admin_notified_at = CURRENT_TIMESTAMP WHERE id = ? AND admin_notified_at IS NULL').bind(proof.id).run()
-    notified += 1
-  }
-  return notified
-}
-
 export function isContractExpired(contract: Contract, now = Date.now()): boolean {
   if ((contract.status as string) === 'expired') return true
   if (!['draft', 'pending_sign'].includes(contract.status)) return false
@@ -525,411 +270,7 @@ export function isContractFinalized(contract: Contract | null | undefined): bool
   return Boolean(contract && ['signed', 'completed'].includes(contract.status) && contract.signedAt && contract.signed_content)
 }
 
-export async function generateUniqueUserId(c: Context, role: 'ADMIN' | 'STAFF' | 'CUSTOMER', accountType: 'formal' | 'guest' = 'formal'): Promise<string> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const id = generateUserId(role, accountType)
-    const existing = await c.env.RENT.prepare('SELECT id FROM users WHERE id = ?').bind(id).first()
-    if (!existing) return id
-  }
-  throw new Error('无法生成唯一用户 ID，请稍后重试')
-}
-
-export async function getUserById(cOrContext: Context | string, id?: string): Promise<User | null> {
-  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
-  const actualId = typeof cOrContext === 'string' ? cOrContext : id
-  if (!actualId) return null
-  const userRow = await db.prepare('SELECT * FROM users WHERE id = ?').bind(actualId).first()
-  if (!userRow) return null
-
-  return normalizeUserRow(userRow)
-}
-
 // 将数据库行归一化为同时包含 snake_case 和 camelCase 字段的 User 对象
-function normalizeUserRow(row: any): User {
-  if (!row) return null as any
-  const account_number = row.account_number ?? row.accountNumber ?? row.account
-  const accountNumber = row.accountNumber ?? row.account_number ?? row.account
-
-  const commissionBalance = Number(row.commissionBalance ?? row.commission_balance ?? 0)
-  const balance = Number(row.balance ?? 0)
-
-  const createdAt = row.createdAt ?? row.created_at ?? row.registrationDate ?? row.created_at
-  const created_at = row.created_at ?? row.createdAt ?? row.registrationDate ?? row.createdAt
-  const updatedAt = row.updatedAt ?? row.updated_at ?? null
-  const updated_at = row.updated_at ?? row.updatedAt ?? null
-
-  const referralCode = row.referralCode ?? row.referral_code ?? null
-  const referrerId = row.referrerId ?? row.referrer_id ?? row.referrerId
-  const staffId = row.staffId ?? row.staff_id
-  const accountType = row.accountType ?? row.account_type ?? 'formal'
-  const accessLevel = getAccessLevel(row)
-  const accountStatus = row.accountStatus ?? row.account_status ?? (row.status === 'inactive' ? 'inactive' : 'active')
-  const guestOrderId = row.guestOrderId ?? row.guest_order_id ?? null
-  const guestExpiresAt = row.guestExpiresAt ?? row.guest_expires_at ?? null
-  const deletedAt = row.deletedAt ?? row.deleted_at ?? null
-  const deletionRequestedAt = row.deletionRequestedAt ?? row.deletion_requested_at ?? null
-  const deletionScheduledAt = row.deletionScheduledAt ?? row.deletion_scheduled_at ?? null
-  const identityStatus = row.identityStatus ?? row.identity_status ?? null
-
-  return {
-    ...row,
-    identityStatus,
-    identity_status: identityStatus,
-    account_number,
-    accountNumber,
-    commissionBalance,
-    commission_balance: commissionBalance,
-    balance,
-    createdAt,
-    created_at,
-    updatedAt,
-    updated_at,
-    referralCode,
-    referrerId,
-    staffId,
-    staff_id: staffId,
-    accountType,
-    accessLevel,
-    access_level: accessLevel,
-    account_type: accountType,
-    accountStatus,
-    account_status: accountStatus,
-    guestOrderId,
-    guest_order_id: guestOrderId,
-    guestExpiresAt,
-    guest_expires_at: guestExpiresAt,
-    deletedAt,
-    deleted_at: deletedAt,
-    deletionRequestedAt,
-    deletionScheduledAt,
-    deletion_requested_at: deletionRequestedAt,
-    deletion_scheduled_at: deletionScheduledAt,
-  } as User
-}
-
-function normalizeOrderRow(orderRow: any): Order {
-  if (!orderRow) return null as any
-
-  const deviceId = orderRow.deviceId ?? orderRow.device_id
-  const startDate = orderRow.startDate ?? orderRow.start_date
-  const endDate = orderRow.endDate ?? orderRow.end_date
-  const rentalPeriod = orderRow.rentalPeriod ?? orderRow.rental_period
-  const totalAmount = orderRow.totalAmount ?? orderRow.total_amount
-  const depositAmount = orderRow.depositAmount ?? orderRow.deposit_amount
-  const createdAt = orderRow.createdAt ?? orderRow.created_at
-  const refundMethod = orderRow.refundMethod ?? orderRow.refund_method ?? 'balance'
-  const refundBsb = orderRow.refundBsb ?? orderRow.refund_bsb
-  const refundAccountNumber = orderRow.refundAccountNumber ?? orderRow.refund_account_number
-  const refundAccountName = orderRow.refundAccountName ?? orderRow.refund_account_name
-  const orderNo = orderRow.orderNo ?? orderRow.order_no
-  const contractId = orderRow.contractId ?? orderRow.contract_id
-  const signedAt = orderRow.signedAt ?? orderRow.signed_at
-
-  return {
-    ...orderRow,
-    deviceId,
-    device_id: deviceId,
-    startDate,
-    start_date: startDate,
-    endDate,
-    end_date: endDate,
-    rentalPeriod,
-    rental_period: rentalPeriod,
-    totalAmount,
-    total_amount: totalAmount,
-    depositAmount,
-    deposit_amount: depositAmount,
-    createdAt,
-    created_at: createdAt,
-    refundMethod,
-    refundBsb,
-    orderNo,
-    order_no: orderNo,
-    contractId,
-    contract_id: contractId,
-    signedAt,
-    signed_at: signedAt,
-    refundAccountNumber,
-    refundAccountName,
-    status: orderRow.status ?? orderRow.order_status
-  } as Order
-}
-
-function normalizeContractRow(contractRow: any): Contract {
-  if (!contractRow) return null as any
-
-  const validFrom = contractRow.validFrom ?? contractRow.valid_from
-  const validUntil = contractRow.validUntil ?? contractRow.valid_until
-  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
-  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
-  const valid_from = contractRow.valid_from ?? contractRow.validFrom
-  const valid_until = contractRow.valid_until ?? contractRow.validUntil
-  const createdBy = contractRow.createdBy ?? contractRow.created_by
-  const created_by = contractRow.created_by ?? contractRow.createdBy
-
-  return {
-    ...contractRow,
-    validFrom,
-    validUntil,
-    signExpiresAt,
-    rentalId,
-    rental_id,
-    sign_expires_at,
-    valid_from,
-    valid_until,
-    createdBy,
-    created_by
-  } as Contract
-}
-
-export async function getOrderById(cOrContext: Context | string, id?: string): Promise<Order | null> {
-  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
-  const actualId = typeof cOrContext === 'string' ? cOrContext : id
-  if (!actualId) {
-    return null;
-  }
-
-  // 1. 直接使用传入的 id 进行查询
-  let orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
-  if (orderRow) {
-    return normalizeOrderRow(orderRow)
-  }
-
-  // 2. 如果查询结果为空，并且传入的 id 不以 o- 开头，则尝试添加 o- 前缀后再次查询
-  if (!actualId.startsWith('o-')) {
-    const prefixedId = `o-${actualId}`
-    orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(prefixedId).first()
-    if (orderRow) {
-      return normalizeOrderRow(orderRow)
-    }
-  }
-
-  // 3. 如果查询结果为空，并且传入的 id 以 o- 开头，则尝试去除 o- 前缀后再次查询
-  if (actualId.startsWith('o-')) {
-    const unprefixedId = actualId.substring(2)
-    orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(unprefixedId).first()
-    if (orderRow) {
-      return normalizeOrderRow(orderRow)
-    }
-  }
-
-  return null
-}
-
-export async function getDeviceById(cOrContext: Context | string, id?: string): Promise<Device | null> {
-  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
-  const actualId = typeof cOrContext === 'string' ? cOrContext : id
-  if (!actualId) return null
-  const deviceRow = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(actualId).first()
-  if (!deviceRow) return null
-
-  // 统一处理snake_case和camelCase字段
-  const pricePerDay = deviceRow.pricePerDay ?? deviceRow.price_per_day
-  const depositAmount = deviceRow.depositAmount ?? deviceRow.deposit_amount
-
-  // Add type validation for required fields
-  if (typeof pricePerDay !== 'number' || typeof depositAmount !== 'number') {
-    throw new Error(`Device ${actualId} has missing or invalid pricePerDay or depositAmount`)
-  }
-
-  // 确保返回的设备对象同时包含两种格式的字段，兼容所有调用方
-  return {
-    ...deviceRow,
-    pricePerDay,
-    price_per_day: pricePerDay,
-    depositAmount,
-    deposit_amount: depositAmount
-  } as Device
-}
-
-export async function getContractById(cOrContext: Context | string, id?: string): Promise<Contract | null> {
-  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
-  const actualId = typeof cOrContext === 'string' ? cOrContext : id
-  if (!actualId) return null
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE id = ?').bind(actualId).first()
-  if (!contractRow) return null
-
-  // 统一处理snake_case和camelCase字段
-  const validFrom = contractRow.validFrom ?? contractRow.valid_from
-  const validUntil = contractRow.validUntil ?? contractRow.valid_until
-  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
-  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
-  const valid_from = contractRow.valid_from ?? contractRow.validFrom
-  const valid_until = contractRow.valid_until ?? contractRow.validUntil
-  const createdBy = contractRow.createdBy ?? contractRow.created_by
-  const created_by = contractRow.created_by ?? contractRow.createdBy
-
-  // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
-  return {
-    ...contractRow,
-    validFrom,
-    validUntil,
-    signExpiresAt,
-    rentalId,
-    rental_id,
-    sign_expires_at,
-    valid_from,
-    valid_until,
-    createdBy,
-    created_by
-  } as Contract
-}
-
-export async function getContractByOrderId(cOrContext: Context | string, orderId?: string): Promise<Contract | null> {
-  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
-  const actualOrderId = typeof cOrContext === 'string' ? cOrContext : orderId
-  if (!actualOrderId) return null
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE orderId = ?').bind(actualOrderId).first()
-  if (!contractRow) return null
-
-  // 统一处理snake_case和camelCase字段
-  const validFrom = contractRow.validFrom ?? contractRow.valid_from
-  const validUntil = contractRow.validUntil ?? contractRow.valid_until
-  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
-  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
-  const valid_from = contractRow.valid_from ?? contractRow.validFrom
-  const valid_until = contractRow.valid_until ?? contractRow.validUntil
-  const createdBy = contractRow.createdBy ?? contractRow.created_by
-  const created_by = contractRow.created_by ?? contractRow.createdBy
-
-  // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
-  return {
-    ...contractRow,
-    validFrom,
-    validUntil,
-    signExpiresAt,
-    rentalId,
-    rental_id,
-    sign_expires_at,
-    valid_from,
-    valid_until,
-    createdBy,
-    created_by
-  } as Contract
-}
-
-export async function getAllContracts(c?: Context): Promise<Contract[]> {
-  const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM contracts').all()
-  return ((result.results || []) as any[]).map(normalizeContractRow) || []
-}
-
-export async function getOrders(c?: Context): Promise<Order[]> {
-  const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM orders').all()
-  return ((result.results || []) as any[]).map(normalizeOrderRow) || []
-}
-
-export async function getOrdersForUser(cOrContext: Context | string, userId?: string): Promise<Order[]> {
-  const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
-  const actualUserId = typeof cOrContext === 'string' ? cOrContext : userId
-  if (!actualUserId) return []
-  const result = await db.prepare('SELECT * FROM orders WHERE userId = ?').bind(actualUserId).all()
-  return ((result.results || []) as any[]).map(normalizeOrderRow) || []
-}
-
-export async function getOrdersWithDetailsForUser(c: Context, userId: string): Promise<any[]> {
-  const db = getDB(c);
-  const query = `
-    SELECT 
-      o.id, 
-      o.orderNo, 
-      o.startDate, 
-      o.endDate, 
-      o.totalAmount, 
-      o.status,
-      d.name as deviceName
-    FROM orders o
-    LEFT JOIN devices d ON o.deviceId = d.id
-    WHERE o.userId = ?
-    ORDER BY o.createdAt DESC
-  `;
-  const result = await db.prepare(query).bind(userId).all();
-  return result.results || [];
-}
-
-export async function insertOrder(c: Context, order: Order): Promise<void> {
-  const db = getDB(c)
-  await db
-    .prepare(
-      'INSERT INTO orders (id, orderNo, userId, deviceId, startDate, endDate, startPeriod, endPeriod, rentalPeriod, status, paymentMethod, totalAmount, depositAmount, contractId, pickupTimeSlot, returnTimeSlot, pickupLocation, returnLocation, deliveryMethod, deliveryFee, rentalNote, coupon_code, discount_amount, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    )
-    .bind(
-      order.id,
-      order.orderNo,
-      order.userId,
-      order.deviceId,
-      order.startDate,
-      order.endDate,
-      order.startPeriod || 'AM', order.endPeriod || 'AM',
-      order.rentalPeriod, // Add rentalPeriod here
-      order.status,
-      order.paymentMethod,
-      order.totalAmount,
-      order.depositAmount,
-      order.contractId, order.pickupTimeSlot || null, order.returnTimeSlot || null, order.pickupLocation || null, order.returnLocation || null, (order as any).deliveryMethod || 'Pickup', Number((order as any).deliveryFee || 0), (order as any).rentalNote || null,
-      (order as any).couponCode || null, Number((order as any).discountAmount || 0), order.createdAt
-    )
-    .run()
-}
-
-export async function ensureOrderNumber(c: Context, orderId: string, externalReference = ''): Promise<string> {
-  const existing = await c.env.RENT.prepare('SELECT orderNo FROM orders WHERE id = ?').bind(orderId).first() as any
-  if (!existing) throw new Error('订单不存在，无法生成订单编号')
-  if (existing.orderNo) return String(existing.orderNo)
-
-  const orderNo = generateReferenceNumber('OD')
-  await c.env.RENT.prepare('UPDATE orders SET orderNo = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND (orderNo IS NULL OR orderNo = ?)')
-    .bind(orderNo, orderId, '').run()
-  const saved = await c.env.RENT.prepare('SELECT orderNo FROM orders WHERE id = ?').bind(orderId).first() as any
-  if (!saved?.orderNo) throw new Error('订单编号生成失败')
-  return String(saved.orderNo)
-}
-
-
-export async function insertContract(c: Context, contract: Contract): Promise<void> {
-  const db = getDB(c);
-  // 同时插入驼峰和下划线格式的字段，确保兼容性
-  await db.prepare('INSERT INTO contracts (id, orderId, contractNumber, content, signedAt, createdAt, signToken, status, validFrom, validUntil, signExpiresAt, created_by, sign_expires_at, sign_token, device_condition, device_accessories, late_fee_per_day, repair_cost, pickup_location, return_location, contract_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
-    contract.id, contract.rentalId, contract.contractNumber, contract.content, contract.signedAt, contract.createdAt, contract.signToken, contract.status, contract.validFrom, contract.validUntil, contract.signExpiresAt, contract.createdBy, contract.signExpiresAt, contract.signToken,
-    contract.device_condition || null, contract.device_accessories || null, contract.late_fee_per_day || 0, contract.repair_cost ?? null, contract.pickup_location || null, contract.return_location || null,
-    typeof contract.contract_data === 'string' ? contract.contract_data : JSON.stringify(contract.contract_data || {})
-  ).run();
-}
-
-export async function updateDeviceStatus(c: Context, deviceId: string, status: string): Promise<void> {
-  const db = getDB(c);
-  await db.prepare('UPDATE devices SET status = ? WHERE id = ?').bind(status, deviceId).run();
-}
-
-export async function recordDeviceLifecycle(c: Context, deviceId: string, nextStatus: DeviceLifecycleStatus, options: { orderId?: string, reason?: string, changedBy?: string } = {}): Promise<void> {
-  if (!DEVICE_LIFECYCLE_STATES.has(nextStatus)) throw new Error('设备生命周期状态无效')
-  const db = getDB(c)
-  const device = await db.prepare('SELECT lifecycle_status FROM devices WHERE id = ?').bind(deviceId).first() as any
-  if (!device) throw new Error('设备不存在')
-  const previousStatus = String(device.lifecycle_status || 'READY')
-  if (previousStatus === nextStatus) return
-  await db.batch([
-    db.prepare('UPDATE devices SET lifecycle_status = ?, status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(nextStatus, legacyDeviceStatusForLifecycle(nextStatus), deviceId),
-    db.prepare('INSERT INTO device_lifecycle_events (id, device_id, order_id, previous_status, next_status, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`dle-${nanoid(16)}`, deviceId, options.orderId || null, previousStatus, nextStatus, options.reason || null, options.changedBy || null),
-  ])
-}
-
-export async function releaseDeviceIfUnbooked(c: Context, deviceId: string): Promise<void> {
-  const activeOrder = await c.env.RENT.prepare(`
-    SELECT id FROM orders
-    WHERE deviceId = ? AND status IN ('paid', 'active', 'pending_pickup', 'pending_return')
-    LIMIT 1
-  `).bind(deviceId).first()
-  if (!activeOrder) await updateDeviceStatus(c, deviceId, 'available')
-}
-
 export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<number> {
   const orders = await c.env.RENT.prepare(`
     SELECT id, deviceId FROM orders
@@ -1044,7 +385,7 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
   return found
 }
 
-// 系统健康监控（完善.md §30, §48）：把近 24 小时的失败率 / 积压量汇总成分级指标。
+// 系统健康监控（完善.md）：把近 24 小时的失败率 / 积压量汇总成分级指标。
 // 每个指标独立 try/catch，缺表不影响其它指标。
 export async function collectMonitoringMetrics(c: Context): Promise<MonitorMetric[]> {
   const metrics: MonitorMetric[] = []
@@ -1128,26 +469,8 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   }
 }
 
-export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string, bufferDays = 0): Promise<boolean> {
-  const requestedStart = new Date(`${startDate}T00:00:00Z`)
-  const requestedEnd = new Date(`${endDate}T00:00:00Z`)
-  requestedStart.setUTCDate(requestedStart.getUTCDate() - Math.max(0, bufferDays))
-  requestedEnd.setUTCDate(requestedEnd.getUTCDate() + Math.max(0, bufferDays))
-  const conflictStart = requestedStart.toISOString().slice(0, 10)
-  const conflictEnd = requestedEnd.toISOString().slice(0, 10)
-  const row = await c.env.RENT.prepare(`
-    SELECT id FROM orders
-    WHERE deviceId = ? AND id != ?
-      AND status NOT IN ('completed', 'cancelled')
-      AND startDate < ? AND endDate > ?
-    LIMIT 1
-  `).bind(deviceId, excludeOrderId || '', conflictEnd, conflictStart).first()
-  return Boolean(row)
-}
-
-
 // ---------------------------------------------------------------------------
-// 通用 Webhook 幂等 (TODO.md P7 / 完善.md §43)
+// 通用 Webhook 幂等 (TODO.md P7 / 完善.md)
 //
 // Stripe、设备回调、未来第三方服务共用一张 webhook_events：provider + event_id
 // 唯一，保证同一事件只产生一次业务副作用，并可安全重试。
@@ -1213,70 +536,7 @@ export async function reconcileOrderPayments(c: Context, orderId: string): Promi
   return evaluatePaymentReconciliation({ payments: paymentRows, paymentAllocations, refunds: refundRows, refundAllocations })
 }
 
-export async function updateOrder(c: Context, order: Order): Promise<void> {
-  const db = getDB(c)
-  await db
-    .prepare(
-      'UPDATE orders SET orderNo = ?, userId = ?, deviceId = ?, startDate = ?, endDate = ?, status = ?, paymentMethod = ?, totalAmount = ?, depositAmount = ?, contractId = ? WHERE id = ?'
-    )
-    .bind(
-      order.orderNo ?? null,
-      order.userId ?? null,
-      order.deviceId ?? null,
-      order.startDate ?? null,
-      order.endDate ?? null,
-      order.status ?? 'pending_payment',
-      order.paymentMethod ?? null,
-      Number(order.totalAmount ?? 0),
-      Number(order.depositAmount ?? 0),
-      order.contractId || null,
-      order.id
-    )
-    .run()
-}
-
 // Compatibility aliases expected by legacy code
-export async function updateOrderInDB(c: Context, orderId: string, data: Partial<Order>): Promise<void> {
-  const fields: Array<[string, unknown]> = [
-    ['orderNo', data.orderNo],
-    ['userId', data.userId],
-    ['deviceId', data.deviceId],
-    ['startDate', data.startDate],
-    ['endDate', data.endDate],
-    ['status', data.status],
-    ['paymentMethod', data.paymentMethod],
-    ['totalAmount', data.totalAmount],
-    ['depositAmount', data.depositAmount],
-    ['contractId', data.contractId],
-  ]
-  const updates = fields.filter(([, value]) => value !== undefined)
-  if (!updates.length) return
-  const existing = await c.env.RENT.prepare('SELECT id FROM orders WHERE id = ?').bind(orderId).first()
-  if (!existing) return
-  await c.env.RENT.prepare(`UPDATE orders SET ${updates.map(([field]) => `${field} = ?`).join(', ')} WHERE id = ?`)
-    .bind(...updates.map(([, value]) => value), orderId)
-    .run()
-}
-
-
-export async function updateContractStatus(c: Context, contractId: string, status: string, signedAt: string | null = null): Promise<void> {
-  const db = getDB(c)
-  await db.prepare('UPDATE contracts SET status = ?, signedAt = ? WHERE id = ?').bind(status, signedAt, contractId).run()
-
-  // 如果合同被取消，则将关联的设备状态设置回“可用”
-  if (status === 'cancelled') {
-    const contract = await getContractById(c, contractId);
-    if (contract && (contract.rentalId || contract.rental_id)) {
-      const orderId = contract.rentalId || contract.rental_id;
-      const order = await getOrderById(c, orderId);
-      if (order && order.deviceId) {
-        await updateDeviceStatus(c, order.deviceId, 'available');
-        console.log(`Device ${order.deviceId} status set to 'available' due to contract ${contractId} cancellation.`);
-      }
-    }
-  }
-}
-
 // 定期清理过期和已取消的合同
 export async function cleanupExpiredAndCancelledContracts(c: Context): Promise<number> {
   const db = getDB(c)
@@ -1338,215 +598,6 @@ export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
       AND NOT EXISTS (SELECT 1 FROM addresses WHERE addresses.user_id = users.id)
   `).run() as any
   return ids.length + Number(purgeResult.meta?.changes ?? purgeResult.changes ?? 0)
-}
-
-// Compatibility alias expected by legacy code
-export async function updateContractStatusInDB(c: Context, contractId: string, status: string, signedAt: string | null = null): Promise<void> {
-  await updateContractStatus(c, contractId, status, signedAt)
-}
-
-
-export async function getContractByContractNumber(c: Context, contractNumber: string): Promise<Contract | null> {
-  const db = getDB(c)
-  // 将输入的合同编号转为大写，数据库中存储的都是大写字母和数字，实现大小写不敏感查询
-  const upperCaseContractNumber = contractNumber.toUpperCase()
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE UPPER(contractNumber) = ?').bind(upperCaseContractNumber).first()
-  if (!contractRow) return null
-
-  // 统一处理snake_case和camelCase字段
-  const validFrom = contractRow.validFrom ?? contractRow.valid_from
-  const validUntil = contractRow.validUntil ?? contractRow.valid_until
-  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
-  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
-  const valid_from = contractRow.valid_from ?? contractRow.validFrom
-  const valid_until = contractRow.valid_until ?? contractRow.validUntil
-  const createdBy = contractRow.createdBy ?? contractRow.created_by
-  const created_by = contractRow.created_by ?? contractRow.createdBy
-
-  // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
-  return {
-    ...contractRow,
-    validFrom,
-    validUntil,
-    signExpiresAt,
-    rentalId,
-    rental_id,
-    sign_expires_at,
-    valid_from,
-    valid_until,
-    createdBy,
-    created_by
-  } as Contract
-}
-
-export async function getContractBySignToken(c: Context, signToken: string): Promise<Contract | null> {
-  const db = getDB(c)
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(signToken).first()
-  if (!contractRow) return null
-
-  // 统一处理snake_case和camelCase字段
-  const validFrom = contractRow.validFrom ?? contractRow.valid_from
-  const validUntil = contractRow.validUntil ?? contractRow.valid_until
-  const signExpiresAt = contractRow.signExpiresAt ?? contractRow.sign_expires_at
-  const rentalId = contractRow.orderId ?? contractRow.order_id ?? contractRow.rentalId ?? contractRow.rental_id
-  const rental_id = contractRow.rental_id ?? contractRow.rentalId ?? contractRow.orderId ?? contractRow.order_id
-  const sign_expires_at = contractRow.sign_expires_at ?? contractRow.signExpiresAt
-  const valid_from = contractRow.valid_from ?? contractRow.validFrom
-  const valid_until = contractRow.valid_until ?? contractRow.validUntil
-  const createdBy = contractRow.createdBy ?? contractRow.created_by
-  const created_by = contractRow.created_by ?? contractRow.createdBy
-
-  // 确保返回的合同对象同时包含两种格式的字段，兼容所有调用方
-  return {
-    ...contractRow,
-    validFrom,
-    validUntil,
-    signExpiresAt,
-    rentalId,
-    rental_id,
-    sign_expires_at,
-    valid_from,
-    valid_until,
-    createdBy,
-    created_by
-  } as Contract
-}
-
-export async function findUserByEmail(c: Context, email: string): Promise<User | null> {
-  const db = getDB(c)
-  const userRow = await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first()
-  if (!userRow) return null
-  return normalizeUserRow(userRow)
-}
-
-export async function verifyUserCredentials(c: Context, account: string, password: string): Promise<User | null> {
-  const db = getDB(c)
-  // Find user by email first
-  const userRow = await db.prepare('SELECT * FROM users WHERE email = ?').bind(account).first()
-  if (userRow) {
-    // Check password
-    const normalizedUser = normalizeUserRow(userRow)
-    // Get password hash (handle both camelCase and snake_case)
-    const passwordHash = userRow.passwordHash || userRow.password_hash
-    const passwordSalt = userRow.passwordSalt || userRow.password_salt
-    if (passwordHash) {
-      const isValid = await verifyPassword(password, String(passwordHash).startsWith('pbkdf2$') ? String(passwordHash) : `${passwordSalt}$${passwordHash}`)
-      if (isValid) {
-        if (!String(passwordHash).startsWith('pbkdf2$')) await updateUser(c, normalizedUser.id, { password })
-        delete (normalizedUser as any).passwordHash
-        delete (normalizedUser as any).passwordSalt
-        delete (normalizedUser as any).password
-        return normalizedUser
-      }
-    }
-  }
-  // If not found by email, try phone number as account
-  const phoneRow = await db.prepare('SELECT * FROM users WHERE phone = ?').bind(account).first()
-  if (phoneRow) {
-    const normalizedUser = normalizeUserRow(phoneRow)
-    const passwordHash = phoneRow.passwordHash || phoneRow.password_hash
-    const passwordSalt = phoneRow.passwordSalt || phoneRow.password_salt
-    if (passwordHash) {
-      const isValid = await verifyPassword(password, String(passwordHash).startsWith('pbkdf2$') ? String(passwordHash) : `${passwordSalt}$${passwordHash}`)
-      if (isValid) {
-        if (!String(passwordHash).startsWith('pbkdf2$')) await updateUser(c, normalizedUser.id, { password })
-        delete (normalizedUser as any).passwordHash
-        delete (normalizedUser as any).passwordSalt
-        delete (normalizedUser as any).password
-        return normalizedUser
-      }
-    }
-  }
-  return null
-}
-
-export async function findUserByReferralCode(c: Context, referralCode: string): Promise<User | null> {
-  const db = getDB(c)
-  const normalizedCode = referralCode.trim().toUpperCase()
-  const userRow = await db.prepare('SELECT * FROM users WHERE UPPER(referral_code) = ?').bind(normalizedCode).first()
-  return userRow ? normalizeUserRow(userRow as any) : null
-}
-
-export async function getDeviceBySerialNumber(c: Context, serialNumber: string): Promise<Device | null> {
-  const db = getDB(c)
-  return db.prepare('SELECT * FROM devices WHERE serialNumber = ?').bind(serialNumber).first() as Device | null
-}
-
-export async function getDevices(c?: Context): Promise<Device[]> {
-  const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM devices').all()
-  if (!result.results) return []
-
-  // 为每个设备统一处理snake_case和camelCase字段
-  return (result.results as any[]).map(deviceRow => {
-    const pricePerDay = deviceRow.pricePerDay ?? deviceRow.price_per_day
-    const depositAmount = deviceRow.depositAmount ?? deviceRow.deposit_amount
-    const serialNumber = deviceRow.serialNumber ?? deviceRow.serial_number
-    const serial_number = deviceRow.serial_number ?? deviceRow.serialNumber
-    const price_per_day = deviceRow.price_per_day ?? deviceRow.pricePerDay
-    const deposit_amount = deviceRow.deposit_amount ?? deviceRow.depositAmount
-
-    return {
-      ...deviceRow,
-      pricePerDay,
-      depositAmount,
-      serialNumber,
-      serial_number,
-      price_per_day,
-      deposit_amount
-    } as Device
-  }) || []
-}
-
-export async function getUsers(c?: Context): Promise<User[]> {
-  const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM users').all()
-  if (!result.results) return []
-  return (result.results as any[]).map(normalizeUserRow) || []
-}
-
-export async function getUsersByIds(c: Context, ids: string[]): Promise<User[]> {
-  if (!ids.length) return []
-  const db = getDB(c)
-  const placeholders = ids.map(() => '?').join(', ')
-  const result = await db.prepare(`SELECT * FROM users WHERE id IN (${placeholders})`).bind(...ids).all()
-  if (!result.results) return []
-  return (result.results as any[]).map(normalizeUserRow) || []
-}
-
-export async function getDevicesByIds(c: Context, ids: string[]): Promise<Device[]> {
-  if (!ids.length) return []
-  const db = getDB(c)
-  const placeholders = ids.map(() => '?').join(', ')
-  const result = await db.prepare(`SELECT * FROM devices WHERE id IN (${placeholders})`).bind(...ids).all()
-  return (result.results as Device[]) || []
-}
-
-export async function getOrdersByIds(c: Context, ids: string[]): Promise<Order[]> {
-  if (!ids.length) return []
-  const db = getDB(c)
-  const placeholders = ids.map(() => '?').join(', ')
-  const result = await db.prepare(`SELECT * FROM orders WHERE id IN (${placeholders})`).bind(...ids).all()
-  return (result.results as Order[]) || []
-}
-
-export async function getOrdersAsync(c: Context): Promise<any[]> {
-  const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM orders').all()
-  return result.results || []
-}
-
-
-
-function safeJsonParse<T>(value: string | null | undefined): T | undefined {
-  if (!value) return undefined
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return undefined
-  }
 }
 
 export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
@@ -1676,630 +727,11 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   return systemSettings
 }
 
-export async function insertUser(c: Context, user: any): Promise<User> {
-  const db = getDB(c)
-  user = {
-    ...user,
-    name: sanitizePlainText(user.name, 100),
-    email: String(user.email ?? '').trim().toLowerCase().slice(0, 254),
-    phone: sanitizePlainText(user.phone, 40),
-    bsb: sanitizePlainText(user.bsb, 20),
-    account: sanitizePlainText(user.account, 40),
-    accountNumber: sanitizePlainText(user.accountNumber, 40),
-    referralCode: sanitizePlainText(user.referralCode, 64) || null,
-  }
-
-  // 检查数据库中存在哪些列
-  const hasPasswordHashSnake = await userHasColumn(c, 'password_hash')
-  const hasPasswordHashCamel = await userHasColumn(c, 'passwordHash')
-  const hasPasswordSaltSnake = await userHasColumn(c, 'password_salt')
-  const hasPasswordSaltCamel = await userHasColumn(c, 'passwordSalt')
-  const hasReferrerIdSnake = await userHasColumn(c, 'referrer_id')
-  const hasReferrerIdCamel = await userHasColumn(c, 'referrerId')
-  const hasReferralCodeSnake = await userHasColumn(c, 'referral_code')
-  const hasReferralCodeCamel = await userHasColumn(c, 'referralCode')
-  const hasCreatedAtSnake = await userHasColumn(c, 'created_at')
-  const hasCreatedAtCamel = await userHasColumn(c, 'createdAt')
-  const hasCommissionBalanceSnake = await userHasColumn(c, 'commission_balance')
-  const hasCommissionBalanceCamel = await userHasColumn(c, 'commissionBalance')
-  const hasStaffIdSnake = await userHasColumn(c, 'staff_id')
-  const hasStaffIdCamel = await userHasColumn(c, 'staffId')
-  const hasAccountType = await userHasColumn(c, 'account_type')
-  const hasAccountStatus = await userHasColumn(c, 'account_status')
-  const hasGuestOrderId = await userHasColumn(c, 'guest_order_id')
-  const hasGuestExpiresAt = await userHasColumn(c, 'guest_expires_at')
-  const hasAccessLevel = await userHasColumn(c, 'access_level')
-
-  let passwordHashToStore = user.passwordHash ?? null;
-  let passwordSaltToStore = user.passwordSalt ?? null;
-
-  if (user.password) {
-    const newHashedPassword = await hashPassword(user.password);
-    passwordHashToStore = newHashedPassword;
-    passwordSaltToStore = 'v2';
-  } else if (user.passwordHash && user.passwordHash.includes('$')) {
-    if (user.passwordHash.startsWith('pbkdf2$')) {
-      passwordHashToStore = user.passwordHash;
-      passwordSaltToStore = 'v2';
-    } else {
-      const [newSalt, newHash] = user.passwordHash.split('$');
-      passwordHashToStore = newHash;
-      passwordSaltToStore = newSalt;
-    }
-  }
-
-  // 构建INSERT字段和值
-  const insertFields = ['id', 'name', 'email', 'phone', 'role', 'status', 'balance'];
-  const insertValues = [user.id, user.name, user.email, user.phone || null, user.role, user.status ?? 'active', user.balance ?? 0];
-  if (hasAccessLevel) { insertFields.push('access_level'); insertValues.push(user.accessLevel ?? user.access_level ?? user.role) }
-
-  // 处理commission_balance / commissionBalance
-  if (hasCommissionBalanceSnake) {
-    insertFields.push('commission_balance');
-    insertValues.push(user.commissionBalance ?? 0);
-  } else if (hasCommissionBalanceCamel) {
-    insertFields.push('commissionBalance');
-    insertValues.push(user.commissionBalance ?? 0);
-  }
-
-  // 处理referral_code / referralCode
-  if (hasReferralCodeSnake) {
-    insertFields.push('referral_code');
-    insertValues.push(user.referralCode ?? null);
-  } else if (hasReferralCodeCamel) {
-    insertFields.push('referralCode');
-    insertValues.push(user.referralCode ?? null);
-  }
-
-  // 处理referrer_id / referrerId
-  if (hasReferrerIdSnake) {
-    insertFields.push('referrer_id');
-    insertValues.push(user.referrerId ?? null);
-  } else if (hasReferrerIdCamel) {
-    insertFields.push('referrerId');
-    insertValues.push(user.referrerId ?? null);
-  }
-
-  if (hasStaffIdSnake) {
-    insertFields.push('staff_id');
-    insertValues.push(user.staffId ?? null);
-  } else if (hasStaffIdCamel) {
-    insertFields.push('staffId');
-    insertValues.push(user.staffId ?? null);
-  }
-
-  if (hasAccountType) {
-    insertFields.push('account_type'); insertValues.push(user.accountType ?? 'formal')
-  }
-  if (hasAccountStatus) {
-    insertFields.push('account_status'); insertValues.push(user.accountStatus ?? (user.status === 'active' ? 'active' : 'inactive'))
-  }
-  if (hasGuestOrderId) {
-    insertFields.push('guest_order_id'); insertValues.push(user.guestOrderId ?? null)
-  }
-  if (hasGuestExpiresAt) {
-    insertFields.push('guest_expires_at'); insertValues.push(user.guestExpiresAt ?? null)
-  }
-
-  // 处理created_at / createdAt
-  if (hasCreatedAtSnake) {
-    insertFields.push('created_at');
-    insertValues.push(user.createdAt ?? new Date().toISOString());
-  } else if (hasCreatedAtCamel) {
-    insertFields.push('createdAt');
-    insertValues.push(user.createdAt ?? new Date().toISOString());
-  }
-
-  // 根据数据库存在的列添加密码相关字段
-  if (passwordHashToStore !== null) {
-    if (hasPasswordHashSnake) {
-      insertFields.push('password_hash');
-      insertValues.push(passwordHashToStore);
-    } else if (hasPasswordHashCamel) {
-      insertFields.push('passwordHash');
-      insertValues.push(passwordHashToStore);
-    }
-  }
-
-  if (passwordSaltToStore !== null) {
-    if (hasPasswordSaltSnake) {
-      insertFields.push('password_salt');
-      insertValues.push(passwordSaltToStore);
-    } else if (hasPasswordSaltCamel) {
-      insertFields.push('passwordSalt');
-      insertValues.push(passwordSaltToStore);
-    }
-  }
-
-  const placeholders = insertFields.map(() => '?').join(', ');
-  const sql = `INSERT INTO users (${insertFields.join(', ')}) VALUES (${placeholders})`;
-
-  await db.prepare(sql).bind(...insertValues).run()
-
-  const usersOldTable = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users_old'").first()
-  if (usersOldTable) {
-    await db.prepare(`
-      INSERT OR IGNORE INTO users_old
-        (id, name, email, phone, passwordHash, role, status, bsb, accountNumber,
-         referrerId, commissionBalance, balance, referralCode, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      user.id,
-      user.name,
-      user.email,
-      user.phone || null,
-      passwordHashToStore ?? '',
-      user.role,
-      user.status ?? 'active',
-      user.bsb || null,
-      user.accountNumber || null,
-      user.referrerId || null,
-      user.commissionBalance ?? 0,
-      user.balance ?? 0,
-      user.referralCode ?? null,
-      user.createdAt ?? new Date().toISOString(),
-      user.updatedAt ?? new Date().toISOString()
-    ).run()
-  }
-
-  const insertedRow = await db.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first() as any | null
-  if (!insertedRow) return null as any
-  const inserted = normalizeUserRow(insertedRow)
-  delete (inserted as any).passwordHash
-  delete (inserted as any).passwordSalt
-  delete (inserted as any).password_hash
-  delete (inserted as any).password_salt
-  delete (inserted as any).password
-  return inserted as User
-}
-
-export async function updateUser(c: Context, userId: string, data: Partial<User> & { password?: string }): Promise<User | null> {
-  const db = getDB(c)
-  const fields: Record<string, any> = { ...data }
-
-  if (fields.password) {
-    const newHashedPassword = await hashPassword(fields.password);
-    fields.passwordHash = newHashedPassword;
-    fields.passwordSalt = 'v2';
-    delete fields.password;
-  }
-
-  // 字段名映射：前端驼峰 -> 数据库蛇形列名
-  const fieldMapping: Record<string, string> = {
-    referralCode: 'referral_code',
-    referrerId: 'referrer_id',
-    passwordHash: 'password_hash',
-    passwordSalt: 'password_salt',
-    commissionBalance: 'commission_balance',
-    createdAt: 'created_at',
-    updatedAt: 'updated_at',
-    commissionRate: 'commission_rate',
-    staffId: 'staff_id',
-    accountType: 'account_type',
-    accountStatus: 'account_status',
-    guestOrderId: 'guest_order_id',
-    guestExpiresAt: 'guest_expires_at',
-    deletedAt: 'deleted_at',
-    deletionRequestedAt: 'deletion_requested_at',
-    deletionScheduledAt: 'deletion_scheduled_at',
-    accountNumber: 'account_number'
-    , accessLevel: 'access_level'
-  }
-
-  const allowedFields = new Set([
-    'name', 'email', 'role', 'status', 'balance', 'phone', 'bsb', 'account', 'accountNumber',
-    'referralCode', 'referrerId', 'passwordHash', 'passwordSalt', 'commissionBalance',
-    'createdAt', 'updatedAt', 'commissionRate', 'staffId', 'accountType', 'accountStatus',
-    'guestOrderId', 'guestExpiresAt', 'deletedAt', 'deletionRequestedAt', 'deletionScheduledAt', 'accessLevel',
-  ])
-  for (const key of Object.keys(fields)) {
-    if (!allowedFields.has(key)) delete fields[key]
-  }
-  for (const key of ['name', 'phone', 'bsb', 'account', 'accountNumber', 'referralCode']) {
-    if (fields[key] !== undefined) fields[key] = sanitizePlainText(fields[key], key === 'name' ? 100 : 64)
-  }
-  if (fields.email !== undefined) fields.email = String(fields.email).trim().toLowerCase().slice(0, 254)
-
-  const setEntries = Object.entries(fields).filter(([k]) => k !== 'id' && fields[k] !== undefined)
-  if (setEntries.length === 0) {
-    return db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
-  }
-
-  const tableInfo = await db.prepare('PRAGMA table_info(users)').all() as any
-  const columns = new Set((tableInfo.results || []).map((column: any) => column.name))
-  const mappedSetEntries = setEntries
-    .map(([key, value]) => {
-      const mappedKey = fieldMapping[key] || key
-      if (columns.has(mappedKey)) return [mappedKey, value]
-      if (columns.has(key)) return [key, value]
-      return null
-    })
-    .filter((entry): entry is [string, any] => Boolean(entry))
-  if (!mappedSetEntries.length) return getUserById(c, userId)
-  const setClause = mappedSetEntries.map(([k]) => `${k} = ?`).join(', ')
-  const values = mappedSetEntries.map(([, v]) => v)
-
-  await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).bind(...values, userId).run()
-  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
-  if (!updated) return null
-  const normalized = normalizeUserRow(updated as any)
-  delete (normalized as any).passwordHash
-  delete (normalized as any).passwordSalt
-  delete (normalized as any).password
-  return normalized
-}
-
-export async function getDevicesAsync(c: Context): Promise<Device[]> {
-  return getDevices(c)
-}
-
-export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id?: string }): Promise<Device> {
-  const db = getDB(c)
-  const { nanoid } = await import('nanoid')
-  const deviceId = device.id || `d-${nanoid(8)}`
-
-  // 先检查devices表中存在哪些列，避免硬编码列名导致错误
-  const tableInfo = await db.prepare('PRAGMA table_info(devices)').all() as any;
-  const deviceColumns = (tableInfo.results || []).map((column: any) => column.name);
-
-  const hasSerialNumberSnake = deviceColumns.includes('serial_number');
-  const hasSerialNumberCamel = deviceColumns.includes('serialNumber');
-  const hasPricePerDaySnake = deviceColumns.includes('price_per_day');
-  const hasPricePerDayCamel = deviceColumns.includes('pricePerDay');
-  const hasDepositAmountSnake = deviceColumns.includes('deposit_amount');
-  const hasDepositAmountCamel = deviceColumns.includes('depositAmount');
-
-  // 构建插入字段和值
-  const insertFields = ['id', 'name', 'model', 'status', 'description'];
-  const insertValues = [
-    deviceId,
-    sanitizePlainText(device.name, 120),
-    sanitizePlainText(device.model, 120),
-    device.status || 'available',
-    sanitizePlainText(device.description, 2000),
-  ];
-  if (deviceColumns.includes('lifecycle_status')) {
-    const initialLifecycle: DeviceLifecycleStatus = device.status === 'maintenance' ? 'MAINTENANCE' : device.status === 'retired' ? 'RETIRED' : device.status === 'rented' ? 'RENTED' : 'READY'
-    insertFields.push('lifecycle_status')
-    insertValues.push(initialLifecycle)
-  }
-
-  for (const field of ['brand', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os']) {
-    if (!deviceColumns.includes(field)) continue
-    const sourceKey = field === 'asset_tag' ? 'assetTag' : field
-    insertFields.push(field)
-    insertValues.push(sanitizePlainText((device as any)[sourceKey] ?? (device as any)[field], 200))
-  }
-
-  if (deviceColumns.includes('agent_token_hash') && (device as any).agentTokenHash) {
-    insertFields.push('agent_token_hash')
-    insertValues.push(sanitizePlainText((device as any).agentTokenHash, 128))
-  }
-
-  // 处理序列号字段
-  if (hasSerialNumberCamel) {
-    insertFields.push('serialNumber');
-    insertValues.push(device.serialNumber);
-  } else if (hasSerialNumberSnake) {
-    insertFields.push('serial_number');
-    insertValues.push(device.serialNumber);
-  }
-
-  // 处理日租金字段
-  if (hasPricePerDayCamel) {
-    insertFields.push('pricePerDay');
-    insertValues.push(device.pricePerDay.toString());
-  } else if (hasPricePerDaySnake) {
-    insertFields.push('price_per_day');
-    insertValues.push(device.pricePerDay.toString());
-  }
-
-  // 处理押金字段
-  if (hasDepositAmountCamel) {
-    insertFields.push('depositAmount');
-    insertValues.push(device.depositAmount.toString());
-  } else if (hasDepositAmountSnake) {
-    insertFields.push('deposit_amount');
-    insertValues.push(device.depositAmount.toString());
-  }
-
-  const placeholders = insertFields.map(() => '?').join(', ');
-  const sql = `INSERT INTO devices (${insertFields.join(', ')}) VALUES (${placeholders})`;
-
-  await db.prepare(sql).bind(...insertValues).run()
-  const inserted = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
-  return inserted
-}
-
-export async function updateDevice(c: Context, deviceId: string, data: Partial<Device>): Promise<Device | null> {
-  const db = getDB(c)
-  const existing = await getDeviceById(c, deviceId)
-  if (!existing) return null
-
-  // Older deployments use snake_case columns while newer ones use camelCase.
-  // Resolve the actual schema once so editing works against either database.
-  const tableInfo = await db.prepare('PRAGMA table_info(devices)').all() as any
-  const columns = new Set((tableInfo.results || []).map((column: any) => column.name))
-
-  const columnMapping: Record<string, string> = {
-    name: 'name', brand: 'brand', model: 'model', assetTag: 'asset_tag', asset_tag: 'asset_tag',
-    cpu: 'cpu', ram: 'ram', storage: 'storage', gpu: 'gpu', os: 'os', status: 'status', description: 'description',
-    serialNumber: 'serialNumber', serial_number: 'serial_number',
-    pricePerDay: 'pricePerDay', price_per_day: 'price_per_day',
-    depositAmount: 'depositAmount', deposit_amount: 'deposit_amount',
-    agentStatus: 'agent_status', agent_status: 'agent_status',
-    deviceMode: 'device_mode', device_mode: 'device_mode',
-    lifecycleStatus: 'lifecycle_status', lifecycle_status: 'lifecycle_status',
-  }
-  const plainTextFields = new Set(['name', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
-  const setEntries: [string, any][] = []
-  for (const [key, value] of Object.entries(data)) {
-    let column = columnMapping[key]
-    if (column === 'asset_tag' && !columns.has(column) && columns.has('assetTag')) column = 'assetTag'
-    if (column === 'serialNumber' && !columns.has(column) && columns.has('serial_number')) column = 'serial_number'
-    if (column === 'pricePerDay' && !columns.has(column) && columns.has('price_per_day')) column = 'price_per_day'
-    if (column === 'depositAmount' && !columns.has(column) && columns.has('deposit_amount')) column = 'deposit_amount'
-    if (column && columns.has(column) && value !== undefined) {
-      setEntries.push([column, plainTextFields.has(key) ? sanitizePlainText(value, key === 'description' ? 2000 : 120) : value])
-    }
-  }
-
-  if (setEntries.length === 0) return existing
-
-  const setClause = setEntries.map(([col]) => `${col} = ?`).join(', ')
-  const values = setEntries.map(([, v]) => v)
-
-  await db.prepare(`UPDATE devices SET ${setClause} WHERE id = ?`).bind(...values, deviceId).run()
-  return db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
-}
-
-export async function deleteDevice(c: Context, deviceId: string): Promise<boolean> {
-  const db = getDB(c)
-  const references = [
-    ['orders', 'deviceId'], ['orders', 'device_id'],
-    ['rentals', 'device_id'], ['rentals', 'deviceId'],
-    ['contracts', 'device_id'], ['contracts', 'deviceId'],
-  ]
-  for (const [table, column] of references) {
-    try {
-      const row = await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).bind(deviceId).first() as any
-      if (Number(row?.count || 0) > 0) {
-        await updateDevice(c, deviceId, { status: 'retired' })
-        return false
-      }
-    } catch (_) { /* schema variant or table not present */ }
-  }
-  const result = await db.prepare('DELETE FROM devices WHERE id = ?').bind(deviceId).run()
-  return result.success
-}
-
-export async function getUsersAsync(c: Context): Promise<User[]> {
-  return getUsers(c)
-}
-
-
-
-
-
 export async function updateContractTemplateInDB(c: Context, newTemplate: { id: string; name: string; content: string }) {
   return updateContractTemplate(c, newTemplate)
 }
 
 
-
-async function getTableColumns(c: Context, tableName: string): Promise<string[]> {
-  const allowedTables = new Set(['commission_withdrawals'])
-  if (!allowedTables.has(tableName)) throw new Error('Unsupported table name')
-  const db = getDB(c)
-  const result = await db.prepare(`PRAGMA table_info(${tableName})`).all() as any
-  return (result.results || []).map((column: any) => column.name)
-}
-
-export interface WithdrawableReward { id: string; amount: number }
-export interface WithdrawalPlan {
-  eligible: boolean
-  fullyConsumedIds: string[]
-  // The boundary reward that only partly covers the request: mark it withdrawn
-  // for `withdrawnAmount` and leave a residual AVAILABLE reward for the rest.
-  split?: { id: string; withdrawnAmount: number; residualAmount: number }
-  total: number
-  shortfall: number
-}
-
-// FIFO 选出足以覆盖提现额的 AVAILABLE 推荐奖励。金额按分计算避免浮点误差；跨越提现
-// 额的那一笔奖励会被拆分，不整笔吞掉，避免"余额还在但没有可提现奖励"的死角。
-export function planWithdrawalConsumption(rewards: WithdrawableReward[], amount: number): WithdrawalPlan {
-  const targetC = Math.round(Number(amount) * 100)
-  let accC = 0
-  const fullyConsumedIds: string[] = []
-  let split: WithdrawalPlan['split']
-  for (const r of rewards) {
-    if (accC >= targetC) break
-    const c = Math.round(Number(r.amount || 0) * 100)
-    if (c <= 0) continue
-    if (accC + c <= targetC) {
-      fullyConsumedIds.push(r.id)
-      accC += c
-    } else {
-      const withdrawnC = targetC - accC
-      split = { id: r.id, withdrawnAmount: withdrawnC / 100, residualAmount: (c - withdrawnC) / 100 }
-      accC = targetC
-      break
-    }
-  }
-  const totalC = rewards.reduce((s, r) => s + Math.max(0, Math.round(Number(r.amount || 0) * 100)), 0)
-  return { eligible: accC >= targetC, fullyConsumedIds, split, total: totalC / 100, shortfall: Math.max(0, targetC - totalC) / 100 }
-}
-
-export async function createWithdrawalRequest(
-  c: Context,
-  userId: string,
-  amount: number,
-  withdrawMethod: 'balance' | 'bank_transfer',
-  bankDetails?: { bsb?: string; accountNumber?: string; accountName?: string }
-): Promise<{ success: boolean; message: string }> {
-  const db = getDB(c)
-  const { nanoid } = await import('nanoid')
-
-  const normalizedAmount = Number(amount)
-
-  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
-    return { success: false, message: '请输入正确的提现金额，金额必须大于 0' }
-  }
-
-  if (withdrawMethod === 'bank_transfer' && (!Number.isInteger(normalizedAmount) || normalizedAmount < 100)) {
-    return { success: false, message: '银行转账提现金额必须大于 100 且为整数' }
-  }
-
-  // D1 doesn't allow raw BEGIN/COMMIT; do all reads first, reserve the commission
-  // with one guarded atomic UPDATE, then apply the rest as a single batch and
-  // compensate (re-credit) if that batch fails.
-  const user = await db.prepare('SELECT commission_balance FROM users WHERE id = ?').bind(userId).first() as any
-  if (!user) return { success: false, message: '用户不存在' }
-  const currentCommissionBalance = Number(user.commission_balance ?? 0)
-  if (currentCommissionBalance < normalizedAmount) {
-    return { success: false, message: '提现金额不能超过可提现余额' }
-  }
-
-  // 唯一账本 referral_rewards：可提现 = 未被其它提现划走的 AVAILABLE 奖励。
-  const availableRewards = await db.prepare(`
-    SELECT id, reward_amount AS amount
-    FROM referral_rewards
-    WHERE customer_id = ? AND status = 'AVAILABLE' AND withdrawn_at IS NULL
-    ORDER BY COALESCE(available_at, created_at) ASC, created_at ASC
-  `).bind(userId).all() as any
-  const plan = planWithdrawalConsumption(
-    (availableRewards.results || []).map((r: any) => ({ id: String(r.id), amount: Number(r.amount || 0) })),
-    normalizedAmount,
-  )
-  if (!plan.eligible) {
-    return { success: false, message: '可提现的推荐奖励不足，请稍后再试' }
-  }
-
-  const withdrawalId = `w-${nanoid(8)}`
-  const consumeWithdrawalId = withdrawMethod === 'bank_transfer' ? withdrawalId : null
-
-  // Reserve: only proceeds if the balance is still there (guards double-spend).
-  const reserved = await db.prepare(
-    'UPDATE users SET commission_balance = ROUND(commission_balance - ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND commission_balance >= ? RETURNING commission_balance',
-  ).bind(normalizedAmount, userId, normalizedAmount).first()
-  if (!reserved) return { success: false, message: '可提现余额已变化，请刷新后重试' }
-
-  try {
-    const writes = plan.fullyConsumedIds.map(id => db.prepare(
-      'UPDATE referral_rewards SET withdrawn_at = CURRENT_TIMESTAMP, withdrawal_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND withdrawn_at IS NULL',
-    ).bind(consumeWithdrawalId, id))
-    if (plan.split) {
-      // Boundary reward: shrink the original to the residual, add a withdrawn
-      // sibling row for the consumed portion (same referral/order lineage).
-      writes.push(
-        db.prepare('UPDATE referral_rewards SET reward_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND withdrawn_at IS NULL').bind(plan.split.residualAmount, plan.split.id),
-        db.prepare(`INSERT INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_type, reward_amount, currency, status, available_at, withdrawn_at, withdrawal_id, reason, created_at, updated_at)
-          SELECT ?, ?, referral_id, customer_id, order_id, reward_type, ?, currency, 'AVAILABLE', available_at, CURRENT_TIMESTAMP, ?, '提现拆分', created_at, CURRENT_TIMESTAMP FROM referral_rewards WHERE id = ?`)
-          .bind(`rrw-${nanoid(14)}`, `RRW-SPLIT-${nanoid(10)}`, plan.split.withdrawnAmount, consumeWithdrawalId, plan.split.id),
-      )
-    }
-
-    if (withdrawMethod === 'balance') {
-      writes.push(db.prepare('UPDATE users SET balance = ROUND(balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalizedAmount, userId))
-      await db.batch(writes)
-      return { success: true, message: '提现成功！金额已划入您的账户余额' }
-    }
-
-    const withdrawalColumns = await getTableColumns(c, 'commission_withdrawals')
-    const accountNumberColumn = withdrawalColumns.includes('account_number') ? 'account_number' : withdrawalColumns.includes('accountNumber') ? 'accountNumber' : null
-    const accountNameColumn = withdrawalColumns.includes('account_name') ? 'account_name' : withdrawalColumns.includes('accountName') ? 'accountName' : null
-    const bsbColumn = withdrawalColumns.includes('bsb') ? 'bsb' : null
-
-    const insertColumns = ['id', 'user_id', 'amount']
-    const insertValues: any[] = [withdrawalId, userId, normalizedAmount]
-    if (bsbColumn) { insertColumns.push(bsbColumn); insertValues.push(bankDetails?.bsb ?? null) }
-    if (accountNumberColumn) { insertColumns.push(accountNumberColumn); insertValues.push(bankDetails?.accountNumber ?? null) }
-    if (accountNameColumn) { insertColumns.push(accountNameColumn); insertValues.push(bankDetails?.accountName ?? null) }
-    insertColumns.push('status'); insertValues.push('pending')
-
-    const placeholders = insertColumns.map(() => '?').join(', ')
-    writes.push(db.prepare(`INSERT INTO commission_withdrawals (${insertColumns.join(', ')}) VALUES (${placeholders})`).bind(...insertValues))
-    await db.batch(writes)
-    return { success: true, message: '提现申请已提交，预计2个工作日处理' }
-  } catch (error) {
-    // Reservation went through but the rest failed — put the commission back.
-    await db.prepare('UPDATE users SET commission_balance = ROUND(commission_balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalizedAmount, userId).run().catch(() => {})
-    console.error('Withdrawal failed after commission was reserved (refunded):', error)
-    return { success: false, message: '提现失败，请稍后重试' }
-  }
-}
-
-export async function getPendingOrdersWithDetails(c: Context, staffId?: string): Promise<any[]> {
-  const db = getDB(c);
-  const query = `
-    SELECT 
-      o.id, 
-      o.orderNo, 
-      o.startDate, 
-      o.endDate, 
-      o.totalAmount, 
-      o.status,
-      u.name as customerName,
-      d.name as deviceName
-    FROM orders o
-    JOIN users u ON o.userId = u.id
-    JOIN devices d ON o.deviceId = d.id
-    WHERE o.status = 'pending_approval' ${staffId ? 'AND u.staff_id = ?' : ''}
-    ORDER BY o.createdAt DESC
-  `;
-  const statement = db.prepare(query)
-  const result = staffId ? await statement.bind(staffId).all() : await statement.all();
-  return result.results || [];
-}
-
-export async function getStaffDashboardData(c: Context, staffId?: string): Promise<any> {
-  const db = getDB(c);
-
-  const statsQuery = `
-    SELECT
-      (SELECT SUM(totalAmount) FROM orders WHERE status IN ('paid', 'active', 'completed')) as totalRevenue,
-      (SELECT COUNT(*) FROM orders WHERE status = 'active' OR status = 'paid') as activeRentals,
-      (SELECT COUNT(*) FROM orders WHERE status = 'pending_approval' OR status = 'pending_payment') as pendingOrders,
-      (SELECT COUNT(*) FROM devices WHERE status = 'available') as availableDevices,
-      (SELECT COUNT(*) FROM devices) as totalDevices
-  `;
-
-  const recentOrdersQuery = `
-    SELECT o.id, o.orderNo, o.status, u.name as customerName, d.name as deviceName
-    FROM orders o
-    LEFT JOIN users u ON o.userId = u.id
-    LEFT JOIN devices d ON o.deviceId = d.id
-    ${staffId ? 'WHERE u.staff_id = ?' : ''}
-    ORDER BY o.createdAt DESC
-    LIMIT 5
-  `;
-
-  const recentDevicesQuery = `
-    SELECT d.id, d.name, d.status, u.name as customerName
-    FROM devices d
-    LEFT JOIN (
-      SELECT o.deviceId, o.userId FROM orders o JOIN users owner ON o.userId = owner.id WHERE (o.status = 'active' OR o.status = 'paid') ${staffId ? 'AND owner.staff_id = ?' : ''}
-    ) o ON d.id = o.deviceId
-    LEFT JOIN users u ON o.userId = u.id
-    ORDER BY d.createdAt DESC
-    LIMIT 5
-  `;
-
-  const recentOrdersStatement = db.prepare(recentOrdersQuery)
-  const recentDevicesStatement = db.prepare(recentDevicesQuery)
-  const [statsResult, recentOrdersResult, recentDevicesResult] = await Promise.all([
-    db.prepare(statsQuery).first(),
-    staffId ? recentOrdersStatement.bind(staffId).all() : recentOrdersStatement.all(),
-    staffId ? recentDevicesStatement.bind(staffId).all() : recentDevicesStatement.all()
-  ]);
-
-  return {
-    stats: statsResult,
-    recentOrders: recentOrdersResult.results || [],
-    recentDevices: recentDevicesResult.results || []
-  };
-}
 
 function escapeContractValue(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
@@ -2354,7 +786,7 @@ export const CONTRACT_VARIABLE_GROUPS = [
 
 // 证件号码在任何非本人视图里默认脱敏；只有 MANAGER/ADMIN 主动“显示完整证件”
 // （经 sensitive_data_access_logs + 审计）或客户查看本人合同时才展示完整值。
-// 完善.md §18 — 普通 STAFF 不得查看完整证件号码。
+// 完善.md — 普通 STAFF 不得查看完整证件号码。
 export const SENSITIVE_CONTRACT_FIELDS = new Set(['customer_id_number'])
 
 export async function logSensitiveDataAccess(
@@ -2531,100 +963,6 @@ export async function getContractVariableData(c: Context, contract: Contract, or
     contract_url: `/contract/view/${contract.id}`,
     invoice_url: new URL(`/orders/${order.id}/invoice`, publicOrigin).toString(),
   }
-}
-
-export async function issueInvoice(c: Context, orderId: string): Promise<void> {
-  const order = await getOrderById(c, orderId)
-  if (!order) return
-  const contract = await getContractByOrderId(c, orderId)
-  const data = contract && typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : ((contract?.contract_data as Record<string, unknown>) || {})
-  // Keep the rental line at its original price. The coupon is shown as a
-  // separate deduction on the receipt, while the payable total stays lower.
-  const discountAmount = Math.max(0, Number((order as any).discountAmount || (order as any).discount_amount || 0))
-  const taxableGross = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount) + discountAmount)
-  const gstAmount = systemSettings.companyDetails.gstIncluded ? taxableGross / 11 : 0
-  const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
-  const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
-  const invoiceId = `inv-${order.id}`
-  const invoiceNumber = /^INV-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.invoice_number || '')) ? String(data.invoice_number) : generateReferenceNumber('INV')
-  const receiptNumber = /^RCP-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.receipt_number || '')) ? String(data.receipt_number) : generateReferenceNumber('RCP')
-  await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, receipt_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET invoice_number = excluded.invoice_number, receipt_number = excluded.receipt_number, subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
-    .bind(invoiceId, invoiceNumber, receiptNumber, order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
-  await ensureReceiptAndTransactions(c, order, invoiceId)
-}
-
-async function ensureFinanceTables(c: Context): Promise<void> {
-  await c.env.RENT.batch([
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS transactions (
-      id TEXT PRIMARY KEY NOT NULL, transaction_number TEXT NOT NULL UNIQUE,
-      order_id TEXT, customer_id TEXT, invoice_id TEXT, transaction_type TEXT NOT NULL,
-      payment_method TEXT NOT NULL, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'AUD',
-      status TEXT NOT NULL DEFAULT 'PENDING', provider TEXT, provider_transaction_id TEXT,
-      provider_reference TEXT, description TEXT, metadata TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, created_by TEXT
-    )`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS receipts (
-      id TEXT PRIMARY KEY NOT NULL, receipt_number TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL,
-      invoice_id TEXT, customer_id TEXT NOT NULL, currency TEXT NOT NULL DEFAULT 'AUD',
-      subtotal REAL NOT NULL DEFAULT 0, gst_amount REAL NOT NULL DEFAULT 0,
-      deposit_amount REAL NOT NULL DEFAULT 0, discount_amount REAL NOT NULL DEFAULT 0,
-      total_paid REAL NOT NULL DEFAULT 0, issued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      status TEXT NOT NULL DEFAULT 'issued', document_url TEXT, document_hash TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS receipt_transactions (
-      receipt_id TEXT NOT NULL, transaction_id TEXT NOT NULL,
-      PRIMARY KEY (receipt_id, transaction_id)
-    )`),
-  ])
-}
-
-function financePaymentMethod(method: unknown): string {
-  if (method === 'card') return 'CARD'
-  if (method === 'bank_transfer') return 'BANK_TRANSFER'
-  if (method === 'balance') return 'ACCOUNT_BALANCE'
-  return String(method || 'OTHER').toUpperCase()
-}
-
-async function ensureReceiptAndTransactions(c: Context, order: any, invoiceId: string): Promise<void> {
-  await ensureFinanceTables(c)
-  const invoice = await c.env.RENT.prepare('SELECT * FROM invoices WHERE id = ?').bind(invoiceId).first() as any
-  if (!invoice) return
-  const payments = (await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at ASC, created_at ASC").bind(order.id).all()).results as any[]
-  if (!payments.length) return
-  const receiptId = `rcpt-${order.id}`
-  const paidTotal = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
-  await c.env.RENT.prepare(`INSERT INTO receipts (id, receipt_number, order_id, invoice_id, customer_id, currency, subtotal, gst_amount, deposit_amount, discount_amount, total_paid, status, document_url)
-    VALUES (?, ?, ?, ?, ?, 'AUD', ?, ?, ?, ?, ?, 'issued', ?)
-    ON CONFLICT(id) DO UPDATE SET receipt_number = excluded.receipt_number, invoice_id = excluded.invoice_id,
-      subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount,
-      discount_amount = excluded.discount_amount, total_paid = excluded.total_paid, status = 'issued', document_url = excluded.document_url`)
-    .bind(receiptId, String(invoice.receipt_number), order.id, invoiceId, order.userId, Number(invoice.subtotal || 0), Number(invoice.gst_amount || 0), Number(invoice.deposit_amount || 0), Math.max(0, Number(order.discountAmount || order.discount_amount || 0)), paidTotal, `/orders/${order.id}/invoice`).run()
-
-  for (const payment of payments) {
-    const transactionNumber = /^TXN-[0-9]{8}-[A-Z0-9]{6}$/.test(String(payment.transaction_id || ''))
-      ? String(payment.transaction_id)
-      : generateReferenceNumber('TXN')
-    if (payment.transaction_id !== transactionNumber) {
-      await c.env.RENT.prepare('UPDATE payments SET transaction_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(transactionNumber, payment.id).run()
-    }
-    const transactionId = `txn-${payment.id}`
-    await c.env.RENT.prepare(`INSERT OR IGNORE INTO transactions
-      (id, transaction_number, order_id, customer_id, invoice_id, transaction_type, payment_method, amount, currency, status, provider, provider_transaction_id, description, completed_at)
-      VALUES (?, ?, ?, ?, ?, 'RENTAL_PAYMENT', ?, ?, ?, 'SUCCESS', ?, ?, ?, '租赁订单付款', CURRENT_TIMESTAMP)`)
-      .bind(transactionId, transactionNumber, order.id, order.userId, invoiceId, financePaymentMethod(payment.payment_method), Number(payment.amount || 0), String(payment.currency || 'AUD').toUpperCase(), payment.payment_method === 'card' ? 'STRIPE' : null, payment.stripe_payment_intent_id || null).run()
-    await c.env.RENT.prepare('INSERT OR IGNORE INTO receipt_transactions (receipt_id, transaction_id) VALUES (?, ?)').bind(receiptId, transactionId).run()
-  }
-}
-
-export async function issueCreditNote(c: Context, orderId: string, amount: number, refundedProcessingFee = 0, refundKey = orderId): Promise<void> {
-  const invoice = await c.env.RENT.prepare("SELECT id, invoice_number FROM invoices WHERE order_id = ? AND type = 'invoice'").bind(orderId).first() as any
-  if (!invoice) return
-  const creditNoteNumber = generateReferenceNumber('CN')
-  await c.env.RENT.prepare(`INSERT OR IGNORE INTO invoices (id, invoice_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status, related_invoice_id) VALUES (?, ?, ?, 'credit_note', ?, 0, 0, ?, ?, 'AUD', 'issued', ?)`)
-    .bind(`cn-${refundKey}`, creditNoteNumber, orderId, -Math.abs(amount), -Math.abs(refundedProcessingFee), -(Math.abs(amount) + Math.abs(refundedProcessingFee)), invoice.id).run()
-  await c.env.RENT.prepare("UPDATE invoices SET invoice_number = ? WHERE id = ? AND type = 'credit_note' AND invoice_number LIKE 'CN-INV-%'")
-    .bind(creditNoteNumber, `cn-${refundKey}`).run()
 }
 
 export const DEFAULT_CONTRACT_TEMPLATE_HTML = `<h1>设备租赁合同</h1>
@@ -2900,98 +1238,6 @@ export async function loadDatabaseData(c: Context): Promise<void> {
 }
 
 
-async function userHasColumn(c: Context, columnName: string): Promise<boolean> {
-  const db = getDB(c)
-  const result = await db.prepare('PRAGMA table_info(users)').all()
-  return (result.results || []).some((column: any) => column.name === columnName)
-}
-
-export async function findUserBySession(c: Context, cookieHeader: string | null): Promise<User | null> {
-  const db = getDB(c)
-  const cookies = parseCookie(cookieHeader)
-  const token = cookies.session || ''
-  if (!token) return null
-
-  if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) return null
-  await ensureAuthSessionsSchema(c)
-  const tokenHash = await sha256Hex(token)
-  const session = await db.prepare('SELECT user_id FROM auth_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP').bind(tokenHash).first() as any
-  if (!session?.user_id) return null
-  const id = String(session.user_id)
-  await db.prepare('UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?').bind(tokenHash).run()
-  const user: User | null = await db
-    .prepare("SELECT * FROM users WHERE id = ? AND status = 'active'")
-    .bind(id)
-    .first()
-
-  if (!user) return null
-  const guestExpiry = user.account_type === 'guest' ? String(user.guest_expires_at || '').slice(0, 10) : ''
-  const todayMelbourne = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-  if (guestExpiry && guestExpiry < todayMelbourne) {
-    await db.prepare("UPDATE users SET account_type = 'deleted_guest', status = 'inactive', email = 'deleted-guest-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, password_hash = 'disabled', password_salt = 'disabled', guest_order_id = NULL, guest_expires_at = NULL, deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND account_type = 'guest'").bind(id).run()
-    await db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').bind(id).run()
-    return null
-  }
-  const normalized = normalizeUserRow(user as any)
-  return normalized
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
-}
-
-let authSessionsSchemaReady: Promise<void> | null = null
-
-async function ensureAuthSessionsSchema(c: Context): Promise<void> {
-  if (!authSessionsSchemaReady) {
-    authSessionsSchemaReady = c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS auth_sessions (
-      token_hash TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )`).run().then(() => undefined)
-  }
-  try {
-    await authSessionsSchemaReady
-  } catch (error) {
-    authSessionsSchemaReady = null
-    throw error
-  }
-}
-
-export async function createAuthSession(c: Context, userId: string, remember = false): Promise<{ token: string; maxAge: number }> {
-  await ensureAuthSessionsSchema(c)
-  const bytes = new Uint8Array(32)
-  crypto.getRandomValues(bytes)
-  const token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-  const maxAge = remember ? 60 * 60 * 24 * 30 : 60 * 60 * 12
-  const expiresAt = new Date(Date.now() + maxAge * 1000).toISOString()
-  await c.env.RENT.prepare('INSERT INTO auth_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').bind(await sha256Hex(token), userId, expiresAt).run()
-  return { token, maxAge }
-}
-
-// Logs out every device currently signed in as this user. Call whenever a
-// credential could have been compromised: password reset/change (self or
-// admin-initiated), or an account being locked/disabled.
-export async function revokeAllSessions(c: Context, userId: string): Promise<void> {
-  await c.env.RENT.prepare('DELETE FROM auth_sessions WHERE user_id = ?').bind(userId).run()
-}
-
-export async function deleteAuthSession(c: Context, cookieHeader: string | null): Promise<void> {
-  const token = parseCookie(cookieHeader).session || ''
-  if (/^[A-Za-z0-9_-]{32,}$/.test(token)) await c.env.RENT.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(await sha256Hex(token)).run()
-}
-
-export async function enforceRateLimit(c: Context, scope: string, clientKey: string, limit: number, windowSeconds: number): Promise<boolean> {
-  const bucket = Math.floor(Date.now() / (windowSeconds * 1000))
-  await c.env.RENT.prepare(`INSERT INTO security_rate_limits (scope, client_key, bucket, request_count) VALUES (?, ?, ?, 1) ON CONFLICT(scope, client_key, bucket) DO UPDATE SET request_count = request_count + 1`).bind(scope, clientKey.slice(0, 200), bucket).run()
-  const row = await c.env.RENT.prepare('SELECT request_count FROM security_rate_limits WHERE scope = ? AND client_key = ? AND bucket = ?').bind(scope, clientKey.slice(0, 200), bucket).first() as any
-  return Number(row?.request_count || 0) <= limit
-}
-
 export function buildLayout(title: string, body: string, currentUser?: User | null): string {
   const normalizedTitle = title.includes('电脑租赁管理系统') ? title : `${title} - 电脑租赁管理系统`
   const isAuthPage = title.includes('登录') || title.includes('注册') || title.includes('找回密码')
@@ -3019,7 +1265,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙',
-    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/backup': '⤓', '/admin/monitoring': 'activity', '/admin/agents': '⚑', '/admin/referrals': 'gift'
+    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/agents': '⚑', '/admin/referrals': 'gift'
   }
 
   const navIconSvg = (kind: string) => {
@@ -3070,7 +1316,6 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       , '▧': '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M4 9h16"></path><path d="M10 9v11"></path>'
       , 'trend': '<path d="M4 18l6-6 4 4 6-7"></path><path d="M15 9h5v5"></path><path d="M3 21h18"></path>'
       , '⧗': '<path d="M6 4h12M6 20h12"></path><path d="M7 4c0 4 10 5 10 8s-10 4-10 8"></path><path d="M17 4c0 4-10 5-10 8"></path>'
-      , '⤓': '<ellipse cx="12" cy="5.5" rx="7" ry="3"></ellipse><path d="M5 5.5v13c0 1.7 3.1 3 7 3s7-1.3 7-3v-13"></path><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path>'
       , 'activity': '<path d="M3 12h4l3 8 4-16 3 8h4"></path>'
       , '⚑': '<path d="M6 3v18"></path><path d="M6 4h11l-2.5 4L17 12H6"></path>'
     }
@@ -3125,7 +1370,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/agents', '代理计划'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
-            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略'], ['/admin/backup', '备份与恢复']])}
+            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">
@@ -3136,6 +1381,15 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
         </div>
       </aside>`
     : ''
+
+  const footerGroups: Array<[string, Array<[string, string]>]> = [
+    ['租赁服务', [['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/refund-policy', '退款政策']]],
+    ['隐私与规范', [['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策'], ['/acceptable-use', '可接受使用']]],
+    ['权益与支持', [['/consumer-rights', '消费者权利'], ['/complaints', '投诉与争议'], ['/software-terms', '软件协议']]],
+  ]
+  const footerNav = footerGroups.map(([label, links]) => `<section class="legal-footer__group"><h2>${label}</h2>${links.map(([href, text]) => `<a href="${href}">${text}</a>`).join('')}</section>`).join('')
+  const footerCompany = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
+  const footerHtml = `<footer class="legal-footer"><div class="legal-footer__inner"><div class="legal-footer__top"><a class="legal-footer__brand" href="/" aria-label="返回首页"><span class="legal-footer__mark" aria-hidden="true">PR</span><span><strong>${footerCompany}</strong><small>DEVICE RENTAL · MELBOURNE</small></span></a><nav aria-label="网站法律信息">${footerNav}</nav></div><div class="legal-footer__bottom"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany} · 保留所有权利</span><span class="legal-footer__note">透明条款，安心租赁</span></div></div></footer>`
 
   return renderLayoutTemplate({
     TITLE: normalizedTitle,
@@ -3148,92 +1402,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
-    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/user-terms">用户协议</a><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/cookies">Cookie 政策</a><a href="/refund-policy">退款政策</a><a href="/consumer-rights">消费者权利</a><a href="/complaints">投诉与争议</a><a href="/acceptable-use">可接受使用</a><a href="/software-terms">软件协议</a></nav></footer>`
+    FOOTER: footerHtml
   })
-}
-
-// ==================== 错误日志记录系统 ====================
-export type ErrorLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
-
-export async function createAuditLog(c: Context, input: { actor?: any, action: string, targetType: string, targetId: string, before?: unknown, after?: unknown, reason?: string }) {
-  const actor = input.actor || c.get('user') as any
-  const redact = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(redact)
-    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, /password|token|secret|signature|authorization/i.test(key) ? '[REDACTED]' : redact(item)]))
-    return value
-  }
-  await getDB(c).prepare('INSERT INTO audit_logs (id, actor_id, actor_role, action, target_type, target_id, before_json, after_json, reason, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(`audit-${nanoid(16)}`, actor?.id || null, actor?.role || null, input.action, input.targetType, input.targetId, input.before === undefined ? null : JSON.stringify(redact(input.before)), input.after === undefined ? null : JSON.stringify(redact(input.after)), input.reason || null, c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0].trim() || null, String(c.req.header('User-Agent') || '').slice(0, 500) || null).run()
-}
-
-/**
- * 记录错误到数据库和控制台
- * @param c Hono上下文对象
- * @param level 错误级别
- * @param message 错误消息
- * @param error 错误对象（可选）
- * @param contextData 额外的上下文数据（可选）
- */
-export async function logError(c: Context, level: ErrorLevel, message: string, error?: Error, contextData?: Record<string, any>) {
-  const user = c.get('user')
-  const db = getDB(c)
-  const { nanoid } = await import('nanoid')
-  const errorId = `err-${nanoid(8)}`
-
-  // 控制台输出，包含时间戳和级别
-  const timestamp = new Date().toISOString()
-  const consolePrefix = `[${timestamp}] [${level}]`
-
-  if (level === 'ERROR' || level === 'CRITICAL') {
-    console.error(`${consolePrefix} ${message}`, error?.stack || '')
-  } else if (level === 'WARNING') {
-    console.warn(`${consolePrefix} ${message}`)
-  } else {
-    console.log(`${consolePrefix} ${message}`)
-  }
-
-  try {
-    // 保存到数据库
-    const redact = (value: any): any => {
-      if (Array.isArray(value)) return value.map(redact)
-      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [/token|password|secret|signature|authorization/i.test(key) ? key : key, /token|password|secret|signature|authorization/i.test(key) ? '[REDACTED]' : redact(item)]))
-      return value
-    }
-    const contextJson = contextData ? JSON.stringify(redact(contextData)) : null
-    const stackTrace = error?.stack || null
-    const userId = user?.id || null
-    const parsedUrl = new URL(c.req.url)
-    for (const key of ['token', 'number', 'session_id']) if (parsedUrl.searchParams.has(key)) parsedUrl.searchParams.set(key, '[REDACTED]')
-    const url = parsedUrl.toString()
-    const method = c.req.method
-
-    await db.prepare(`
-      INSERT INTO error_logs (id, error_level, error_message, error_stack, context_data, user_id, request_url, request_method, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).bind(errorId, level, message, stackTrace, contextJson, userId, url, method).run()
-  } catch (dbError) {
-    // 如果数据库日志记录失败，至少保证控制台有日志
-    console.error('Failed to write error to database:', dbError)
-  }
-}
-
-/**
- * 清理过期的错误日志（保留30天）
- * @param c Hono上下文对象
- */
-export async function cleanupOldErrorLogs(c: Context) {
-  const db = getDB(c)
-  const thirtyDaysAgo = new Date()
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-
-  try {
-    await db.prepare(`
-      DELETE FROM error_logs WHERE created_at < ?
-    `).bind(thirtyDaysAgo.toISOString()).run()
-    await logError(c, 'INFO', `Cleaned up error logs older than 30 days`)
-  } catch (error) {
-    await logError(c, 'WARNING', 'Failed to cleanup old error logs', error as Error)
-  }
 }
 
 // ==================== 签约会话持久化管理 ====================

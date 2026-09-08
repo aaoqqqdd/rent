@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContractExpired, isContractFinalized, sanitizePlainText } from '../../site'
+import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContractExpired, isContractFinalized, sanitizePlainText, formatMelbourneDateTime } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string, staffId?: string) {
@@ -123,7 +123,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
           const canCancel = user && !expired && (user.role === 'ADMIN' || contract.created_by === user.id || contract.createdBy === user.id || contract.status === 'pending_sign');
           const statusLabel = expired ? '已过期' : contract.status === 'pending_sign' ? '待签署' : contract.status === 'signed' ? '已签署' : contract.status === 'cancelled' ? '已取消' : contract.status === 'draft' ? '草稿' : contract.status
           const statusClass = expired ? 'badge-danger' : contract.status === 'signed' ? 'badge-success' : contract.status === 'cancelled' ? 'badge-neutral' : 'badge-warning'
-          const signedAtText = contract.signedAt ? contract.signedAt : (expired ? '签署期限已过' : contract.status === 'cancelled' ? '已取消' : '未签署')
+          const signedAtText = contract.signedAt ? formatMelbourneDateTime(contract.signedAt) : (expired ? '签署期限已过' : contract.status === 'cancelled' ? '已取消' : '未签署')
           const showSigningProgress = contract.status === 'pending_sign' && !expired
           const canEditData = !expired && !['signed', 'completed', 'cancelled'].includes(contract.status)
           const canViewContract = isContractFinalized(contract)

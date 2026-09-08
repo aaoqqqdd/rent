@@ -5,10 +5,12 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import styles from '../src/styles.css'
 import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
 import { renderAdminContracts } from '../src/pages/admin/contracts'
+import { renderAdminDataRetention } from '../src/pages/admin/dataRetention'
 import { renderAdminAgreementEditor, renderAdminTemplateHub } from '../src/pages/admin/templates'
 import { renderAdminUserNew } from '../src/pages/admin/userNew'
 import { renderAdminUserEdit } from '../src/pages/admin/userEdit'
@@ -310,7 +312,25 @@ test('rich text editor pages emit valid browser JavaScript', async () => {
   assert.match(contractTemplateHtml, /返回协议与模板/)
   assert.match(contractTemplateHtml, /完整合同变量索引/)
   assert.doesNotMatch(contractTemplateHtml, /合同模板可用变量/)
+  assert.ok(contractTemplateHtml.indexOf('id="templateSaveStatus"') < contractTemplateHtml.indexOf('class="form-actions form-actions-right"'))
   assertInlineScriptsParse(contractTemplateHtml)
+})
+
+test('data retention controls stay in their matching table columns and submit one row', () => {
+  const html = renderAdminDataRetention(
+    { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' },
+    [{ category: 'CONTRACTS', label: '租赁合同与签署快照', retention_days: 2555, action: 'RETAIN', basis: '税务 / 合同法', notes: '仅归档不删', enabled: 1, updated_at: '2026-09-07' }],
+    { CONTRACTS: 0 },
+  )
+  assert.match(html, /class="table-wrapper retention-policy-table"/)
+  assert.match(html, /<form id="retention-policy-0"[^>]+action="\/admin\/data-retention\/CONTRACTS"/)
+  assert.match(html, /class="retention-policy-period"><input[^>]+form="retention-policy-0"[^>]+name="retentionDays"/)
+  assert.match(html, /class="retention-policy-action"><select[^>]+form="retention-policy-0"[^>]+name="action"/)
+  assert.match(html, /<button[^>]+form="retention-policy-0"[^>]+type="submit">保存<\/button>/)
+})
+
+test('button shine is contained by the button instead of the whole page', () => {
+  assert.match(styles, /\.button\s*\{[^}]*position:\s*relative;[^}]*overflow:\s*hidden;/)
 })
 
 test('site layout loads the external stylesheet and resolves template slots', () => {

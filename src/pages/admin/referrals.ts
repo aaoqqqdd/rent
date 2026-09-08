@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency, sanitizePlainText } from '../../site';
+import { buildLayout, formatCurrency, sanitizePlainText, formatMelbourneDate } from '../../site';
 
 const statusLabels: Record<string, string> = { PENDING: '待结算', AVAILABLE: '已发放', CANCELLED: '已撤销' }
 const statusBadge: Record<string, string> = { PENDING: 'badge-warning', AVAILABLE: 'badge-success', CANCELLED: 'badge-danger' }
@@ -15,7 +15,7 @@ export function renderAdminReferrals(user: any, rewards: any[] = [], settlementD
     <td>${sanitizePlainText(reward.referee_name || '-', 100)}</td>
     <td>${formatCurrency(Number(reward.reward_amount || 0))}</td>
     <td><span class="badge ${statusBadge[reward.status] || 'badge-info'}">${statusLabels[reward.status] || reward.status}</span></td>
-    <td>${reward.qualified_at ? new Date(reward.qualified_at).toISOString().slice(0, 10) : '-'}</td>
+    <td>${reward.qualified_at ? formatMelbourneDate(reward.qualified_at) : '-'}</td>
     <td>${sanitizePlainText(reward.reason || '-', 200)}</td>
     <td>${reward.status === 'PENDING' ? `
       <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/release" style="display:inline"><button class="button button-sm button-primary" type="submit">立即发放</button></form>

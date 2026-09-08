@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency, sanitizePlainText } from '../../site';
+import { buildLayout, formatCurrency, sanitizePlainText, formatMelbourneDate } from '../../site';
 
 export function renderAdminDeviceReports(user: any, rows: any[] = []) {
   const deviceCount = rows.length || 1
@@ -21,7 +21,7 @@ export function renderAdminDeviceReports(user: any, rows: any[] = []) {
       <td>${Number(r.total_rental_days || 0)} 天</td>
       <td>${maintenanceCount} 次 · ${formatCurrency(maintenanceCost)}${maintenanceCount ? ` · 均次 ${formatCurrency(maintenanceCost / maintenanceCount)}` : ''}</td>
       <td>${Number(r.damage_count || 0)} 次 · ${formatCurrency(Number(r.damage_cost_cents || 0) / 100)}</td>
-      <td>${r.retired_at ? `已退役 · ${new Date(r.retired_at).toISOString().slice(0, 10)}` : sanitizePlainText(r.lifecycle_status || '-', 30)}</td>
+      <td>${r.retired_at ? `已退役 · ${formatMelbourneDate(r.retired_at)}` : sanitizePlainText(r.lifecycle_status || '-', 30)}</td>
     </tr>`
   }).join('')
 

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 运营分析报表 (完善.md §23, §40)
+// 运营分析报表 (完善.md)
 //
 // 金额只从 Ledger / Payment / Refund 明细汇总，不从订单 UI 状态推算。
 // 这里放两个纯函数：车队利用率、支付方式占比——其余聚合在路由里用 SQL 完成。

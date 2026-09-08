@@ -3,13 +3,13 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 混合付款 / 退款分配引擎 (TODO.md P1 #6 / 完善.md §28, §29)
+// 混合付款 / 退款分配引擎 (TODO.md P1 #6 / 完善.md)
 //
 // 一笔订单可能由多个来源结算（Stripe + 余额 + 押金 + 调整）。退款时必须把退款
 // 额分摊到各来源，且任一来源的累计退款不得超过该来源实付、订单累计退款不得超过
 // 订单实付。分摊策略：
 //   proportional —— 按各来源“剩余可退”比例分摊（默认）
-//   priority     —— 按传入顺序优先退（§29“优先原支付方式”）
+//   priority     —— 按传入顺序优先退（“优先原支付方式”）
 // 分币误差统一由排在前面的来源逐分吸收。
 
 const toCents = (value: number) => Math.round(Number(value) * 100)

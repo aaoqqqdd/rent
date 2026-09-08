@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractById, getOrderById, getUserById } from '../../site';
+import { buildLayout, getContractById, getOrderById, getUserById, formatMelbourneDateTime } from '../../site';
 import { Context } from 'hono';
 
 export async function renderStaffContractProgress(c: Context, user: any, contractId: string) {
@@ -35,8 +35,8 @@ export async function renderStaffContractProgress(c: Context, user: any, contrac
           contract.status === 'draft' ? '草稿中' :
           '未查看' // pending_sign 状态下显示为未查看
         }</h3>
-        <p>创建日期: ${contract.createdAt ? new Date(contract.createdAt).toLocaleString() : '未知'}</p>
-        ${contract.signedAt ? `<p>签署日期: ${new Date(contract.signedAt).toLocaleString()}</p>` : ''}
+        <p>创建日期（墨尔本）: ${contract.createdAt ? formatMelbourneDateTime(contract.createdAt) : '未知'}</p>
+        ${contract.signedAt ? `<p>签署日期（墨尔本）: ${formatMelbourneDateTime(contract.signedAt)}</p>` : ''}
       </div>
 
       <div class="contract-section">

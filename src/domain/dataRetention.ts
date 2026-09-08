@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 数据保留策略 (完善.md §25, §37 / P3 #18)
+// 数据保留策略 (完善.md / P3 #18)
 //
 // 每类数据配置：保留天数 + 到期动作。RETAIN = 永久保留（合同 / 财务 / 审计），
 // ARCHIVE / DELETE / ANONYMISE = 到期后可被清理任务处理。这里只放纯判定，

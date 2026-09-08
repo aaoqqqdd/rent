@@ -3,11 +3,12 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 系统健康监控 (完善.md §30, §48 / P8 #32, #33)
+// 系统健康监控 (完善.md / P8 #32, #33)
 //
 // 把“分子 / 分母”比率按阈值分级。分母为 0（没有样本）时记 OK 而非报警。
 
 export type HealthLevel = 'OK' | 'WARN' | 'CRITICAL'
+export type MonitorProbeStatus = 'ok' | 'degraded' | 'down'
 
 export interface MonitorMetric { key: string; label: string; numerator: number; denominator: number; rate: number; level: HealthLevel; note?: string }
 
@@ -25,4 +26,15 @@ export function worstHealthLevel(metrics: Array<{ level: HealthLevel }>): Health
   if (metrics.some(m => m.level === 'CRITICAL')) return 'CRITICAL'
   if (metrics.some(m => m.level === 'WARN')) return 'WARN'
   return 'OK'
+}
+
+export function monitorOverallStatus(checks: Array<{ status: MonitorProbeStatus }>): MonitorProbeStatus {
+  if (checks.some(check => check.status === 'down')) return 'down'
+  if (checks.some(check => check.status === 'degraded')) return 'degraded'
+  return 'ok'
+}
+
+export function parseBearerToken(header: string | null | undefined): string | null {
+  const match = String(header || '').match(/^Bearer\s+(\S+)$/i)
+  return match?.[1] || null
 }

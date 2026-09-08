@@ -49,7 +49,6 @@ import {
   RISK_FLAG_TYPES,
   findBlockingRiskFlag,
   timingSafeEqualStr,
-  fnv1aHex,
   collectMonitoringMetrics,
   canTransitionDeviceLifecycle,
   MAINTENANCE_CHECK_TYPES,
@@ -99,6 +98,7 @@ import {
   , recordExternalRentalFlow
   , lockReferralRelationship
   , createAuditLog
+  , formatMelbourneDateTime
 } from './site'
 import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
@@ -108,6 +108,8 @@ import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
+import { monitorOverallStatus, parseBearerToken } from './domain/monitoring'
+import { runConnectivityProbes } from './services/connectivity'
 import siteStyles from './styles.css'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
@@ -208,40 +210,79 @@ app.get('/api/system-status', async (c) => {
   }
 })
 
-// Lightweight probe for an external uptime monitor ("检测站"). Unauthenticated,
-// never cached, tiny payload. Returns 200 when the site and the website<->agent
-// channel are healthy, 503 when a core dependency is down, so a monitor can
-// alert on the status code alone.
+// Token-protected, read-only website probe for Monitorflare. Device online
+// state is intentionally excluded: this endpoint measures the website and its
+// core services, not whether an individual Windows client is running.
 app.get('/api/monitor', async (c) => {
   const startedAt = Date.now()
   const checks: Record<string, any> = {}
-  let down = false
 
   try {
-    await c.env.RENT.prepare('SELECT 1 AS ok').first()
-    checks.database = { ok: true }
+    const databaseStartedAt = Date.now()
+    const tokenValid = await hasValidMonitorApiToken(c)
+    const latencyMs = Date.now() - databaseStartedAt
+    checks.database = { ok: true, status: latencyMs >= 1000 ? 'degraded' : 'ok', latencyMs }
+    if (!tokenValid) {
+      return c.json({ status: 'unauthorized', error: 'Valid monitor token required' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="monitor"' })
+    }
   } catch (error: any) {
-    checks.database = { ok: false, error: String(error?.message || error).slice(0, 200) }
-    down = true
+    console.error('Monitor database check failed:', error?.message || error)
+    checks.database = { ok: false, status: 'down', error: 'database unavailable' }
   }
 
-  try {
-    const row = await c.env.RENT.prepare(
-      "SELECT COUNT(*) AS total, SUM(CASE WHEN agent_status = 'online' THEN 1 ELSE 0 END) AS online, MAX(agent_last_seen_at) AS last_seen FROM devices WHERE agent_token_hash IS NOT NULL"
-    ).first() as any
-    const total = Number(row?.total || 0)
-    const online = Number(row?.online || 0)
-    const lastSeenMs = row?.last_seen ? Date.parse(String(row.last_seen).replace(' ', 'T') + 'Z') : NaN
-    const lastHeartbeatAgeSeconds = Number.isFinite(lastSeenMs) ? Math.max(0, Math.round((Date.now() - lastSeenMs) / 1000)) : null
-    checks.deviceAgentChannel = { ok: true, registered: total, online, offline: total - online, lastHeartbeatAgeSeconds }
-  } catch (error: any) {
-    checks.deviceAgentChannel = { ok: false, error: String(error?.message || error).slice(0, 200) }
-    down = true
+  const runCheck = async (name: string, failureStatus: 'degraded' | 'down', query: () => Promise<Record<string, any>>) => {
+    try {
+      checks[name] = await query()
+    } catch (error: any) {
+      console.error(`Monitor ${name} check failed:`, error?.message || error)
+      checks[name] = { ok: false, status: failureStatus, error: 'check unavailable' }
+    }
   }
 
+  if (checks.database.status !== 'down') await Promise.all([
+    runCheck('applicationErrors', 'degraded', async () => {
+      const row = await c.env.RENT.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN error_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
+      const recent = Number(row?.total || 0)
+      const critical = Number(row?.critical || 0)
+      return { ok: recent === 0, status: recent ? 'degraded' : 'ok', windowMinutes: 10, recent, critical }
+    }),
+    runCheck('scheduledJobs', 'degraded', async () => {
+      const row = await c.env.RENT.prepare(`SELECT
+        SUM(CASE WHEN status = 'FAILED' AND datetime(started_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN status = 'RUNNING' AND datetime(started_at) < datetime('now', '-1 hour') THEN 1 ELSE 0 END) AS stuck,
+        MAX(started_at) AS last_run
+        FROM scheduled_job_runs`).first() as any
+      const failures = Number(row?.failures || 0)
+      const stuck = Number(row?.stuck || 0)
+      const lastRunMs = row?.last_run ? Date.parse(`${String(row.last_run).replace(' ', 'T')}Z`) : NaN
+      const lastRunAgeSeconds = Number.isFinite(lastRunMs) ? Math.max(0, Math.round((Date.now() - lastRunMs) / 1000)) : null
+      const overdue = lastRunAgeSeconds === null || lastRunAgeSeconds > 36 * 60 * 60
+      return { ok: !failures && !stuck && !overdue, status: failures || stuck || overdue ? 'degraded' : 'ok', failures24h: failures, stuck, lastRunAgeSeconds }
+    }),
+    runCheck('emailDelivery', 'degraded', async () => {
+      const row = await c.env.RENT.prepare(`SELECT
+        SUM(CASE WHEN status = 'FAILED' AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN status IN ('PENDING', 'SENDING') AND datetime(created_at) < datetime('now', '-30 minutes') THEN 1 ELSE 0 END) AS stuck
+        FROM email_events`).first() as any
+      const failures = Number(row?.failures || 0)
+      const stuck = Number(row?.stuck || 0)
+      return { ok: !failures && !stuck, status: failures || stuck ? 'degraded' : 'ok', failures24h: failures, stuck }
+    }),
+    runCheck('remoteCommands', 'degraded', async () => {
+      const row = await c.env.RENT.prepare(`SELECT
+        SUM(CASE WHEN status IN ('FAILED', 'EXPIRED') AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END) AS overdue
+        FROM device_commands`).first() as any
+      const failures = Number(row?.failures || 0)
+      const overdue = Number(row?.overdue || 0)
+      return { ok: !failures && !overdue, status: failures || overdue ? 'degraded' : 'ok', failures24h: failures, overdue }
+    }),
+  ])
+
+  const status = monitorOverallStatus(Object.values(checks))
   return c.json(
-    { status: down ? 'down' : 'ok', checks, latencyMs: Date.now() - startedAt, checkedAt: new Date().toISOString() },
-    down ? 503 : 200,
+    { status, checks, latencyMs: Date.now() - startedAt, checkedAt: new Date().toISOString() },
+    status === 'down' ? 503 : 200,
     { 'Cache-Control': 'no-store' },
   )
 })
@@ -397,7 +438,8 @@ app.use('*', async (c, next) => {
         : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
           : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
             : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
-            : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
+              : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
+                : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
@@ -1161,7 +1203,7 @@ app.get('/notifications', async (c) => {
   const emailTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM email_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
   const emailTemplateOptions = `<option value="custom">自定义通知</option>${emailTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
   const recipientOptions = recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')
-  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};search.addEventListener('input',update);select.addEventListener('change',update);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<article class="notification-item ${item.read_at ? '' : 'is-unread'}"><div><strong>${item.title}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${item.created_at}</small></div>${item.order_id ? `<a class="button button-sm button-secondary" href="${user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`}" >查看订单</a>` : ''}</article>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
+  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};search.addEventListener('input',update);select.addEventListener('change',update);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<article class="notification-item ${item.read_at ? '' : 'is-unread'}"><div><strong>${item.title}</strong><div class="notification-message">${renderNotificationMarkdown(item.message)}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div>${item.order_id ? `<a class="button button-sm button-secondary" href="${user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`}" >查看订单</a>` : ''}</article>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
   const pagination = pageCount > 1 ? `<nav class="pagination" aria-label="通知分页">${Array.from({ length: pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === page ? 'button-primary' : 'button-secondary'}" href="/notifications?page=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''
   const bodyWithTemplateChoice = body.replace('<div class="form-group"><label class="form-label" for="notificationTitle">标题</label>', `<div class="form-group"><label class="form-label" for="notificationTemplate">发送内容</label><select class="form-control" id="notificationTemplate" name="templateId">${emailTemplateOptions}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label>`)
   const bodyWithArchiveLink = user.role === 'ADMIN' ? bodyWithTemplateChoice.replace('<h3>发布通告</h3>', '<div class="section-title"><h3>发布通告</h3><a class="link-button" href="/admin/announcements">历史通告 →</a></div>') : bodyWithTemplateChoice
@@ -1173,7 +1215,7 @@ app.get('/admin/notifications', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
   const notifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
-  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(item.type || 'SYSTEM', 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(item.created_at, 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>`).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
+  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(item.type || 'SYSTEM', 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>`).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
   return c.html(buildLayout('管理员通知中心', body, user))
 })
 
@@ -1183,7 +1225,7 @@ app.get('/admin/announcements', async (c) => {
   await ensureNotificationsTable(c)
   const result = await c.env.RENT.prepare("SELECT MIN(id) AS id, title, message, created_at, COUNT(*) AS recipient_count FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC").bind(user.id).all() as any
   const esc = (value: unknown) => sanitizePlainText(value, 500).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  const body = `<div class="page-header"><div><p class="section-code">ANNOUNCEMENT ARCHIVE</p><h2>历史公告</h2><p>编辑已发布公告后，所有收件人会同步更新。</p></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="announcement-archive">${(result.results || []).map((item: any) => `<form class="panel announcement-archive__item" method="post" action="/admin/announcements/${encodeURIComponent(item.id)}"><div class="section-title"><div><h3>${esc(item.title)}</h3><small>${esc(item.created_at)} · 已发送 ${item.recipient_count} 人</small></div></div><label class="form-label">标题</label><input class="form-control" name="title" value="${esc(item.title)}" maxlength="120" required><label class="form-label">内容</label><textarea class="form-control" name="message" rows="5" maxlength="2000" required>${esc(item.message)}</textarea><button class="button button-primary" type="submit">保存公告</button></form>`).join('') || '<p class="empty-state">暂无历史公告</p>'}</div>`
+  const body = `<div class="page-header"><div><p class="section-code">ANNOUNCEMENT ARCHIVE</p><h2>历史公告</h2><p>编辑已发布公告后，所有收件人会同步更新。</p></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="announcement-archive">${(result.results || []).map((item: any) => `<form class="panel announcement-archive__item" method="post" action="/admin/announcements/${encodeURIComponent(item.id)}"><div class="section-title"><div><h3>${esc(item.title)}</h3><small>${esc(formatMelbourneDateTime(item.created_at))} · 已发送 ${item.recipient_count} 人</small></div></div><label class="form-label">标题</label><input class="form-control" name="title" value="${esc(item.title)}" maxlength="120" required><label class="form-label">内容</label><textarea class="form-control" name="message" rows="5" maxlength="2000" required>${esc(item.message)}</textarea><button class="button button-primary" type="submit">保存公告</button></form>`).join('') || '<p class="empty-state">暂无历史公告</p>'}</div>`
   return c.html(buildLayout('历史公告 - 电脑租赁管理系统', body, user))
 })
 
@@ -1297,7 +1339,7 @@ app.get('/notifications/:id', async (c) => {
   const item = await c.env.RENT.prepare('SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), user.id).first() as any
   if (!item) return c.html(renderNotFound(), 404)
   await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
-  const body = `<div class="panel notification-detail"><div class="section-title"><div><p class="section-code">NOTIFICATION DETAIL</p><h2>${sanitizePlainText(item.title, 200)}</h2><small>${sanitizePlainText(item.created_at, 80)}</small></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="notification-message">${renderNotificationMarkdown(item.message)}</div></div>`
+  const body = `<div class="panel notification-detail"><div class="section-title"><div><p class="section-code">NOTIFICATION DETAIL</p><h2>${sanitizePlainText(item.title, 200)}</h2><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="notification-message">${renderNotificationMarkdown(item.message)}</div></div>`
   return c.html(buildLayout('通知详情', body, user))
 })
 
@@ -2534,8 +2576,8 @@ app.get('/admin/exceptions', async (c) => {
     ['待审核损坏记录', damageCases.results, '/admin/inspections', (item: any) => `订单 ${item.order_id} · ${item.description || '待补充损坏说明'}`],
     ['待处理支付争议', disputes.results, '/admin/finance/payment-disputes', (item: any) => `订单 ${sanitizePlainText(item.order_id || '-', 50)} · ${sanitizePlainText(item.currency, 10)}$${Number(item.amount).toFixed(2)} · ${sanitizePlainText(item.reason || '未说明原因', 100)}`],
     ['待审核异常订单', anomalousOrders.results, '/admin/finance/anomalous-orders', (item: any) => `订单 ${sanitizePlainText(item.orderNo || item.order_id, 50)} · ${sanitizePlainText(item.anomaly_type, 100)} · 已自动暂停`],
-    ['数据不一致', consistencyIssues.results, '/admin/exceptions', (item: any) => `${sanitizePlainText(item.issue_type, 60)} · ${sanitizePlainText(item.entity_type, 30)} ${sanitizePlainText(item.entity_id, 60)} · 发现于 ${item.detected_at}`],
-    ['连续失败的定时任务', failingJobs.results, '/health', (item: any) => `${sanitizePlainText(item.job_name, 80)} · 最近失败于 ${item.last_failed_at} · ${sanitizePlainText(item.last_error || '无错误信息', 200)}`],
+    ['数据不一致', consistencyIssues.results, '/admin/exceptions', (item: any) => `${sanitizePlainText(item.issue_type, 60)} · ${sanitizePlainText(item.entity_type, 30)} ${sanitizePlainText(item.entity_id, 60)} · 发现于 ${formatMelbourneDateTime(item.detected_at)}`],
+    ['连续失败的定时任务', failingJobs.results, '/health', (item: any) => `${sanitizePlainText(item.job_name, 80)} · 最近失败于 ${formatMelbourneDateTime(item.last_failed_at)} · ${sanitizePlainText(item.last_error || '无错误信息', 200)}`],
   ] as const
   const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和押金异常；所有充值与转账审核均在此完成。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
   return c.html(buildLayout('异常任务中心', body, admin))
@@ -2767,7 +2809,8 @@ app.get('/admin/withdrawals', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderAdminWithdrawals(c, user))
+  const body = await pages.renderWithdrawalsPanel(c)
+  return c.html(buildLayout('佣金提现 - 电脑租赁管理系统', body, user))
 })
 
 app.get('/admin/payment-reviews', async (c) => {
@@ -2988,7 +3031,7 @@ app.post('/admin/orders/:id/changes', async (c) => {
   ])
   if (type === 'DEVICE_SWAP') { await releaseDeviceIfUnbooked(c, before.deviceId); await recordDeviceLifecycle(c, after.deviceId, 'RESERVED', { orderId: order.id, reason: '订单换机', changedBy: admin.id }) }
 
-  // 设计文档/优惠码 §37：改租期 / 换机 / 改价后，若可打折基数跌破优惠码最低消费，
+  // 设计文档/优惠码：改租期 / 换机 / 改价后，若可打折基数跌破优惠码最低消费，
   // 该优惠码不再成立——释放名额、移除折扣、把折扣额加回订单总价，并留痕。
   if (['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT'].includes(type) && (order as any).coupon_id && Number(after.discountAmount || 0) > 0) {
     const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ?').bind((order as any).coupon_id).first() as any
@@ -3334,7 +3377,7 @@ app.get('/admin/revenue-stats', async (c) => {
   return c.html(pages.renderAdminRevenueStats(user, await pages.getRevenueData(c)))
 })
 
-// 运营分析报表（完善.md §23, §40）——金额一律从 Ledger / Payment / Refund 明细汇总。
+// 运营分析报表（完善.md）——金额一律从 Ledger / Payment / Refund 明细汇总。
 app.get('/admin/reports', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -3377,7 +3420,7 @@ app.get('/admin/reports', async (c) => {
   }))
 })
 
-// 数据保留策略（完善.md §25, §37 / P3 #18）
+// 数据保留策略（完善.md / P3 #18）
 const RETENTION_PREVIEW_SOURCES: Record<string, { table: string; dateCol: string }> = {
   CONTRACTS: { table: 'contracts', dateCol: 'createdAt' },
   FINANCIAL_RECORDS: { table: 'financial_ledger_entries', dateCol: 'created_at' },
@@ -3424,97 +3467,7 @@ app.post('/admin/data-retention/:category', async (c) => {
   return c.redirect('/admin/data-retention', 303)
 })
 
-// 备份与恢复（完善.md §26, §39 / P4 #19, #20）
-const BACKUP_EXPORT_TABLES = ['contracts', 'payments', 'payment_refunds', 'financial_ledger_entries', 'balance_transactions', 'audit_logs', 'invoices']
-
-app.get('/admin/backup', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const [policy, runs, tests] = await Promise.all([
-    c.env.RENT.prepare('SELECT * FROM backup_policy WHERE id = 1').first(),
-    c.env.RENT.prepare('SELECT * FROM backup_runs ORDER BY created_at DESC LIMIT 30').all().then(r => r.results || []),
-    c.env.RENT.prepare('SELECT * FROM restore_tests ORDER BY created_at DESC LIMIT 30').all().then(r => r.results || []),
-  ])
-  return c.html(pages.renderAdminBackup(user, policy, runs as any[], tests as any[]))
-})
-
-app.get('/admin/backup/export.json', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const snapshot: Record<string, any> = { generatedAt: new Date().toISOString(), generatedBy: user.id, tables: {} }
-  const rowCounts: Record<string, number> = {}
-  for (const table of BACKUP_EXPORT_TABLES) {
-    try {
-      const rows = (await c.env.RENT.prepare(`SELECT * FROM ${table}`).all()).results || []
-      snapshot.tables[table] = rows
-      rowCounts[table] = rows.length
-    } catch (error: any) {
-      snapshot.tables[table] = { error: String(error?.message || error) }
-    }
-  }
-  const serialised = JSON.stringify(snapshot)
-  const checksum = fnv1aHex(serialised)
-  snapshot.checksum = checksum
-  const body = JSON.stringify(snapshot, null, 2)
-  await c.env.RENT.prepare('INSERT INTO backup_runs (id, scope, status, row_counts_json, checksum, byte_size, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(`bkp-${nanoid(12)}`, `离线 JSON 快照：${BACKUP_EXPORT_TABLES.join(', ')}`, 'SUCCESS', JSON.stringify(rowCounts), checksum, body.length, user.id).run()
-  await createAuditLog(c, { actor: user, action: 'BACKUP_EXPORTED', targetType: 'BACKUP', targetId: checksum, after: { rowCounts, bytes: body.length }, reason: '下载离线 JSON 快照' })
-  return new Response(body, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="rent-backup-${new Date().toISOString().slice(0, 10)}-${checksum}.json"` } })
-})
-
-app.post('/admin/backup/runs', async (c) => {
-  const admin = c.get('user')
-  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
-  const counts: Record<string, number> = {}
-  for (const table of BACKUP_EXPORT_TABLES) {
-    try { counts[table] = Number((await c.env.RENT.prepare(`SELECT COUNT(*) AS v FROM ${table}`).first<{ v: number }>())?.v || 0) } catch { /* skip */ }
-  }
-  await c.env.RENT.prepare('INSERT INTO backup_runs (id, scope, status, row_counts_json, created_by) VALUES (?, ?, ?, ?, ?)')
-    .bind(`bkp-${nanoid(12)}`, '手动记录（外部备份已完成）', 'SUCCESS', JSON.stringify(counts), admin.id).run()
-  await createAuditLog(c, { actor: admin, action: 'BACKUP_RUN_RECORDED', targetType: 'BACKUP', targetId: 'manual', after: { rowCounts: counts }, reason: '手动记录一次备份执行' })
-  return c.redirect('/admin/backup', 303)
-})
-
-app.post('/admin/backup/policy', async (c) => {
-  const admin = c.get('user')
-  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
-  const form = await c.req.parseBody()
-  const rpoMinutes = Math.round(Number(form.rpoMinutes))
-  const rtoMinutes = Math.round(Number(form.rtoMinutes))
-  const scheduleNote = sanitizePlainText(String(form.scheduleNote || ''), 300).trim()
-  const scopeNote = sanitizePlainText(String(form.scopeNote || ''), 300).trim()
-  if (![rpoMinutes, rtoMinutes].every(n => Number.isFinite(n) && n >= 1 && n <= 43200)) return c.text('RPO / RTO 必须是 1–43200 分钟', 400)
-  if (!scheduleNote || !scopeNote) return c.text('备份计划与覆盖范围说明必填', 400)
-  const before = await c.env.RENT.prepare('SELECT rpo_minutes, rto_minutes FROM backup_policy WHERE id = 1').first() as any
-  await c.env.RENT.prepare('UPDATE backup_policy SET rpo_minutes = ?, rto_minutes = ?, schedule_note = ?, scope_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1')
-    .bind(rpoMinutes, rtoMinutes, scheduleNote, scopeNote, admin.id).run()
-  await createAuditLog(c, { actor: admin, action: 'BACKUP_POLICY_UPDATED', targetType: 'BACKUP_POLICY', targetId: '1', before, after: { rpoMinutes, rtoMinutes }, reason: '更新备份策略' })
-  return c.redirect('/admin/backup', 303)
-})
-
-app.post('/admin/backup/restore-tests', async (c) => {
-  const admin = c.get('user')
-  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
-  const form = await c.req.parseBody()
-  const scope = sanitizePlainText(String(form.scope || ''), 120).trim()
-  const outcome = String(form.outcome || '')
-  const durationText = String(form.durationMinutes || '').trim()
-  const durationMinutes = durationText === '' ? null : Math.round(Number(durationText))
-  const notes = sanitizePlainText(String(form.notes || ''), 500).trim() || null
-  if (!scope) return c.text('必须填写演练范围', 400)
-  if (!['PASS', 'FAIL'].includes(outcome)) return c.text('结果无效', 400)
-  if (durationMinutes !== null && (!Number.isFinite(durationMinutes) || durationMinutes < 0 || durationMinutes > 10080)) return c.text('耗时无效', 400)
-  await c.env.RENT.batch([
-    c.env.RENT.prepare('INSERT INTO restore_tests (id, scope, outcome, duration_minutes, notes, created_by) VALUES (?, ?, ?, ?, ?, ?)')
-      .bind(`rst-${nanoid(12)}`, scope, outcome, durationMinutes, notes, admin.id),
-    c.env.RENT.prepare("UPDATE backup_policy SET last_restore_test_at = CURRENT_TIMESTAMP, last_restore_test_note = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1")
-      .bind(`${outcome}${notes ? ` · ${notes}` : ''}`, admin.id),
-  ])
-  await createAuditLog(c, { actor: admin, action: 'RESTORE_TEST_RECORDED', targetType: 'BACKUP', targetId: 'restore-test', after: { scope, outcome, durationMinutes }, reason: notes || `恢复演练 ${outcome}` })
-  return c.redirect('/admin/backup', 303)
-})
-
-// 系统健康监控（完善.md §30, §48 / P8 #32, #33）
+// 系统健康监控（完善.md / P8 #32, #33）
 app.get('/admin/monitoring', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -3525,7 +3478,25 @@ app.get('/admin/monitoring', async (c) => {
   return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[]))
 })
 
-// 代理计划（完善.md §29，预留未启用）
+app.get('/admin/connectivity', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(pages.renderAdminConnectivity(user))
+})
+
+app.post('/admin/connectivity/check', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ error: '无权限执行检测' }, 403)
+  const input = await c.req.json().catch(() => ({})) as any
+  try {
+    const results = await runConnectivityProbes(c, String(input.target || 'all'))
+    return c.json({ results }, 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    return c.json({ error: String(error?.message || '检测失败').slice(0, 160) }, 400, { 'Cache-Control': 'no-store' })
+  }
+})
+
+// 代理计划（完善.md，预留未启用）
 app.get('/admin/agents', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -3545,7 +3516,21 @@ app.get('/admin/coupons', async (c) => {
 app.get('/admin/device-agent-bindings', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  return c.html(await pages.renderAdminDeviceAgentBindings(c, user))
+  const monitorToken = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  return c.html(await pages.renderAdminDeviceAgentBindings(c, user, { monitorApiConfigured: Boolean(monitorToken?.value) }))
+})
+
+app.post('/admin/device-agent-bindings/monitor-token', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '')
+  const tokenHash = await hashAgentValue(token)
+  const existing = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  await c.env.RENT.prepare(`INSERT INTO systemSettings (key, value) VALUES ('monitorApiTokenHash', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP`).bind(tokenHash).run()
+  await createAuditLog(c, { actor: user, action: existing?.value ? 'MONITOR_API_TOKEN_ROTATED' : 'MONITOR_API_TOKEN_CREATED', targetType: 'SYSTEM', targetId: 'monitor-api' })
+  c.header('Cache-Control', 'no-store')
+  return c.html(await pages.renderAdminDeviceAgentBindings(c, user, { monitorApiConfigured: true, newMonitorApiToken: token }))
 })
 
 app.post('/admin/device-agent-bindings/:id/unbind', async (c) => {
@@ -3767,7 +3752,7 @@ app.post('/admin/maintenance/:id/advance', async (c) => {
   if (!record) return c.text('维护记录不存在或已结束', 409)
   // CLIENT_CHECK is the last phase; completing it manually is only allowed once
   // every one of the ten return-preparation checks has been recorded as passed
-  // (完善.md §16 — "完成维护前禁止进入 READY").
+  // (完善.md — "完成维护前禁止进入 READY").
   if (record.status === 'CLIENT_CHECK') {
     const passed = await c.env.RENT.prepare('SELECT COUNT(*) AS n FROM maintenance_preparation_checks WHERE maintenance_id = ? AND passed = 1').bind(record.id).first() as any
     if (Number(passed?.n || 0) < 10) return c.text(`还有 ${10 - Number(passed?.n || 0)} 项设备验证未通过，不能完成维护`, 409)
@@ -3862,7 +3847,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   if (form.lifecycleStatus && !['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'].includes(form.lifecycleStatus)) return c.text('设备生命周期状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
   if (!['normal', 'return', 'maintenance', 'lost'].includes(form.deviceMode || 'normal')) return c.text('客户设备状态无效', 400)
-  // 完善.md §16：设备还有未完成的维护记录时，不能被标记为可用 / READY。
+  // 完善.md：设备还有未完成的维护记录时，不能被标记为可用 / READY。
   if ((form.status === 'available' || form.lifecycleStatus === 'READY')) {
     const openMaintenance = await c.env.RENT.prepare("SELECT id FROM maintenance_records WHERE device_id = ? AND status IN ('OPEN','IN_PROGRESS','DATA_CLEAN','SYSTEM_RESET','CLIENT_CHECK') LIMIT 1").bind(c.req.param('id')).first()
     if (openMaintenance) return c.text('该设备还有未完成的维护记录，完成维护后才能标记为可用', 409)
@@ -4324,6 +4309,13 @@ async function hashAgentValue(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((item) => item.toString(16).padStart(2, '0')).join('')
 }
 
+async function hasValidMonitorApiToken(c: any): Promise<boolean> {
+  const providedToken = parseBearerToken(c.req.header('Authorization'))
+  const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  const providedHash = await hashAgentValue(providedToken || '')
+  return Boolean(providedToken && tokenRow?.value && timingSafeEqualStr(providedHash, String(tokenRow.value)))
+}
+
 async function getAgentDevice(c: any): Promise<any | null> {
   const header = String(c.req.header('Authorization') || '')
   if (!header.startsWith('Bearer ')) return null
@@ -4388,10 +4380,19 @@ app.post('/api/device-agent/inspection', async (c) => {
 })
 
 app.get('/api/device-agent/state', async (c) => {
-  const device = await getAgentDevice(c)
-  if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
-  const rental = await c.env.RENT.prepare(`SELECT o.id, o.startDate AS start_date, o.endDate AS end_date, o.status, COALESCE(o.rental_status, CASE o.status WHEN 'active' THEN 'ACTIVE' WHEN 'paid' THEN 'CONFIRMED' ELSE o.status END) AS rental_status, COALESCE(o.payment_status, CASE WHEN o.status IN ('paid', 'active') THEN 'PAID' ELSE 'UNPAID' END) AS payment_status, u.name AS customer_name FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.deviceId = ? AND o.status IN ('paid', 'active', 'pending_pickup', 'pending_return') ORDER BY CASE o.status WHEN 'active' THEN 0 WHEN 'pending_return' THEN 1 WHEN 'pending_pickup' THEN 2 ELSE 3 END, o.endDate DESC LIMIT 1`).bind(device.id).first()
-  return c.json({ ok: true, serverTime: new Date().toISOString(), inspectionRequested: Boolean(device.inspection_requested_at), deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental })
+  try {
+    const device = await getAgentDevice(c)
+    if (!device) {
+      if (!await hasValidMonitorApiToken(c)) return c.json({ ok: false, error: 'Invalid token' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="device-agent-state"' })
+      const row = await c.env.RENT.prepare('SELECT COUNT(*) AS bound_devices FROM devices WHERE agent_token_hash IS NOT NULL').first() as any
+      return c.json({ ok: true, status: 'ok', service: 'device-agent-state', boundDevices: Number(row?.bound_devices || 0), checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
+    }
+    const rental = await c.env.RENT.prepare(`SELECT o.id, o.startDate AS start_date, o.endDate AS end_date, o.status, COALESCE(o.rental_status, CASE o.status WHEN 'active' THEN 'ACTIVE' WHEN 'paid' THEN 'CONFIRMED' ELSE o.status END) AS rental_status, COALESCE(o.payment_status, CASE WHEN o.status IN ('paid', 'active') THEN 'PAID' ELSE 'UNPAID' END) AS payment_status, u.name AS customer_name FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.deviceId = ? AND o.status IN ('paid', 'active', 'pending_pickup', 'pending_return') ORDER BY CASE o.status WHEN 'active' THEN 0 WHEN 'pending_return' THEN 1 WHEN 'pending_pickup' THEN 2 ELSE 3 END, o.endDate DESC LIMIT 1`).bind(device.id).first()
+    return c.json({ ok: true, serverTime: new Date().toISOString(), inspectionRequested: Boolean(device.inspection_requested_at), deviceId: device.id, deviceStatus: device.agent_status, deviceMode: device.device_mode || 'normal', remoteLockEnabled: Boolean(device.remote_lock_enabled), lockMessage: device.remote_lock_message || null, contractLink: device.contract_link || null, cleanupRequested: Boolean(device.cleanup_requested), cleanupRequestId: device.cleanup_requested_at || null, rental }, 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    console.error('Device agent state monitor failed:', error?.message || error)
+    return c.json({ ok: false, status: 'down', error: 'state service unavailable' }, 503, { 'Cache-Control': 'no-store' })
+  }
 })
 
 app.get('/api/device-agent/commands', async (c) => {
