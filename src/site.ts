@@ -2413,7 +2413,20 @@ export function getSystemSettings(): typeof systemSettings {
   return systemSettings
 }
 
+// 每次 loadSystemSettingsFromDB 都要跑一次 D1 查询 + 对约 10 个富文本字段做
+// sanitize-html（CPU 密集，整体 ~500ms）。设置极少变化，用进程内短 TTL 缓存把
+// 连续调用（设备端轮询、各页面渲染）挡在重复计算之前。updateSystemSettings 会失效它。
+const SYSTEM_SETTINGS_CACHE_TTL_MS = 30_000
+let systemSettingsLoadedAt = 0
+
+export function invalidateSystemSettingsCache(): void {
+  systemSettingsLoadedAt = 0
+}
+
 export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
+  if (systemSettingsLoadedAt && Date.now() - systemSettingsLoadedAt < SYSTEM_SETTINGS_CACHE_TTL_MS) {
+    return systemSettings
+  }
   const db = getDB(c)
   const rows = await db.prepare('SELECT key, value FROM systemSettings').all() as any
   const values = new Map<SystemSettingsKey, string>((rows.results || []).map((row: any) => [row.key, row.value]))
@@ -2482,11 +2495,13 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
   if (parsedRegistrationSettings) systemSettings.registrationSettings = { ...systemSettings.registrationSettings, ...parsedRegistrationSettings }
 
+  systemSettingsLoadedAt = Date.now()
   return systemSettings
 }
 
 export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {
   Object.assign(systemSettings, updates)
+  invalidateSystemSettingsCache()
 
   const db = getDB(c)
 

@@ -243,9 +243,22 @@ app.get('/api/device-agent/update', (c) => c.json({
 }))
 
 app.get('/api/device-agent/software-terms', async (c) => {
+  // 设备端会定期拉取该协议，内容极少变化；边缘缓存 5 分钟，
+  // 命中时直接跳过 loadSystemSettingsFromDB（D1 + sanitize-html）。
+  const cache = caches.default
+  const cacheKey = new Request('https://rent.internal/api/device-agent/software-terms')
+  const cached = await cache.match(cacheKey)
+  if (cached) return c.json(await cached.json() as any)
+
   const settings = await loadSystemSettingsFromDB(c)
   const metadata = settings.legalMetadata.software
-  return c.json({ content: settings.softwareTerms, version: metadata.version, lastUpdatedDate: metadata.lastUpdatedDate })
+  const body = { content: settings.softwareTerms, version: metadata.version, lastUpdatedDate: metadata.lastUpdatedDate }
+  const toCache = new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' },
+  })
+  try { c.executionCtx.waitUntil(cache.put(cacheKey, toCache)) } catch (_) { }
+  return c.json(body)
 })
 
 let loginAttemptsSchemaReady: Promise<void> | null = null
