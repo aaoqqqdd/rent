@@ -165,6 +165,35 @@ import type { ErrorLevel } from './services/audit'
 export { createAuditLog, logError, cleanupOldErrorLogs }
 export type { ErrorLevel }
 
+// ---------------------------------------------------------------------------
+// 业务服务已拆到 src/services/*：ledger（余额 / 财务台账）、notifications（站内
+// 通知 + cron 邮件）、referral（推荐计划）、rentalProvisioning（外部付款入账 +
+// Windows 账户命令）。依赖方向 services → db/lib/settings/audit，无回边。
+// site.ts 仅 import 自身编排逻辑（updateOrderStatus / issueInvoice 等）需要的，
+// 并统一 re-export。
+// ---------------------------------------------------------------------------
+import { recordBalanceTransaction, recordFinancialLedgerEntry } from './services/ledger'
+import {
+  ensureNotificationsTable, createNotification, getNotifications,
+  createDueDateNotifications, deliverPendingAgreementEmails, notifyOverduePaymentProofs,
+} from './services/notifications'
+import {
+  ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
+  revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
+} from './services/referral'
+import {
+  recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
+} from './services/rentalProvisioning'
+
+export {
+  recordBalanceTransaction, recordFinancialLedgerEntry,
+  ensureNotificationsTable, createNotification, getNotifications,
+  createDueDateNotifications, deliverPendingAgreementEmails, notifyOverduePaymentProofs,
+  ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
+  revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
+  recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
+}
+
 function renderLayoutTemplate(values: Record<string, string>): string {
   return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? values[key] : placeholder
@@ -208,334 +237,6 @@ export function renderSiteVariables(content: string, currentUser: any = {}, extr
   return sanitizeRichHtml(filled)
 }
 
-
-export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string }): Promise<void> {
-  await ensureNotificationsTable(c)
-  const id = `nt-${crypto.randomUUID()}`
-  await c.env.RENT.prepare('INSERT INTO notifications (id, recipient_id, type, title, message, order_id, sender_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null).run()
-}
-
-export async function recordBalanceTransaction(c: Context, userId: string, amount: number, type: string, reason: string, createdBy?: string | null, balanceAfter?: number): Promise<void> {
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount REAL NOT NULL, balance_after REAL NOT NULL, type TEXT NOT NULL, reason TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
-  const current = balanceAfter ?? Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
-  const id = `bt-${crypto.randomUUID()}`
-  const value = Number(amount.toFixed(2))
-  await c.env.RENT.prepare('INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, userId, value, Number(current.toFixed(2)), type, reason, createdBy || null).run()
-  await recordFinancialLedgerEntry(c, { entryType: 'BALANCE', amount: value, customerId: userId, sourceType: 'BALANCE_TRANSACTION', sourceId: id, description: reason, createdBy, metadata: { type, balanceAfter: Number(current.toFixed(2)) } })
-}
-
-export async function recordFinancialLedgerEntry(c: Context, input: { entryType: 'PAYMENT' | 'REFUND' | 'BALANCE' | 'REFERRAL_REWARD' | 'COUPON_DISCOUNT'; amount: number; customerId?: string | null; orderId?: string | null; sourceType: string; sourceId: string; description: string; createdBy?: string | null; metadata?: unknown }): Promise<void> {
-  if (!Number.isFinite(input.amount)) throw new Error('财务流水金额无效')
-  await c.env.RENT.prepare(`INSERT OR IGNORE INTO financial_ledger_entries (id, entry_number, entry_type, amount, customer_id, order_id, source_type, source_id, description, metadata, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(`fle-${nanoid(16)}`, `FLE-${nanoid(12).toUpperCase()}`, input.entryType, Number(input.amount.toFixed(2)), input.customerId || null, input.orderId || null, input.sourceType, input.sourceId, input.description, JSON.stringify(input.metadata || {}), input.createdBy || null).run()
-}
-
-export async function ensureReferralProgram(c: Context): Promise<void> {
-  await c.env.RENT.batch([
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_codes (id TEXT PRIMARY KEY NOT NULL, customer_id TEXT NOT NULL, code TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'ACTIVE', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, disabled_at TEXT)`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referrals (id TEXT PRIMARY KEY NOT NULL, referral_number TEXT NOT NULL UNIQUE, referrer_customer_id TEXT NOT NULL, referee_customer_id TEXT NOT NULL UNIQUE, referral_code_id TEXT, status TEXT NOT NULL DEFAULT 'REGISTERED', attributed_at TEXT, registered_at TEXT, qualifying_order_id TEXT, qualified_at TEXT, rewarded_at TEXT, invalidated_at TEXT, invalid_reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_rewards (id TEXT PRIMARY KEY NOT NULL, reward_number TEXT NOT NULL UNIQUE, referral_id TEXT NOT NULL, customer_id TEXT NOT NULL, order_id TEXT, reward_type TEXT NOT NULL DEFAULT 'ACCOUNT_BALANCE', reward_amount REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'AUD', status TEXT NOT NULL DEFAULT 'PENDING', available_at TEXT, issued_at TEXT, cancelled_at TEXT, balance_transaction_id TEXT, reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
-    c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS referral_audit_logs (id TEXT PRIMARY KEY NOT NULL, referral_id TEXT NOT NULL, action TEXT NOT NULL, actor_id TEXT, reason TEXT, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
-  ])
-}
-
-// Walks the chain of referrers backward from referrerId; if refereeId shows up
-// anywhere in that ancestry, linking referrerId -> refereeId would close a
-// cycle (direct A<->B, or a longer A->B->C->A chain). Each person can only
-// ever be a referee once (unique constraint), so the ancestor chain has no
-// branching and this loop terminates quickly; the hop cap is just a safety
-// net against corrupt data forming an unexpected loop.
-async function wouldCreateReferralCycle(c: Context, referrerId: string, refereeId: string): Promise<boolean> {
-  let current = referrerId
-  for (let hop = 0; hop < 50; hop++) {
-    if (current === refereeId) return true
-    const row = await c.env.RENT.prepare('SELECT referrer_customer_id FROM referrals WHERE referee_customer_id = ?').bind(current).first() as any
-    if (!row?.referrer_customer_id) return false
-    current = String(row.referrer_customer_id)
-  }
-  return true
-}
-
-export async function lockReferralRelationship(c: Context, referrerId: string | null | undefined, refereeId: string, code?: string | null): Promise<void> {
-  if (!referrerId) return
-  await ensureReferralProgram(c)
-  if (referrerId === refereeId) {
-    await logError(c, 'INFO', 'Self-referral attempt blocked', undefined, { referrerId, refereeId })
-    return
-  }
-  if (await wouldCreateReferralCycle(c, referrerId, refereeId)) {
-    await logError(c, 'WARNING', 'Circular referral attempt blocked', undefined, { referrerId, refereeId })
-    return
-  }
-  const referrer = await c.env.RENT.prepare('SELECT referral_code FROM users WHERE id = ?').bind(referrerId).first() as any
-  if (!referrer) return
-  const referralCode = String(code || referrer.referral_code || '').trim().toUpperCase()
-  let codeRow: any = null
-  if (referralCode) {
-    await c.env.RENT.prepare("INSERT OR IGNORE INTO referral_codes (id, customer_id, code, status) VALUES (?, ?, ?, 'ACTIVE')").bind(`rfc-${nanoid(16)}`, referrerId, referralCode).run()
-    codeRow = await c.env.RENT.prepare("SELECT id FROM referral_codes WHERE code = ? AND status = 'ACTIVE'").bind(referralCode).first()
-  }
-  if (await c.env.RENT.prepare('SELECT id FROM referrals WHERE referee_customer_id = ?').bind(refereeId).first()) return
-  const id = `ref-${nanoid(16)}`
-  await c.env.RENT.batch([
-    c.env.RENT.prepare("INSERT INTO referrals (id, referral_number, referrer_customer_id, referee_customer_id, referral_code_id, status, attributed_at, registered_at) VALUES (?, ?, ?, ?, ?, 'REGISTERED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").bind(id, generateReferenceNumber('RFD').replace(/^RFD-/, 'REF-'), referrerId, refereeId, codeRow?.id || null),
-    c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, metadata) VALUES (?, ?, 'REGISTERED', ?)").bind(`rfa-${nanoid(16)}`, id, JSON.stringify({ source: 'registration' })),
-  ])
-}
-
-async function syncReferralOrderState(c: Context, orderId: string, rentalStatus: string): Promise<void> {
-  if (!['ACTIVE', 'COMPLETED', 'CANCELLED'].includes(rentalStatus)) return
-  await ensureReferralProgram(c)
-  const order = await c.env.RENT.prepare('SELECT id, userId, payment_status, totalAmount, depositAmount FROM orders WHERE id = ?').bind(orderId).first() as any
-  if (!order) return
-  const referral = await c.env.RENT.prepare("SELECT id FROM referrals WHERE referee_customer_id = ? AND status IN ('REGISTERED','QUALIFYING','QUALIFIED')").bind(order.userId).first() as any
-  if (!referral) return
-  if (rentalStatus === 'CANCELLED') {
-    await c.env.RENT.prepare("UPDATE referrals SET status = 'CANCELLED', invalid_reason = 'ORDER_CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(referral.id).run()
-    await revokeReferralRewardForOrder(c, orderId, '订单已取消')
-  } else if (order.payment_status === 'PAID' && rentalStatus === 'ACTIVE') {
-    await c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFYING', qualifying_order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id).run()
-  } else if (order.payment_status === 'PAID' && rentalStatus === 'COMPLETED') {
-    const rentAmount = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
-    const rate = Math.min(100, Math.max(0, Number(getSystemSettings().referralSettings.defaultRate || 0))) / 100
-    const rewardAmount = Number((rentAmount * rate).toFixed(2))
-    await c.env.RENT.batch([
-      c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFIED', qualifying_order_id = ?, qualified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id),
-      c.env.RENT.prepare("INSERT OR IGNORE INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_amount, status, reason) SELECT ?, ?, r.id, r.referrer_customer_id, ?, ?, 'PENDING', '订单已完成，等待结算期满后发放' FROM referrals r WHERE r.id = ?").bind(`rrw-${nanoid(16)}`, generateReferenceNumber('RFD').replace(/^RFD-/, 'RRW-'), orderId, rewardAmount, referral.id),
-    ])
-  }
-}
-
-// Reverses a reward that hasn't been paid out yet (PENDING) or claws back one
-// that already was (AVAILABLE, credited to commission_balance). Safe to call
-// on orders with no reward at all (no-op). Idempotent: a second call finds
-// the reward already CANCELLED and does nothing further. Uses 'CANCELLED'
-// (not e.g. 'REVOKED') to match the status values allowed by the CHECK
-// constraint in migrations/0079_referral_program.sql.
-export async function revokeReferralRewardForOrder(c: Context, orderId: string, reason: string): Promise<void> {
-  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, status, referral_id FROM referral_rewards WHERE order_id = ? AND status IN ('PENDING','AVAILABLE')").bind(orderId).first() as any
-  if (!reward) return
-  const wasAvailable = reward.status === 'AVAILABLE'
-  const result = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP, reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING','AVAILABLE')").bind(reason, reward.id).run() as any
-  if (!Number(result.meta?.changes ?? result.changes ?? 0)) return
-  if (wasAvailable) {
-    await c.env.RENT.prepare('UPDATE users SET commission_balance = MAX(0, commission_balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(reward.reward_amount, reward.customer_id).run()
-    await recordFinancialLedgerEntry(c, { entryType: 'REFERRAL_REWARD', amount: -Number(reward.reward_amount), customerId: reward.customer_id, sourceType: 'REFERRAL_REWARD', sourceId: reward.id, description: `推荐奖励撤销：${reason}`, createdBy: null })
-  }
-  await c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, reason, metadata) VALUES (?, ?, 'REWARD_REVOKED', ?, ?)").bind(`rfa-${nanoid(16)}`, reward.referral_id, reason, JSON.stringify({ rewardId: reward.id, amount: reward.reward_amount })).run()
-}
-
-// Moves rewards from PENDING to AVAILABLE once the qualifying order has
-// cleared the settlement/chargeback window (referralSettings.settlementPeriod
-// days past qualification), skipping any order with an open Stripe dispute.
-// Flips one PENDING reward to AVAILABLE and credits the referrer's commission
-// balance. Shared by the scheduled settlement job and the admin "release now"
-// override. Returns false if the reward wasn't PENDING (already handled).
-async function markReferralRewardAvailable(c: Context, reward: { id: string; customer_id: string; reward_amount: number; referral_id: string }, actorId?: string | null): Promise<boolean> {
-  const claimed = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'AVAILABLE', available_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'PENDING'").bind(reward.id).run() as any
-  if (!Number(claimed.meta?.changes ?? claimed.changes ?? 0)) return false
-  await c.env.RENT.prepare('UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(reward.reward_amount, reward.customer_id).run()
-  await recordFinancialLedgerEntry(c, { entryType: 'REFERRAL_REWARD', amount: Number(reward.reward_amount), customerId: reward.customer_id, sourceType: 'REFERRAL_REWARD', sourceId: reward.id, description: '推荐奖励结算到账', createdBy: actorId || null })
-  await c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, actor_id, metadata) VALUES (?, ?, 'REWARD_RELEASED', ?, ?)").bind(`rfa-${nanoid(16)}`, reward.referral_id, actorId || null, JSON.stringify({ rewardId: reward.id, amount: reward.reward_amount })).run()
-  return true
-}
-
-export async function releaseQualifiedReferralRewards(c: Context): Promise<number> {
-  const settlementDays = Math.max(1, Math.floor(Number(getSystemSettings().referralSettings.settlementPeriod || 30)))
-  const rows = (await c.env.RENT.prepare(`
-    SELECT rw.id, rw.customer_id, rw.reward_amount, rw.referral_id
-    FROM referral_rewards rw
-    JOIN referrals r ON r.id = rw.referral_id
-    WHERE rw.status = 'PENDING'
-      AND r.status = 'QUALIFIED'
-      AND r.qualified_at IS NOT NULL
-      AND datetime(r.qualified_at) <= datetime('now', ?)
-      AND NOT EXISTS (
-        SELECT 1 FROM payment_disputes pd
-        JOIN payments p ON p.id = pd.payment_id
-        WHERE p.rental_id = r.qualifying_order_id AND pd.status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW')
-      )
-  `).bind(`-${settlementDays} days`).all()).results || []
-  let released = 0
-  for (const row of rows as any[]) {
-    if (await markReferralRewardAvailable(c, row)) released++
-  }
-  return released
-}
-
-// Admin override: release a specific reward immediately, bypassing the
-// settlement-period wait (but not the open-dispute rule, callers should check
-// separately if they want to warn the admin about that).
-export async function releaseReferralRewardNow(c: Context, rewardId: string, actorId: string): Promise<boolean> {
-  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, referral_id FROM referral_rewards WHERE id = ? AND status = 'PENDING'").bind(rewardId).first() as any
-  if (!reward) return false
-  return markReferralRewardAvailable(c, reward, actorId)
-}
-
-export async function recordExternalRentalFlow(c: Context, userId: string, amount: number, method: string, createdBy?: string | null, orderId?: string): Promise<void> {
-  const value = Number(amount || 0)
-  if (value <= 0) return
-  const balance = Number(((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any)?.balance || 0))
-  await recordBalanceTransaction(c, userId, value, 'rental_payment_credit', `${method}租赁付款入账`, createdBy, balance)
-  await recordBalanceTransaction(c, userId, -value, 'rental_payment_debit', `${method}租赁付款扣款`, createdBy, balance)
-  if (orderId) await recordFinancialLedgerEntry(c, { entryType: 'PAYMENT', amount: value, customerId: userId, orderId, sourceType: 'ORDER_PAYMENT', sourceId: orderId, description: `${method}租赁付款`, createdBy, metadata: { method } })
-}
-
-export async function enqueueRentalUserCreation(c: Context, order: any): Promise<void> {
-  const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
-  if (!contract?.contract_data) return
-  let data: any = {}
-  try { data = JSON.parse(contract.contract_data) } catch (_) { }
-  const password = String(data.windows_password || '')
-  if (!password || data.windows_account_created) return
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, command_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, claimed_at TEXT, completed_at TEXT, expires_at TEXT NOT NULL)`).run()
-  const username = String(data.windows_username || order.customer?.name || 'RentalUser')
-  await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CREATE_RENTAL_USER', ?, NULL, datetime('now', '+7 days'))").bind(`cmd-${crypto.randomUUID()}`, order.deviceId || order.device_id, JSON.stringify({ username, password })).run()
-  data.windows_account_created = true
-  await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
-}
-
-export async function enqueueRentalUserDeletion(c: Context, order: any): Promise<void> {
-  const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
-  if (!contract?.contract_data) return
-  let data: any = {}
-  try { data = JSON.parse(contract.contract_data) } catch (_) { }
-  if (data.windows_account_deleted) return
-  const username = String(data.windows_username || order.customer?.name || 'RentalUser')
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, command_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, claimed_at TEXT, completed_at TEXT, expires_at TEXT NOT NULL)`).run()
-  await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'DELETE_RENTAL_USER', ?, NULL, datetime('now', '+30 days'))").bind(`cmd-${crypto.randomUUID()}`, order.deviceId || order.device_id, JSON.stringify({ username })).run()
-  data.windows_account_deleted = true
-  await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
-}
-
-let notificationsSchemaReady: Promise<void> | null = null
-
-export async function ensureNotificationsTable(c: Context): Promise<void> {
-  if (!notificationsSchemaReady) notificationsSchemaReady = (async () => {
-    await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS notifications (
-    id TEXT PRIMARY KEY,
-    recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL,
-    title TEXT NOT NULL,
-    message TEXT NOT NULL,
-    order_id TEXT,
-    sender_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-    read_at TEXT,
-    deleted_at TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`).run()
-    try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN sender_id TEXT REFERENCES users(id) ON DELETE SET NULL').run() } catch (_) { /* column already exists */ }
-    try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN deleted_at TEXT').run() } catch (_) { /* column already exists */ }
-    await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created ON notifications(recipient_id, read_at, created_at DESC)').run()
-    await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_sender_created ON notifications(sender_id, deleted_at, created_at DESC)').run()
-  })()
-  try { await notificationsSchemaReady } catch (error) { notificationsSchemaReady = null; throw error }
-}
-
-export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
-  await ensureNotificationsTable(c)
-  const result = await c.env.RENT.prepare('SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 100').bind(recipientId).all()
-  return result.results || []
-}
-
-export async function createDueDateNotifications(c: Context): Promise<number> {
-  await ensureNotificationsTable(c)
-  const today = new Date()
-  const notices = [
-    { days: 3, type: 'due_soon_3d', title: '租赁即将到期', text: '您的设备租赁将在 3 天后到期，请提前安排归还或联系工作人员续租。' },
-    { days: 0, type: 'due_today', title: '租赁今日到期', text: '您的设备租赁今天到期，请尽快归还设备并等待验机。' },
-  ]
-  let created = 0
-  for (const notice of notices) {
-    const due = new Date(today)
-    due.setUTCDate(due.getUTCDate() + notice.days)
-    const date = due.toISOString().slice(0, 10)
-    const rows = await c.env.RENT.prepare(`
-      SELECT o.id, o.orderNo, o.userId, o.endDate, u.name
-      FROM orders o JOIN users u ON u.id = o.userId
-      WHERE o.endDate = ? AND o.status IN ('paid', 'active') AND u.role = 'CUSTOMER'
-        AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.recipient_id = o.userId AND n.order_id = o.id AND n.type = ?)
-    `).bind(date, notice.type).all()
-    for (const order of (rows.results || []) as any[]) {
-      await createNotification(c, { recipientId: order.userId, type: notice.type, title: notice.title, message: `${notice.text} 订单：${order.orderNo || order.id}。`, orderId: order.id })
-      created += 1
-    }
-  }
-  return created
-}
-
-// 投递 notifyAgreementUpdate 排入 email_events 队列的协议更新邮件。
-// 由 cron 触发，每次只处理一小批，避免一次调用里对外发起过多子请求；
-// 失败的行会在下一次 tick 自动重试，直到 max_attempts。
-export async function deliverPendingAgreementEmails(c: Context): Promise<number> {
-  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
-  if (!apiKey || !from) return 0
-  const rows = (((await c.env.RENT.prepare(
-    "SELECT id, recipient, subject, text_body, html_body FROM email_events WHERE event_type = 'AGREEMENT_UPDATE' AND status IN ('PENDING', 'FAILED') AND retry_count < max_attempts ORDER BY created_at LIMIT 90"
-  ).all()) as any).results || []) as any[]
-  let sent = 0
-  for (const row of rows) {
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, to: [row.recipient], subject: row.subject, text: row.text_body, html: row.html_body || undefined }),
-      })
-      const result = await response.json().catch(() => ({})) as any
-      await c.env.RENT.prepare(
-        "UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?"
-      ).bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status).slice(0, 500), response.ok ? 1 : 0, row.id).run()
-      if (response.ok) sent += 1
-    } catch (error: any) {
-      await c.env.RENT.prepare(
-        "UPDATE email_events SET status = 'FAILED', error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).bind(String(error?.message || error).slice(0, 500), row.id).run()
-    }
-  }
-  return sent
-}
-
-export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
-  await c.env.RENT.prepare('ALTER TABLE payment_proofs ADD COLUMN admin_notified_at TEXT').run().catch(() => undefined)
-  await ensureNotificationsTable(c)
-  const proofs = await c.env.RENT.prepare(`
-    SELECT pp.id, pp.payment_id, pp.uploaded_at, o.id AS order_id, o.orderNo, o.totalAmount,
-           p.payment_method, u.name AS customer_name
-    FROM payment_proofs pp
-    JOIN payments p ON p.id = pp.payment_id
-    JOIN orders o ON o.id = p.rental_id
-    LEFT JOIN users u ON u.id = o.userId
-    WHERE pp.status = 'submitted'
-      AND pp.admin_notified_at IS NULL
-      AND pp.uploaded_at <= datetime('now', '-1 hour')
-      AND p.payment_method IN ('bank_transfer', 'alipay', 'wechat')
-      AND o.status = 'pending_payment'
-    ORDER BY pp.uploaded_at ASC
-    LIMIT 100
-  `).all() as any
-  if (!(proofs.results || []).length) return 0
-  const admins = (await c.env.RENT.prepare("SELECT id, email, name FROM users WHERE role = 'ADMIN' AND status = 'active'").all() as any).results || []
-  if (!admins.length) return 0
-  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
-  let notified = 0
-  for (const proof of proofs.results as any[]) {
-    const method = proof.payment_method === 'alipay' ? '支付宝' : proof.payment_method === 'wechat' ? '微信' : '银行转账'
-    const orderLabel = proof.orderNo || proof.order_id
-    const title = `${method}付款待审核超过 1 小时`
-    const message = `订单 ${orderLabel} 的${method}付款凭证已提交超过 1 小时，客户：${proof.customer_name || '未填写'}，金额：AUD ${Number(proof.totalAmount || 0).toFixed(2)}。请尽快审核。`
-    await Promise.all(admins.map((admin: any) => createNotification(c, { recipientId: admin.id, type: 'payment_review_overdue', title, message, orderId: proof.order_id })))
-    if (apiKey && from) {
-      const html = renderEmailNotificationHtml(title, `<p>${message}</p><p><a href="${new URL(`/admin/orders/${proof.order_id}`, c.req.url).toString()}">打开订单审核</a></p>`, getSystemSettings().companyDetails.name)
-      await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: admins.map((admin: any) => admin.email).filter((email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)), subject: title, text: message, html }) })
-    }
-    await c.env.RENT.prepare('UPDATE payment_proofs SET admin_notified_at = CURRENT_TIMESTAMP WHERE id = ? AND admin_notified_at IS NULL').bind(proof.id).run()
-    notified += 1
-  }
-  return notified
-}
 
 export function isContractExpired(contract: Contract, now = Date.now()): boolean {
   if ((contract.status as string) === 'expired') return true
