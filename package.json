@@ -4,7 +4,7 @@
   "dependencies": {
     "hono": "^4.12.34",
     "nanoid": "^5.1.16",
-    "sanitize-html": "^2.17.6"
+    "sanitize-html": "^2.17.7"
   },
   "scripts": {
     "test": "TS_NODE_TRANSPILE_ONLY=true node --loader ts-node/esm --loader ./tests/text-module-loader.mjs --experimental-specifier-resolution=node --test tests/*.test.ts",
@@ -25,6 +25,9 @@
     "wrangler": "^4.118.0"
   },
   "overrides": {
-    "undici": "^7.29.0"
+    "undici": "^7.29.0",
+    "postcss": {
+      "nanoid": "^3.3.18"
+    }
   }
 }
