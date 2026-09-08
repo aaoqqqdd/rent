@@ -4313,7 +4313,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_USER_BLOCK: mobileUserBlock,
     SIDEBAR: sidebar,
     CONTENT: body,
-    FOOTER: `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/user-terms">用户协议</a><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><a href="/cookies">Cookie 政策</a><a href="/refund-policy">退款政策</a><a href="/consumer-rights">消费者权利</a><a href="/complaints">投诉与争议</a><a href="/acceptable-use">可接受使用</a><a href="/software-terms">软件协议</a></nav></footer>`
+    FOOTER: `<footer class="legal-footer"><div class="legal-footer__inner"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)}</span><nav aria-label="网站法律信息"><a href="/service-terms">服务条款</a><a href="/privacy">隐私政策</a><details class="legal-footer__more"><summary>更多</summary><div class="legal-footer__menu"><a href="/user-terms">用户协议</a><a href="/cookies">Cookie 政策</a><a href="/refund-policy">退款政策</a><a href="/consumer-rights">消费者权利</a><a href="/complaints">投诉与争议</a><a href="/acceptable-use">可接受使用</a><a href="/software-terms">软件协议</a></div></details></nav></div></footer>`
   })
 }
 
