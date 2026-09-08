@@ -1382,22 +1382,14 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       </aside>`
     : ''
 
-  const footerLinks: Array<[string, string]> = [
-    ['/user-terms', '用户协议'],
-    ['/service-terms', '服务条款'],
-    ['/privacy', '隐私政策'],
-    ['/cookies', 'Cookie 政策'],
-    ['/refund-policy', '退款政策'],
-    ['/consumer-rights', '消费者权利'],
-    ['/complaints', '投诉与争议'],
-    ['/acceptable-use', '可接受使用'],
-    ['/software-terms', '软件协议'],
+  const footerGroups: Array<[string, Array<[string, string]>]> = [
+    ['租赁服务', [['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/refund-policy', '退款政策']]],
+    ['隐私与规范', [['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策'], ['/acceptable-use', '可接受使用']]],
+    ['权益与支持', [['/consumer-rights', '消费者权利'], ['/complaints', '投诉与争议'], ['/software-terms', '软件协议']]],
   ]
-  const footerNav = footerLinks
-    .map(([href, text]) => `<a href="${href}">${text}</a>`)
-    .join('<span class="legal-footer__sep" aria-hidden="true">·</span>')
+  const footerNav = footerGroups.map(([label, links]) => `<section class="legal-footer__group"><h2>${label}</h2>${links.map(([href, text]) => `<a href="${href}">${text}</a>`).join('')}</section>`).join('')
   const footerCompany = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
-  const footerHtml = `<footer class="legal-footer"><nav aria-label="网站法律信息">${footerNav}</nav><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany} · 保留所有权利</span></footer>`
+  const footerHtml = `<footer class="legal-footer"><div class="legal-footer__inner"><div class="legal-footer__top"><a class="legal-footer__brand" href="/" aria-label="返回首页"><span class="legal-footer__mark" aria-hidden="true">PR</span><span><strong>${footerCompany}</strong><small>DEVICE RENTAL · MELBOURNE</small></span></a><nav aria-label="网站法律信息">${footerNav}</nav></div><div class="legal-footer__bottom"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany} · 保留所有权利</span><span class="legal-footer__note">透明条款，安心租赁</span></div></div></footer>`
 
   return renderLayoutTemplate({
     TITLE: normalizedTitle,

@@ -2767,7 +2767,8 @@ app.get('/admin/withdrawals', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderAdminWithdrawals(c, user))
+  const body = await pages.renderWithdrawalsPanel(c)
+  return c.html(buildLayout('佣金提现 - 电脑租赁管理系统', body, user))
 })
 
 app.get('/admin/payment-reviews', async (c) => {
