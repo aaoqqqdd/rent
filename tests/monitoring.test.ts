@@ -6,6 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { rateHealth, worstHealthLevel } from '../src/site'
+import { monitorOverallStatus, parseBearerToken } from '../src/domain/monitoring'
 
 test('rateHealth classifies against warn/critical thresholds', () => {
   assert.deepEqual(rateHealth(1, 100, 0.02, 0.1), { rate: 0.01, level: 'OK' })
@@ -28,4 +29,19 @@ test('worstHealthLevel picks the most severe level present', () => {
   assert.equal(worstHealthLevel([{ level: 'OK' }, { level: 'CRITICAL' }, { level: 'WARN' }]), 'CRITICAL')
   assert.equal(worstHealthLevel([{ level: 'OK' }, { level: 'OK' }]), 'OK')
   assert.equal(worstHealthLevel([]), 'OK')
+})
+
+test('monitorOverallStatus returns the worst public probe state', () => {
+  assert.equal(monitorOverallStatus([{ status: 'ok' }, { status: 'ok' }]), 'ok')
+  assert.equal(monitorOverallStatus([{ status: 'ok' }, { status: 'degraded' }]), 'degraded')
+  assert.equal(monitorOverallStatus([{ status: 'degraded' }, { status: 'down' }]), 'down')
+  assert.equal(monitorOverallStatus([]), 'ok')
+})
+
+test('monitor API accepts only one Bearer token value', () => {
+  assert.equal(parseBearerToken('Bearer monitor-secret'), 'monitor-secret')
+  assert.equal(parseBearerToken('bearer monitor-secret'), 'monitor-secret')
+  assert.equal(parseBearerToken('Basic monitor-secret'), null)
+  assert.equal(parseBearerToken('Bearer one two'), null)
+  assert.equal(parseBearerToken(null), null)
 })

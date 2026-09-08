@@ -108,6 +108,7 @@ import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
+import { monitorOverallStatus, parseBearerToken } from './domain/monitoring'
 import siteStyles from './styles.css'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
@@ -208,40 +209,81 @@ app.get('/api/system-status', async (c) => {
   }
 })
 
-// Lightweight probe for an external uptime monitor ("检测站"). Unauthenticated,
-// never cached, tiny payload. Returns 200 when the site and the website<->agent
-// channel are healthy, 503 when a core dependency is down, so a monitor can
-// alert on the status code alone.
+// Token-protected, read-only website probe for Monitorflare. Device online
+// state is intentionally excluded: this endpoint measures the website and its
+// core services, not whether an individual Windows client is running.
 app.get('/api/monitor', async (c) => {
   const startedAt = Date.now()
   const checks: Record<string, any> = {}
-  let down = false
 
   try {
-    await c.env.RENT.prepare('SELECT 1 AS ok').first()
-    checks.database = { ok: true }
+    const databaseStartedAt = Date.now()
+    const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+    const latencyMs = Date.now() - databaseStartedAt
+    checks.database = { ok: true, status: latencyMs >= 1000 ? 'degraded' : 'ok', latencyMs }
+    const providedToken = parseBearerToken(c.req.header('Authorization'))
+    const providedHash = await hashAgentValue(providedToken || '')
+    if (!providedToken || !tokenRow?.value || !timingSafeEqualStr(providedHash, String(tokenRow.value))) {
+      return c.json({ status: 'unauthorized', error: 'Valid monitor token required' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="monitor"' })
+    }
   } catch (error: any) {
-    checks.database = { ok: false, error: String(error?.message || error).slice(0, 200) }
-    down = true
+    console.error('Monitor database check failed:', error?.message || error)
+    checks.database = { ok: false, status: 'down', error: 'database unavailable' }
   }
 
-  try {
-    const row = await c.env.RENT.prepare(
-      "SELECT COUNT(*) AS total, SUM(CASE WHEN agent_status = 'online' THEN 1 ELSE 0 END) AS online, MAX(agent_last_seen_at) AS last_seen FROM devices WHERE agent_token_hash IS NOT NULL"
-    ).first() as any
-    const total = Number(row?.total || 0)
-    const online = Number(row?.online || 0)
-    const lastSeenMs = row?.last_seen ? Date.parse(String(row.last_seen).replace(' ', 'T') + 'Z') : NaN
-    const lastHeartbeatAgeSeconds = Number.isFinite(lastSeenMs) ? Math.max(0, Math.round((Date.now() - lastSeenMs) / 1000)) : null
-    checks.deviceAgentChannel = { ok: true, registered: total, online, offline: total - online, lastHeartbeatAgeSeconds }
-  } catch (error: any) {
-    checks.deviceAgentChannel = { ok: false, error: String(error?.message || error).slice(0, 200) }
-    down = true
+  const runCheck = async (name: string, failureStatus: 'degraded' | 'down', query: () => Promise<Record<string, any>>) => {
+    try {
+      checks[name] = await query()
+    } catch (error: any) {
+      console.error(`Monitor ${name} check failed:`, error?.message || error)
+      checks[name] = { ok: false, status: failureStatus, error: 'check unavailable' }
+    }
   }
 
+  if (checks.database.status !== 'down') await Promise.all([
+    runCheck('applicationErrors', 'degraded', async () => {
+      const row = await c.env.RENT.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN error_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
+      const recent = Number(row?.total || 0)
+      const critical = Number(row?.critical || 0)
+      return { ok: recent === 0, status: recent ? 'degraded' : 'ok', windowMinutes: 10, recent, critical }
+    }),
+    runCheck('scheduledJobs', 'degraded', async () => {
+      const row = await c.env.RENT.prepare(`SELECT
+        SUM(CASE WHEN status = 'FAILED' AND datetime(started_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN status = 'RUNNING' AND datetime(started_at) < datetime('now', '-1 hour') THEN 1 ELSE 0 END) AS stuck,
+        MAX(started_at) AS last_run
+        FROM scheduled_job_runs`).first() as any
+      const failures = Number(row?.failures || 0)
+      const stuck = Number(row?.stuck || 0)
+      const lastRunMs = row?.last_run ? Date.parse(`${String(row.last_run).replace(' ', 'T')}Z`) : NaN
+      const lastRunAgeSeconds = Number.isFinite(lastRunMs) ? Math.max(0, Math.round((Date.now() - lastRunMs) / 1000)) : null
+      const overdue = lastRunAgeSeconds === null || lastRunAgeSeconds > 36 * 60 * 60
+      return { ok: !failures && !stuck && !overdue, status: failures || stuck || overdue ? 'degraded' : 'ok', failures24h: failures, stuck, lastRunAgeSeconds }
+    }),
+    runCheck('emailDelivery', 'degraded', async () => {
+      const row = await c.env.RENT.prepare(`SELECT
+        SUM(CASE WHEN status = 'FAILED' AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN status IN ('PENDING', 'SENDING') AND datetime(created_at) < datetime('now', '-30 minutes') THEN 1 ELSE 0 END) AS stuck
+        FROM email_events`).first() as any
+      const failures = Number(row?.failures || 0)
+      const stuck = Number(row?.stuck || 0)
+      return { ok: !failures && !stuck, status: failures || stuck ? 'degraded' : 'ok', failures24h: failures, stuck }
+    }),
+    runCheck('remoteCommands', 'degraded', async () => {
+      const row = await c.env.RENT.prepare(`SELECT
+        SUM(CASE WHEN status IN ('FAILED', 'EXPIRED') AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END) AS overdue
+        FROM device_commands`).first() as any
+      const failures = Number(row?.failures || 0)
+      const overdue = Number(row?.overdue || 0)
+      return { ok: !failures && !overdue, status: failures || overdue ? 'degraded' : 'ok', failures24h: failures, overdue }
+    }),
+  ])
+
+  const status = monitorOverallStatus(Object.values(checks))
   return c.json(
-    { status: down ? 'down' : 'ok', checks, latencyMs: Date.now() - startedAt, checkedAt: new Date().toISOString() },
-    down ? 503 : 200,
+    { status, checks, latencyMs: Date.now() - startedAt, checkedAt: new Date().toISOString() },
+    status === 'down' ? 503 : 200,
     { 'Cache-Control': 'no-store' },
   )
 })
@@ -3456,7 +3498,21 @@ app.get('/admin/coupons', async (c) => {
 app.get('/admin/device-agent-bindings', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  return c.html(await pages.renderAdminDeviceAgentBindings(c, user))
+  const monitorToken = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  return c.html(await pages.renderAdminDeviceAgentBindings(c, user, { monitorApiConfigured: Boolean(monitorToken?.value) }))
+})
+
+app.post('/admin/device-agent-bindings/monitor-token', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '')
+  const tokenHash = await hashAgentValue(token)
+  const existing = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  await c.env.RENT.prepare(`INSERT INTO systemSettings (key, value) VALUES ('monitorApiTokenHash', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP`).bind(tokenHash).run()
+  await createAuditLog(c, { actor: user, action: existing?.value ? 'MONITOR_API_TOKEN_ROTATED' : 'MONITOR_API_TOKEN_CREATED', targetType: 'SYSTEM', targetId: 'monitor-api' })
+  c.header('Cache-Control', 'no-store')
+  return c.html(await pages.renderAdminDeviceAgentBindings(c, user, { monitorApiConfigured: true, newMonitorApiToken: token }))
 })
 
 app.post('/admin/device-agent-bindings/:id/unbind', async (c) => {
