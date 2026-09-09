@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { rateHealth, worstHealthLevel } from '../src/site'
-import { monitorOverallStatus, parseBearerToken } from '../src/domain/monitoring'
+import { monitorOverallStatus, monitorHttpStatus, parseBearerToken } from '../src/domain/monitoring'
 
 test('rateHealth classifies against warn/critical thresholds', () => {
   assert.deepEqual(rateHealth(1, 100, 0.02, 0.1), { rate: 0.01, level: 'OK' })
@@ -36,6 +36,12 @@ test('monitorOverallStatus returns the worst public probe state', () => {
   assert.equal(monitorOverallStatus([{ status: 'ok' }, { status: 'degraded' }]), 'degraded')
   assert.equal(monitorOverallStatus([{ status: 'degraded' }, { status: 'down' }]), 'down')
   assert.equal(monitorOverallStatus([]), 'ok')
+})
+
+test('monitorHttpStatus lets a monitor grade on the status code alone', () => {
+  assert.equal(monitorHttpStatus('ok'), 200)
+  assert.equal(monitorHttpStatus('degraded'), 503)
+  assert.equal(monitorHttpStatus('down'), 521)
 })
 
 test('monitor API accepts only one Bearer token value', () => {
