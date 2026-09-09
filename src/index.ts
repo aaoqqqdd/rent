@@ -51,6 +51,8 @@ import {
   findBlockingRiskFlag,
   timingSafeEqualStr,
   collectMonitoringMetrics,
+  getMonitoringHistory,
+  recentErrorLogCount,
   canTransitionDeviceLifecycle,
   MAINTENANCE_CHECK_TYPES,
   validateHostedImageUrls,
@@ -110,7 +112,7 @@ import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
-import { monitorOverallStatus, parseBearerToken } from './domain/monitoring'
+import { monitorOverallStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
 import { styleSheetText as siteStyles, styleSheetVersion, appScriptText, appScriptVersion } from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
@@ -222,8 +224,7 @@ app.get('/api/system-status', async (c) => {
   const startedAt = Date.now()
   try {
     await c.env.RENT.prepare('SELECT 1 AS ok').first()
-    const recent = await c.env.RENT.prepare("SELECT COUNT(*) AS total FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
-    const errors = Number(recent?.total || 0)
+    const errors = (await recentErrorLogCount(c, 10)).total
     const latency = Date.now() - startedAt
     const delayed = latency >= 1000
     return c.json({ status: errors ? 'degraded' : delayed ? 'delayed' : 'healthy', label: errors ? '异常' : delayed ? '延迟' : '正常', checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
@@ -264,9 +265,7 @@ app.get('/api/monitor', async (c) => {
 
   if (checks.database.status !== 'down') await Promise.all([
     runCheck('applicationErrors', 'degraded', async () => {
-      const row = await c.env.RENT.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN error_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
-      const recent = Number(row?.total || 0)
-      const critical = Number(row?.critical || 0)
+      const { total: recent, critical } = await recentErrorLogCount(c, 10)
       return { ok: recent === 0, status: recent ? 'degraded' : 'ok', windowMinutes: 10, recent, critical }
     }),
     runCheck('scheduledJobs', 'degraded', async () => {
@@ -2227,6 +2226,21 @@ app.get('/health', async (c) => {
     degraded = true
   }
 
+  // 失败率 / 积压汇总：与 /admin/monitoring、cron sweep 共用 collectMonitoringMetrics 一份口径。
+  try {
+    const metrics = await collectMonitoringMetrics(c)
+    const level = worstHealthLevel(metrics)
+    checks.metrics = {
+      ok: level === 'OK',
+      level,
+      breaching: metrics.filter(m => m.level !== 'OK').map(m => ({ key: m.key, level: m.level, numerator: m.numerator, denominator: m.denominator, rate: m.rate })),
+    }
+    if (level !== 'OK') degraded = true
+  } catch (error: any) {
+    checks.metrics = { ok: false, error: error?.message || String(error) }
+    degraded = true
+  }
+
   const status = unhealthy ? 'unhealthy' : degraded ? 'degraded' : 'healthy'
   return c.json({ status, checks, timestamp: new Date().toISOString() }, unhealthy ? 503 : 200)
 })
@@ -3493,11 +3507,12 @@ app.post('/admin/data-retention/:category', async (c) => {
 app.get('/admin/monitoring', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const [metrics, jobRuns] = await Promise.all([
+  const [metrics, history, jobRuns] = await Promise.all([
     collectMonitoringMetrics(c),
+    getMonitoringHistory(c, 168),
     c.env.RENT.prepare('SELECT job_name, status, started_at, completed_at, error_message, result_summary FROM scheduled_job_runs ORDER BY started_at DESC LIMIT 25').all().then(r => r.results || []),
   ])
-  return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[]))
+  return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[], history))
 })
 
 app.get('/admin/connectivity', async (c) => {
