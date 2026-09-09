@@ -335,7 +335,7 @@ test('button shine is contained by the button instead of the whole page', () => 
 
 test('site layout loads the external stylesheet and resolves template slots', () => {
   const html = buildLayout('测试页面', '<section id="test-content">内容</section>')
-  assert.match(html, /<link rel="stylesheet" href="\/styles\.css">/)
+  assert.match(html, /<link rel="stylesheet" href="\/styles\.css(?:\?v=[a-z0-9]+)?">/)
   assert.doesNotMatch(html, /<style(?:\s|>)/i)
   assert.doesNotMatch(html, /\{\{[A-Z_]+\}\}/)
   assert.match(html, /<section id="test-content">内容<\/section>/)

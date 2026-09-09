@@ -5,6 +5,7 @@
 
 import { formatCurrency, formatMelbourneDateTime } from '../../site';
 import { Context } from 'hono';
+import { getTableColumns as getCachedTableColumns } from '../../db/client';
 
 function getStatusLabel(status: string) {
   switch (status) {
@@ -25,12 +26,11 @@ function getStatusLabel(status: string) {
  * 佣金提现审核板块。作为「推荐奖励与佣金提现」合并页的一部分渲染，返回内容片段而非整页。
  */
 export async function renderWithdrawalsPanel(c: Context): Promise<string> {
-  const tableInfo = await c.env.RENT.prepare('PRAGMA table_info(commission_withdrawals)').all() as any;
-  const withdrawalColumns = (tableInfo.results || []).map((column: any) => column.name);
-  const hasAccountNameColumn = withdrawalColumns.includes('account_name') || withdrawalColumns.includes('accountName');
-  const hasAccountNumberColumn = withdrawalColumns.includes('account_number') || withdrawalColumns.includes('accountNumber');
-  const hasBsbColumn = withdrawalColumns.includes('bsb');
-  const hasProcessedAtColumn = withdrawalColumns.includes('processed_at') || withdrawalColumns.includes('processedAt');
+  const withdrawalColumns = await getCachedTableColumns(c.env.RENT, 'commission_withdrawals');
+  const hasAccountNameColumn = withdrawalColumns.has('account_name') || withdrawalColumns.has('accountName');
+  const hasAccountNumberColumn = withdrawalColumns.has('account_number') || withdrawalColumns.has('accountNumber');
+  const hasBsbColumn = withdrawalColumns.has('bsb');
+  const hasProcessedAtColumn = withdrawalColumns.has('processed_at') || withdrawalColumns.has('processedAt');
 
   const accountNameSelect = hasAccountNameColumn ? 'w.account_name AS account_name' : 'NULL AS account_name';
   const accountNumberSelect = hasAccountNumberColumn ? 'w.account_number AS account_number' : 'NULL AS account_number';

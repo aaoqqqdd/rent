@@ -12,7 +12,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { getDB } from './client'
+import { getDB, getTableColumns } from './client'
 import type { User, Device, DeviceLifecycleStatus, Order, Contract } from './types'
 import { getAccessLevel } from '../lib/access'
 import { sanitizePlainText } from '../lib/html'
@@ -175,8 +175,7 @@ function normalizeContractRow(contractRow: any): Contract {
 
 export async function userHasColumn(c: Context, columnName: string): Promise<boolean> {
   const db = getDB(c)
-  const result = await db.prepare('PRAGMA table_info(users)').all()
-  return (result.results || []).some((column: any) => column.name === columnName)
+  return (await getTableColumns(db, 'users')).has(columnName)
 }
 
 // ---------------------------------------------------------------------------
@@ -506,8 +505,7 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     return db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first() as User | null
   }
 
-  const tableInfo = await db.prepare('PRAGMA table_info(users)').all() as any
-  const columns = new Set((tableInfo.results || []).map((column: any) => column.name))
+  const columns = await getTableColumns(db, 'users')
   const mappedSetEntries = setEntries
     .map(([key, value]) => {
       const mappedKey = fieldMapping[key] || key
@@ -795,15 +793,14 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   const deviceId = device.id || `d-${nanoid(8)}`
 
   // 先检查devices表中存在哪些列，避免硬编码列名导致错误
-  const tableInfo = await db.prepare('PRAGMA table_info(devices)').all() as any;
-  const deviceColumns = (tableInfo.results || []).map((column: any) => column.name);
+  const deviceColumns = await getTableColumns(db, 'devices');
 
-  const hasSerialNumberSnake = deviceColumns.includes('serial_number');
-  const hasSerialNumberCamel = deviceColumns.includes('serialNumber');
-  const hasPricePerDaySnake = deviceColumns.includes('price_per_day');
-  const hasPricePerDayCamel = deviceColumns.includes('pricePerDay');
-  const hasDepositAmountSnake = deviceColumns.includes('deposit_amount');
-  const hasDepositAmountCamel = deviceColumns.includes('depositAmount');
+  const hasSerialNumberSnake = deviceColumns.has('serial_number');
+  const hasSerialNumberCamel = deviceColumns.has('serialNumber');
+  const hasPricePerDaySnake = deviceColumns.has('price_per_day');
+  const hasPricePerDayCamel = deviceColumns.has('pricePerDay');
+  const hasDepositAmountSnake = deviceColumns.has('deposit_amount');
+  const hasDepositAmountCamel = deviceColumns.has('depositAmount');
 
   // 构建插入字段和值
   const insertFields = ['id', 'name', 'model', 'status', 'description'];
@@ -814,20 +811,20 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     device.status || 'available',
     sanitizePlainText(device.description, 2000),
   ];
-  if (deviceColumns.includes('lifecycle_status')) {
+  if (deviceColumns.has('lifecycle_status')) {
     const initialLifecycle: DeviceLifecycleStatus = device.status === 'maintenance' ? 'MAINTENANCE' : device.status === 'retired' ? 'RETIRED' : device.status === 'rented' ? 'RENTED' : 'READY'
     insertFields.push('lifecycle_status')
     insertValues.push(initialLifecycle)
   }
 
   for (const field of ['brand', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os']) {
-    if (!deviceColumns.includes(field)) continue
+    if (!deviceColumns.has(field)) continue
     const sourceKey = field === 'asset_tag' ? 'assetTag' : field
     insertFields.push(field)
     insertValues.push(sanitizePlainText((device as any)[sourceKey] ?? (device as any)[field], 200))
   }
 
-  if (deviceColumns.includes('agent_token_hash') && (device as any).agentTokenHash) {
+  if (deviceColumns.has('agent_token_hash') && (device as any).agentTokenHash) {
     insertFields.push('agent_token_hash')
     insertValues.push(sanitizePlainText((device as any).agentTokenHash, 128))
   }
@@ -874,8 +871,7 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
 
   // Older deployments use snake_case columns while newer ones use camelCase.
   // Resolve the actual schema once so editing works against either database.
-  const tableInfo = await db.prepare('PRAGMA table_info(devices)').all() as any
-  const columns = new Set((tableInfo.results || []).map((column: any) => column.name))
+  const columns = await getTableColumns(db, 'devices')
 
   const columnMapping: Record<string, string> = {
     name: 'name', brand: 'brand', model: 'model', assetTag: 'asset_tag', asset_tag: 'asset_tag',

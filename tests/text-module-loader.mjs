@@ -4,7 +4,7 @@
 import { readFile } from 'node:fs/promises'
 
 export async function load(url, context, nextLoad) {
-  if (url.endsWith('.html') || url.endsWith('.css')) {
+  if (url.endsWith('.html') || url.endsWith('.css') || url.endsWith('.txt')) {
     const content = await readFile(new URL(url), 'utf8')
     return {
       format: 'module',

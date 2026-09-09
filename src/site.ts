@@ -4,8 +4,14 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
-import layoutTemplate from './layout.html'
+import rawLayoutTemplate from './layout.html'
+import { styleSheetHref, appScriptHref } from './lib/assetVersion'
 import { nanoid } from 'nanoid'
+
+// 给 styles.css / app.js 链接注入内容指纹版本号，配合 ?v=<hash> 的一年期 immutable 缓存。
+const layoutTemplate = rawLayoutTemplate
+  .replace('href="/styles.css"', `href="${styleSheetHref}"`)
+  .replace('src="{{APP_SCRIPT}}"', `src="${appScriptHref}"`)
 
 // ---------------------------------------------------------------------------
 // 通用工具函数已拆分到 src/lib/*。这里 import 供本文件内部使用，并在文件内
@@ -600,9 +606,23 @@ export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
   return ids.length + Number(purgeResult.meta?.changes ?? purgeResult.changes ?? 0)
 }
 
+// systemSettings 极少变动，但 loadSystemSettingsFromDB 每次都要查 D1 + 对约 10 份
+// 大体量法律文档跑 sanitize-html。用 isolate 级短 TTL 缓存把热路径上的这些成本摊掉；
+// updateSystemSettings 写入后会主动失效。
+let systemSettingsLoadedAt = 0
+const SYSTEM_SETTINGS_TTL_MS = 30_000
+
+export function invalidateSystemSettingsCache(): void {
+  systemSettingsLoadedAt = 0
+}
+
 export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
+  if (systemSettingsLoadedAt && Date.now() - systemSettingsLoadedAt < SYSTEM_SETTINGS_TTL_MS) {
+    return systemSettings
+  }
   const db = getDB(c)
   const rows = await db.prepare('SELECT key, value FROM systemSettings').all() as any
+  systemSettingsLoadedAt = Date.now()
   const values = new Map<SystemSettingsKey, string>((rows.results || []).map((row: any) => [row.key, row.value]))
   const userTermsValue = values.get('userTerms')
   const rentalTermsValue = values.get('rentalTerms')
@@ -674,6 +694,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
 
 export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {
   Object.assign(systemSettings, updates)
+  invalidateSystemSettingsCache()
 
   const db = getDB(c)
 

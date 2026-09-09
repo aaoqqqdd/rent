@@ -18,3 +18,19 @@ export function getDB(c?: Context): any {
   }
   return dbInstance
 }
+
+// 表结构在部署（migrations）时才变，运行期不变。历史代码里有很多处在写入前跑
+// `PRAGMA table_info(...)` 来兼容 snake_case / camelCase 列名，那是一条额外的 D1 往返。
+// 这里按表名做 isolate 级缓存，命中后直接返回列名集合。
+const tableColumnsCache = new Map<string, Promise<Set<string>>>()
+
+export function getTableColumns(db: any, table: string): Promise<Set<string>> {
+  const cached = tableColumnsCache.get(table)
+  if (cached) return cached
+  // 表名只来自代码内的字面量，不接受外部输入。
+  const pending = db.prepare(`PRAGMA table_info(${table})`).all()
+    .then((result: any) => new Set<string>((result.results || []).map((column: any) => String(column.name))))
+    .catch((error: unknown) => { tableColumnsCache.delete(table); throw error })
+  tableColumnsCache.set(table, pending)
+  return pending
+}
