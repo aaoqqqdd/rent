@@ -640,16 +640,10 @@ async function sendEmailVerification(c: any, user: any) {
   await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, eventKey).run()
 }
 
-app.on('GET', ['/terms', '/user-terms'], async (c) => {
-  const settings = await loadSystemSettingsFromDB(c)
-  const currentUser = c.get('user')
-  const content = renderSiteVariables(settings.userTerms, currentUser)
-  return c.html(buildLayout('用户协议', `<div class="panel contract-section"><div class="section-title"><h2>用户协议</h2><span class="section-note mono">LEGAL / USER TERMS</span></div>${content}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`, currentUser))
-})
-
 // 公开法务页面。metaKey 与 legalMetadata 的键一致；varPrefix 生成 `${prefix}_version`
 // 与 `${prefix}_last_updated_date` 两个模板变量，供文档正文引用。
 const PUBLIC_LEGAL_PAGES: Array<{ paths: string[]; title: string; key: SystemSettingsKey; code: string; metaKey: string; varPrefix: string }> = [
+  { paths: ['/terms', '/user-terms'], title: '用户协议', key: 'userTerms', code: 'LEGAL / USER TERMS', metaKey: 'user', varPrefix: 'user_terms' },
   { paths: ['/service-terms'], title: '服务条款', key: 'serviceTerms', code: 'LEGAL / SERVICE TERMS', metaKey: 'service', varPrefix: 'service_terms' },
   { paths: ['/privacy'], title: '隐私政策', key: 'privacyPolicy', code: 'LEGAL / PRIVACY', metaKey: 'privacy', varPrefix: 'privacy_policy' },
   { paths: ['/software-terms'], title: '软件使用协议', key: 'softwareTerms', code: 'LEGAL / SOFTWARE', metaKey: 'software', varPrefix: 'software_terms' },
