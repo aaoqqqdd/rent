@@ -24,6 +24,6 @@ export function renderAdminMonitoring(user: any, metrics: MonitorMetric[] = [], 
     <div class="section-title"><h3>最近定时任务</h3><a class="button button-sm button-secondary" href="/admin/exceptions">异常任务中心</a></div>
     ${jobRows ? `<div class="table-wrapper"><table><thead><tr><th>任务</th><th>状态</th><th>开始</th><th>完成</th><th>结果 / 错误</th></tr></thead><tbody>${jobRows}</tbody></table></div>` : '<div class="empty-state">暂无任务运行记录</div>'}
   </div>
-  <div class="panel"><p class="section-note">机器可读健康检查见 <a href="/health">/health</a>（数据库 / Stripe / 邮件 / 设备 / 定时任务）。</p></div>`
+  <div class="panel"><p class="section-note">机器可读健康检查见 <code>/api/monitor</code>（需 Bearer Token；数据库 / 应用错误 / 定时任务 / 邮件投递 / 远程命令）。</p></div>`
   return buildLayout('系统健康监控 - 电脑租赁管理系统', body, user)
 }

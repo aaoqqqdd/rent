@@ -10,7 +10,6 @@ const CATEGORY_LABELS: Record<string, string> = { CORE: '核心服务', PAYMENT:
 
 const INBOUND_ENDPOINTS = [
   ['/api/system-status', 'GET', '公开', '页面底部轻量状态检查'],
-  ['/health', 'GET', '公开', '基础设施与配置健康检查'],
   ['/api/monitor', 'GET', 'Bearer Token', 'Monitorflare 机器监控'],
   ['/api/payment/aud-cny', 'GET', '公开', 'AUD/CNY 汇率换算'],
   ['/api/payment/status', 'GET', '登录', '支付结果轮询'],
