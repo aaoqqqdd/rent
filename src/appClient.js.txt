@@ -223,6 +223,24 @@
       });
     });
 
+    // 页脚「更多」折叠菜单：点击菜单以外的任意位置或按 Esc 时收起。
+    // 用 pointerdown + 捕获阶段监听，确保在 SPA 局部导航处理器
+    // （其 click 处理器会 stopImmediatePropagation）之前就能收到事件。
+    document.addEventListener('DOMContentLoaded', function () {
+      const more = document.querySelector('details.legal-footer__more');
+      if (!more) return;
+      document.addEventListener('pointerdown', function (event) {
+        if (more.open && !more.contains(event.target)) more.open = false;
+      }, true);
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && more.open) {
+          more.open = false;
+          const summary = more.querySelector('summary');
+          if (summary) summary.focus();
+        }
+      });
+    });
+
     document.addEventListener('DOMContentLoaded', function () {
       document.querySelectorAll('textarea.markdown-editor').forEach(function (editor) {
         if (editor.dataset.markdownReady === 'true') return;
