@@ -12,7 +12,10 @@
 //   priority     —— 按传入顺序优先退（“优先原支付方式”）
 // 分币误差统一由排在前面的来源逐分吸收。
 
+import { formatCurrency } from '../lib/format'
+
 const toCents = (value: number) => Math.round(Number(value) * 100)
+const money = (cents: number) => formatCurrency(cents / 100)
 
 export interface RefundSource { id: string; amount: number; refunded?: number; method?: string }
 export interface RefundAllocationLine { id: string; amount: number; method?: string }
@@ -62,10 +65,23 @@ export interface ReconInput {
   refunds: { id: string; payment_id: string | null; refund_amount: number; status: string }[]
   refundAllocations: { refund_id: string; payment_id: string; amount: number }[]
 }
-export interface ReconIssue { code: string; detail: string }
-export interface ReconResult { ok: boolean; paidTotal: number; refundedTotal: number; issues: ReconIssue[] }
+export type ReconSeverity = 'error' | 'warning'
+export interface ReconIssue { code: string; severity: ReconSeverity; detail: string }
+export interface ReconResult {
+  /** 完全干净：没有任何 error / warning。 */
+  ok: boolean
+  /** 账目平衡：钱能对上（没有 error 级问题），可能仍有待补录的 warning。 */
+  balanced: boolean
+  paidTotal: number
+  refundedTotal: number
+  issues: ReconIssue[]
+  errors: ReconIssue[]
+  warnings: ReconIssue[]
+}
 
-// 纯函数对账：给定订单的付款 / 分配 / 退款行，找出账目不一致。
+// 纯函数对账：给定订单的付款 / 分配 / 退款行，分级列出问题。
+//   error   —— 钱对不上：拆分不符、超退、分配指向不属于本单的付款。
+//   warning —— 钱能对上，只是台账没登全（退款已关联付款但缺来源分配行）。
 export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
   const issues: ReconIssue[] = []
   const EPS = 1 // 1 分容差
@@ -76,25 +92,42 @@ export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
   for (const p of paidPayments) {
     const allocC = input.paymentAllocations.filter(a => a.payment_id === p.id).reduce((s, a) => s + toCents(a.amount), 0)
     if (allocC > 0 && Math.abs(allocC - toCents(p.amount)) > EPS) {
-      issues.push({ code: 'ALLOCATION_MISMATCH', detail: `付款 ${p.id} 金额 ${p.amount} 与拆分合计 ${(allocC / 100).toFixed(2)} 不符` })
+      issues.push({ code: 'ALLOCATION_MISMATCH', severity: 'error', detail: `付款 ${p.id} 实付 ${money(toCents(p.amount))}，拆分合计却是 ${money(allocC)}` })
     }
     const refundedC = input.refundAllocations.filter(r => r.payment_id === p.id).reduce((s, r) => s + toCents(r.amount), 0)
     if (refundedC - toCents(p.amount) > EPS) {
-      issues.push({ code: 'OVER_REFUND_SOURCE', detail: `付款 ${p.id} 已退 ${(refundedC / 100).toFixed(2)} 超过实付 ${p.amount}` })
+      issues.push({ code: 'OVER_REFUND_SOURCE', severity: 'error', detail: `付款 ${p.id} 已退 ${money(refundedC)}，超过实付 ${money(toCents(p.amount))}` })
     }
   }
 
   const succeededRefunds = input.refunds.filter(r => r.status === 'succeeded')
   const refundedTotalC = succeededRefunds.reduce((s, r) => s + toCents(r.refund_amount), 0)
   if (refundedTotalC - paidTotalC > EPS) {
-    issues.push({ code: 'OVER_REFUND_ORDER', detail: `订单累计退款 ${(refundedTotalC / 100).toFixed(2)} 超过累计实付 ${(paidTotalC / 100).toFixed(2)}` })
+    issues.push({ code: 'OVER_REFUND_ORDER', severity: 'error', detail: `订单累计退款 ${money(refundedTotalC)}，超过累计实付 ${money(paidTotalC)}` })
   }
   for (const ra of input.refundAllocations) {
-    if (!paymentIds.has(ra.payment_id)) issues.push({ code: 'ORPHAN_REFUND_ALLOCATION', detail: `退款分配 ${ra.refund_id} 指向的付款 ${ra.payment_id} 不属于本订单` })
+    if (!paymentIds.has(ra.payment_id)) issues.push({ code: 'ORPHAN_REFUND_ALLOCATION', severity: 'error', detail: `退款分配 ${ra.refund_id} 指向的付款 ${ra.payment_id} 不属于本订单` })
   }
   for (const r of succeededRefunds) {
     const hasAlloc = input.refundAllocations.some(ra => ra.refund_id === r.id)
-    if (!hasAlloc) issues.push({ code: 'UNALLOCATED_REFUND', detail: `退款 ${r.id}（${r.refund_amount}）没有对应的来源分配` })
+    if (hasAlloc) continue
+    const amount = money(toCents(r.refund_amount))
+    const linkedToOrder = r.payment_id != null && paymentIds.has(r.payment_id)
+    const detail = linkedToOrder
+      ? `退款 ${r.id}（${amount}）已关联付款 ${r.payment_id}，但尚未登记来源分配台账（待补录）`
+      : `退款 ${r.id}（${amount}）未关联本单任何付款来源，需人工核对退款渠道`
+    issues.push({ code: 'UNALLOCATED_REFUND', severity: 'warning', detail })
   }
-  return { ok: issues.length === 0, paidTotal: paidTotalC / 100, refundedTotal: refundedTotalC / 100, issues }
+
+  const errors = issues.filter(i => i.severity === 'error')
+  const warnings = issues.filter(i => i.severity === 'warning')
+  return {
+    ok: issues.length === 0,
+    balanced: errors.length === 0,
+    paidTotal: paidTotalC / 100,
+    refundedTotal: refundedTotalC / 100,
+    issues,
+    errors,
+    warnings,
+  }
 }

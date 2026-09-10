@@ -46,6 +46,9 @@ test('reconciliation passes for a clean single-source order', () => {
     refundAllocations: [{ refund_id: 'rf1', payment_id: 'p1', amount: 120 }],
   })
   assert.equal(r.ok, true)
+  assert.equal(r.balanced, true)
+  assert.equal(r.errors.length, 0)
+  assert.equal(r.warnings.length, 0)
   assert.equal(r.paidTotal, 500)
   assert.equal(r.refundedTotal, 120)
 })
@@ -66,6 +69,10 @@ test('reconciliation flags over-refund, orphan allocation and unallocated refund
   const codes = r.issues.map(i => i.code).sort()
   assert.deepEqual([...new Set(codes)], ['ORPHAN_REFUND_ALLOCATION', 'OVER_REFUND_ORDER', 'OVER_REFUND_SOURCE', 'UNALLOCATED_REFUND'])
   assert.equal(r.ok, false)
+  assert.equal(r.balanced, false)
+  // 三个 error 码 + 一个 warning（rf2 未分配）
+  assert.deepEqual([...new Set(r.errors.map(i => i.code))].sort(), ['ORPHAN_REFUND_ALLOCATION', 'OVER_REFUND_ORDER', 'OVER_REFUND_SOURCE'])
+  assert.deepEqual(r.warnings.map(i => i.code), ['UNALLOCATED_REFUND'])
 })
 
 test('reconciliation flags a payment whose component split does not add up', () => {
@@ -76,4 +83,36 @@ test('reconciliation flags a payment whose component split does not add up', () 
     refundAllocations: [],
   })
   assert.deepEqual(r.issues.map(i => i.code), ['ALLOCATION_MISMATCH'])
+  assert.equal(r.issues[0].severity, 'error')
+  assert.match(r.issues[0].detail, /AUD\$500\.00.*AUD\$300\.00/)
+})
+
+test('an unallocated refund that is linked and within capacity is a warning, not an imbalance', () => {
+  const r = evaluatePaymentReconciliation({
+    payments: [{ id: 'p-1YMPgZFxlc5y', amount: 210, status: 'paid' }],
+    paymentAllocations: [{ payment_id: 'p-1YMPgZFxlc5y', amount: 210 }],
+    refunds: [{ id: 'rf-LbP987xS0PLf', payment_id: 'p-1YMPgZFxlc5y', refund_amount: 200, status: 'succeeded' }],
+    refundAllocations: [],
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.balanced, true)
+  assert.equal(r.errors.length, 0)
+  assert.equal(r.warnings.length, 1)
+  assert.equal(r.warnings[0].code, 'UNALLOCATED_REFUND')
+  assert.equal(r.warnings[0].severity, 'warning')
+  assert.match(r.warnings[0].detail, /AUD\$200\.00/)
+  assert.match(r.warnings[0].detail, /已关联付款 p-1YMPgZFxlc5y/)
+  assert.doesNotMatch(r.warnings[0].detail, /（200）/)
+})
+
+test('an unallocated refund with no linked payment asks for a manual check', () => {
+  const r = evaluatePaymentReconciliation({
+    payments: [{ id: 'p1', amount: 300, status: 'paid' }],
+    paymentAllocations: [{ payment_id: 'p1', amount: 300 }],
+    refunds: [{ id: 'rf9', payment_id: null, refund_amount: 50, status: 'succeeded' }],
+    refundAllocations: [],
+  })
+  assert.equal(r.balanced, true)
+  assert.deepEqual(r.warnings.map(i => i.code), ['UNALLOCATED_REFUND'])
+  assert.match(r.warnings[0].detail, /未关联本单任何付款来源/)
 })
