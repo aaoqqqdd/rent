@@ -9,6 +9,24 @@
 import type { Context } from 'hono'
 import { renderEmailNotificationHtml } from '../lib/html'
 import { getSystemSettings } from '../settings/systemSettings'
+import { resolveResendCredentials, dispatchChannelAlert } from '../notifyChannels'
+
+const STAFF_ROLES = new Set(['ADMIN', 'MANAGER', 'STAFF'])
+
+// 判断某个收件人是不是员工/管理员（结果按请求缓存）。用于决定这条通知
+// 是否要同时广播到 Telegram / Server酱 / Webhook 等推送渠道——客户的站内信
+// 不会往管理员的推送渠道里灌。
+async function isStaffRecipient(c: Context, recipientId: string): Promise<boolean> {
+  const cache: Map<string, boolean> = (c as any).__recipientRoleCache ||= new Map()
+  if (cache.has(recipientId)) return cache.get(recipientId)!
+  let staff = false
+  try {
+    const row = await c.env.RENT.prepare('SELECT role FROM users WHERE id = ?').bind(recipientId).first() as any
+    staff = STAFF_ROLES.has(String(row?.role || '').toUpperCase())
+  } catch { staff = false }
+  cache.set(recipientId, staff)
+  return staff
+}
 
 let notificationsSchemaReady: Promise<void> | null = null
 
@@ -39,6 +57,16 @@ export async function createNotification(c: Context, notification: { recipientId
   const id = `nt-${crypto.randomUUID()}`
   await c.env.RENT.prepare('INSERT INTO notifications (id, recipient_id, type, title, message, order_id, sender_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null).run()
+
+  // 员工/管理员收到的通知同步广播到已启用的推送渠道；尽力而为，绝不影响站内信。
+  try {
+    if (await isStaffRecipient(c, notification.recipientId)) {
+      const url = notification.orderId ? new URL(`/admin/orders/${notification.orderId}`, c.req.url).toString() : undefined
+      await dispatchChannelAlert(c, { title: notification.title, message: notification.message, url })
+    }
+  } catch (error: any) {
+    console.error('dispatchChannelAlert failed:', error?.message || error)
+  }
 }
 
 export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
@@ -77,8 +105,7 @@ export async function createDueDateNotifications(c: Context): Promise<number> {
 // 由 cron 触发，每次只处理一小批，避免一次调用里对外发起过多子请求；
 // 失败的行会在下一次 tick 自动重试，直到 max_attempts。
 export async function deliverPendingAgreementEmails(c: Context): Promise<number> {
-  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+  const { apiKey, from } = await resolveResendCredentials(c)
   if (!apiKey || !from) return 0
   const rows = (((await c.env.RENT.prepare(
     "SELECT id, recipient, subject, text_body, html_body FROM email_events WHERE event_type = 'AGREEMENT_UPDATE' AND status IN ('PENDING', 'FAILED') AND retry_count < max_attempts ORDER BY created_at LIMIT 90"
@@ -126,8 +153,7 @@ export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
   if (!(proofs.results || []).length) return 0
   const admins = (await c.env.RENT.prepare("SELECT id, email, name FROM users WHERE role = 'ADMIN' AND status = 'active'").all() as any).results || []
   if (!admins.length) return 0
-  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+  const { apiKey, from } = await resolveResendCredentials(c)
   let notified = 0
   for (const proof of proofs.results as any[]) {
     const method = proof.payment_method === 'alipay' ? '支付宝' : proof.payment_method === 'wechat' ? '微信' : '银行转账'

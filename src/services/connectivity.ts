@@ -5,6 +5,7 @@
 
 import type { Context } from 'hono'
 import { getStripeRuntimeConfig } from '../stripe'
+import { resolveResendCredentials, getNotifyChannelsSummary } from '../notifyChannels'
 
 export type ConnectivityStatus = 'ok' | 'warning' | 'error' | 'unconfigured'
 
@@ -27,6 +28,8 @@ export const CONNECTIVITY_PROBES: ConnectivityProbeDefinition[] = [
   { id: 'database', label: 'Cloudflare D1', category: 'CORE', endpoint: 'RENT binding', description: '验证 Worker 到主数据库的查询通道。' },
   { id: 'stripe', label: 'Stripe API', category: 'PAYMENT', endpoint: 'api.stripe.com/v1/account', description: '使用已保存的密钥读取 Stripe 账户，不创建付款。' },
   { id: 'resend', label: 'Resend 邮件 API', category: 'MESSAGING', endpoint: 'api.resend.com/emails', description: '验证邮件发送权限及服务连通性，不发送邮件。' },
+  { id: 'telegram', label: 'Telegram 推送', category: 'MESSAGING', endpoint: 'api.telegram.org/bot*/getMe', description: '校验已保存的 Bot Token，不发送消息。' },
+  { id: 'notifyWebhook', label: '通用推送 Webhook', category: 'MESSAGING', endpoint: '已配置的 Webhook 地址', description: '检查通用推送 Webhook 是否已配置并启用，不发送请求。' },
   { id: 'exchange', label: 'AUD/CNY 汇率', category: 'PAYMENT', endpoint: 'api.frankfurter.app/latest', description: '读取澳元兑人民币实时汇率。' },
   { id: 'github', label: 'GitHub 客户端发布', category: 'DEVICE', endpoint: 'api.github.com/releases/latest', description: '验证 Windows 客户端更新检查通道。' },
   { id: 'photon', label: 'Photon 地址服务', category: 'LOCATION', endpoint: 'photon.komoot.io/api', description: '验证首选地址联想服务。' },
@@ -63,13 +66,21 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
       if (!response.ok) throw new Error(`Stripe 返回 HTTP ${response.status}`)
       detail = '密钥有效，账户接口可访问'
     } else if (definition.id === 'resend') {
-      const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-      if (!apiKey) { status = 'unconfigured'; detail = '尚未配置 RESEND_API_KEY' }
+      const { apiKey } = await resolveResendCredentials(c)
+      if (!apiKey) { status = 'unconfigured'; detail = '尚未配置 Resend API Key（后台「通知渠道」或 RESEND_API_KEY）' }
       else {
         const response = await timedFetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' }, body: '{}' })
         if (response.status === 401 || response.status === 403 || response.status >= 500) throw new Error(`Resend 返回 HTTP ${response.status}`)
         detail = '密钥与发送权限有效，未投递测试邮件'
       }
+    } else if (definition.id === 'telegram') {
+      const summary = await getNotifyChannelsSummary(c)
+      if (!summary.telegram.configured) { status = 'unconfigured'; detail = '尚未配置 Telegram Bot Token / Chat ID' }
+      else { status = summary.telegram.enabled ? 'ok' : 'warning'; detail = summary.telegram.enabled ? 'Bot Token 与 Chat ID 已配置并启用' : '已配置但未启用推送' }
+    } else if (definition.id === 'notifyWebhook') {
+      const summary = await getNotifyChannelsSummary(c)
+      if (!summary.webhook.configured) { status = 'unconfigured'; detail = '尚未配置通用推送 Webhook' }
+      else { status = summary.webhook.enabled ? 'ok' : 'warning'; detail = summary.webhook.enabled ? 'Webhook 地址已配置并启用' : '已配置但未启用推送' }
     } else if (definition.id === 'exchange') {
       const response = await timedFetch('https://api.frankfurter.app/latest?from=AUD&to=CNY', { headers: { Accept: 'application/json' } })
       if (!response.ok) throw new Error(`汇率服务返回 HTTP ${response.status}`)

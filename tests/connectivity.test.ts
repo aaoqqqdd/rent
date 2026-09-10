@@ -12,7 +12,7 @@ import { extractInlineScripts } from './helpers'
 test('connectivity page exposes every registered read-only probe', () => {
   const ids = CONNECTIVITY_PROBES.map(probe => probe.id)
   assert.equal(new Set(ids).size, ids.length)
-  assert.deepEqual(ids, ['database', 'stripe', 'resend', 'exchange', 'github', 'photon', 'nominatim', 'googlePlaces', 'turnstile', 'deviceChannel'])
+  assert.deepEqual(ids, ['database', 'stripe', 'resend', 'telegram', 'notifyWebhook', 'exchange', 'github', 'photon', 'nominatim', 'googlePlaces', 'turnstile', 'deviceChannel'])
   const html = renderAdminConnectivity({ id: 'admin-1', name: 'Admin', role: 'ADMIN' })
   for (const probe of CONNECTIVITY_PROBES) {
     assert.match(html, new RegExp(`data-probe-id="${probe.id}"`))
