@@ -4057,12 +4057,18 @@ tr:hover td {
 
 .legal-footer {
   margin-top: auto;
-  padding: 16px 28px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 2px 14px;
+  padding: 12px 28px;
   color: var(--text-secondary);
   border-top: 1px solid var(--border);
   background: transparent;
   font-size: .74rem;
   line-height: 1.6;
+  text-align: right;
 }
 
 .legal-footer__inner {
@@ -4253,7 +4259,9 @@ tr:hover td {
 
 @media (max-width: 720px) {
   .legal-footer {
+    justify-content: flex-start;
     padding: 14px 16px;
+    text-align: left;
   }
 
   .legal-footer nav {
