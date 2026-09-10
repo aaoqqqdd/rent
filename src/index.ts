@@ -3485,14 +3485,7 @@ app.post('/admin/connectivity/check', async (c) => {
   }
 })
 
-// 代理计划（完善.md，预留未启用）
-app.get('/admin/agents', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const flag = await c.env.RENT.prepare("SELECT enabled FROM feature_flags WHERE key = 'agent_program'").first<{ enabled: number }>()
-  const agents = (await c.env.RENT.prepare('SELECT a.*, u.name AS user_name, u.email AS user_email FROM agents a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.created_at DESC').all()).results || []
-  return c.html(pages.renderAdminAgents(user, Number(flag?.enabled) === 1, agents as any[]))
-})
+// 代理计划（完善.md，预留未启用）：路由已下线，入口从后台导航移除
 
 app.get('/admin/coupons', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
