@@ -34,6 +34,17 @@ export function monitorOverallStatus(checks: Array<{ status: MonitorProbeStatus 
   return 'ok'
 }
 
+// HTTP 状态码映射：让外部监控（Monitorflare）只凭状态码就能分级，
+// 不必再对响应体做关键词匹配。
+//   ok       -> 200
+//   degraded -> 503 Service Unavailable（部分降级，仍在服务，触发告警）
+//   down     -> 521（Cloudflare 风格「源站宕机」，与 degraded 区分严重程度）
+export function monitorHttpStatus(status: MonitorProbeStatus): 200 | 503 | 521 {
+  if (status === 'down') return 521
+  if (status === 'degraded') return 503
+  return 200
+}
+
 export function parseBearerToken(header: string | null | undefined): string | null {
   const match = String(header || '').match(/^Bearer\s+(\S+)$/i)
   return match?.[1] || null

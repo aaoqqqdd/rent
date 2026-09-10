@@ -110,7 +110,7 @@ import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
-import { monitorOverallStatus, parseBearerToken } from './domain/monitoring'
+import { monitorOverallStatus, monitorHttpStatus, parseBearerToken } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
 import { styleSheetText as siteStyles, styleSheetVersion, appScriptText, appScriptVersion } from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
@@ -379,7 +379,7 @@ app.get('/api/monitor', async (c) => {
   const status = monitorOverallStatus(Object.values(checks))
   return c.json(
     { status, checks, latencyMs: Date.now() - startedAt, checkedAt: new Date().toISOString() },
-    status === 'down' ? 503 : 200,
+    monitorHttpStatus(status),
     { 'Cache-Control': 'no-store' },
   )
 })
