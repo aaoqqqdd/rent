@@ -242,7 +242,7 @@ export async function renderAdminOrders(c: Context, user: any) {
     return `
                 <tr>
                   <td><input type="checkbox" name="orderIds" value="${order.id}" class="order-checkbox" form="bulk-order-form" /></td>
-                  <td style="font-family: monospace;">${order.id}</td>
+                  <td style="font-family: monospace;">${order.orderNo || order.id}</td>
                   <td>
                     <div><strong>${order.customer?.name || '未知用户'}</strong>${order.customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</div>
                     <small style="color: var(--text-secondary);">${order.customer?.email || ''}</small>
