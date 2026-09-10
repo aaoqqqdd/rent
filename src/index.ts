@@ -51,6 +51,8 @@ import {
   findBlockingRiskFlag,
   timingSafeEqualStr,
   collectMonitoringMetrics,
+  getMonitoringHistory,
+  recentErrorLogCount,
   canTransitionDeviceLifecycle,
   MAINTENANCE_CHECK_TYPES,
   validateHostedImageUrls,
@@ -110,7 +112,7 @@ import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
-import { monitorOverallStatus, monitorHttpStatus, parseBearerToken } from './domain/monitoring'
+import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
 import { styleSheetText as siteStyles, styleSheetVersion, appScriptText, appScriptVersion } from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
@@ -359,22 +361,7 @@ app.get('/api/monitor', async (c) => {
     }
   }
 
-  if (checks.database.status !== 'down') {
-    try {
-      const batchResults = await c.env.RENT.batch(probes.map((probe) => c.env.RENT.prepare(probe.sql)))
-      probes.forEach((probe, index) => applyShape(probe, (batchResults[index] as any)?.results?.[0]))
-    } catch (error: any) {
-      console.error('Monitor batch checks failed, falling back to per-check:', error?.message || error)
-      await Promise.all(probes.map(async (probe) => {
-        try {
-          applyShape(probe, await c.env.RENT.prepare(probe.sql).first())
-        } catch (err: any) {
-          console.error(`Monitor ${probe.name} check failed:`, err?.message || err)
-          checks[probe.name] = { ok: false, status: 'degraded', error: 'check unavailable' }
-        }
-      }))
-    }
-  }
+
 
   const status = monitorOverallStatus(Object.values(checks))
   return c.json(
@@ -3527,11 +3514,12 @@ app.post('/admin/data-retention/:category', async (c) => {
 app.get('/admin/monitoring', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const [metrics, jobRuns] = await Promise.all([
+  const [metrics, history, jobRuns] = await Promise.all([
     collectMonitoringMetrics(c),
+    getMonitoringHistory(c, 168),
     c.env.RENT.prepare('SELECT job_name, status, started_at, completed_at, error_message, result_summary FROM scheduled_job_runs ORDER BY started_at DESC LIMIT 25').all().then(r => r.results || []),
   ])
-  return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[]))
+  return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[], history))
 })
 
 app.get('/admin/connectivity', async (c) => {
