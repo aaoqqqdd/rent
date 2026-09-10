@@ -26,6 +26,7 @@ import {
 } from '../../site'
 import { calculateCouponDiscount, checkCustomerCouponEligibility } from '../coupons'
 import { getStripePublishableKey, stripeRequest } from '../../stripe'
+import { canUseAccountBalance } from '../../lib/access'
 
 const AU_STATES = ['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']
 const MAX_CART_ITEMS = 10
@@ -158,8 +159,6 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
   } else {
     return json(c, 400, { ok: false, message: '请先填写并验证信用卡信息。' })
   }
-  if (!contact.name) contact.name = paymentName
-  if (!contact.email) contact.email = paymentEmail
   if (!contact.name || !contact.email) return json(c, 400, { ok: false, message: '请填写姓名和邮箱' })
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) return json(c, 400, { ok: false, message: '邮箱格式不正确。' })
 
@@ -273,7 +272,7 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
     })
     customerId = (created as any).id || newId
   }
-  if (refundMethod === 'balance' && (isNewAccount || String(existing?.accountType || existing?.account_type || 'guest') !== 'formal')) {
+  if (refundMethod === 'balance' && (isNewAccount || !canUseAccountBalance(existing))) {
     return json(c, 400, { ok: false, message: '当前选择不可用，请改选其他选项。' })
   }
   if (coupon) {
