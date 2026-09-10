@@ -417,8 +417,10 @@ export const MONITOR_METRIC_DEFS: MonitorMetricDef[] = [
     sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM webhook_events WHERE received_at > datetime('now','-1 day')` },
   { key: 'email_failure_rate', label: '邮件失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
     sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM email_events WHERE created_at > datetime('now','-1 day')` },
+  // 离线判定按心跳时间：没有任何 sweep 会把 agent_status 从 'online' 改回 'offline'，
+  // 只能靠 agent_last_seen_at 是否陈旧。5 分钟阈值与绑定设备页一致。
   { key: 'device_offline_rate', label: '设备离线率', kind: 'rate', warn: 0.2, crit: 0.5,
-    sql: `SELECT SUM(CASE WHEN agent_status = 'offline' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL` },
+    sql: `SELECT SUM(CASE WHEN agent_last_seen_at IS NULL OR agent_last_seen_at <= datetime('now', '-5 minutes') THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL` },
   { key: 'remote_command_failure_rate', label: '远程命令失败率（24h）', kind: 'rate', warn: 0.15, crit: 0.4,
     sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')` },
   { key: 'scheduled_job_failure_rate', label: '定时任务失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.25,
