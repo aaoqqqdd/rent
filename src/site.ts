@@ -1397,13 +1397,17 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     : ''
 
   const footerCompany = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
-  // 这是内部运营后台，页脚保持低调的一行：版权 + 少量核心法律链接。
-  // 对外的公开页 / 登录页仍展示完整的合规链接清单。
-  const footerLinks: Array<[string, string]> = currentUser
-    ? [['/service-terms', '服务条款'], ['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策']]
-    : [['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'], ['/complaints', '投诉与争议'], ['/acceptable-use', '可接受使用'], ['/software-terms', '软件协议']]
-  const footerNav = footerLinks.map(([href, text]) => `<a href="${href}">${text}</a>`).join('')
-  const footerHtml = `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany}</span><nav aria-label="网站法律信息">${footerNav}</nav></footer>`
+  const footerPrimaryLinks: Array<[string, string]> = [
+    ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
+  ]
+  const footerMoreLinks: Array<[string, string]> = [
+    ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'],
+    ['/complaints', '投诉与争议'], ['/acceptable-use', '可接受使用'], ['/software-terms', '软件协议'],
+  ]
+  const renderFooterLink = ([href, text]: [string, string]) => `<a href="${href}">${text}</a>`
+  const footerNav = footerPrimaryLinks.map(renderFooterLink).join('')
+  const footerMore = `<details class="legal-footer__more"><summary>更多</summary><div class="legal-footer__more-panel">${footerMoreLinks.map(renderFooterLink).join('')}</div></details>`
+  const footerHtml = `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany}</span><nav aria-label="网站法律信息">${footerNav}${footerMore}</nav></footer>`
 
   return renderLayoutTemplate({
     TITLE: normalizedTitle,

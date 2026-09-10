@@ -127,6 +127,22 @@
       window.siteConfirm(message, function () { form.requestSubmit(); });
     }, true);
 
+    // 页脚“更多”菜单：点击菜单外部或按 Esc 时收起。
+    document.addEventListener('DOMContentLoaded', function () {
+      const more = document.querySelector('details.legal-footer__more');
+      if (!more) return;
+      document.addEventListener('pointerdown', function (event) {
+        if (more.open && !more.contains(event.target)) more.open = false;
+      }, true);
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && more.open) {
+          more.open = false;
+          const summary = more.querySelector('summary');
+          if (summary) summary.focus();
+        }
+      });
+    });
+
     // 表单提交时的加载指示；页面入场动画见 styles.css 的 site-enter。
     document.addEventListener('DOMContentLoaded', function () {
       const showNavigationLoading = function () {
