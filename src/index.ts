@@ -455,7 +455,7 @@ app.use('*', async (c, next) => {
   const isPublicRentalPreview = c.req.path === '/api/coupons/rental-cart-preview'
   const isPublicRentalSetupIntent = c.req.path === '/public/rental-setup-intent'
   const isPublicOrderLookup = c.req.path === '/public/order-lookup'
-  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicRentalRequest) {
+  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicRentalRequest && !isPublicRentalSetupIntent && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
     if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
