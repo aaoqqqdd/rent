@@ -5,7 +5,7 @@ export async function renderAdminEmailTemplates(c: any, user: any) {
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'").run() } catch (_) {}
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#f0a35b'").run() } catch (_) {}
   // 内置模板的兜底植入（仅当迁移未跑、对应行缺失时生效）。正文为结构化 HTML，
-  // 与 migrations/0118_richen_email_templates.sql 的范式一致；已存在的行不会被覆盖。
+  // 与 migrations/0120_richen_email_templates.sql 的范式一致；已存在的行不会被覆盖。
   const footer = '<hr style="border:0; border-top:1px solid #ddd; margin:24px 0;"><p style="font-size:12px; color:#888;">此邮件由系统自动发送，请勿直接回复。</p>'
   const sign = '<p><strong>{company_name}</strong><br>{company_email}</p>'
   const seed = (id: string, name: string, subject: string, body: string) =>
