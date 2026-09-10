@@ -85,7 +85,7 @@ import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
 } from './domain/dataRetention'
 import type { RetentionAction, RetentionPolicyLike } from './domain/dataRetention'
-import { rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory } from './domain/monitoring'
+import { rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory, staleMonitoringAlertIds } from './domain/monitoring'
 import type { HealthLevel, MonitorMetric, MonitorMetricKind, MetricHistoryPoint, MetricHistorySummary } from './domain/monitoring'
 import { agentCommission } from './domain/agentProgram'
 import { buildRefundAllocation, evaluatePaymentReconciliation } from './domain/refundAllocation'
@@ -107,7 +107,7 @@ export {
   isRiskFlagCurrentlyActive, findBlockingRiskFlag,
   deviceUtilisationRate, paymentMethodBreakdown,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
-  rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory,
+  rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory, staleMonitoringAlertIds,
   agentCommission,
   buildRefundAllocation, evaluatePaymentReconciliation,
 }
@@ -478,7 +478,8 @@ export async function getMonitoringHistory(c: Context, windowHours = 168): Promi
 }
 
 // 调度步骤：跑一遍监控，落盘快照（并清理过期），若有 CRITICAL 指标则写入异常任务中心（去重按当天）。
-export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number }> {
+// 指标恢复后自动关闭历史 MONITORING_ALERT 行，让告警可以自愈而不是永久堆积。
+export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number; resolved: number }> {
   const metrics = await collectMonitoringMetrics(c)
 
   try {
@@ -512,7 +513,15 @@ export async function runMonitoringSweep(c: Context): Promise<{ metrics: number;
       }
     }
   }
-  return { metrics: metrics.length, alerts }
+  const criticalKeys = metrics.filter(x => x.level === 'CRITICAL').map(x => x.key)
+  const openAlerts = ((await c.env.RENT.prepare("SELECT id, entity_id FROM data_consistency_issues WHERE issue_type = 'MONITORING_ALERT' AND resolved_at IS NULL").all()).results || []) as Array<{ id: string; entity_id: string }>
+  const staleIds = staleMonitoringAlertIds(openAlerts, criticalKeys)
+  let resolved = 0
+  if (staleIds.length) {
+    await c.env.RENT.batch(staleIds.map(id => c.env.RENT.prepare("UPDATE data_consistency_issues SET resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND resolved_at IS NULL").bind(id)))
+    resolved = staleIds.length
+  }
+  return { metrics: metrics.length, alerts, resolved }
 }
 
 export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {

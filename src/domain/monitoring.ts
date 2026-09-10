@@ -57,6 +57,18 @@ export function summarizeMetricHistory(history: MetricHistoryPoint[], opts?: { w
   return { points: rows.length, firstBreach, worstLevel, sparkPath, sparkMax }
 }
 
+// runMonitoringSweep 把 CRITICAL 指标写进异常任务中心，entity_id 形如 `<metricKey>:<YYYY-MM-DD>`。
+// 指标恢复后这些告警行不会自己消失（也没有人工处理入口），会一直挂在“异常任务积压”里。
+// 给定当前仍为 CRITICAL 的指标 key，返回应当自动关闭的历史告警行 id：其指标已不再 CRITICAL。
+export function staleMonitoringAlertIds(
+  openAlerts: Array<{ id: string; entity_id: string }>,
+  criticalKeys: string[],
+): string[] {
+  return openAlerts
+    .filter(alert => !criticalKeys.some(key => String(alert.entity_id).startsWith(`${key}:`)))
+    .map(alert => alert.id)
+}
+
 // 一组指标里最差的级别，作为系统整体健康度。
 export function worstHealthLevel(metrics: Array<{ level: HealthLevel }>): HealthLevel {
   if (metrics.some(m => m.level === 'CRITICAL')) return 'CRITICAL'
