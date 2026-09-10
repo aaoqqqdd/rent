@@ -237,6 +237,7 @@ app.get('/api/system-status', async (c) => {
 // state is intentionally excluded: this endpoint measures the website and its
 // core services, not whether an individual Windows client is running.
 app.get('/api/monitor', async (c) => {
+  if (isBrowserNavigation(c)) return c.redirect('/', 302)
   const startedAt = Date.now()
   const checks: Record<string, any> = {}
 
@@ -253,74 +254,106 @@ app.get('/api/monitor', async (c) => {
     checks.database = { ok: false, status: 'down', error: 'database unavailable' }
   }
 
-  const runCheck = async (name: string, failureStatus: 'degraded' | 'down', query: () => Promise<Record<string, any>>) => {
-    try {
-      checks[name] = await query()
-    } catch (error: any) {
-      console.error(`Monitor ${name} check failed:`, error?.message || error)
-      checks[name] = { ok: false, status: failureStatus, error: 'check unavailable' }
-    }
-  }
-
-  if (checks.database.status !== 'down') await Promise.all([
-    runCheck('applicationErrors', 'degraded', async () => {
-      const row = await c.env.RENT.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN error_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
-      const recent = Number(row?.total || 0)
-      const critical = Number(row?.critical || 0)
-      return { ok: recent === 0, status: recent ? 'degraded' : 'ok', windowMinutes: 10, recent, critical }
-    }),
-    runCheck('scheduledJobs', 'degraded', async () => {
+  // 四个探针过去各自一条 D1 往返（Promise.all 并发，但每条仍付一次完整网络延迟）。
+  // 改成一次 batch() —— 一个网络往返里按序跑完四条只读聚合。batch 整体失败时回退到
+  // 逐条查询，保留单表异常不拖垮整个探针的韧性。
+  const probes: { name: string; sql: string; shape: (row: any) => Record<string, any> }[] = [
+    {
+      name: 'applicationErrors',
+      sql: "SELECT COUNT(*) AS total, SUM(CASE WHEN error_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')",
+      shape: (row) => {
+        const recent = Number(row?.total || 0)
+        const critical = Number(row?.critical || 0)
+        return { ok: recent === 0, status: recent ? 'degraded' : 'ok', windowMinutes: 10, recent, critical }
+      },
+    },
+    {
+      name: 'scheduledJobs',
       // "stuck" only counts a RUNNING row that plausibly belongs to a live job:
       // started 1h–24h ago. scheduled_job_runs is never purged, and a worker
       // killed mid-tick (CPU/wall-clock limit) leaves an orphan RUNNING row
       // forever — without the lower bound one past crash pins this check to
       // "degraded" permanently regardless of how healthy the cron now is.
-      const row = await c.env.RENT.prepare(`SELECT
+      sql: `SELECT
         SUM(CASE WHEN status = 'FAILED' AND datetime(started_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
         SUM(CASE WHEN status = 'RUNNING' AND datetime(started_at) < datetime('now', '-1 hour') AND datetime(started_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS stuck,
         MAX(started_at) AS last_run
-        FROM scheduled_job_runs`).first() as any
-      const failures = Number(row?.failures || 0)
-      const stuck = Number(row?.stuck || 0)
-      const lastRunMs = row?.last_run ? Date.parse(`${String(row.last_run).replace(' ', 'T')}Z`) : NaN
-      const lastRunAgeSeconds = Number.isFinite(lastRunMs) ? Math.max(0, Math.round((Date.now() - lastRunMs) / 1000)) : null
-      const overdue = lastRunAgeSeconds === null || lastRunAgeSeconds > 36 * 60 * 60
-      return { ok: !failures && !stuck && !overdue, status: failures || stuck || overdue ? 'degraded' : 'ok', failures24h: failures, stuck, lastRunAgeSeconds }
-    }),
-    runCheck('emailDelivery', 'degraded', async () => {
+        FROM scheduled_job_runs`,
+      shape: (row) => {
+        const failures = Number(row?.failures || 0)
+        const stuck = Number(row?.stuck || 0)
+        const lastRunMs = row?.last_run ? Date.parse(`${String(row.last_run).replace(' ', 'T')}Z`) : NaN
+        const lastRunAgeSeconds = Number.isFinite(lastRunMs) ? Math.max(0, Math.round((Date.now() - lastRunMs) / 1000)) : null
+        const overdue = lastRunAgeSeconds === null || lastRunAgeSeconds > 36 * 60 * 60
+        return { ok: !failures && !stuck && !overdue, status: failures || stuck || overdue ? 'degraded' : 'ok', failures24h: failures, stuck, lastRunAgeSeconds }
+      },
+    },
+    {
+      name: 'emailDelivery',
       // email_events.status is one of PENDING/SENT/FAILED/SKIPPED — there is no
       // 'SENDING'. Grade failures as a share of 24h volume (a single transient
       // bounce must not pin the probe to "degraded" for a whole day); a PENDING
       // row older than 30min is a genuinely stuck send and always counts.
-      const row = await c.env.RENT.prepare(`SELECT
+      sql: `SELECT
         SUM(CASE WHEN datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS total,
         SUM(CASE WHEN status = 'FAILED' AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
         SUM(CASE WHEN status = 'PENDING' AND datetime(created_at) < datetime('now', '-30 minutes') THEN 1 ELSE 0 END) AS stuck
-        FROM email_events`).first() as any
-      const total = Number(row?.total || 0)
-      const failures = Number(row?.failures || 0)
-      const stuck = Number(row?.stuck || 0)
-      const bad = stuck > 0 || (total > 0 && failures / total >= 0.1)
-      return { ok: !bad, status: bad ? 'degraded' : 'ok', total24h: total, failures24h: failures, stuck }
-    }),
-    runCheck('remoteCommands', 'degraded', async () => {
+        FROM email_events`,
+      shape: (row) => {
+        const total = Number(row?.total || 0)
+        const failures = Number(row?.failures || 0)
+        const stuck = Number(row?.stuck || 0)
+        const bad = stuck > 0 || (total > 0 && failures / total >= 0.1)
+        return { ok: !bad, status: bad ? 'degraded' : 'ok', total24h: total, failures24h: failures, stuck }
+      },
+    },
+    {
+      name: 'remoteCommands',
       // EXPIRED is a normal lapse (offline device, or a long-dated cleanup
       // command that was never meant to run soon) — only FAILED is a real
       // failure, graded as a share of completed commands. "overdue" is bounded
       // to the last 24h so an offline device's stale QUEUED command (only swept
       // to EXPIRED when that device next polls) doesn't pin the probe forever.
-      const row = await c.env.RENT.prepare(`SELECT
+      sql: `SELECT
         SUM(CASE WHEN status = 'FAILED' AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
         SUM(CASE WHEN status IN ('SUCCESS', 'FAILED', 'EXPIRED') AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP AND datetime(expires_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS overdue
-        FROM device_commands`).first() as any
-      const failures = Number(row?.failures || 0)
-      const completed = Number(row?.completed || 0)
-      const overdue = Number(row?.overdue || 0)
-      const bad = overdue > 0 || (completed > 0 && failures / completed >= 0.15)
-      return { ok: !bad, status: bad ? 'degraded' : 'ok', failures24h: failures, completed24h: completed, overdue }
-    }),
-  ])
+        FROM device_commands`,
+      shape: (row) => {
+        const failures = Number(row?.failures || 0)
+        const completed = Number(row?.completed || 0)
+        const overdue = Number(row?.overdue || 0)
+        const bad = overdue > 0 || (completed > 0 && failures / completed >= 0.15)
+        return { ok: !bad, status: bad ? 'degraded' : 'ok', failures24h: failures, completed24h: completed, overdue }
+      },
+    },
+  ]
+
+  const applyShape = (probe: typeof probes[number], row: any) => {
+    try {
+      checks[probe.name] = probe.shape(row || {})
+    } catch (error: any) {
+      console.error(`Monitor ${probe.name} check failed:`, error?.message || error)
+      checks[probe.name] = { ok: false, status: 'degraded', error: 'check unavailable' }
+    }
+  }
+
+  if (checks.database.status !== 'down') {
+    try {
+      const batchResults = await c.env.RENT.batch(probes.map((probe) => c.env.RENT.prepare(probe.sql)))
+      probes.forEach((probe, index) => applyShape(probe, (batchResults[index] as any)?.results?.[0]))
+    } catch (error: any) {
+      console.error('Monitor batch checks failed, falling back to per-check:', error?.message || error)
+      await Promise.all(probes.map(async (probe) => {
+        try {
+          applyShape(probe, await c.env.RENT.prepare(probe.sql).first())
+        } catch (err: any) {
+          console.error(`Monitor ${probe.name} check failed:`, err?.message || err)
+          checks[probe.name] = { ok: false, status: 'degraded', error: 'check unavailable' }
+        }
+      }))
+    }
+  }
 
   const status = monitorOverallStatus(Object.values(checks))
   return c.json(
@@ -3517,6 +3550,7 @@ app.post('/admin/device-agent-bindings/monitor-token', async (c) => {
   const existing = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
   await c.env.RENT.prepare(`INSERT INTO systemSettings (key, value) VALUES ('monitorApiTokenHash', ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP`).bind(tokenHash).run()
+  invalidateMonitorApiTokenCache()
   await createAuditLog(c, { actor: user, action: existing?.value ? 'MONITOR_API_TOKEN_ROTATED' : 'MONITOR_API_TOKEN_CREATED', targetType: 'SYSTEM', targetId: 'monitor-api' })
   c.header('Cache-Control', 'no-store')
   return c.html(await pages.renderAdminDeviceAgentBindings(c, user, { monitorApiConfigured: true, newMonitorApiToken: token }))
@@ -4299,11 +4333,44 @@ async function hashAgentValue(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((item) => item.toString(16).padStart(2, '0')).join('')
 }
 
+// monitorApiTokenHash 只在管理员手动轮换时改变，但每个受保护的监控探针请求都要
+// 读一次。用 isolate 级短 TTL 缓存把这条 D1 往返从热路径上摘掉；轮换处会主动失效。
+let monitorApiTokenHashCache: { value: string | null; loadedAt: number } | null = null
+const MONITOR_API_TOKEN_TTL_MS = 30_000
+
+export function invalidateMonitorApiTokenCache(): void {
+  monitorApiTokenHashCache = null
+}
+
+async function loadMonitorApiTokenHash(c: any): Promise<string | null> {
+  if (monitorApiTokenHashCache && Date.now() - monitorApiTokenHashCache.loadedAt < MONITOR_API_TOKEN_TTL_MS) {
+    return monitorApiTokenHashCache.value
+  }
+  const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  const value = tokenRow?.value ? String(tokenRow.value) : null
+  monitorApiTokenHashCache = { value, loadedAt: Date.now() }
+  return value
+}
+
+// 监控探针接口只给程序化调用（curl / uptime 检查 / Agent）。用浏览器直接打开这些
+// URL 属于误访问 —— 顶层导航（Sec-Fetch-Mode: navigate / Sec-Fetch-Dest: document，
+// 或 Accept 里带 text/html）一律跳回主页，而不是把 JSON 错误甩到用户脸上。
+function isBrowserNavigation(c: any): boolean {
+  // 带 Bearer token 的一律放行 —— 那是程序化调用，哪怕它的 Accept 头长得像浏览器。
+  if (parseBearerToken(c.req.header('Authorization'))) return false
+  if ((c.req.header('Sec-Fetch-Mode') || '').toLowerCase() === 'navigate') return true
+  if ((c.req.header('Sec-Fetch-Dest') || '').toLowerCase() === 'document') return true
+  return (c.req.header('Accept') || '').toLowerCase().includes('text/html')
+}
+
 async function hasValidMonitorApiToken(c: any): Promise<boolean> {
   const providedToken = parseBearerToken(c.req.header('Authorization'))
-  const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
-  const providedHash = await hashAgentValue(providedToken || '')
-  return Boolean(providedToken && tokenRow?.value && timingSafeEqualStr(providedHash, String(tokenRow.value)))
+  if (!providedToken) return false
+  const [storedHash, providedHash] = await Promise.all([
+    loadMonitorApiTokenHash(c),
+    hashAgentValue(providedToken),
+  ])
+  return Boolean(storedHash && timingSafeEqualStr(providedHash, storedHash))
 }
 
 async function getAgentDevice(c: any): Promise<any | null> {
@@ -4370,10 +4437,17 @@ app.post('/api/device-agent/inspection', async (c) => {
 })
 
 app.get('/api/device-agent/state', async (c) => {
+  if (isBrowserNavigation(c)) return c.redirect('/', 302)
   try {
-    const device = await getAgentDevice(c)
+    // 设备 token 与监控 token 是互斥的两条鉴权路径，但监控探针（无设备 token）过去要
+    // 串行跑 getAgentDevice → hasValidMonitorApiToken → COUNT 三条 D1 往返。并发前两条，
+    // 监控 token 已走 isolate 缓存，热路径就只剩一条 COUNT 往返。
+    const [device, monitorTokenValid] = await Promise.all([
+      getAgentDevice(c),
+      hasValidMonitorApiToken(c),
+    ])
     if (!device) {
-      if (!await hasValidMonitorApiToken(c)) return c.json({ ok: false, error: 'Invalid token' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="device-agent-state"' })
+      if (!monitorTokenValid) return c.json({ ok: false, error: 'Invalid token' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="device-agent-state"' })
       const row = await c.env.RENT.prepare('SELECT COUNT(*) AS bound_devices FROM devices WHERE agent_token_hash IS NOT NULL').first() as any
       return c.json({ ok: true, status: 'ok', service: 'device-agent-state', boundDevices: Number(row?.bound_devices || 0), checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
     }
