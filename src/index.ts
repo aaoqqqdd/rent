@@ -556,6 +556,46 @@ app.post('/login', async (c) => {
   return response
 })
 
+// 官网（rent-web）单点登录握手。官网已在共享 auth_sessions 建好会话，并签发了一个
+// 一次性 token（sso_handoff_tokens，60s 过期、用一次即废）。这里校验后在 rent 域
+// 也建立会话 cookie，用户随即进入自己的用户中心，无需再次登录。
+// GET + 顶层跳转，不涉及跨站表单 POST，因此不受 POST 同源中间件限制。
+app.get('/sso/consume', async (c) => {
+  const token = String(c.req.query('t') || '')
+  if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) return c.redirect('/login')
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS sso_handoff_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run()
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+  const tokenHash = Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
+  const row = await c.env.RENT
+    .prepare('SELECT user_id FROM sso_handoff_tokens WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1')
+    .bind(tokenHash)
+    .first() as { user_id?: string } | null
+  // 单次使用：命中与否都立即销毁；顺带清掉过期行。
+  c.executionCtx.waitUntil(
+    c.env.RENT.batch([
+      c.env.RENT.prepare('DELETE FROM sso_handoff_tokens WHERE token_hash = ?').bind(tokenHash),
+      c.env.RENT.prepare("DELETE FROM sso_handoff_tokens WHERE expires_at <= CURRENT_TIMESTAMP"),
+    ]).then(() => undefined).catch(() => undefined),
+  )
+  if (!row?.user_id) return c.redirect('/login')
+  const activeUser = await c.env.RENT
+    .prepare("SELECT id FROM users WHERE id = ? AND status = 'active' AND account_type = 'formal' LIMIT 1")
+    .bind(String(row.user_id))
+    .first() as { id?: string } | null
+  if (!activeUser?.id) return c.redirect('/login')
+  const session = await createAuthSession(c, String(activeUser.id))
+  const response = c.redirect('/')
+  let ssoCookie = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`
+  if (new URL(c.req.url).protocol === 'https:') ssoCookie += '; Secure'
+  response.headers.set('Set-Cookie', ssoCookie)
+  return response
+})
+
 app.get('/register', async (c) => {
   const user = c.get('user')
   if (user) {
