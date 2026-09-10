@@ -39,7 +39,7 @@ export async function renderNewContractPage(c: Context, user: any) {
       const configuration = [device.cpu, device.ram, device.storage, device.gpu, device.os].filter(Boolean).join(' · ') || device.description || '暂无配置说明'
       const searchText = [device.name, device.brand, device.model, serial, assetTag, configuration].filter(Boolean).join(' ').toLocaleLowerCase('zh-CN')
       const isBooked = bookedDeviceIds.has(device.id)
-      return `<button class="device-catalog-card" type="button" data-device-id="${escape(device.id)}" data-device-search="${escape(searchText)}" aria-pressed="false"><span class="device-catalog-card__top"><strong>${escape(device.model || '未登记型号')}</strong><span class="badge ${isBooked ? 'badge-warning' : 'badge-success'}">${isBooked ? '有租赁档期' : '可安排'}</span></span><span class="device-catalog-card__config">${escape(configuration)}</span><span class="device-catalog-card__meta"><span>SN ${escape(serial)}</span><span>资产 ${escape(assetTag)}</span></span></button>`
+      return `<button class="device-catalog-card" type="button" data-device-card data-device-id="${escape(device.id)}" data-device-search="${escape(searchText)}" aria-pressed="false"><span class="device-catalog-card__top"><strong>${escape(device.model || '未登记型号')}</strong><span class="badge ${isBooked ? 'badge-warning' : 'badge-success'}">${isBooked ? '有租赁档期' : '可安排'}</span></span><span class="device-catalog-card__config">${escape(configuration)}</span><span class="device-catalog-card__meta"><span>SN ${escape(serial)}</span><span>资产 ${escape(assetTag)}</span></span></button>`
     }).join('')}
       </div>
       <div class="device-group-pagination" data-group-pagination><button class="button button-sm button-secondary" data-group-prev type="button">上一页</button><span class="mono" data-group-page-status></span><button class="button button-sm button-secondary" data-group-next type="button">下一页</button></div>
@@ -66,7 +66,8 @@ export async function renderNewContractPage(c: Context, user: any) {
           <div id="device-catalog-results" class="device-catalog-results">${deviceCatalog}</div>
           <p id="device-empty-state" class="device-empty-state" hidden>没有符合条件的设备，请尝试其他名称、型号、序列号或配置。</p>
           <label for="device-select" class="visually-hidden">已选择设备</label>
-          <select id="device-select" name="deviceId" class="visually-hidden" required>
+          <label for="device-select" class="form-label" style="margin-top: 14px;">设备下拉选择</label>
+          <select id="device-select" name="deviceId" class="form-control" required>
             <option value="">请选择设备</option>
             ${devices.map(device => `<option value="${device.id}">${device.name} (${device.model}) - ${device.serialNumber}${device.status === 'rented' ? ' · 有租赁档期' : ''}</option>`).join('')}
           </select>
@@ -150,7 +151,7 @@ export async function renderNewContractPage(c: Context, user: any) {
       const endDateInput = document.getElementById('end-date');
       const deviceSelect = document.getElementById('device-select');
       const deviceSearch = document.getElementById('device-search');
-      const deviceCards = Array.from(document.querySelectorAll('[data-device-id]'));
+      const deviceCards = Array.from(document.querySelectorAll('[data-device-card]'));
       const deviceGroups = Array.from(document.querySelectorAll('[data-device-group]'));
       const deviceResultCount = document.getElementById('device-result-count');
       const deviceEmptyState = document.getElementById('device-empty-state');
@@ -172,9 +173,7 @@ export async function renderNewContractPage(c: Context, user: any) {
       const selectedBookings = () => bookings.filter(item => item.deviceId === deviceSelect.value);
       function selectDevice(card) {
         deviceSelect.value = card.dataset.deviceId;
-        deviceCards.forEach(item => { const selected = item === card; item.classList.toggle('is-selected', selected); item.setAttribute('aria-pressed', String(selected)); });
-        fillDeviceCondition(deviceSelect.value);
-        validateBookingDates();
+        deviceSelect.dispatchEvent(new Event('change'));
       }
       function fillInspectionRecords(deviceId) {
         const records = inspectionRecords.filter(item => item.deviceId === deviceId);
@@ -310,7 +309,11 @@ export async function renderNewContractPage(c: Context, user: any) {
       updateValidityDates();
       startDateInput.addEventListener('change', () => { if (startDateInput.value) { const selected = new Date(startDateInput.value + 'T00:00:00Z'); bookingMonth = new Date(Date.UTC(selected.getUTCFullYear(), selected.getUTCMonth(), 1)); } updateValidityDates(); validateBookingDates(); });
       endDateInput.addEventListener('change', () => { updateValidityDates(); validateBookingDates(); });
-      deviceSelect.addEventListener('change', validateBookingDates);
+      deviceSelect.addEventListener('change', () => {
+        deviceCards.forEach(item => { const selected = item.dataset.deviceId === deviceSelect.value; item.classList.toggle('is-selected', selected); item.setAttribute('aria-pressed', String(selected)); });
+        fillDeviceCondition(deviceSelect.value);
+        validateBookingDates();
+      });
       deviceCards.forEach(card => card.addEventListener('click', () => selectDevice(card)));
       deviceSearch.addEventListener('input', () => { deviceGroups.forEach(group => { group.dataset.groupPage = '0'; }); filterDevices(); });
       deviceGroups.forEach(group => {

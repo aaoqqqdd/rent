@@ -2175,14 +2175,6 @@ app.get('/api/coupons/rental-preview', async (c) => {
 })
 
 app.get('/api/coupons/rental-cart-preview', async (c) => {
-
-  app.post('/public/rental-setup-intent', async (c) => {
-    try {
-      return c.json(await actions.createPublicRentalSetupIntent(c))
-    } catch (error: any) {
-      return c.json({ ok: false, message: error?.message || '信用卡验证暂不可用，请稍后重试。' }, 400)
-    }
-  })
   const rawIds = String(c.req.query('deviceIds') || '')
   let deviceIds: string[] = []
   try {
@@ -2198,6 +2190,14 @@ app.get('/api/coupons/rental-cart-preview', async (c) => {
     String(c.req.query('code') || '').trim(),
   )
   return c.json(result, result.ok ? 200 : 400)
+})
+
+app.post('/public/rental-setup-intent', async (c) => {
+  try {
+    return c.json(await actions.createPublicRentalSetupIntent(c))
+  } catch (error: any) {
+    return c.json({ ok: false, message: error?.message || '信用卡验证暂不可用，请稍后重试。' }, 400)
+  }
 })
 
 app.post('/public/order-lookup', async (c) => {
