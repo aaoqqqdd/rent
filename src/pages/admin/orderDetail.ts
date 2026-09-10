@@ -6,6 +6,7 @@
 import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, formatCurrency, formatMelbourneDateTime, validateHostedImageUrls, isContractFinalized, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
+import { renderReconciliationPanel } from '../partials/reconciliationPanel';
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
@@ -87,12 +88,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       const detail = diffs.length ? diffs.map(d => `<div>${escapeHtml(d.label)}：<span class="mono">${escapeHtml(String(d.before ?? '—'))}</span> → <strong class="mono">${escapeHtml(String(d.after ?? '—'))}</strong></div>`).join('') : '—';
       return `<tr><td class="mono">${escapeHtml(formatMelbourneDateTime(item.created_at))}</td><td>${escapeHtml(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${escapeHtml(item.reason || '—')}</td><td class="mono">${escapeHtml(item.changed_by || '—')}</td></tr>`;
     }).join('')}</tbody></table></div></section>` : ''}
-    ${(paymentSources.length || refundRows.length) ? `<section class="panel" style="margin: 0 0 24px;">
-      <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}</span></div>
-      ${reconciliation.ok ? '<div class="alert" style="background:#ecfdf5;color:#065f46">账目一致：分配合计与实付/退款相符，无超退。</div>' : `<div class="alert" style="background:#fef2f2;color:#991b1b"><strong>发现 ${reconciliation.issues.length} 处账目异常：</strong><ul style="margin:6px 0 0;padding-left:18px">${reconciliation.issues.map((i: any) => `<li>[${escapeHtml(i.code)}] ${escapeHtml(i.detail)}</li>`).join('')}</ul></div>`}
-      <div class="table-wrapper"><table><thead><tr><th>付款来源</th><th>方式</th><th>金额</th><th>手续费</th><th>状态</th></tr></thead><tbody>${paymentSources.map((p: any) => `<tr><td class="mono">${escapeHtml(p.id)}</td><td>${escapeHtml(p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${escapeHtml(p.status)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-state">无付款记录</td></tr>'}</tbody></table></div>
-      ${refundRows.length ? `<div class="table-wrapper" style="margin-top:12px"><table><thead><tr><th>退款单</th><th>对应付款</th><th>类型</th><th>金额</th><th>方式</th><th>状态</th><th>时间</th></tr></thead><tbody>${refundRows.map((r: any) => `<tr><td class="mono">${escapeHtml(r.id)}</td><td class="mono">${escapeHtml(r.payment_id || '—')}</td><td>${escapeHtml(r.type)}</td><td>${formatCurrency(r.refund_amount)}</td><td>${escapeHtml(r.refund_method || '—')}</td><td>${escapeHtml(r.status)}</td><td class="mono">${escapeHtml(formatMelbourneDateTime(r.created_at))}</td></tr>`).join('')}</tbody></table></div>` : ''}
-    </section>` : ''}
+    ${renderReconciliationPanel({ reconciliation, paymentSources, refundRows })}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
       <div class="panel">
         <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">

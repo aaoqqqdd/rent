@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site'
+import { renderReconciliationPanel } from '../partials/reconciliationPanel'
 import type { Context } from 'hono'
 
 const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -83,12 +84,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         return `<tr><td class="mono">${esc(formatMelbourneDateTime(item.created_at))}</td><td>${esc(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${esc(item.reason || '—')}</td><td class="mono">${esc(item.changed_by || '—')}</td></tr>`
       }).join('')}</tbody></table></div></section>` : ''}
 
-      ${(paymentSources.length || refundRows.length) ? `<section class="panel" style="margin-top:20px">
-        <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">只读 · 实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}</span></div>
-        ${reconciliation.ok ? '<div class="alert" style="background:#ecfdf5;color:#065f46">账目一致：分配合计与实付/退款相符，无超退。</div>' : `<div class="alert" style="background:#fef2f2;color:#991b1b"><strong>发现 ${reconciliation.issues.length} 处账目异常，请通知管理员：</strong><ul style="margin:6px 0 0;padding-left:18px">${reconciliation.issues.map((i: any) => `<li>[${esc(i.code)}] ${esc(i.detail)}</li>`).join('')}</ul></div>`}
-        <div class="table-wrapper"><table><thead><tr><th>付款来源</th><th>方式</th><th>金额</th><th>手续费</th><th>状态</th></tr></thead><tbody>${paymentSources.map((p: any) => `<tr><td class="mono">${esc(p.id)}</td><td>${esc(p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${esc(p.status)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-state">无付款记录</td></tr>'}</tbody></table></div>
-        ${refundRows.length ? `<div class="table-wrapper" style="margin-top:12px"><table><thead><tr><th>退款单</th><th>对应付款</th><th>类型</th><th>金额</th><th>方式</th><th>状态</th><th>时间</th></tr></thead><tbody>${refundRows.map((r: any) => `<tr><td class="mono">${esc(r.id)}</td><td class="mono">${esc(r.payment_id || '—')}</td><td>${esc(r.type)}</td><td>${formatCurrency(r.refund_amount)}</td><td>${esc(r.refund_method || '—')}</td><td>${esc(r.status)}</td><td class="mono">${esc(formatMelbourneDateTime(r.created_at))}</td></tr>`).join('')}</tbody></table></div>` : ''}
-      </section>` : ''}
+      ${renderReconciliationPanel({ reconciliation, paymentSources, refundRows }, { readOnly: true, margin: '20px 0 0' })}
 
       ${contract ? `
         <div class="section-title order-section-heading" style="margin-top: 24px;"><h3>合同详情 #${contract.contractNumber || '待生成'}</h3><span class="section-note">查看合同状态、签署记录和正式合同文件。</span></div>

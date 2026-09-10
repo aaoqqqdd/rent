@@ -27,7 +27,15 @@ export async function renderInvoice(c: Context, user: any, orderId: string, prin
   const payment = await c.env.RENT.prepare('SELECT payment_method, paid_at, transaction_id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = \'paid\' ORDER BY paid_at DESC LIMIT 1').bind(order.id).first() as any
   const refunds = (await c.env.RENT.prepare("SELECT type, refund_number, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at").bind(order.id).all()).results as any[]
   const refundTotal = refunds.reduce((sum, refund) => sum + Number(refund.refund_amount || 0), 0)
-  const documents = invoices.map(invoice => {
+  // 退款凭证（credit note）只在确有成功退款时展示。历史遗留、或退款后来被撤销 /
+  // 改状态的孤儿 credit_note 不应再作为「退款凭证」出现在收据页。
+  const hasSucceededRefund = refundTotal > 0
+  const visibleInvoices = invoices.filter(invoice => {
+    const isCreditNote = invoice.type === 'credit_note' || Number(invoice.total_amount || 0) < 0
+    return !isCreditNote || hasSucceededRefund
+  })
+  if (!visibleInvoices.length) return buildLayout('发票尚未开具', '<div class="panel"><h2>付款完成后系统将自动开具发票</h2></div>', user)
+  const documents = visibleInvoices.map(invoice => {
     // Credit notes are already negative documents. Never subtract the linked
     // refund again, even if an older record was stored with the wrong type.
     const isCreditNote = invoice.type === 'credit_note' || Number(invoice.total_amount || 0) < 0
