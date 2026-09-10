@@ -10,142 +10,108 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>系统设置</h2><span class="section-note">配置公司资料、支付方式和推荐分成规则。</span></div>
+      <div class="section-title"><h2>系统设置</h2><span class="section-note">配置邮件、公司资料、租赁规则、支付方式和推荐分成。</span></div>
 
-      <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">
-        <h4 style="margin-top:0;">邮件 SMTP 配置</h4><a href="/admin/email-templates">完整邮件变量索引</a>
-        <p class="section-note">用于邮箱验证、收据、合同、退款和其他通知。SMTP 密码加密保存，留空表示保留原密码。</p>
-        <div class="grid grid-2">
-          <div><label class="form-label" for="smtpHost">SMTP 主机</label><input class="form-control" id="smtpHost" value="${email.host || ''}" placeholder="smtp-relay.brevo.com"></div>
-          <div><label class="form-label" for="smtpPort">端口</label><input class="form-control" id="smtpPort" type="number" value="${email.port || 587}"></div>
-          <div><label class="form-label" for="smtpUser">SMTP 用户名</label><input class="form-control" id="smtpUser" value="${email.user || ''}"></div>
-          <div><label class="form-label" for="smtpPassword">SMTP 密码 / Key</label><input class="form-control" id="smtpPassword" type="password" placeholder="${email.passwordMasked || '请输入 SMTP Key'}" autocomplete="new-password"></div>
-          <div><label class="form-label" for="smtpFrom">发件邮箱</label><input class="form-control" id="smtpFrom" type="email" value="${email.from || ''}" placeholder="noreply@example.com"></div>
-          <div><label class="form-label" for="smtpEncryption">加密方式</label><select class="form-control" id="smtpEncryption"><option value="starttls" ${email.encryption === 'starttls' ? 'selected' : ''}>STARTTLS（587）</option><option value="ssl" ${email.encryption === 'ssl' ? 'selected' : ''}>SSL/TLS（465）</option><option value="none" ${email.encryption === 'none' ? 'selected' : ''}>无加密</option></select></div>
-        </div>
-        <label style="display:flex;gap:8px;align-items:center;margin-top:14px;"><input type="checkbox" id="clearEmailTransport"> 清除已保存的 SMTP 配置</label>
-      </div>
-
-      <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">
-        <h4 style="margin-top:0;">注册安全设置</h4>
-        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="requireEmailVerification" ${settings.registrationSettings?.requireEmailVerification ? 'checked' : ''}> 强制新注册用户验证邮箱</label>
-        <p class="form-text">关闭时仍可发送验证邮件，但注册后不会阻止用户直接进入系统。</p>
-      </div>
-
-      <form id="systemSettingsForm">
-        <div class="form-group">
-          <label>公司税务信息</label>
+      <form id="systemSettingsForm" class="asset-editor">
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">SMTP</span><div><h3>邮件 SMTP 配置</h3><p>用于邮箱验证、收据、合同、退款和其他通知。密码加密保存，留空表示保留原密码。<a href="/admin/email-templates">完整邮件变量索引</a>。</p></div></div>
           <div class="grid grid-2">
-            <div><label class="form-label" for="companyName">公司名称</label><input id="companyName" name="companyName" class="form-control" value="${settings.companyDetails.name}"></div>
-            <div><label class="form-label" for="companyAbn">公司 ABN</label><input id="companyAbn" name="companyAbn" class="form-control" value="${settings.companyDetails.abn}" placeholder="11 位 ABN"></div>
-            <div><label class="form-label" for="gstIncluded">GST 设置</label><select id="gstIncluded" name="gstIncluded" class="form-control"><option value="true" ${settings.companyDetails.gstIncluded ? 'selected' : ''}>价格包含 GST</option><option value="false" ${!settings.companyDetails.gstIncluded ? 'selected' : ''}>价格不含 GST</option></select></div>
-            <div><label class="form-label" for="companyAddress">公司地址</label><input id="companyAddress" name="companyAddress" class="form-control" value="${settings.companyDetails.address}"></div>
-            <div><label class="form-label" for="companyContact">公司联系人</label><input id="companyContact" name="companyContact" class="form-control" value="${settings.companyDetails.contact}"></div>
-            <div><label class="form-label" for="companyPhone">公司电话</label><input id="companyPhone" name="companyPhone" class="form-control" value="${settings.companyDetails.phone}"></div>
-            <div><label class="form-label" for="companyEmail">公司邮箱</label><input type="email" id="companyEmail" name="companyEmail" class="form-control" value="${settings.companyDetails.email}"></div>
-            <div><label class="form-label" for="companyWebsite">公司网站</label><input type="url" id="companyWebsite" name="companyWebsite" class="form-control" value="${settings.companyDetails.website}" placeholder="https://"></div>
-            <div><label class="form-label" for="companyLogo">公司 Logo URL</label><input type="url" id="companyLogo" name="companyLogo" class="form-control" value="${settings.companyDetails.logo}" placeholder="https://"></div>
-            <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
-            <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><textarea id="unavailableDates" name="unavailableDates" class="form-control" rows="4" placeholder="2026-12-25\n2026-12-26">${settings.rentalRules.unavailableDates.join('\n')}</textarea><small class="form-text">每行一个 YYYY-MM-DD；这些日期不能取货或归还。</small></div>
-            <div class="form-group"><label class="form-label" for="unavailableTimeSlots">按日期设置不可用时间段</label><textarea id="unavailableTimeSlots" name="unavailableTimeSlots" class="form-control" rows="4" placeholder="2026-12-25: afternoon, evening_service">${Object.entries(settings.rentalRules.unavailableTimeSlots || {}).map(([date, slots]) => `${date}: ${(slots as string[]).join(', ')}`).join('\n')}</textarea><small class="form-text">每行格式：日期: 时间段；例如 2026-12-25: afternoon, evening_service。可用时间段：morning_service、morning、afternoon、evening_service。</small></div>
-            <div class="grid grid-2"><div><label class="form-label" for="minimumRentalDays">最短租赁天数</label><input id="minimumRentalDays" name="minimumRentalDays" type="number" min="1" step="1" class="form-control" value="${settings.rentalRules.minimumRentalDays}"></div><div><label class="form-label" for="bufferDays">设备周转缓冲天数</label><input id="bufferDays" name="bufferDays" type="number" min="0" step="1" class="form-control" value="${settings.rentalRules.bufferDays}"><small class="form-text">自动扩展订单前后不可预约的缓冲时间。</small></div></div>
+            <div class="form-group"><label class="form-label" for="smtpHost">SMTP 主机</label><input class="form-control" id="smtpHost" value="${email.host || ''}" placeholder="smtp-relay.brevo.com"></div>
+            <div class="form-group"><label class="form-label" for="smtpPort">端口</label><input class="form-control" id="smtpPort" type="number" value="${email.port || 587}"></div>
+            <div class="form-group"><label class="form-label" for="smtpUser">SMTP 用户名</label><input class="form-control" id="smtpUser" value="${email.user || ''}"></div>
+            <div class="form-group"><label class="form-label" for="smtpPassword">SMTP 密码 / Key</label><input class="form-control" id="smtpPassword" type="password" placeholder="${email.passwordMasked || '请输入 SMTP Key'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="smtpFrom">发件邮箱</label><input class="form-control" id="smtpFrom" type="email" value="${email.from || ''}" placeholder="noreply@example.com"></div>
+            <div class="form-group"><label class="form-label" for="smtpEncryption">加密方式</label><select class="form-control" id="smtpEncryption"><option value="starttls" ${email.encryption === 'starttls' ? 'selected' : ''}>STARTTLS（587）</option><option value="ssl" ${email.encryption === 'ssl' ? 'selected' : ''}>SSL/TLS（465）</option><option value="none" ${email.encryption === 'none' ? 'selected' : ''}>无加密</option></select></div>
           </div>
-        </div>
-        <div class="form-group">
-          <label for="priceStrategy">价格策略配置</label>
-          <textarea id="priceStrategy" name="priceStrategy" rows="5" class="form-control">${settings.priceStrategy}</textarea>
-        </div>
+          <div class="checkbox-group"><input type="checkbox" id="clearEmailTransport"><label for="clearEmailTransport">清除已保存的 SMTP 配置</label></div>
+        </section>
 
-        <div class="form-group">
-          <label>支付方式配置</label>
-          <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
-          <input class="form-control" id="processingFeeRate" name="processingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.processingFeeRate ?? 0.025) * 100).toFixed(2)}">
-          <p class="form-text">Stripe 信用卡支付和押金退款手续费按此比例计算。</p>
-          <div class="checkbox-group">
-            <input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}>
-            <label for="enableStripe">启用 Stripe 信用卡支付</label>
-          </div>
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">AUTH</span><div><h3>注册安全设置</h3><p>关闭时仍可发送验证邮件，但注册后不会阻止用户直接进入系统。</p></div></div>
+          <div class="checkbox-group"><input type="checkbox" id="requireEmailVerification" ${settings.registrationSettings?.requireEmailVerification ? 'checked' : ''}><label for="requireEmailVerification">强制新注册用户验证邮箱</label></div>
+        </section>
 
-          <div style="margin-top: 24px; padding: 24px; background: #f8fafc; border-radius: 12px; border: 1px solid #cbd5e1;">
-            <h4 style="margin-top:0;">Stripe API 配置</h4>
-            <p class="section-note">当前状态：${stripe.configured ? `已配置（${stripe.mode === 'live' ? '正式模式' : '测试模式'}）` : '未配置'}。Webhook 地址：<code>/webhooks/stripe</code></p>
-            <label class="form-label" for="stripePublishableKey">Publishable Key</label>
-            <input class="form-control" id="stripePublishableKey" name="stripePublishableKey" value="${stripe.publishableKey || ''}" placeholder="pk_test_... 或 pk_live_...">
-            <label class="form-label" for="stripeSecretKey">Secret Key</label>
-            <input class="form-control" type="password" id="stripeSecretKey" name="stripeSecretKey" placeholder="${stripe.secretKeyMasked || 'sk_test_...'}" autocomplete="new-password">
-            <label class="form-label" for="stripeWebhookSecret">Webhook Signing Secret</label>
-            <input class="form-control" type="password" id="stripeWebhookSecret" name="stripeWebhookSecret" placeholder="${stripe.webhookSecretMasked || 'whsec_...'}" autocomplete="new-password">
-            <label style="display:flex; gap:8px; align-items:center; margin-top:12px;"><input type="checkbox" name="clearStripeConfig"> 清除已保存的 Stripe 配置</label>
-            <p class="section-note">私密密钥留空会保留现有值，保存后不会再次显示完整内容。</p>
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">INFO</span><div><h3>公司税务信息</h3><p>用于合同、发票和收据的抬头信息。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="companyName">公司名称</label><input id="companyName" name="companyName" class="form-control" value="${settings.companyDetails.name}"></div>
+            <div class="form-group"><label class="form-label" for="companyAbn">公司 ABN</label><input id="companyAbn" name="companyAbn" class="form-control" value="${settings.companyDetails.abn}" placeholder="11 位 ABN"></div>
+            <div class="form-group"><label class="form-label" for="gstIncluded">GST 设置</label><select id="gstIncluded" name="gstIncluded" class="form-control"><option value="true" ${settings.companyDetails.gstIncluded ? 'selected' : ''}>价格包含 GST</option><option value="false" ${!settings.companyDetails.gstIncluded ? 'selected' : ''}>价格不含 GST</option></select></div>
+            <div class="form-group"><label class="form-label" for="companyAddress">公司地址</label><input id="companyAddress" name="companyAddress" class="form-control" value="${settings.companyDetails.address}"></div>
+            <div class="form-group"><label class="form-label" for="companyContact">公司联系人</label><input id="companyContact" name="companyContact" class="form-control" value="${settings.companyDetails.contact}"></div>
+            <div class="form-group"><label class="form-label" for="companyPhone">公司电话</label><input id="companyPhone" name="companyPhone" class="form-control" value="${settings.companyDetails.phone}"></div>
+            <div class="form-group"><label class="form-label" for="companyEmail">公司邮箱</label><input type="email" id="companyEmail" name="companyEmail" class="form-control" value="${settings.companyDetails.email}"></div>
+            <div class="form-group"><label class="form-label" for="companyWebsite">公司网站</label><input type="url" id="companyWebsite" name="companyWebsite" class="form-control" value="${settings.companyDetails.website}" placeholder="https://"></div>
+            <div class="form-group"><label class="form-label" for="companyLogo">公司 Logo URL</label><input type="url" id="companyLogo" name="companyLogo" class="form-control" value="${settings.companyDetails.logo}" placeholder="https://"></div>
           </div>
-          <div class="checkbox-group">
-            <input type="checkbox" id="enableBankTransfer" name="enableBankTransfer" ${settings.paymentMethods.bankTransfer ? 'checked' : ''}>
-            <label for="enableBankTransfer">启用银行转账</label>
-          </div>
-          <div class="checkbox-group">
-            <input type="checkbox" id="enableBalancePayment" name="enableBalancePayment" ${settings.paymentMethods.balancePayment ? 'checked' : ''}>
-            <label for="enableBalancePayment">启用余额支付</label>
-          </div>
-          <div class="checkbox-group">
-            <input type="checkbox" id="enableAlipay" name="enableAlipay" ${settings.paymentMethods.alipay ? 'checked' : ''}>
-            <label for="enableAlipay">启用支付宝人民币付款</label>
-          </div>
-          <div class="checkbox-group">
-            <input type="checkbox" id="enableWechat" name="enableWechat" ${settings.paymentMethods.wechat ? 'checked' : ''}>
-            <label for="enableWechat">启用微信支付人民币付款</label>
-          </div>
-          
-          <!-- 银行转账账户信息设置 -->
-          <div style="margin-top: 24px; padding: 24px; background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 12px; border: 1px solid #bae6fd;">
-            <h4 style="margin: 0 0 20px 0; color: #0369a1; display: flex; align-items: center; gap: 8px;">
-              银行转账账户信息
-            </h4>
-            <div class="grid grid-2">
-              <div>
-                <label for="bankName" class="form-label">银行名称</label>
-                <input type="text" id="bankName" name="bankName" class="form-control" value="${settings.bankDetails.bankName}" placeholder="例如: Commonwealth Bank">
-              </div>
-              <div>
-                <label for="bankAccountName" class="form-label">账户名称</label>
-                <input type="text" id="bankAccountName" name="bankAccountName" class="form-control" value="${settings.bankDetails.accountName}" placeholder="请输入账户名称">
-              </div>
-              <div>
-                <label for="bankBSB" class="form-label">BSB</label>
-                <input type="text" id="bankBSB" name="bankBSB" class="form-control" value="${settings.bankDetails.bsb}" placeholder="例如: 062-001">
-              </div>
-              <div>
-                <label for="bankAccount" class="form-label">银行账号</label>
-                <input type="text" id="bankAccount" name="bankAccount" class="form-control" value="${settings.bankDetails.account}" placeholder="请输入银行账号">
-              </div>
-            </div>
-            <p style="margin: 16px 0 0 0; color: #0c4a6e; font-size: 0.9rem;">
-              这些银行账户信息将会在用户选择银行转账时显示，供客户转账使用。
-            </p>
-          </div>
-          <div style="margin-top: 18px; padding: 18px; background: #fff7ed; border-radius: 12px; border: 1px solid #fed7aa;">
-            <h4 style="margin-top:0;">人民币收款码</h4>
-            <p class="form-text">请输入公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。</p>
-            <label class="form-label" for="alipayQrUrl">支付宝收款码 URL</label>
-            <input class="form-control" id="alipayQrUrl" name="alipayQrUrl" type="url" value="${settings.rmbPayment.alipayQrUrl}" placeholder="https://.../alipay-qr.png">
-            <label class="form-label" for="wechatQrUrl">微信收款码 URL</label>
-            <input class="form-control" id="wechatQrUrl" name="wechatQrUrl" type="url" value="${settings.rmbPayment.wechatQrUrl}" placeholder="https://.../wechat-qr.png">
-          </div>
-        </div>
+        </section>
 
-        <div class="form-group">
-          <label for="defaultReferralRate">默认推荐分成比例 (%)</label>
-          <input type="number" id="defaultReferralRate" name="defaultReferralRate" class="form-control" value="${settings.referralSettings.defaultRate}" min="0" max="100">
-        </div>
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">RULE</span><div><h3>租赁规则</h3><p>控制取货/归还地点、不可用时间以及最短租期。</p></div></div>
+          <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
+          <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><textarea id="unavailableDates" name="unavailableDates" class="form-control" rows="4" placeholder="2026-12-25\n2026-12-26">${settings.rentalRules.unavailableDates.join('\n')}</textarea><small class="form-text">每行一个 YYYY-MM-DD；这些日期不能取货或归还。</small></div>
+          <div class="form-group"><label class="form-label" for="unavailableTimeSlots">按日期设置不可用时间段</label><textarea id="unavailableTimeSlots" name="unavailableTimeSlots" class="form-control" rows="4" placeholder="2026-12-25: afternoon, evening_service">${Object.entries(settings.rentalRules.unavailableTimeSlots || {}).map(([date, slots]) => `${date}: ${(slots as string[]).join(', ')}`).join('\n')}</textarea><small class="form-text">每行格式：日期: 时间段；例如 2026-12-25: afternoon, evening_service。可用时间段：morning_service、morning、afternoon、evening_service。</small></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="minimumRentalDays">最短租赁天数</label><input id="minimumRentalDays" name="minimumRentalDays" type="number" min="1" step="1" class="form-control" value="${settings.rentalRules.minimumRentalDays}"></div>
+            <div class="form-group"><label class="form-label" for="bufferDays">设备周转缓冲天数</label><input id="bufferDays" name="bufferDays" type="number" min="0" step="1" class="form-control" value="${settings.rentalRules.bufferDays}"><small class="form-text">自动扩展订单前后不可预约的缓冲时间。</small></div>
+          </div>
+        </section>
 
-        <div class="form-group">
-          <label for="referralLevelLimit">推荐层级限制</label>
-          <input type="number" id="referralLevelLimit" name="referralLevelLimit" class="form-control" value="${settings.referralSettings.levelLimit}" min="0">
-        </div>
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">RATE</span><div><h3>价格策略配置</h3><p>用于计算租金与押金的策略文本。</p></div></div>
+          <div class="form-group"><textarea id="priceStrategy" name="priceStrategy" rows="5" class="form-control">${settings.priceStrategy}</textarea></div>
+        </section>
 
-        <div class="form-group">
-          <label for="referralSettlementPeriod">分成结算周期 (天)</label>
-          <input type="number" id="referralSettlementPeriod" name="referralSettlementPeriod" class="form-control" value="${settings.referralSettings.settlementPeriod}" min="1">
-        </div>
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">PAY</span><div><h3>支付方式配置</h3><p>启用或停用面向客户的支付渠道，并设置信用卡手续费。</p></div></div>
+          <div class="form-group">
+            <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
+            <input class="form-control" id="processingFeeRate" name="processingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.processingFeeRate ?? 0.025) * 100).toFixed(2)}">
+            <small class="form-text">Stripe 信用卡支付和押金退款手续费按此比例计算。</small>
+          </div>
+          <div class="checkbox-group"><input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}><label for="enableStripe">启用 Stripe 信用卡支付</label></div>
+          <div class="checkbox-group"><input type="checkbox" id="enableBankTransfer" name="enableBankTransfer" ${settings.paymentMethods.bankTransfer ? 'checked' : ''}><label for="enableBankTransfer">启用银行转账</label></div>
+          <div class="checkbox-group"><input type="checkbox" id="enableBalancePayment" name="enableBalancePayment" ${settings.paymentMethods.balancePayment ? 'checked' : ''}><label for="enableBalancePayment">启用余额支付</label></div>
+          <div class="checkbox-group"><input type="checkbox" id="enableAlipay" name="enableAlipay" ${settings.paymentMethods.alipay ? 'checked' : ''}><label for="enableAlipay">启用支付宝人民币付款</label></div>
+          <div class="checkbox-group"><input type="checkbox" id="enableWechat" name="enableWechat" ${settings.paymentMethods.wechat ? 'checked' : ''}><label for="enableWechat">启用微信支付人民币付款</label></div>
+        </section>
+
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">API</span><div><h3>Stripe API 配置</h3><p>当前状态：${stripe.configured ? `已配置（${stripe.mode === 'live' ? '正式模式' : '测试模式'}）` : '未配置'}。Webhook 地址：<code>/webhooks/stripe</code>。私密密钥留空会保留现有值。</p></div></div>
+          <div class="form-group"><label class="form-label" for="stripePublishableKey">Publishable Key</label><input class="form-control" id="stripePublishableKey" name="stripePublishableKey" value="${stripe.publishableKey || ''}" placeholder="pk_test_... 或 pk_live_..."></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="stripeSecretKey">Secret Key</label><input class="form-control" type="password" id="stripeSecretKey" name="stripeSecretKey" placeholder="${stripe.secretKeyMasked || 'sk_test_...'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="stripeWebhookSecret">Webhook Signing Secret</label><input class="form-control" type="password" id="stripeWebhookSecret" name="stripeWebhookSecret" placeholder="${stripe.webhookSecretMasked || 'whsec_...'}" autocomplete="new-password"></div>
+          </div>
+          <div class="checkbox-group"><input type="checkbox" id="clearStripeConfig" name="clearStripeConfig"><label for="clearStripeConfig">清除已保存的 Stripe 配置</label></div>
+        </section>
+
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">BANK</span><div><h3>银行转账账户信息</h3><p>客户选择银行转账时会看到这些账户信息，供其转账使用。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label for="bankName" class="form-label">银行名称</label><input type="text" id="bankName" name="bankName" class="form-control" value="${settings.bankDetails.bankName}" placeholder="例如: Commonwealth Bank"></div>
+            <div class="form-group"><label for="bankAccountName" class="form-label">账户名称</label><input type="text" id="bankAccountName" name="bankAccountName" class="form-control" value="${settings.bankDetails.accountName}" placeholder="请输入账户名称"></div>
+            <div class="form-group"><label for="bankBSB" class="form-label">BSB</label><input type="text" id="bankBSB" name="bankBSB" class="form-control" value="${settings.bankDetails.bsb}" placeholder="例如: 062-001"></div>
+            <div class="form-group"><label for="bankAccount" class="form-label">银行账号</label><input type="text" id="bankAccount" name="bankAccount" class="form-control" value="${settings.bankDetails.account}" placeholder="请输入银行账号"></div>
+          </div>
+        </section>
+
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">RMB</span><div><h3>人民币收款码</h3><p>请输入公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="alipayQrUrl">支付宝收款码 URL</label><input class="form-control" id="alipayQrUrl" name="alipayQrUrl" type="url" value="${settings.rmbPayment.alipayQrUrl}" placeholder="https://.../alipay-qr.png"></div>
+            <div class="form-group"><label class="form-label" for="wechatQrUrl">微信收款码 URL</label><input class="form-control" id="wechatQrUrl" name="wechatQrUrl" type="url" value="${settings.rmbPayment.wechatQrUrl}" placeholder="https://.../wechat-qr.png"></div>
+          </div>
+        </section>
+
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">REF</span><div><h3>推荐分成规则</h3><p>控制推荐返佣比例、层级深度和结算周期。</p></div></div>
+          <div class="grid grid-3">
+            <div class="form-group"><label class="form-label" for="defaultReferralRate">默认推荐分成比例 (%)</label><input type="number" id="defaultReferralRate" name="defaultReferralRate" class="form-control" value="${settings.referralSettings.defaultRate}" min="0" max="100"></div>
+            <div class="form-group"><label class="form-label" for="referralLevelLimit">推荐层级限制</label><input type="number" id="referralLevelLimit" name="referralLevelLimit" class="form-control" value="${settings.referralSettings.levelLimit}" min="0"></div>
+            <div class="form-group"><label class="form-label" for="referralSettlementPeriod">分成结算周期 (天)</label><input type="number" id="referralSettlementPeriod" name="referralSettlementPeriod" class="form-control" value="${settings.referralSettings.settlementPeriod}" min="1"></div>
+          </div>
+        </section>
 
         <div class="form-actions form-actions-right">
           <button type="submit" class="button button-primary">保存设置</button>
