@@ -3890,7 +3890,7 @@ app.post('/admin/maintenance/:id/checks', async (c) => {
   const form = await c.req.parseBody()
   const checkType = String(form.checkType || '')
   const passed = String(form.passed || '') === '1'
-  const allowed = new Set(['DATA_WIPE','SYSTEM_RESET','WINDOWS_BOOT','AGENT_INSTALLED','AGENT_VERSION','DEVICE_SERIAL','DISK_HEALTH','NETWORK','HARDWARE','ACCESSORIES'])
+  const allowed = new Set(['DATA_WIPE', 'SYSTEM_RESET', 'WINDOWS_BOOT', 'AGENT_INSTALLED', 'AGENT_VERSION', 'DEVICE_SERIAL', 'DISK_HEALTH', 'NETWORK', 'HARDWARE', 'ACCESSORIES'])
   if (!allowed.has(checkType)) return c.text('维护检查项无效', 400)
   await c.env.RENT.prepare('INSERT INTO maintenance_preparation_checks (id, maintenance_id, check_type, passed, details, verified_by) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(maintenance_id, check_type) DO UPDATE SET passed = excluded.passed, details = excluded.details, verified_by = excluded.verified_by, verified_at = CURRENT_TIMESTAMP').bind(`mpc-${nanoid(12)}`, record.id, checkType, passed ? 1 : 0, String(form.details || '').trim().slice(0, 1000) || null, user.id).run()
   await createAuditLog(c, { actor: user, action: 'MAINTENANCE_CHECK_RECORDED', targetType: 'MAINTENANCE_RECORD', targetId: record.id, after: { checkType, passed } })
