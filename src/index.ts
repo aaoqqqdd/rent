@@ -449,10 +449,22 @@ app.use('*', async (c, next) => {
   const contentLength = Number(c.req.header('Content-Length') || 0)
   const maxBody = c.req.path === '/webhooks/stripe' ? 512 * 1024 : 128 * 1024
   if (contentLength > maxBody) return c.text('Request body too large', 413)
-  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe') {
+  const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
+  const isPublicRentalRequest = c.req.path === '/public/rental-request'
+  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicRentalRequest) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
     if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
+  }
+  if (isPublicRentalRequest && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
   }
   const ip = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim()
   const rateRule = c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
@@ -462,7 +474,8 @@ app.use('*', async (c, next) => {
           : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
             : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
               : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
-                : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
+                : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
+                  : c.req.path === '/public/rental-request' && c.req.method === 'POST' ? ['public-rental-request', 6, 900] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
@@ -2172,6 +2185,19 @@ app.post('/contract/sign', async (c) => {
   const form = await c.req.parseBody();
   return actions.handleSignContractStep(c, token, step, form);
 });
+
+app.post('/public/rental-request', async (c) => {
+  let body: Record<string, unknown> = {}
+  try {
+    const contentType = c.req.header('content-type') || ''
+    body = contentType.includes('application/json')
+      ? ((await c.req.json()) as Record<string, unknown>)
+      : Object.fromEntries(Object.entries(await c.req.parseBody()).map(([key, value]) => [key, String(value)]))
+  } catch {
+    return c.json({ ok: false, message: '请求格式无效。' }, 400)
+  }
+  return actions.handlePublicRentalRequest(c, body)
+})
 
 app.post('/admin/contracts/template', async (c) => {
   const user = c.get('user')
