@@ -1320,9 +1320,24 @@ app.get('/admin/announcements', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
-  const result = await c.env.RENT.prepare("SELECT MIN(id) AS id, title, message, created_at, COUNT(*) AS recipient_count FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC").bind(user.id).all() as any
+  const order = c.req.query('order') === 'asc' ? 'asc' : 'desc'
+  const result = await c.env.RENT.prepare(`SELECT MIN(id) AS id, title, message, created_at, COUNT(*) AS recipient_count FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at ${order === 'asc' ? 'ASC' : 'DESC'}`).bind(user.id).all() as any
+  const rows = (result.results || []) as any[]
+  const total = rows.length
+  const pageSize = 10
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const page = Math.min(Math.max(1, Number(c.req.query('page') || 1) || 1), pageCount)
+  const offset = (page - 1) * pageSize
+  const pageRows = rows.slice(offset, offset + pageSize)
   const esc = (value: unknown) => sanitizePlainText(value, 500).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  const body = `<div class="page-header"><div><p class="section-code">ANNOUNCEMENT ARCHIVE</p><h2>历史公告</h2><p>编辑已发布公告后，所有收件人会同步更新。</p></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="announcement-archive">${(result.results || []).map((item: any) => `<form class="panel announcement-archive__item" method="post" action="/admin/announcements/${encodeURIComponent(item.id)}"><div class="section-title"><div><h3>${esc(item.title)}</h3><small>${esc(formatMelbourneDateTime(item.created_at))} · 已发送 ${item.recipient_count} 人</small></div></div><label class="form-label">标题</label><input class="form-control" name="title" value="${esc(item.title)}" maxlength="120" required><label class="form-label">内容</label><textarea class="form-control" name="message" rows="5" maxlength="2000" required>${esc(item.message)}</textarea><button class="button button-primary" type="submit">保存公告</button></form>`).join('') || '<p class="empty-state">暂无历史公告</p>'}</div>`
+  const sortLink = (value: string, label: string) => `<a class="button button-sm ${order === value ? 'button-primary' : 'button-secondary'}" href="/admin/announcements?order=${value}">${label}</a>`
+  const pagination = pageCount > 1 ? `<nav class="record-archive__pagination" aria-label="历史公告分页">${Array.from({ length: pageCount }, (_, i) => `<a class="button button-sm ${i + 1 === page ? 'button-primary' : 'button-secondary'}" href="/admin/announcements?order=${order}&page=${i + 1}">${i + 1}</a>`).join('')}</nav>` : ''
+  const items = pageRows.map((item: any, index: number) => {
+    const seq = order === 'asc' ? offset + index + 1 : total - offset - index
+    return `<details class="record-archive__item" data-search="${esc(`${item.title} ${item.message}`).toLowerCase()}"><summary class="record-archive__summary"><span class="record-archive__seq">#${seq}</span><span class="record-archive__title">${esc(item.title)}</span><span class="record-archive__meta">${esc(formatMelbourneDateTime(item.created_at))} · 已发送 ${item.recipient_count} 人</span></summary><div class="record-archive__body"><form method="post" action="/admin/announcements/${encodeURIComponent(item.id)}"><label class="form-label">标题</label><input class="form-control" name="title" value="${esc(item.title)}" maxlength="120" required><label class="form-label">内容</label><textarea class="form-control" name="message" rows="5" maxlength="2000" required>${esc(item.message)}</textarea><div class="record-archive__actions"><button class="button button-primary" type="submit">保存公告</button></div></form><form method="post" action="/admin/announcements/${encodeURIComponent(item.id)}/delete" onsubmit="return confirm('确定删除这条公告吗？所有收件人都会看不到它。')"><button class="button button-sm button-danger" type="submit">删除公告</button></form></div></details>`
+  }).join('')
+  const countLabel = pageCount > 1 ? `第 ${page}/${pageCount} 页 · 共 ${total} 条` : `共 ${total} 条`
+  const body = `<div class="page-header"><div><p class="section-code">ANNOUNCEMENT ARCHIVE</p><h2>历史公告</h2><p>编辑后所有收件人同步更新；删除后将从所有人处撤回。</p></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="record-archive">${total ? `<div class="record-archive__toolbar"><input type="search" id="announcementSearch" class="form-control" placeholder="在本页搜索标题或内容…" autocomplete="off"><div class="record-archive__sort">${sortLink('desc', '最新在前')}${sortLink('asc', '最早在前')}</div><span class="record-archive__count" id="announcementCount" data-base="${countLabel}">${countLabel}</span></div><div class="record-archive__list">${items}</div><p class="empty-state" id="announcementNoResult" style="display:none">本页没有匹配的公告</p>${pagination}` : '<p class="empty-state">暂无历史公告</p>'}</div><script>(()=>{const s=document.getElementById('announcementSearch');if(!s)return;const list=[...document.querySelectorAll('.record-archive__item')];const count=document.getElementById('announcementCount');const none=document.getElementById('announcementNoResult');const run=()=>{const q=s.value.trim().toLowerCase();let n=0;list.forEach(it=>{const hit=!q||(it.dataset.search||'').includes(q);it.style.display=hit?'':'none';if(hit)n++;});count.textContent=q?('匹配 '+n+' 条'):count.dataset.base;none.style.display=q&&!n?'':'none';};s.addEventListener('input',run);})();</script>`
   return c.html(buildLayout('历史公告 - 电脑租赁管理系统', body, user))
 })
 
@@ -1337,6 +1352,17 @@ app.post('/admin/announcements/:id', async (c) => {
   const source = await c.env.RENT.prepare('SELECT title, message, created_at FROM notifications WHERE id = ? AND sender_id = ? AND type = \'announcement\'').bind(c.req.param('id'), user.id).first() as any
   if (!source) return c.text('公告不存在', 404)
   await c.env.RENT.prepare('UPDATE notifications SET title = ?, message = ? WHERE sender_id = ? AND type = \'announcement\' AND title = ? AND message = ? AND created_at = ?').bind(title, message, user.id, source.title, source.message, source.created_at).run()
+  return c.redirect('/admin/announcements')
+})
+
+app.post('/admin/announcements/:id/delete', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureNotificationsTable(c)
+  const source = await c.env.RENT.prepare("SELECT title, message, created_at FROM notifications WHERE id = ? AND sender_id = ? AND type = 'announcement'").bind(c.req.param('id'), user.id).first() as any
+  if (source) {
+    await c.env.RENT.prepare("UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE sender_id = ? AND type = 'announcement' AND title = ? AND message = ? AND created_at = ?").bind(user.id, source.title, source.message, source.created_at).run()
+  }
   return c.redirect('/admin/announcements')
 })
 
