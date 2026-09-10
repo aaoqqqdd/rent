@@ -6,7 +6,7 @@
 import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site'
 import type { Context } from 'hono'
 
-const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
 export async function renderStaffOrderDetail(c: Context, user: any, orderId: string, message?: string, type: 'success' | 'error' = 'error') {
   const order = await getOrderById(c, orderId)

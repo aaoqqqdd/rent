@@ -4,7 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
-import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, ensureNotificationsTable, renderEmailNotificationHtml } from '../../site'
+import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, ensureNotificationsTable, renderEmailNotificationHtml, sanitizePlainText } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
 import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
 
@@ -75,7 +75,7 @@ export async function notifyAgreementUpdate(c: Context, changedAgreements: Array
         const message = fillCustomer(bodyStatic, customer)
         const html = renderEmailNotificationHtml(subject, message, companyName)
         return c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, idempotency_key, status, subject, text_body, html_body) VALUES (?, 'AGREEMENT_UPDATE', ?, ?, 'PENDING', ?, ?, ?)")
-          .bind(`email-${crypto.randomUUID()}`, customer.email, `agreement_update:${today}:${names}:${customer.email}`, subject, message.replace(/<[^>]+>/g, ''), html)
+          .bind(`email-${crypto.randomUUID()}`, customer.email, `agreement_update:${today}:${names}:${customer.email}`, subject, sanitizePlainText(message, 20000), html)
       }))
     }
   } catch (error: any) {
