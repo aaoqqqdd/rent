@@ -19,9 +19,10 @@
 	// "compatibility_flags": [
 	//   "nodejs_compat"
 	// ],
-	// "vars": {
-	//   "MY_VAR": "my-variable"
-	// },
+	"vars": {
+		// 仅允许已部署的营销官网跨站提交购物车订单。
+		"PUBLIC_WEB_ORIGIN": "https://rent-web.ydnw6zt6vj.workers.dev"
+	},
 	// "kv_namespaces": [
 	//   {
 	//     "binding": "MY_KV_NAMESPACE",

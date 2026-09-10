@@ -86,6 +86,7 @@ import {
   combinePersonName,
   isStrongPassword,
   generateUniqueUserId,
+  generateTemporaryPassword,
   isContractExpired,
   getUsers,
   getAccessLevel
@@ -206,6 +207,13 @@ app.get('/styles.css', (c) => {
   if (c.req.header('If-None-Match') === `"${styleSheetVersion}"`) return c.body(null, 304)
   return c.body(siteStyles)
 })
+
+app.get('/favicon.svg', (c) => {
+  c.header('Content-Type', 'image/svg+xml')
+  c.header('Cache-Control', 'public, max-age=604800')
+  return c.body('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg>')
+})
+app.get('/favicon.ico', (c) => c.redirect('/favicon.svg', 301))
 
 app.get('/app.js', (c) => {
   c.header('Content-Type', 'text/javascript; charset=utf-8')
@@ -477,7 +485,7 @@ function errorDetails(error: unknown) {
 
 app.use('*', async (c, next) => {
   // 静态资源不需要鉴权，避免每次加载 CSS 都额外查询 D1 会话表。
-  if (c.req.path === '/styles.css' || c.req.path === '/app.js') return next()
+  if (c.req.path === '/styles.css' || c.req.path === '/app.js' || c.req.path === '/favicon.svg' || c.req.path === '/favicon.ico') return next()
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     c.set('user', user)
@@ -523,10 +531,55 @@ app.use('*', async (c, next) => {
   const contentLength = Number(c.req.header('Content-Length') || 0)
   const maxBody = c.req.path === '/webhooks/stripe' ? 512 * 1024 : 128 * 1024
   if (contentLength > maxBody) return c.text('Request body too large', 413)
-  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe') {
+  const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
+  const isPublicRentalRequest = c.req.path === '/public/rental-request'
+  const isPublicRentalPreview = c.req.path === '/api/coupons/rental-cart-preview'
+  const isPublicRentalSetupIntent = c.req.path === '/public/rental-setup-intent'
+  const isPublicOrderLookup = c.req.path === '/public/order-lookup'
+  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicRentalRequest && !isPublicRentalSetupIntent && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
     if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
+  }
+  if (isPublicRentalRequest && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
+  }
+  if (isPublicRentalPreview && (c.req.method === 'GET' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
+  }
+  if (isPublicRentalSetupIntent && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
+  }
+  if (isPublicOrderLookup && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
   }
   const ip = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim()
   const rateRule = c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
@@ -536,7 +589,10 @@ app.use('*', async (c, next) => {
           : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
             : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
               : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
-                : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const : null
+                : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
+                  : c.req.path === '/public/rental-request' && c.req.method === 'POST' ? ['public-rental-request', 6, 900] as const
+                    : c.req.path === '/public/rental-setup-intent' && c.req.method === 'POST' ? ['public-rental-setup', 6, 900] as const
+                    : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
@@ -650,6 +706,46 @@ app.post('/login', async (c) => {
   let cookieOptions = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`;
   if (new URL(c.req.url).protocol === 'https:') cookieOptions += '; Secure'
   response.headers.set('Set-Cookie', cookieOptions)
+  return response
+})
+
+// 官网（rent-web）单点登录握手。官网已在共享 auth_sessions 建好会话，并签发了一个
+// 一次性 token（sso_handoff_tokens，60s 过期、用一次即废）。这里校验后在 rent 域
+// 也建立会话 cookie，用户随即进入自己的用户中心，无需再次登录。
+// GET + 顶层跳转，不涉及跨站表单 POST，因此不受 POST 同源中间件限制。
+app.get('/sso/consume', async (c) => {
+  const token = String(c.req.query('t') || '')
+  if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) return c.redirect('/login')
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS sso_handoff_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run()
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+  const tokenHash = Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
+  const row = await c.env.RENT
+    .prepare('SELECT user_id FROM sso_handoff_tokens WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP LIMIT 1')
+    .bind(tokenHash)
+    .first() as { user_id?: string } | null
+  // 单次使用：命中与否都立即销毁；顺带清掉过期行。
+  c.executionCtx.waitUntil(
+    c.env.RENT.batch([
+      c.env.RENT.prepare('DELETE FROM sso_handoff_tokens WHERE token_hash = ?').bind(tokenHash),
+      c.env.RENT.prepare("DELETE FROM sso_handoff_tokens WHERE expires_at <= CURRENT_TIMESTAMP"),
+    ]).then(() => undefined).catch(() => undefined),
+  )
+  if (!row?.user_id) return c.redirect('/login')
+  const activeUser = await c.env.RENT
+    .prepare("SELECT id FROM users WHERE id = ? AND status = 'active' AND account_type = 'formal' LIMIT 1")
+    .bind(String(row.user_id))
+    .first() as { id?: string } | null
+  if (!activeUser?.id) return c.redirect('/login')
+  const session = await createAuthSession(c, String(activeUser.id))
+  const response = c.redirect('/')
+  let ssoCookie = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`
+  if (new URL(c.req.url).protocol === 'https:') ssoCookie += '; Secure'
+  response.headers.set('Set-Cookie', ssoCookie)
   return response
 })
 
@@ -2176,6 +2272,46 @@ app.get('/api/coupons/rental-preview', async (c) => {
   return c.json({ ok: true, rent, discount, deposit, total: Number((rent + deposit - discount).toFixed(2)), message: `已优惠 AUD$${discount.toFixed(2)}` })
 })
 
+app.get('/api/coupons/rental-cart-preview', async (c) => {
+  const rawIds = String(c.req.query('deviceIds') || '')
+  let deviceIds: string[] = []
+  try {
+    const parsed = JSON.parse(rawIds)
+    deviceIds = Array.isArray(parsed) ? parsed.map((id) => String(id).trim()).filter(Boolean) : []
+  } catch {
+    deviceIds = rawIds.split(',').map((id) => id.trim()).filter(Boolean)
+  }
+  const result = await actions.previewPublicRentalCoupon(
+    c,
+    [...new Set(deviceIds)],
+    Number(c.req.query('days') || 0),
+    String(c.req.query('code') || '').trim(),
+  )
+  return c.json(result, result.ok ? 200 : 400)
+})
+
+app.post('/public/rental-setup-intent', async (c) => {
+  try {
+    return c.json(await actions.createPublicRentalSetupIntent(c))
+  } catch (error: any) {
+    return c.json({ ok: false, message: error?.message || '信用卡验证暂不可用，请稍后重试。' }, 400)
+  }
+})
+
+app.post('/public/order-lookup', async (c) => {
+  let body: Record<string, unknown> = {}
+  try { body = (await c.req.json()) as Record<string, unknown> } catch { return c.json({ ok: false, message: '请求格式无效。' }, 400) }
+  const orderNo = String(body.orderNo || '').trim().toUpperCase()
+  const email = String(body.email || '').trim().toLowerCase()
+  if (!orderNo || !email) return c.json({ ok: false, message: '请输入订单编号和申请邮箱。' }, 400)
+  const order = await c.env.RENT.prepare(`SELECT o.id, o.orderNo, o.status, o.startDate, o.endDate, o.totalAmount, o.depositAmount, o.deliveryMethod, o.pickupLocation, o.userId, u.email, u.account_type, d.name AS deviceName FROM orders o JOIN users u ON u.id = o.userId LEFT JOIN devices d ON d.id = o.deviceId WHERE UPPER(o.orderNo) = ? AND lower(u.email) = ?`).bind(orderNo, email).first() as any
+  if (!order) return c.json({ ok: false, message: '没有找到匹配的订单，请检查订单编号和邮箱。' }, 404)
+  if (String(order.account_type || 'formal') !== 'guest') return c.json({ ok: true, registered: true, message: '该邮箱已注册，请进入账号中心登录查看订单。', loginUrl: '/login' })
+  const temporaryPassword = generateTemporaryPassword()
+  await c.env.RENT.prepare("UPDATE users SET password_hash = ?, password_salt = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND account_type = 'guest'").bind(await hashPassword(temporaryPassword), order.userId).run()
+  return c.json({ ok: true, registered: false, order: { orderNo: order.orderNo, status: order.status, deviceName: order.deviceName, startDate: order.startDate, endDate: order.endDate, totalAmount: order.totalAmount, depositAmount: order.depositAmount, deliveryMethod: order.deliveryMethod, pickupLocation: order.pickupLocation }, temporaryPassword })
+})
+
 app.get('/api/contract-sign/coupon-preview', async (c) => {
   const token = c.req.query('token') || c.req.query('number') || ''
   const code = String(c.req.query('code') || '').trim().toUpperCase().slice(0, 40)
@@ -2223,6 +2359,19 @@ app.post('/contract/sign', async (c) => {
   const form = await c.req.parseBody();
   return actions.handleSignContractStep(c, token, step, form);
 });
+
+app.post('/public/rental-request', async (c) => {
+  let body: Record<string, unknown> = {}
+  try {
+    const contentType = c.req.header('content-type') || ''
+    body = contentType.includes('application/json')
+      ? ((await c.req.json()) as Record<string, unknown>)
+      : Object.fromEntries(Object.entries(await c.req.parseBody()).map(([key, value]) => [key, String(value)]))
+  } catch {
+    return c.json({ ok: false, message: '请求格式无效。' }, 400)
+  }
+  return actions.handlePublicRentalRequest(c, body)
+})
 
 app.post('/admin/contracts/template', async (c) => {
   const user = c.get('user')
@@ -2610,7 +2759,7 @@ app.get('/admin/exceptions', async (c) => {
     c.env.RENT.prepare("SELECT bt.id, bt.user_id, bt.amount, bt.payment_method, bt.reference, bt.note, u.name AS user_name FROM balance_topups bt LEFT JOIN users u ON u.id = bt.user_id WHERE bt.status = 'submitted' ORDER BY bt.updated_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT pp.id, pp.payment_id, p.rental_id, pp.reference_number, pp.uploaded_at, o.orderNo FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN orders o ON o.id = p.rental_id WHERE pp.status = 'submitted' ORDER BY pp.uploaded_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, endDate FROM orders WHERE status IN ('active', 'extended', 'overdue', 'pending_return') AND endDate < ? ORDER BY endDate ASC LIMIT 50").bind(new Date().toISOString().slice(0, 10)).all(),
-    c.env.RENT.prepare("SELECT id, name, agent_status FROM devices WHERE agent_token_hash IS NOT NULL AND agent_status = 'offline' ORDER BY updatedAt ASC LIMIT 50").all(),
+    c.env.RENT.prepare("SELECT id, name, agent_status, agent_last_seen_at FROM devices WHERE agent_token_hash IS NOT NULL AND (agent_last_seen_at IS NULL OR agent_last_seen_at <= datetime('now', '-5 minutes')) ORDER BY agent_last_seen_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, depositAmount FROM orders WHERE deposit_status = 'HELD' AND status IN ('returned', 'completed') ORDER BY updatedAt ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, order_id, description FROM damage_cases WHERE status IN ('OPEN', 'PENDING', 'UNDER_REVIEW') ORDER BY created_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, order_id, amount, currency, reason, status FROM payment_disputes WHERE status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') ORDER BY created_at ASC LIMIT 50").all(),
@@ -3882,7 +4031,7 @@ app.post('/admin/maintenance/:id/checks', async (c) => {
   const form = await c.req.parseBody()
   const checkType = String(form.checkType || '')
   const passed = String(form.passed || '') === '1'
-  const allowed = new Set(['DATA_WIPE','SYSTEM_RESET','WINDOWS_BOOT','AGENT_INSTALLED','AGENT_VERSION','DEVICE_SERIAL','DISK_HEALTH','NETWORK','HARDWARE','ACCESSORIES'])
+  const allowed = new Set(['DATA_WIPE', 'SYSTEM_RESET', 'WINDOWS_BOOT', 'AGENT_INSTALLED', 'AGENT_VERSION', 'DEVICE_SERIAL', 'DISK_HEALTH', 'NETWORK', 'HARDWARE', 'ACCESSORIES'])
   if (!allowed.has(checkType)) return c.text('维护检查项无效', 400)
   await c.env.RENT.prepare('INSERT INTO maintenance_preparation_checks (id, maintenance_id, check_type, passed, details, verified_by) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(maintenance_id, check_type) DO UPDATE SET passed = excluded.passed, details = excluded.details, verified_by = excluded.verified_by, verified_at = CURRENT_TIMESTAMP').bind(`mpc-${nanoid(12)}`, record.id, checkType, passed ? 1 : 0, String(form.details || '').trim().slice(0, 1000) || null, user.id).run()
   await createAuditLog(c, { actor: user, action: 'MAINTENANCE_CHECK_RECORDED', targetType: 'MAINTENANCE_RECORD', targetId: record.id, after: { checkType, passed } })
@@ -4659,7 +4808,7 @@ export default {
           for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
             try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) { }
           }
-          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET name = '删除账户', email = 'deleted-account-' || id || '@invalid.local', phone = NULL, bsb = NULL, account = NULL, account_number = NULL, balance = 0, commission_balance = 0, password_hash = 'disabled', password_salt = 'disabled', referral_code = NULL, referrer_id = NULL, staff_id = NULL, user_agreement_accepted_ip = NULL, status = 'inactive', account_status = 'inactive', deleted_at = CURRENT_TIMESTAMP, deletion_requested_at = NULL, deletion_scheduled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
+          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET name = '删除账户', email = 'deleted-account-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, balance = 0, commission_balance = 0, password_hash = 'disabled', password_salt = 'disabled', referral_code = NULL, referrer_id = NULL, staff_id = NULL, user_agreement_accepted_ip = NULL, status = 'inactive', account_status = 'inactive', deleted_at = CURRENT_TIMESTAMP, deletion_requested_at = NULL, deletion_scheduled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
           return Number(deletedAccountResult.meta?.changes || 0)
         })
 

@@ -10,7 +10,7 @@ export function renderLogin(errorMessage?: string, showTestAccounts = false) {
     <div class="page-centered">
       <div class="login-container">
         <div class="login-card">
-          <div class="login-logo"><span class="logo-mark">▣</span>PC Rental</div>
+          <div class="login-logo"><span class="logo-mark"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg></span>PC Rental</div>
           <p class="login-subtitle">专业设备租赁管理平台</p>
           <form method="POST" action="/login">
             <label class="form-label" for="login-account">邮箱地址</label>

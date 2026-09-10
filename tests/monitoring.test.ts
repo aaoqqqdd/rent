@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory } from '../src/site'
-import { monitorOverallStatus, monitorHttpStatus, parseBearerToken } from '../src/domain/monitoring'
+import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, staleMonitoringAlertIds } from '../src/domain/monitoring'
 import { renderAdminMonitoring } from '../src/pages/admin/monitoring'
 
 test('rateHealth classifies against warn/critical thresholds', () => {
@@ -95,6 +95,27 @@ test('renderAdminMonitoring draws sparklines, count values and first-breach time
   assert.match(html, /首次异常：/)                      // first non-OK snapshot surfaced
   assert.match(html, /<div class="value">12<\/div>/)   // count metric shows raw count, not a %
   assert.doesNotMatch(html.split('异常任务积压')[1].split('</div>')[0], /%/)
+})
+
+test('staleMonitoringAlertIds closes alerts whose metric is no longer CRITICAL', () => {
+  const open = [
+    { id: 'a', entity_id: 'open_exception_backlog:2026-09-08' },
+    { id: 'b', entity_id: 'open_exception_backlog:2026-09-09' },
+    { id: 'c', entity_id: 'payment_failure_rate:2026-09-09' },
+  ]
+  // backlog recovered, payment failure still critical -> only a,b are stale
+  assert.deepEqual(staleMonitoringAlertIds(open, ['payment_failure_rate']), ['a', 'b'])
+  // nothing critical -> every open alert is stale
+  assert.deepEqual(staleMonitoringAlertIds(open, []), ['a', 'b', 'c'])
+  // still critical -> keep the alert open
+  assert.deepEqual(staleMonitoringAlertIds(open, ['open_exception_backlog', 'payment_failure_rate']), [])
+})
+
+test('staleMonitoringAlertIds matches on the metric-key prefix, not a substring', () => {
+  const open = [{ id: 'x', entity_id: 'exception_backlog:2026-09-10' }]
+  // 'backlog' critical key must not keep an 'exception_backlog' alert alive by accident
+  assert.deepEqual(staleMonitoringAlertIds(open, ['backlog']), ['x'])
+  assert.deepEqual(staleMonitoringAlertIds(open, ['exception_backlog']), [])
 })
 
 test('monitor API accepts only one Bearer token value', () => {

@@ -263,7 +263,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先填写您的个人信息。');
         }
 
-        const { paymentMethod } = body;
+        const paymentMethod = (order as any).stripe_payment_method_id ? 'stripe' : String(body.paymentMethod || '')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
@@ -278,11 +278,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (serviceFee !== previousServiceFee) {
           const adjustedTotal = Number((Number(order.totalAmount) + serviceFee - previousServiceFee).toFixed(2))
           await c.env.RENT.prepare('UPDATE orders SET totalAmount = ?, serviceFee = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(adjustedTotal, serviceFee, contract.rentalId).run()
-          ;(order as any).totalAmount = adjustedTotal
-          ;(order as any).serviceFee = serviceFee
+            ; (order as any).totalAmount = adjustedTotal
+            ; (order as any).serviceFee = serviceFee
         }
         const canUseBalance = canUseAccountBalance(currentUser)
-        const refundMethod = canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original'
+        const refundMethod = (order as any).refundMethod === 'balance' ? 'balance' : (canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original')
         const refundBsb = String(body.refundBsb || '').trim()
         const refundAccountNumber = String(body.refundAccountNumber || '').replace(/\s/g, '')
         const refundAccountName = String(body.refundAccountName || '').trim()
@@ -414,10 +414,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             await reserveCouponForOrder(c, { coupon, customerId: userId, orderId: contract.rentalId, discountAmount })
             const adjustment = discountAmount - previousDiscount
             if (adjustment !== 0) await c.env.RENT.prepare('UPDATE orders SET totalAmount = totalAmount - ? WHERE id = ?').bind(adjustment, contract.rentalId).run()
-            ;(order as any).totalAmount = Number(order.totalAmount) - adjustment
+              ; (order as any).totalAmount = Number(order.totalAmount) - adjustment
           } catch (error: any) {
             await clearPreviewCouponFromOrder(c, contract.rentalId, previousDiscount)
-            ;(order as any).totalAmount = Number(order.totalAmount) + previousDiscount
+              ; (order as any).totalAmount = Number(order.totalAmount) + previousDiscount
             await logError(c, 'INFO', `Preview coupon dropped at signing: ${error?.message || error}`, undefined, { token, orderId: contract.rentalId })
           }
         } else if (!previewCouponCode && enteredCouponCode) {
@@ -429,7 +429,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           const discountAmount = calculateCouponDiscount(coupon, rentAmountForCoupon)
           await reserveCouponForOrder(c, { coupon, customerId: userId, orderId: contract.rentalId, discountAmount })
           await c.env.RENT.prepare('UPDATE orders SET totalAmount = totalAmount - ? WHERE id = ?').bind(discountAmount, contract.rentalId).run()
-          ;(order as any).totalAmount = Number(order.totalAmount) - discountAmount
+            ; (order as any).totalAmount = Number(order.totalAmount) - discountAmount
         }
 
         // 2. 更新订单信息
@@ -518,8 +518,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (paymentMethod === 'stripe') {
           const stripeUser = await getUserById(c, userId)
           if (!stripeUser) throw new Error('无法读取付款用户信息')
-          const intent = await createOrderPaymentIntent(c, stripeUser, contract.rentalId)
-          if (!intent.alreadyPaid) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
+          const intent = await createOrderPaymentIntent(c, stripeUser, contract.rentalId, Boolean((order as any).stripe_payment_method_id))
+          if (!intent.alreadyPaid && !(order as any).stripe_payment_method_id) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
         }
         if (paymentMethod === 'balance') {
           await ensureOrderNumber(c, contract.rentalId)
@@ -564,7 +564,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const signedOrder = await getOrderById(c, contract.rentalId)
         const signedDevice = signedOrder ? await getDeviceById(c, signedOrder.deviceId) : null
         const signedCustomer = await getUserById(c, userId)
-        const signedContract = { ...contract, contract_data: signedData, esign_ip: esignIp, esign_device: esignDevice, signedAt,
+        const signedContract = {
+          ...contract, contract_data: signedData, esign_ip: esignIp, esign_device: esignDevice, signedAt,
           privacy_policy_accepted: true,
           privacy_policy_version: signedData.privacy_policy_version,
           privacy_policy_accepted_at: signedData.privacy_policy_accepted_at,
@@ -651,7 +652,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
       return c.json({ ok: false, error: errorMessage || '提交失败，请重试' }, 400)
     }
     // 如果出错，重定向回当前步骤并显示错误消息
-        const stepToRedirect = (step > 1 && step <= 5) ? step : 1;
+    const stepToRedirect = (step > 1 && step <= 5) ? step : 1;
     redirectUrl = `/contract/sign?token=${token}&step=${stepToRedirect}&error=${encodeURIComponent(errorMessage || '')}`;
   }
 
