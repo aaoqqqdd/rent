@@ -390,6 +390,24 @@ html.spa-navigation-ready .sidebar a,
 html.spa-navigation-ready .main-nav a,
 html.spa-navigation-ready .mobile-bottom-nav a { cursor: pointer; }
 
+/* 局部导航过渡：优先用浏览器原生 View Transition 交叉淡入淡出；
+   不支持的浏览器回退为一次轻量淡入（gsap 已不再加载，旧的过渡分支是死代码）。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.24s;
+  animation-timing-function: cubic-bezier(.22, .8, .25, 1);
+}
+body.has-navigated .content.is-swapping,
+.content.is-swapping {
+  opacity: 0.4;
+  transition: opacity 0.16s ease !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) { animation: none !important; }
+}
+
 .button, button, .link-button {
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, background-color 0.16s ease, border-color 0.16s ease;
 }
@@ -1836,12 +1854,17 @@ body:not(.has-navigated) .content > .page-header { will-change: transform, opaci
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-  scrollbar-color: #5d7080 transparent;
+  scrollbar-color: #7d8fa0 transparent;
+  /* 底部渐隐提示：当导航超出可视高度时，让用户看出这里还能继续滚动。 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 22px), transparent 100%);
 }
 
-.sidebar-section::-webkit-scrollbar { width: 5px; }
+.sidebar-section::-webkit-scrollbar { width: 8px; }
 .sidebar-section::-webkit-scrollbar-track { background: transparent; }
-.sidebar-section::-webkit-scrollbar-thumb { background: #5d7080; border-radius: 99px; }
+.sidebar-section::-webkit-scrollbar-thumb { background: #7d8fa0; border-radius: 99px; }
+.sidebar-section:hover { scrollbar-color: #98a9b8 transparent; }
+.sidebar-section:hover::-webkit-scrollbar-thumb { background: #98a9b8; }
 
 .sidebar-section h3 {
   font-size: 0.68rem;
