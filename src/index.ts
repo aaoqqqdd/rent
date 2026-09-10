@@ -2642,7 +2642,7 @@ app.get('/admin/exceptions', async (c) => {
     c.env.RENT.prepare("SELECT bt.id, bt.user_id, bt.amount, bt.payment_method, bt.reference, bt.note, u.name AS user_name FROM balance_topups bt LEFT JOIN users u ON u.id = bt.user_id WHERE bt.status = 'submitted' ORDER BY bt.updated_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT pp.id, pp.payment_id, p.rental_id, pp.reference_number, pp.uploaded_at, o.orderNo FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN orders o ON o.id = p.rental_id WHERE pp.status = 'submitted' ORDER BY pp.uploaded_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, endDate FROM orders WHERE status IN ('active', 'extended', 'overdue', 'pending_return') AND endDate < ? ORDER BY endDate ASC LIMIT 50").bind(new Date().toISOString().slice(0, 10)).all(),
-    c.env.RENT.prepare("SELECT id, name, agent_status FROM devices WHERE agent_token_hash IS NOT NULL AND agent_status = 'offline' ORDER BY updatedAt ASC LIMIT 50").all(),
+    c.env.RENT.prepare("SELECT id, name, agent_status, agent_last_seen_at FROM devices WHERE agent_token_hash IS NOT NULL AND (agent_last_seen_at IS NULL OR agent_last_seen_at <= datetime('now', '-5 minutes')) ORDER BY agent_last_seen_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, depositAmount FROM orders WHERE deposit_status = 'HELD' AND status IN ('returned', 'completed') ORDER BY updatedAt ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, order_id, description FROM damage_cases WHERE status IN ('OPEN', 'PENDING', 'UNDER_REVIEW') ORDER BY created_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, order_id, amount, currency, reason, status FROM payment_disputes WHERE status IN ('DISPUTE_OPENED', 'DISPUTE_UNDER_REVIEW') ORDER BY created_at ASC LIMIT 50").all(),
@@ -4691,7 +4691,7 @@ export default {
           for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
             try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) { }
           }
-          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET name = '删除账户', email = 'deleted-account-' || id || '@invalid.local', phone = NULL, bsb = NULL, account = NULL, account_number = NULL, balance = 0, commission_balance = 0, password_hash = 'disabled', password_salt = 'disabled', referral_code = NULL, referrer_id = NULL, staff_id = NULL, user_agreement_accepted_ip = NULL, status = 'inactive', account_status = 'inactive', deleted_at = CURRENT_TIMESTAMP, deletion_requested_at = NULL, deletion_scheduled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
+          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET name = '删除账户', email = 'deleted-account-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, balance = 0, commission_balance = 0, password_hash = 'disabled', password_salt = 'disabled', referral_code = NULL, referrer_id = NULL, staff_id = NULL, user_agreement_accepted_ip = NULL, status = 'inactive', account_status = 'inactive', deleted_at = CURRENT_TIMESTAMP, deletion_requested_at = NULL, deletion_scheduled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
           return Number(deletedAccountResult.meta?.changes || 0)
         })
 
