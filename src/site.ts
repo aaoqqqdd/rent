@@ -406,8 +406,10 @@ export async function collectMonitoringMetrics(c: Context): Promise<MonitorMetri
     `SELECT SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM payments WHERE created_at > datetime('now','-1 day')`)
   await add('email_failure_rate', '邮件失败率（24h）', 0.1, 0.3,
     `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM email_events WHERE created_at > datetime('now','-1 day')`)
+  // 离线判定按心跳时间：没有任何 sweep 会把 agent_status 从 'online' 改回
+  // 'offline'，只能靠 agent_last_seen_at 是否陈旧。5 分钟阈值与绑定设备页一致。
   await add('device_offline_rate', '设备离线率', 0.2, 0.5,
-    `SELECT SUM(CASE WHEN agent_status = 'offline' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL`)
+    `SELECT SUM(CASE WHEN agent_last_seen_at IS NULL OR agent_last_seen_at <= datetime('now', '-5 minutes') THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL`)
   await add('remote_command_failure_rate', '远程命令失败率（24h）', 0.15, 0.4,
     `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')`)
   await add('scheduled_job_failure_rate', '定时任务失败率（24h）', 0.1, 0.25,
