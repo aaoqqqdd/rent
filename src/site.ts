@@ -33,6 +33,7 @@ import { parseCookie } from './lib/cookie'
 import { generateUserId, generateReferralCode } from './lib/userId'
 import { validateHostedImageUrls } from './lib/hostedImages'
 import { safeJsonParse } from './lib/json'
+import { dispatchChannelAlert } from './notifyChannels'
 
 export {
   generateReferenceNumber, generateContractNumber,
@@ -84,8 +85,8 @@ import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
 } from './domain/dataRetention'
 import type { RetentionAction, RetentionPolicyLike } from './domain/dataRetention'
-import { rateHealth, worstHealthLevel } from './domain/monitoring'
-import type { HealthLevel, MonitorMetric } from './domain/monitoring'
+import { rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory } from './domain/monitoring'
+import type { HealthLevel, MonitorMetric, MonitorMetricKind, MetricHistoryPoint, MetricHistorySummary } from './domain/monitoring'
 import { agentCommission } from './domain/agentProgram'
 import { buildRefundAllocation, evaluatePaymentReconciliation } from './domain/refundAllocation'
 import type {
@@ -106,14 +107,14 @@ export {
   isRiskFlagCurrentlyActive, findBlockingRiskFlag,
   deviceUtilisationRate, paymentMethodBreakdown,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
-  rateHealth, worstHealthLevel,
+  rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory,
   agentCommission,
   buildRefundAllocation, evaluatePaymentReconciliation,
 }
 export type {
   OrderChangeType, OrderChangePlan, DeviceCommandState, PaymentDisputeState,
   RiskFlagType, RiskFlagLike, PaymentMethodRow, PaymentMethodShare,
-  RetentionAction, RetentionPolicyLike, HealthLevel, MonitorMetric,
+  RetentionAction, RetentionPolicyLike, HealthLevel, MonitorMetric, MonitorMetricKind, MetricHistoryPoint, MetricHistorySummary,
   RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
 }
 
@@ -391,47 +392,125 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
   return found
 }
 
-// 系统健康监控（完善.md）：把近 24 小时的失败率 / 积压量汇总成分级指标。
+// 系统健康监控（完善.md P8 #32）：所有健康检查（/admin/monitoring、/health、cron sweep）
+// 共用这一份指标定义，避免同一段口径散落在多处后各自漂移。
+//   kind='rate'  ：SQL 需 SELECT n（分子）与 d（分母），按 warn/crit 比率分级；d<=0 记 OK。
+//   kind='count' ：SQL 只需 SELECT n，按 warn/crit 条数分级，不伪造分母。
+export interface MonitorMetricDef {
+  key: string
+  label: string
+  kind: MonitorMetricKind
+  warn: number
+  crit: number
+  sql: string
+  note?: string
+}
+
+const MONITOR_SNAPSHOT_RETENTION_DAYS = 30
+
+export const MONITOR_METRIC_DEFS: MonitorMetricDef[] = [
+  { key: 'api_error_rate', label: 'API 错误率（24h）', kind: 'rate', warn: 0.02, crit: 0.1,
+    sql: `SELECT (SELECT COUNT(*) FROM error_logs WHERE error_level IN ('ERROR','FATAL') AND created_at > datetime('now','-1 day')) AS n, (SELECT COUNT(*) FROM error_logs WHERE created_at > datetime('now','-1 day')) AS d` },
+  { key: 'payment_failure_rate', label: '付款失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
+    sql: `SELECT SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM payments WHERE created_at > datetime('now','-1 day')` },
+  { key: 'webhook_failure_rate', label: 'Webhook 失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
+    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM webhook_events WHERE received_at > datetime('now','-1 day')` },
+  { key: 'email_failure_rate', label: '邮件失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
+    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM email_events WHERE created_at > datetime('now','-1 day')` },
+  { key: 'device_offline_rate', label: '设备离线率', kind: 'rate', warn: 0.2, crit: 0.5,
+    sql: `SELECT SUM(CASE WHEN agent_status = 'offline' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL` },
+  { key: 'remote_command_failure_rate', label: '远程命令失败率（24h）', kind: 'rate', warn: 0.15, crit: 0.4,
+    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')` },
+  { key: 'scheduled_job_failure_rate', label: '定时任务失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.25,
+    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM scheduled_job_runs WHERE started_at > datetime('now','-1 day')` },
+  // 计数型：积压排除 MONITORING_ALERT 自身，否则「告警写回 data_consistency_issues → 抬高积压 → 再告警」自循环。
+  { key: 'open_exception_backlog', label: '异常任务积压', kind: 'count', warn: 3, crit: 10,
+    sql: `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL AND issue_type <> 'MONITORING_ALERT') + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n`,
+    note: '未处理异常条数（WARN ≥3 / CRITICAL ≥10）' },
+]
+
+// 近 minutes 分钟内 ERROR/CRITICAL 日志计数。/api/system-status 与 /api/monitor 的实时错误探针共用，
+// 用比 collectMonitoringMetrics（24h 口径）更短的窗口做即时告警。
+export async function recentErrorLogCount(c: Context, minutes: number): Promise<{ total: number; critical: number }> {
+  const row = await c.env.RENT.prepare(
+    `SELECT COUNT(*) AS total, SUM(CASE WHEN error_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical
+     FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', ?)`,
+  ).bind(`-${Math.max(1, Math.floor(minutes))} minutes`).first() as any
+  return { total: Number(row?.total || 0), critical: Number(row?.critical || 0) }
+}
+
 // 每个指标独立 try/catch，缺表不影响其它指标。
 export async function collectMonitoringMetrics(c: Context): Promise<MonitorMetric[]> {
   const metrics: MonitorMetric[] = []
-  const add = async (key: string, label: string, warn: number, crit: number, sql: string, note?: string) => {
+  for (const def of MONITOR_METRIC_DEFS) {
     try {
-      const row = await c.env.RENT.prepare(sql).first() as { n?: number; d?: number } | null
+      const row = await c.env.RENT.prepare(def.sql).first() as { n?: number; d?: number } | null
       const numerator = Number(row?.n || 0)
-      const denominator = Number(row?.d || 0)
-      const { rate, level } = rateHealth(numerator, denominator, warn, crit)
-      metrics.push({ key, label, numerator, denominator, rate, level, note })
+      if (def.kind === 'count') {
+        const { level } = countHealth(numerator, def.warn, def.crit)
+        metrics.push({ key: def.key, label: def.label, kind: 'count', numerator, denominator: 0, rate: 0, level, note: def.note })
+      } else {
+        const denominator = Number(row?.d || 0)
+        const { rate, level } = rateHealth(numerator, denominator, def.warn, def.crit)
+        metrics.push({ key: def.key, label: def.label, kind: 'rate', numerator, denominator, rate, level, note: def.note })
+      }
     } catch {
-      metrics.push({ key, label, numerator: 0, denominator: 0, rate: 0, level: 'OK', note: '无数据源' })
+      metrics.push({ key: def.key, label: def.label, kind: def.kind, numerator: 0, denominator: 0, rate: 0, level: 'OK', note: '无数据源' })
     }
   }
-  await add('api_error_rate', 'API 错误率（24h）', 0.02, 0.1,
-    `SELECT (SELECT COUNT(*) FROM error_logs WHERE error_level IN ('ERROR','FATAL') AND created_at > datetime('now','-1 day')) AS n, (SELECT COUNT(*) FROM error_logs WHERE created_at > datetime('now','-1 day')) AS d`)
-  await add('payment_failure_rate', '付款失败率（24h）', 0.1, 0.3,
-    `SELECT SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM payments WHERE created_at > datetime('now','-1 day')`)
-  await add('email_failure_rate', '邮件失败率（24h）', 0.1, 0.3,
-    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM email_events WHERE created_at > datetime('now','-1 day')`)
-  await add('device_offline_rate', '设备离线率', 0.2, 0.5,
-    `SELECT SUM(CASE WHEN agent_status = 'offline' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL`)
-  await add('remote_command_failure_rate', '远程命令失败率（24h）', 0.15, 0.4,
-    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')`)
-  await add('scheduled_job_failure_rate', '定时任务失败率（24h）', 0.1, 0.25,
-    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM scheduled_job_runs WHERE started_at > datetime('now','-1 day')`)
-  await add('open_exception_backlog', '异常任务积压', 0.001, 0.001,
-    `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL) + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n, 1 AS d`,
-    '任一条未处理即 WARN')
   return metrics
 }
 
-// 调度步骤：跑一遍监控，若有 CRITICAL 指标则写入异常任务中心（去重按当天）。
+// 近 windowHours 内的指标快照，按 metric_key 分组、时间升序，供 /admin/monitoring 画趋势。
+export async function getMonitoringHistory(c: Context, windowHours = 168): Promise<Record<string, MetricHistoryPoint[]>> {
+  const out: Record<string, MetricHistoryPoint[]> = {}
+  try {
+    const rows = (await c.env.RENT.prepare(
+      `SELECT metric_key, captured_at, rate, level FROM monitoring_metric_snapshots
+       WHERE captured_at > datetime('now', ?) ORDER BY captured_at ASC`,
+    ).bind(`-${Math.max(1, Math.floor(windowHours))} hours`).all()).results as any[]
+    for (const r of rows || []) {
+      const key = String(r.metric_key)
+      ;(out[key] ||= []).push({ capturedAt: String(r.captured_at), rate: Number(r.rate) || 0, level: r.level as HealthLevel })
+    }
+  } catch { /* 快照表尚未迁移时静默降级为空趋势 */ }
+  return out
+}
+
+// 调度步骤：跑一遍监控，落盘快照（并清理过期），若有 CRITICAL 指标则写入异常任务中心（去重按当天）。
 export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number }> {
   const metrics = await collectMonitoringMetrics(c)
+
+  try {
+    for (const m of metrics) {
+      // count 型没有比率，用条数作为可绘制的量级存进 rate 列（level 列仍是权威分级）。
+      const graphable = m.kind === 'count' ? m.numerator : m.rate
+      await c.env.RENT.prepare(
+        `INSERT INTO monitoring_metric_snapshots (id, metric_key, numerator, denominator, rate, level) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(`mms-${nanoid(14)}`, m.key, m.numerator, m.denominator, graphable, m.level).run()
+    }
+    await c.env.RENT.prepare(
+      `DELETE FROM monitoring_metric_snapshots WHERE captured_at < datetime('now', ?)`,
+    ).bind(`-${MONITOR_SNAPSHOT_RETENTION_DAYS} days`).run()
+  } catch { /* 快照表尚未迁移时不影响告警逻辑 */ }
+
   let alerts = 0
   for (const m of metrics.filter(x => x.level === 'CRITICAL')) {
     const res = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
       .bind(`dci-${nanoid(12)}`, 'MONITORING_ALERT', 'METRIC', `${m.key}:${new Date().toISOString().slice(0, 10)}`, JSON.stringify(m)).run() as any
-    if (Number(res.meta?.changes ?? res.changes ?? 0) > 0) alerts++
+    if (Number(res.meta?.changes ?? res.changes ?? 0) > 0) {
+      alerts++
+      // 当天首次出现的 CRITICAL 指标推送到已启用的通知渠道；尽力而为。
+      try {
+        await dispatchChannelAlert(c, {
+          title: `监控告警：${(m as any).label || m.key}`,
+          message: `指标 ${m.key} 触发 CRITICAL${(m as any).detail ? `：${(m as any).detail}` : ''}。请打开 /admin/monitoring 查看。`,
+          url: new URL('/admin/monitoring', c.req.url).toString(),
+        })
+      } catch (error: any) {
+        console.error('monitoring alert dispatch failed:', error?.message || error)
+      }
+    }
   }
   return { metrics: metrics.length, alerts }
 }
@@ -606,18 +685,18 @@ export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
   return ids.length + Number(purgeResult.meta?.changes ?? purgeResult.changes ?? 0)
 }
 
-// systemSettings 极少变动，但 loadSystemSettingsFromDB 每次都要查 D1 + 对约 10 份
-// 大体量法律文档跑 sanitize-html。用 isolate 级短 TTL 缓存把热路径上的这些成本摊掉；
-// updateSystemSettings 写入后会主动失效。
+// 每次 loadSystemSettingsFromDB 都要跑一次 D1 查询 + 对约 10 个富文本字段做
+// sanitize-html（CPU 密集，整体 ~500ms）。设置极少变化，用 isolate 级短 TTL 缓存把
+// 连续调用（设备端轮询、各页面渲染）挡在重复计算之前。updateSystemSettings 会失效它。
+const SYSTEM_SETTINGS_CACHE_TTL_MS = 30_000
 let systemSettingsLoadedAt = 0
-const SYSTEM_SETTINGS_TTL_MS = 30_000
 
 export function invalidateSystemSettingsCache(): void {
   systemSettingsLoadedAt = 0
 }
 
 export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
-  if (systemSettingsLoadedAt && Date.now() - systemSettingsLoadedAt < SYSTEM_SETTINGS_TTL_MS) {
+  if (systemSettingsLoadedAt && Date.now() - systemSettingsLoadedAt < SYSTEM_SETTINGS_CACHE_TTL_MS) {
     return systemSettings
   }
   const db = getDB(c)
@@ -689,6 +768,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
   if (parsedRegistrationSettings) systemSettings.registrationSettings = { ...systemSettings.registrationSettings, ...parsedRegistrationSettings }
 
+  systemSettingsLoadedAt = Date.now()
   return systemSettings
 }
 
@@ -1286,7 +1366,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/settings': '⚙',
-    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/agents': '⚑', '/admin/referrals': 'gift'
+    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/referrals': 'gift'
   }
 
   const navIconSvg = (kind: string) => {
@@ -1390,7 +1470,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/agents', '代理计划'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
@@ -1404,13 +1484,21 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     : ''
 
   const footerCompany = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
-  // 这是内部运营后台，页脚保持低调的一行：版权 + 少量核心法律链接。
-  // 对外的公开页 / 登录页仍展示完整的合规链接清单。
-  const footerLinks: Array<[string, string]> = currentUser
-    ? [['/service-terms', '服务条款'], ['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策']]
-    : [['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'], ['/complaints', '投诉与争议'], ['/acceptable-use', '可接受使用'], ['/software-terms', '软件协议']]
-  const footerNav = footerLinks.map(([href, text]) => `<a href="${href}">${text}</a>`).join('')
-  const footerHtml = `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany}</span><nav aria-label="网站法律信息">${footerNav}</nav></footer>`
+  // 页脚在所有页面（登录前后）保持一致：平铺三个核心法律链接，其余合规页面
+  // 统一收进「更多」折叠菜单，避免一长排链接换行。
+  const footerPrimaryLinks: Array<[string, string]> = [
+    ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
+  ]
+  const footerMoreLinks: Array<[string, string]> = [
+    ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'],
+    ['/complaints', '投诉与争议'], ['/acceptable-use', '可接受使用'], ['/software-terms', '软件协议'],
+  ]
+  const renderFooterLink = ([href, text]: [string, string]) => `<a href="${href}">${text}</a>`
+  const footerNav = footerPrimaryLinks.map(renderFooterLink).join('')
+  const footerMore = footerMoreLinks.length
+    ? `<details class="legal-footer__more"><summary>更多</summary><div class="legal-footer__more-panel">${footerMoreLinks.map(renderFooterLink).join('')}</div></details>`
+    : ''
+  const footerHtml = `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany}</span><nav aria-label="网站法律信息">${footerNav}${footerMore}</nav></footer>`
 
   return renderLayoutTemplate({
     TITLE: normalizedTitle,

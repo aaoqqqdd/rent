@@ -51,6 +51,8 @@ import {
   findBlockingRiskFlag,
   timingSafeEqualStr,
   collectMonitoringMetrics,
+  getMonitoringHistory,
+  recentErrorLogCount,
   canTransitionDeviceLifecycle,
   MAINTENANCE_CHECK_TYPES,
   validateHostedImageUrls,
@@ -106,11 +108,12 @@ import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
+import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
-import { monitorOverallStatus, parseBearerToken } from './domain/monitoring'
+import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
 import { styleSheetText as siteStyles, styleSheetVersion, appScriptText, appScriptVersion } from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
@@ -130,7 +133,7 @@ function parseFormBody(body: string | null | undefined): Record<string, string> 
 async function sendLoggedEmail(c: any, input: { eventType: string, recipient: string, key: string, subject: string, text: string, html?: string, orderId?: string, templateId?: string }): Promise<{ ok: boolean }> {
   const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, order_id, template_id, idempotency_key, status, subject, text_body, html_body, last_attempt_at) VALUES (?, ?, ?, ?, ?, ?, 'SENDING', ?, ?, ?, CURRENT_TIMESTAMP)").bind(`email-${nanoid(12)}`, input.eventType, input.recipient, input.orderId || null, input.templateId || null, input.key, input.subject, input.text, input.html || null).run() as any
   if (!claimed.meta?.changes) return { ok: true }
-  const apiKey = String(c.env.RESEND_API_KEY || '').trim(); const from = String(c.env.EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+  const { apiKey, from } = await resolveResendCredentials(c)
   if (!apiKey || !from) { await c.env.RENT.prepare("UPDATE email_events SET status = 'FAILED', retry_count = retry_count + 1, error_message = 'Email transport is not configured' WHERE idempotency_key = ?").bind(input.key).run(); return { ok: false } }
   try {
     const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [input.recipient], subject: input.subject, text: input.text, html: input.html }) })
@@ -142,8 +145,7 @@ async function sendLoggedEmail(c: any, input: { eventType: string, recipient: st
 
 async function sendPaymentReviewEmail(c: any, customer: any, subject: string, message: string, orderId: string): Promise<void> {
   const email = String(customer?.email || '').trim()
-  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+  const { apiKey, from } = await resolveResendCredentials(c)
   if (!apiKey || !from || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return
   try {
     const key = `payment-review:${orderId}:${email}:${subject}`
@@ -218,15 +220,36 @@ app.get('/app.js', (c) => {
   return c.body(appScriptText)
 })
 
+const SYSTEM_STATUS_CACHE_KEY = 'https://rent.internal/api/system-status'
+const SYSTEM_STATUS_TTL_MS = 15_000
+
 app.get('/api/system-status', async (c) => {
+  // 边缘缓存：MonitorFlare 每 15 分钟探测一次，每个页面又每 60 秒轮询一次，
+  // 命中缓存即可跳过 D1 往返（原本两次串行查询 ~470ms）。
+  const cache = caches.default
+  const cacheKey = new Request(SYSTEM_STATUS_CACHE_KEY)
+  const cached = await cache.match(cacheKey)
+  if (cached) {
+    const body = await cached.json()
+    return c.json(body as any, 200, { 'Cache-Control': 'no-store' })
+  }
+
   const startedAt = Date.now()
   try {
-    await c.env.RENT.prepare('SELECT 1 AS ok').first()
-    const recent = await c.env.RENT.prepare("SELECT COUNT(*) AS total FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
-    const errors = Number(recent?.total || 0)
-    const latency = Date.now() - startedAt
-    const delayed = latency >= 1000
-    return c.json({ status: errors ? 'degraded' : delayed ? 'delayed' : 'healthy', label: errors ? '异常' : delayed ? '延迟' : '正常', checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
+    // 单条可命中 idx_error_logs_created_at 的查询：既验证 D1 连通性，
+    // 又判断近 10 分钟内是否有错误。直接比较文本时间戳，避免 datetime() 包裹导致索引失效；
+    // 只取存在性（LIMIT 1）而非 COUNT(*)，命中即停。
+    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ')
+    const recent = await c.env.RENT.prepare("SELECT 1 AS hit FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND created_at >= ? LIMIT 1").bind(since).first() as any
+    const errors = recent ? 1 : 0
+    const delayed = Date.now() - startedAt >= 1000
+    const body = { status: errors ? 'degraded' : delayed ? 'delayed' : 'healthy', label: errors ? '异常' : delayed ? '延迟' : '正常', checkedAt: new Date().toISOString() }
+    const toCache = new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${SYSTEM_STATUS_TTL_MS / 1000}` },
+    })
+    try { c.executionCtx.waitUntil(cache.put(cacheKey, toCache)) } catch (_) { }
+    return c.json(body, 200, { 'Cache-Control': 'no-store' })
   } catch (error: any) {
     console.error('System status check failed:', error?.message || error)
     return c.json({ status: 'down', label: '错误' }, 503, { 'Cache-Control': 'no-store' })
@@ -237,6 +260,7 @@ app.get('/api/system-status', async (c) => {
 // state is intentionally excluded: this endpoint measures the website and its
 // core services, not whether an individual Windows client is running.
 app.get('/api/monitor', async (c) => {
+  if (isBrowserNavigation(c)) return c.redirect('/', 302)
   const startedAt = Date.now()
   const checks: Record<string, any> = {}
 
@@ -253,79 +277,96 @@ app.get('/api/monitor', async (c) => {
     checks.database = { ok: false, status: 'down', error: 'database unavailable' }
   }
 
-  const runCheck = async (name: string, failureStatus: 'degraded' | 'down', query: () => Promise<Record<string, any>>) => {
-    try {
-      checks[name] = await query()
-    } catch (error: any) {
-      console.error(`Monitor ${name} check failed:`, error?.message || error)
-      checks[name] = { ok: false, status: failureStatus, error: 'check unavailable' }
-    }
-  }
-
-  if (checks.database.status !== 'down') await Promise.all([
-    runCheck('applicationErrors', 'degraded', async () => {
-      const row = await c.env.RENT.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN error_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
-      const recent = Number(row?.total || 0)
-      const critical = Number(row?.critical || 0)
-      return { ok: recent === 0, status: recent ? 'degraded' : 'ok', windowMinutes: 10, recent, critical }
-    }),
-    runCheck('scheduledJobs', 'degraded', async () => {
+  // 四个探针过去各自一条 D1 往返（Promise.all 并发，但每条仍付一次完整网络延迟）。
+  // 改成一次 batch() —— 一个网络往返里按序跑完四条只读聚合。batch 整体失败时回退到
+  // 逐条查询，保留单表异常不拖垮整个探针的韧性。
+  const probes: { name: string; sql: string; shape: (row: any) => Record<string, any> }[] = [
+    {
+      name: 'applicationErrors',
+      sql: "SELECT COUNT(*) AS total, SUM(CASE WHEN error_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')",
+      shape: (row) => {
+        const recent = Number(row?.total || 0)
+        const critical = Number(row?.critical || 0)
+        return { ok: recent === 0, status: recent ? 'degraded' : 'ok', windowMinutes: 10, recent, critical }
+      },
+    },
+    {
+      name: 'scheduledJobs',
       // "stuck" only counts a RUNNING row that plausibly belongs to a live job:
       // started 1h–24h ago. scheduled_job_runs is never purged, and a worker
       // killed mid-tick (CPU/wall-clock limit) leaves an orphan RUNNING row
       // forever — without the lower bound one past crash pins this check to
       // "degraded" permanently regardless of how healthy the cron now is.
-      const row = await c.env.RENT.prepare(`SELECT
+      sql: `SELECT
         SUM(CASE WHEN status = 'FAILED' AND datetime(started_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
         SUM(CASE WHEN status = 'RUNNING' AND datetime(started_at) < datetime('now', '-1 hour') AND datetime(started_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS stuck,
         MAX(started_at) AS last_run
-        FROM scheduled_job_runs`).first() as any
-      const failures = Number(row?.failures || 0)
-      const stuck = Number(row?.stuck || 0)
-      const lastRunMs = row?.last_run ? Date.parse(`${String(row.last_run).replace(' ', 'T')}Z`) : NaN
-      const lastRunAgeSeconds = Number.isFinite(lastRunMs) ? Math.max(0, Math.round((Date.now() - lastRunMs) / 1000)) : null
-      const overdue = lastRunAgeSeconds === null || lastRunAgeSeconds > 36 * 60 * 60
-      return { ok: !failures && !stuck && !overdue, status: failures || stuck || overdue ? 'degraded' : 'ok', failures24h: failures, stuck, lastRunAgeSeconds }
-    }),
-    runCheck('emailDelivery', 'degraded', async () => {
+        FROM scheduled_job_runs`,
+      shape: (row) => {
+        const failures = Number(row?.failures || 0)
+        const stuck = Number(row?.stuck || 0)
+        const lastRunMs = row?.last_run ? Date.parse(`${String(row.last_run).replace(' ', 'T')}Z`) : NaN
+        const lastRunAgeSeconds = Number.isFinite(lastRunMs) ? Math.max(0, Math.round((Date.now() - lastRunMs) / 1000)) : null
+        const overdue = lastRunAgeSeconds === null || lastRunAgeSeconds > 36 * 60 * 60
+        return { ok: !failures && !stuck && !overdue, status: failures || stuck || overdue ? 'degraded' : 'ok', failures24h: failures, stuck, lastRunAgeSeconds }
+      },
+    },
+    {
+      name: 'emailDelivery',
       // email_events.status is one of PENDING/SENT/FAILED/SKIPPED — there is no
       // 'SENDING'. Grade failures as a share of 24h volume (a single transient
       // bounce must not pin the probe to "degraded" for a whole day); a PENDING
       // row older than 30min is a genuinely stuck send and always counts.
-      const row = await c.env.RENT.prepare(`SELECT
+      sql: `SELECT
         SUM(CASE WHEN datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS total,
         SUM(CASE WHEN status = 'FAILED' AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
         SUM(CASE WHEN status = 'PENDING' AND datetime(created_at) < datetime('now', '-30 minutes') THEN 1 ELSE 0 END) AS stuck
-        FROM email_events`).first() as any
-      const total = Number(row?.total || 0)
-      const failures = Number(row?.failures || 0)
-      const stuck = Number(row?.stuck || 0)
-      const bad = stuck > 0 || (total > 0 && failures / total >= 0.1)
-      return { ok: !bad, status: bad ? 'degraded' : 'ok', total24h: total, failures24h: failures, stuck }
-    }),
-    runCheck('remoteCommands', 'degraded', async () => {
+        FROM email_events`,
+      shape: (row) => {
+        const total = Number(row?.total || 0)
+        const failures = Number(row?.failures || 0)
+        const stuck = Number(row?.stuck || 0)
+        const bad = stuck > 0 || (total > 0 && failures / total >= 0.1)
+        return { ok: !bad, status: bad ? 'degraded' : 'ok', total24h: total, failures24h: failures, stuck }
+      },
+    },
+    {
+      name: 'remoteCommands',
       // EXPIRED is a normal lapse (offline device, or a long-dated cleanup
       // command that was never meant to run soon) — only FAILED is a real
       // failure, graded as a share of completed commands. "overdue" is bounded
       // to the last 24h so an offline device's stale QUEUED command (only swept
       // to EXPIRED when that device next polls) doesn't pin the probe forever.
-      const row = await c.env.RENT.prepare(`SELECT
+      sql: `SELECT
         SUM(CASE WHEN status = 'FAILED' AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
         SUM(CASE WHEN status IN ('SUCCESS', 'FAILED', 'EXPIRED') AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP AND datetime(expires_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS overdue
-        FROM device_commands`).first() as any
-      const failures = Number(row?.failures || 0)
-      const completed = Number(row?.completed || 0)
-      const overdue = Number(row?.overdue || 0)
-      const bad = overdue > 0 || (completed > 0 && failures / completed >= 0.15)
-      return { ok: !bad, status: bad ? 'degraded' : 'ok', failures24h: failures, completed24h: completed, overdue }
-    }),
-  ])
+        FROM device_commands`,
+      shape: (row) => {
+        const failures = Number(row?.failures || 0)
+        const completed = Number(row?.completed || 0)
+        const overdue = Number(row?.overdue || 0)
+        const bad = overdue > 0 || (completed > 0 && failures / completed >= 0.15)
+        return { ok: !bad, status: bad ? 'degraded' : 'ok', failures24h: failures, completed24h: completed, overdue }
+      },
+    },
+  ]
+
+  const applyShape = (probe: typeof probes[number], row: any) => {
+    try {
+      checks[probe.name] = probe.shape(row || {})
+    } catch (error: any) {
+      console.error(`Monitor ${probe.name} check failed:`, error?.message || error)
+      checks[probe.name] = { ok: false, status: 'degraded', error: 'check unavailable' }
+    }
+  }
+
+
 
   const status = monitorOverallStatus(Object.values(checks))
   return c.json(
     { status, checks, latencyMs: Date.now() - startedAt, checkedAt: new Date().toISOString() },
-    status === 'down' ? 503 : 200,
+    monitorHttpStatus(status),
     { 'Cache-Control': 'no-store' },
   )
 })
@@ -369,9 +410,22 @@ app.get('/api/device-agent/update', async (c) => {
 })
 
 app.get('/api/device-agent/software-terms', async (c) => {
+  // 设备端会定期拉取该协议，内容极少变化；边缘缓存 5 分钟，
+  // 命中时直接跳过 loadSystemSettingsFromDB（D1 + sanitize-html）。
+  const cache = caches.default
+  const cacheKey = new Request('https://rent.internal/api/device-agent/software-terms')
+  const cached = await cache.match(cacheKey)
+  if (cached) return c.json(await cached.json() as any)
+
   const settings = await loadSystemSettingsFromDB(c)
   const metadata = settings.legalMetadata.software
-  return c.json({ content: settings.softwareTerms, version: metadata.version, lastUpdatedDate: metadata.lastUpdatedDate })
+  const body = { content: settings.softwareTerms, version: metadata.version, lastUpdatedDate: metadata.lastUpdatedDate }
+  const toCache = new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' },
+  })
+  try { c.executionCtx.waitUntil(cache.put(cacheKey, toCache)) } catch (_) { }
+  return c.json(body)
 })
 
 let loginAttemptsSchemaReady: Promise<void> | null = null
@@ -631,8 +685,7 @@ async function sendEmailVerification(c: any, user: any) {
   await c.env.RENT.prepare('INSERT INTO email_verifications (id, user_id, email, token_hash, sent_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)').bind(nanoid(), user.id, user.email, tokenHash, now.toISOString(), expiresAt).run()
   const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, idempotency_key, status) VALUES (?, 'EMAIL_VERIFICATION', ?, ?, 'PENDING')").bind(`email-${nanoid(12)}`, user.email, eventKey).run() as any
   if (!claimed.meta?.changes) return
-  const apiKey = String((c.env as any).RESEND_API_KEY || '')
-  const from = String((c.env as any).EMAIL_FROM || '')
+  const { apiKey, from } = await resolveResendCredentials(c)
   if (!apiKey || !from) { await c.env.RENT.prepare("UPDATE email_events SET status = 'SKIPPED', error_message = 'Email transport is not configured' WHERE idempotency_key = ?").bind(eventKey).run(); return }
   const verifyUrl = `${new URL(c.req.url).origin}/verify-email?token=${encodeURIComponent(token)}`
   const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [user.email], subject: '验证您的邮箱 - PC Rental', text: `您好 ${user.name}，请在 24 小时内打开以下链接验证邮箱：\n${verifyUrl}` }) })
@@ -640,16 +693,10 @@ async function sendEmailVerification(c: any, user: any) {
   await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, eventKey).run()
 }
 
-app.on('GET', ['/terms', '/user-terms'], async (c) => {
-  const settings = await loadSystemSettingsFromDB(c)
-  const currentUser = c.get('user')
-  const content = renderSiteVariables(settings.userTerms, currentUser)
-  return c.html(buildLayout('用户协议', `<div class="panel contract-section"><div class="section-title"><h2>用户协议</h2><span class="section-note mono">LEGAL / USER TERMS</span></div>${content}<p style="margin-top:24px"><a class="button button-secondary" href="/register">返回注册</a></p></div>`, currentUser))
-})
-
 // 公开法务页面。metaKey 与 legalMetadata 的键一致；varPrefix 生成 `${prefix}_version`
 // 与 `${prefix}_last_updated_date` 两个模板变量，供文档正文引用。
 const PUBLIC_LEGAL_PAGES: Array<{ paths: string[]; title: string; key: SystemSettingsKey; code: string; metaKey: string; varPrefix: string }> = [
+  { paths: ['/terms', '/user-terms'], title: '用户协议', key: 'userTerms', code: 'LEGAL / USER TERMS', metaKey: 'user', varPrefix: 'user_terms' },
   { paths: ['/service-terms'], title: '服务条款', key: 'serviceTerms', code: 'LEGAL / SERVICE TERMS', metaKey: 'service', varPrefix: 'service_terms' },
   { paths: ['/privacy'], title: '隐私政策', key: 'privacyPolicy', code: 'LEGAL / PRIVACY', metaKey: 'privacy', varPrefix: 'privacy_policy' },
   { paths: ['/software-terms'], title: '软件使用协议', key: 'softwareTerms', code: 'LEGAL / SOFTWARE', metaKey: 'software', varPrefix: 'software_terms' },
@@ -839,8 +886,7 @@ app.post('/forgot-password', async (c) => {
     const tokenHash = Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
     await c.env.RENT.prepare('UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL').bind(user.id).run()
     await c.env.RENT.prepare('INSERT INTO password_resets (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, datetime(\'now\', \'+30 minutes\'))').bind(`reset-${nanoid(12)}`, user.id, tokenHash).run()
-    const apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-    const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+    const { apiKey, from } = await resolveResendCredentials(c)
     if (apiKey && from) {
       const resetUrl = `${new URL(c.req.url).origin}/reset-password?token=${encodeURIComponent(token)}`
       await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [email], subject: '重置您的登录密码 - PC Rental', text: `您好 ${user.name || ''}，请在 30 分钟内打开以下链接重置密码：\n${resetUrl}` }) }).catch(error => console.error('Password reset email failed:', error))
@@ -1266,9 +1312,24 @@ app.get('/admin/announcements', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
-  const result = await c.env.RENT.prepare("SELECT MIN(id) AS id, title, message, created_at, COUNT(*) AS recipient_count FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at DESC").bind(user.id).all() as any
+  const order = c.req.query('order') === 'asc' ? 'asc' : 'desc'
+  const result = await c.env.RENT.prepare(`SELECT MIN(id) AS id, title, message, created_at, COUNT(*) AS recipient_count FROM notifications WHERE sender_id = ? AND type = 'announcement' AND deleted_at IS NULL GROUP BY title, message, created_at ORDER BY created_at ${order === 'asc' ? 'ASC' : 'DESC'}`).bind(user.id).all() as any
+  const rows = (result.results || []) as any[]
+  const total = rows.length
+  const pageSize = 10
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const page = Math.min(Math.max(1, Number(c.req.query('page') || 1) || 1), pageCount)
+  const offset = (page - 1) * pageSize
+  const pageRows = rows.slice(offset, offset + pageSize)
   const esc = (value: unknown) => sanitizePlainText(value, 500).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  const body = `<div class="page-header"><div><p class="section-code">ANNOUNCEMENT ARCHIVE</p><h2>历史公告</h2><p>编辑已发布公告后，所有收件人会同步更新。</p></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="announcement-archive">${(result.results || []).map((item: any) => `<form class="panel announcement-archive__item" method="post" action="/admin/announcements/${encodeURIComponent(item.id)}"><div class="section-title"><div><h3>${esc(item.title)}</h3><small>${esc(formatMelbourneDateTime(item.created_at))} · 已发送 ${item.recipient_count} 人</small></div></div><label class="form-label">标题</label><input class="form-control" name="title" value="${esc(item.title)}" maxlength="120" required><label class="form-label">内容</label><textarea class="form-control" name="message" rows="5" maxlength="2000" required>${esc(item.message)}</textarea><button class="button button-primary" type="submit">保存公告</button></form>`).join('') || '<p class="empty-state">暂无历史公告</p>'}</div>`
+  const sortLink = (value: string, label: string) => `<a class="button button-sm ${order === value ? 'button-primary' : 'button-secondary'}" href="/admin/announcements?order=${value}">${label}</a>`
+  const pagination = pageCount > 1 ? `<nav class="record-archive__pagination" aria-label="历史公告分页">${Array.from({ length: pageCount }, (_, i) => `<a class="button button-sm ${i + 1 === page ? 'button-primary' : 'button-secondary'}" href="/admin/announcements?order=${order}&page=${i + 1}">${i + 1}</a>`).join('')}</nav>` : ''
+  const items = pageRows.map((item: any, index: number) => {
+    const seq = order === 'asc' ? offset + index + 1 : total - offset - index
+    return `<details class="record-archive__item" data-search="${esc(`${item.title} ${item.message}`).toLowerCase()}"><summary class="record-archive__summary"><span class="record-archive__seq">#${seq}</span><span class="record-archive__title">${esc(item.title)}</span><span class="record-archive__meta">${esc(formatMelbourneDateTime(item.created_at))} · 已发送 ${item.recipient_count} 人</span></summary><div class="record-archive__body"><form method="post" action="/admin/announcements/${encodeURIComponent(item.id)}"><label class="form-label">标题</label><input class="form-control" name="title" value="${esc(item.title)}" maxlength="120" required><label class="form-label">内容</label><textarea class="form-control" name="message" rows="5" maxlength="2000" required>${esc(item.message)}</textarea><div class="record-archive__actions"><button class="button button-primary" type="submit">保存公告</button></div></form><form method="post" action="/admin/announcements/${encodeURIComponent(item.id)}/delete" onsubmit="return confirm('确定删除这条公告吗？所有收件人都会看不到它。')"><button class="button button-sm button-danger" type="submit">删除公告</button></form></div></details>`
+  }).join('')
+  const countLabel = pageCount > 1 ? `第 ${page}/${pageCount} 页 · 共 ${total} 条` : `共 ${total} 条`
+  const body = `<div class="page-header"><div><p class="section-code">ANNOUNCEMENT ARCHIVE</p><h2>历史公告</h2><p>编辑后所有收件人同步更新；删除后将从所有人处撤回。</p></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="record-archive">${total ? `<div class="record-archive__toolbar"><input type="search" id="announcementSearch" class="form-control" placeholder="在本页搜索标题或内容…" autocomplete="off"><div class="record-archive__sort">${sortLink('desc', '最新在前')}${sortLink('asc', '最早在前')}</div><span class="record-archive__count" id="announcementCount" data-base="${countLabel}">${countLabel}</span></div><div class="record-archive__list">${items}</div><p class="empty-state" id="announcementNoResult" style="display:none">本页没有匹配的公告</p>${pagination}` : '<p class="empty-state">暂无历史公告</p>'}</div><script>(()=>{const s=document.getElementById('announcementSearch');if(!s)return;const list=[...document.querySelectorAll('.record-archive__item')];const count=document.getElementById('announcementCount');const none=document.getElementById('announcementNoResult');const run=()=>{const q=s.value.trim().toLowerCase();let n=0;list.forEach(it=>{const hit=!q||(it.dataset.search||'').includes(q);it.style.display=hit?'':'none';if(hit)n++;});count.textContent=q?('匹配 '+n+' 条'):count.dataset.base;none.style.display=q&&!n?'':'none';};s.addEventListener('input',run);})();</script>`
   return c.html(buildLayout('历史公告 - 电脑租赁管理系统', body, user))
 })
 
@@ -1283,6 +1344,17 @@ app.post('/admin/announcements/:id', async (c) => {
   const source = await c.env.RENT.prepare('SELECT title, message, created_at FROM notifications WHERE id = ? AND sender_id = ? AND type = \'announcement\'').bind(c.req.param('id'), user.id).first() as any
   if (!source) return c.text('公告不存在', 404)
   await c.env.RENT.prepare('UPDATE notifications SET title = ?, message = ? WHERE sender_id = ? AND type = \'announcement\' AND title = ? AND message = ? AND created_at = ?').bind(title, message, user.id, source.title, source.message, source.created_at).run()
+  return c.redirect('/admin/announcements')
+})
+
+app.post('/admin/announcements/:id/delete', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureNotificationsTable(c)
+  const source = await c.env.RENT.prepare("SELECT title, message, created_at FROM notifications WHERE id = ? AND sender_id = ? AND type = 'announcement'").bind(c.req.param('id'), user.id).first() as any
+  if (source) {
+    await c.env.RENT.prepare("UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE sender_id = ? AND type = 'announcement' AND title = ? AND message = ? AND created_at = ?").bind(user.id, source.title, source.message, source.created_at).run()
+  }
   return c.redirect('/admin/announcements')
 })
 
@@ -1340,9 +1412,8 @@ app.post('/admin/email-templates/send', async (c) => {
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
   if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: fill(template.body) })
   if (['email', 'both'].includes(channel)) {
-    const apiKey = (c.env as any).RESEND_API_KEY
-    const from = (c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email
-    if (!apiKey || !from) return c.text('尚未配置邮件服务：请设置 RESEND_API_KEY 和 EMAIL_FROM', 503)
+    const { apiKey, from } = await resolveResendCredentials(c)
+    if (!apiKey || !from) return c.text('尚未配置邮件服务：请在后台「通知渠道」填写 Resend API Key 与发件邮箱，或设置 RESEND_API_KEY / EMAIL_FROM', 503)
     const filledBody = fill(template.body)
     const html = renderEmailNotificationHtml(fill(template.subject), filledBody, vars.company_name, template.theme_color || '#71818d')
     const sent = await sendLoggedEmail(c, { eventType: 'TEMPLATE', recipient: mailTo, key: `template:${String(form.templateId || 'custom')}:${mailTo}:${JSON.stringify(vars)}`, subject: fill(template.subject), text: filledBody, html, templateId: String(form.templateId || '') || undefined })
@@ -1374,16 +1445,6 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
   if (!id.startsWith('custom_')) return c.text('内置模板不能删除', 400)
   await c.env.RENT.prepare('DELETE FROM email_templates WHERE id = ?').bind(id).run()
   return c.redirect('/admin/email-templates')
-})
-
-app.get('/notifications/:id', async (c) => {
-  const user = c.get('user')
-  if (!user) return c.redirect('/login')
-  const item = await c.env.RENT.prepare('SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), user.id).first() as any
-  if (!item) return c.html(renderNotFound(), 404)
-  await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
-  const body = `<div class="panel notification-detail"><div class="section-title"><div><p class="section-code">NOTIFICATION DETAIL</p><h2>${sanitizePlainText(item.title, 200)}</h2><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="notification-message">${renderNotificationMarkdown(item.message)}</div></div>`
-  return c.html(buildLayout('通知详情', body, user))
 })
 
 app.get('/notifications/announcements', async (c) => {
@@ -1419,6 +1480,16 @@ app.get('/notifications/recent', async (c) => {
   const result = await c.env.RENT.prepare("SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10").bind(user.id).all() as any
   const unread = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND read_at IS NULL").bind(user.id).first() as any
   return c.json({ notifications: result.results || [], unreadCount: Number(unread?.count || 0) })
+})
+
+app.get('/notifications/:id', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.redirect('/login')
+  const item = await c.env.RENT.prepare('SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), user.id).first() as any
+  if (!item) return c.html(renderNotFound(), 404)
+  await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
+  const body = `<div class="panel notification-detail"><div class="section-title"><div><p class="section-code">NOTIFICATION DETAIL</p><h2>${sanitizePlainText(item.title, 200)}</h2><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="notification-message">${renderNotificationMarkdown(item.message)}</div></div>`
+  return c.html(buildLayout('通知详情', body, user))
 })
 
 app.post('/notifications/announcements/:id/dismiss', async (c) => {
@@ -2631,7 +2702,7 @@ app.post('/manager/email-events/:id/retry', async (c) => {
   if (!user || !['MANAGER', 'ADMIN'].includes(getAccessLevel(user))) return c.html(renderForbidden(), 403)
   const event = await c.env.RENT.prepare("SELECT * FROM email_events WHERE id = ? AND status <> 'SENT' AND retry_count < max_attempts").bind(c.req.param('id')).first() as any
   if (!event) return c.text('邮件事件不存在、已发送或已超过最大重试次数', 409)
-  const apiKey = String((c.env as any).RESEND_API_KEY || '').trim(); const from = String((c.env as any).EMAIL_FROM || getSystemSettings().companyDetails.email || '').trim()
+  const { apiKey, from } = await resolveResendCredentials(c)
   if (!apiKey || !from) return c.text('邮件服务尚未配置', 503)
   const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [event.recipient], subject: event.subject, text: event.text_body, html: event.html_body || undefined }) })
   const result = await response.json().catch(() => ({})) as any
@@ -3460,11 +3531,12 @@ app.post('/admin/data-retention/:category', async (c) => {
 app.get('/admin/monitoring', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const [metrics, jobRuns] = await Promise.all([
+  const [metrics, history, jobRuns] = await Promise.all([
     collectMonitoringMetrics(c),
+    getMonitoringHistory(c, 168),
     c.env.RENT.prepare('SELECT job_name, status, started_at, completed_at, error_message, result_summary FROM scheduled_job_runs ORDER BY started_at DESC LIMIT 25').all().then(r => r.results || []),
   ])
-  return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[]))
+  return c.html(pages.renderAdminMonitoring(user, metrics, jobRuns as any[], history))
 })
 
 app.get('/admin/connectivity', async (c) => {
@@ -3485,14 +3557,7 @@ app.post('/admin/connectivity/check', async (c) => {
   }
 })
 
-// 代理计划（完善.md，预留未启用）
-app.get('/admin/agents', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const flag = await c.env.RENT.prepare("SELECT enabled FROM feature_flags WHERE key = 'agent_program'").first<{ enabled: number }>()
-  const agents = (await c.env.RENT.prepare('SELECT a.*, u.name AS user_name, u.email AS user_email FROM agents a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.created_at DESC').all()).results || []
-  return c.html(pages.renderAdminAgents(user, Number(flag?.enabled) === 1, agents as any[]))
-})
+// 代理计划（完善.md §29，预留未启用）：路由已下线，入口从后台导航移除
 
 app.get('/admin/coupons', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
@@ -3517,6 +3582,7 @@ app.post('/admin/device-agent-bindings/monitor-token', async (c) => {
   const existing = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
   await c.env.RENT.prepare(`INSERT INTO systemSettings (key, value) VALUES ('monitorApiTokenHash', ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP`).bind(tokenHash).run()
+  invalidateMonitorApiTokenCache()
   await createAuditLog(c, { actor: user, action: existing?.value ? 'MONITOR_API_TOKEN_ROTATED' : 'MONITOR_API_TOKEN_CREATED', targetType: 'SYSTEM', targetId: 'monitor-api' })
   c.header('Cache-Control', 'no-store')
   return c.html(await pages.renderAdminDeviceAgentBindings(c, user, { monitorApiConfigured: true, newMonitorApiToken: token }))
@@ -3890,7 +3956,22 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c)))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c)))
+})
+
+app.post('/admin/notify-channels/test', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ error: '需要管理员权限' }, 403)
+  try {
+    const results = await dispatchChannelAlert(c, {
+      title: 'PC Rental 测试推送',
+      message: `这是一条来自管理后台的测试通知，发送人：${user.name || user.email || user.id}。`,
+      url: new URL('/admin/settings', c.req.url).toString(),
+    })
+    return c.json({ success: true, results })
+  } catch (error: any) {
+    return c.json({ error: String(error?.message || error).slice(0, 300) }, 500)
+  }
 })
 
 function parseCouponFormFields(form: Record<string, any>) {
@@ -4299,11 +4380,44 @@ async function hashAgentValue(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((item) => item.toString(16).padStart(2, '0')).join('')
 }
 
+// monitorApiTokenHash 只在管理员手动轮换时改变，但每个受保护的监控探针请求都要
+// 读一次。用 isolate 级短 TTL 缓存把这条 D1 往返从热路径上摘掉；轮换处会主动失效。
+let monitorApiTokenHashCache: { value: string | null; loadedAt: number } | null = null
+const MONITOR_API_TOKEN_TTL_MS = 30_000
+
+export function invalidateMonitorApiTokenCache(): void {
+  monitorApiTokenHashCache = null
+}
+
+async function loadMonitorApiTokenHash(c: any): Promise<string | null> {
+  if (monitorApiTokenHashCache && Date.now() - monitorApiTokenHashCache.loadedAt < MONITOR_API_TOKEN_TTL_MS) {
+    return monitorApiTokenHashCache.value
+  }
+  const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  const value = tokenRow?.value ? String(tokenRow.value) : null
+  monitorApiTokenHashCache = { value, loadedAt: Date.now() }
+  return value
+}
+
+// 监控探针接口只给程序化调用（curl / uptime 检查 / Agent）。用浏览器直接打开这些
+// URL 属于误访问 —— 顶层导航（Sec-Fetch-Mode: navigate / Sec-Fetch-Dest: document，
+// 或 Accept 里带 text/html）一律跳回主页，而不是把 JSON 错误甩到用户脸上。
+function isBrowserNavigation(c: any): boolean {
+  // 带 Bearer token 的一律放行 —— 那是程序化调用，哪怕它的 Accept 头长得像浏览器。
+  if (parseBearerToken(c.req.header('Authorization'))) return false
+  if ((c.req.header('Sec-Fetch-Mode') || '').toLowerCase() === 'navigate') return true
+  if ((c.req.header('Sec-Fetch-Dest') || '').toLowerCase() === 'document') return true
+  return (c.req.header('Accept') || '').toLowerCase().includes('text/html')
+}
+
 async function hasValidMonitorApiToken(c: any): Promise<boolean> {
   const providedToken = parseBearerToken(c.req.header('Authorization'))
-  const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
-  const providedHash = await hashAgentValue(providedToken || '')
-  return Boolean(providedToken && tokenRow?.value && timingSafeEqualStr(providedHash, String(tokenRow.value)))
+  if (!providedToken) return false
+  const [storedHash, providedHash] = await Promise.all([
+    loadMonitorApiTokenHash(c),
+    hashAgentValue(providedToken),
+  ])
+  return Boolean(storedHash && timingSafeEqualStr(providedHash, storedHash))
 }
 
 async function getAgentDevice(c: any): Promise<any | null> {
@@ -4370,10 +4484,17 @@ app.post('/api/device-agent/inspection', async (c) => {
 })
 
 app.get('/api/device-agent/state', async (c) => {
+  if (isBrowserNavigation(c)) return c.redirect('/', 302)
   try {
-    const device = await getAgentDevice(c)
+    // 设备 token 与监控 token 是互斥的两条鉴权路径，但监控探针（无设备 token）过去要
+    // 串行跑 getAgentDevice → hasValidMonitorApiToken → COUNT 三条 D1 往返。并发前两条，
+    // 监控 token 已走 isolate 缓存，热路径就只剩一条 COUNT 往返。
+    const [device, monitorTokenValid] = await Promise.all([
+      getAgentDevice(c),
+      hasValidMonitorApiToken(c),
+    ])
     if (!device) {
-      if (!await hasValidMonitorApiToken(c)) return c.json({ ok: false, error: 'Invalid token' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="device-agent-state"' })
+      if (!monitorTokenValid) return c.json({ ok: false, error: 'Invalid token' }, 401, { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer realm="device-agent-state"' })
       const row = await c.env.RENT.prepare('SELECT COUNT(*) AS bound_devices FROM devices WHERE agent_token_hash IS NOT NULL').first() as any
       return c.json({ ok: true, status: 'ok', service: 'device-agent-state', boundDevices: Number(row?.bound_devices || 0), checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
     }

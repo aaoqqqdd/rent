@@ -390,6 +390,24 @@ html.spa-navigation-ready .sidebar a,
 html.spa-navigation-ready .main-nav a,
 html.spa-navigation-ready .mobile-bottom-nav a { cursor: pointer; }
 
+/* 局部导航过渡：优先用浏览器原生 View Transition 交叉淡入淡出；
+   不支持的浏览器回退为一次轻量淡入（gsap 已不再加载，旧的过渡分支是死代码）。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.24s;
+  animation-timing-function: cubic-bezier(.22, .8, .25, 1);
+}
+body.has-navigated .content.is-swapping,
+.content.is-swapping {
+  opacity: 0.4;
+  transition: opacity 0.16s ease !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) { animation: none !important; }
+}
+
 .button, button, .link-button {
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, background-color 0.16s ease, border-color 0.16s ease;
 }
@@ -1766,6 +1784,53 @@ body:not(.has-navigated) .content > .page-header { will-change: transform, opaci
   .quick-actions, .dashboard-announcements { height: auto; min-height: 300px; }
 }
 
+/* 历史公告归档页 */
+.record-archive { display: grid; gap: 14px; }
+.record-archive__toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 12px 14px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-sm);
+}
+.record-archive__toolbar .form-control[type="search"] { flex: 1 1 220px; margin: 0; }
+.record-archive__sort { display: inline-flex; gap: 6px; }
+.record-archive__count { margin-left: auto; color: var(--text-secondary); font-size: 0.8rem; white-space: nowrap; }
+.record-archive__list { display: grid; gap: 10px; }
+.record-archive__item {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-sm);
+  overflow: hidden; transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.record-archive__item[open] { border-color: var(--primary); box-shadow: var(--shadow-md); }
+.record-archive__summary {
+  display: flex; align-items: center; gap: 10px; padding: 13px 16px;
+  cursor: pointer; list-style: none; user-select: none;
+}
+.record-archive__summary::-webkit-details-marker { display: none; }
+.record-archive__summary::after {
+  content: "▸"; margin-left: auto; color: var(--text-tertiary);
+  transition: transform 0.15s ease; flex: 0 0 auto;
+}
+.record-archive__item[open] .record-archive__summary::after { transform: rotate(90deg); }
+.record-archive__seq {
+  flex: 0 0 auto; min-width: 34px; padding: 2px 8px; border-radius: 999px;
+  background: var(--primary-light); color: var(--primary-dark);
+  font-size: 0.72rem; font-weight: 700; text-align: center;
+}
+.record-archive__title {
+  font-weight: 600; color: var(--text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.record-archive__meta { flex: 0 0 auto; color: var(--text-secondary); font-size: 0.76rem; }
+.record-archive__body { padding: 4px 16px 16px; border-top: 1px solid var(--border-subtle); display: grid; gap: 6px; }
+.record-archive__body .form-label { margin-top: 10px; }
+.record-archive__actions { margin-top: 12px; }
+.record-archive__pagination { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 4px; }
+
+@media (max-width: 640px) {
+  .record-archive__count { margin-left: 0; }
+  .record-archive__meta { display: none; }
+}
+
 .text-muted {
   color: var(--text-secondary);
   font-size: 0.85rem;
@@ -1789,12 +1854,17 @@ body:not(.has-navigated) .content > .page-header { will-change: transform, opaci
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-  scrollbar-color: #5d7080 transparent;
+  scrollbar-color: #7d8fa0 transparent;
+  /* 底部渐隐提示：当导航超出可视高度时，让用户看出这里还能继续滚动。 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 22px), transparent 100%);
 }
 
-.sidebar-section::-webkit-scrollbar { width: 5px; }
+.sidebar-section::-webkit-scrollbar { width: 8px; }
 .sidebar-section::-webkit-scrollbar-track { background: transparent; }
-.sidebar-section::-webkit-scrollbar-thumb { background: #5d7080; border-radius: 99px; }
+.sidebar-section::-webkit-scrollbar-thumb { background: #7d8fa0; border-radius: 99px; }
+.sidebar-section:hover { scrollbar-color: #98a9b8 transparent; }
+.sidebar-section:hover::-webkit-scrollbar-thumb { background: #98a9b8; }
 
 .sidebar-section h3 {
   font-size: 0.68rem;
@@ -2761,6 +2831,34 @@ textarea:focus {
   color: var(--text-secondary);
 }
 
+.form-check--inline {
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.65;
+}
+
+.form-check--inline input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.form-check--inline > span {
+  flex: 1 1 auto;
+}
+
+.form-check--inline a {
+  color: var(--primary);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.form-check--inline a:hover,
+.form-check--inline a:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 input[type='checkbox'],
 input[type='radio'] {
   accent-color: var(--primary);
@@ -3453,6 +3551,21 @@ tr:hover td {
   font-size: .78rem;
 }
 
+.form-subheading {
+  margin: 22px 0 10px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+  color: var(--text);
+  font-size: .92rem;
+  font-weight: 700;
+}
+
+.form-subheading:first-of-type {
+  margin-top: 6px;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .record-actions {
   margin-top: 28px;
   padding-top: 20px;
@@ -3958,39 +4071,160 @@ tr:hover td {
 }
 
 .legal-footer {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 18px;
-  min-height: 48px;
-  padding: 10px 24px;
+  margin-top: auto;
+  padding: 16px 28px;
   color: var(--text-secondary);
   border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  font-size: .78rem;
+  background: transparent;
+  font-size: .74rem;
+  line-height: 1.6;
+}
+
+.legal-footer__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  max-width: 1180px;
+  margin-inline: auto;
 }
 
 .legal-footer nav {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 14px;
+  align-items: center;
+  gap: 4px 8px;
 }
 
-.legal-footer a {
+.legal-footer nav > a,
+.legal-footer__more > summary {
+  position: relative;
   color: inherit;
   text-decoration: none;
+  opacity: .8;
+  padding: 2px 0;
+  transition: opacity .15s ease, color .15s ease;
+}
+
+.legal-footer nav > a::after {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: .82em;
+  margin-left: 8px;
+  vertical-align: -1px;
+  background: currentColor;
+  opacity: .28;
 }
 
 .legal-footer a:hover,
-.legal-footer a:focus-visible {
+.legal-footer a:focus-visible,
+.legal-footer__more > summary:hover {
+  opacity: 1;
   color: var(--primary);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+}
+
+.legal-footer__more {
+  position: relative;
+}
+
+.legal-footer__more > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.legal-footer__more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.legal-footer__more[open] > summary {
+  opacity: 1;
+  color: var(--primary);
+}
+
+.legal-footer__menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: flex;
+  flex-direction: column;
+  min-width: 136px;
+  padding: 6px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgb(15 23 42 / .14);
+  z-index: 30;
+}
+
+.legal-footer__menu a {
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  opacity: 1;
+}
+
+.legal-footer__menu a:hover,
+.legal-footer__menu a:focus-visible {
+  background: var(--primary-light);
+  color: var(--primary);
 }
 
 .legal-footer__copyright {
   font-family: var(--font-mono);
+  letter-spacing: .02em;
+  white-space: nowrap;
+  opacity: .9;
+}
+
+.legal-footer__more {
+  position: relative;
+}
+
+.legal-footer__more > summary {
+  list-style: none;
+  cursor: pointer;
+  color: inherit;
+  user-select: none;
+}
+
+.legal-footer__more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.legal-footer__more > summary::after {
+  content: "▾";
+  margin-left: 4px;
+  font-size: .7em;
+  vertical-align: middle;
+}
+
+.legal-footer__more[open] > summary {
+  color: var(--primary);
+}
+
+.legal-footer__more[open] > summary::after {
+  content: "▴";
+}
+
+.legal-footer__more-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 168px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(13, 27, 42, .16);
+  z-index: 50;
 }
 
 .legal-document {
@@ -4034,17 +4268,17 @@ tr:hover td {
 
 @media (max-width: 720px) {
   .legal-footer {
-    justify-content: flex-start;
-    align-items: center;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 6px 12px;
-    padding: 8px 16px;
+    padding: 14px 16px;
   }
 
   .legal-footer nav {
     justify-content: flex-start;
-    gap: 8px 12px;
+    gap: 8px 16px;
+  }
+
+  .legal-footer__more-panel {
+    right: auto;
+    left: 0;
   }
 }
 
@@ -5633,18 +5867,25 @@ tr:hover td {
 .skip-link {
   position: fixed;
   z-index: 10000;
-  top: 10px;
-  left: 10px;
-  padding: 10px 14px;
+  top: 12px;
+  left: 50%;
+  padding: 10px 18px;
   color: #172331;
   background: #ffad5c;
-  border-radius: 4px;
+  border-radius: 6px;
   font-weight: 700;
-  transform: translateY(-150%);
-  transition: transform .15s ease;
+  box-shadow: 0 6px 20px rgba(13, 27, 42, .28);
+  /* 默认滑出视口顶部；聚焦时落在顶部居中，避开左上角 logo */
+  transform: translate(-50%, -180%);
+  transition: transform .18s ease;
 }
 
-.skip-link:focus { transform: translateY(0); }
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translate(-50%, 0);
+  outline: 2px solid #172331;
+  outline-offset: 2px;
+}
 
 :where(button, .button, a.button) { min-height: 40px; }
 :where(input, select, textarea) { max-width: 100%; }
@@ -5700,3 +5941,104 @@ tr:hover td {
 .payment-hourglass { display:inline-block; font-size:24px; animation:payment-hourglass 1.8s ease-in-out infinite; }
 @keyframes payment-hourglass { 0%,100% { transform:rotate(0deg) translateY(0); } 45% { transform:rotate(8deg) translateY(-2px); } 55% { transform:rotate(-8deg) translateY(-2px); } }
 @media (prefers-reduced-motion: reduce) { .payment-review-status--pending .payment-review-status__icon, .payment-hourglass { animation:none; } }
+
+/* ============================================================
+   Document tables stay real tables — never mobile "cards"
+   ------------------------------------------------------------
+   The max-width:760px layer rewrites every data table into
+   stacked cards (grid rows, empty ::before labels, blue left
+   rail). That transform is for admin data grids, not for the
+   prose tables inside a rental contract, and it also fired
+   during mobile-browser "Save as PDF" (print uses the device
+   viewport width), which is what mangled the printed contract:
+   label and value on separate lines, empty bordered boxes.
+   Keep contract / template documents rendering as genuine
+   tables everywhere, and harden it again for print. The receipt
+   table (.official-document__table) is already excluded from the
+   card transform and keeps its own right-aligned amount column.
+   ============================================================ */
+.contract-content table,
+.a4-document table,
+.template-preview-paper table,
+.contract-print-standalone table {
+  display: table !important;
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+.contract-content thead,
+.a4-document thead,
+.template-preview-paper thead,
+.contract-print-standalone thead { display: table-header-group !important; }
+.contract-content tbody,
+.a4-document tbody,
+.template-preview-paper tbody,
+.contract-print-standalone tbody { display: table-row-group !important; }
+.contract-content tr,
+.a4-document tr,
+.template-preview-paper tr,
+.contract-print-standalone tr {
+  display: table-row !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.contract-content td, .contract-content th,
+.a4-document td, .a4-document th,
+.template-preview-paper td, .template-preview-paper th,
+.contract-print-standalone td, .contract-print-standalone th {
+  display: table-cell !important;
+  min-height: 0 !important;
+  text-align: left !important;
+  justify-content: flex-start !important;
+}
+.contract-content td::before, .contract-content th::before,
+.a4-document td::before, .a4-document th::before,
+.template-preview-paper td::before, .template-preview-paper th::before,
+.contract-print-standalone td::before, .contract-print-standalone th::before {
+  content: none !important;
+}
+
+@media print {
+  .contract-content table,
+  .a4-document table,
+  .contract-print-standalone table,
+  .contract-print-page table {
+    display: table !important;
+    width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+  }
+  .contract-content thead, .a4-document thead,
+  .contract-print-standalone thead, .contract-print-page thead { display: table-header-group !important; }
+  .contract-content tbody, .a4-document tbody,
+  .contract-print-standalone tbody, .contract-print-page tbody { display: table-row-group !important; }
+  .contract-content tr, .a4-document tr,
+  .contract-print-standalone tr, .contract-print-page tr {
+    display: table-row !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .contract-content td, .contract-content th,
+  .a4-document td, .a4-document th,
+  .contract-print-standalone td, .contract-print-standalone th,
+  .contract-print-page td, .contract-print-page th {
+    display: table-cell !important;
+    min-height: 0 !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+  }
+  .contract-content td::before, .contract-content th::before,
+  .a4-document td::before, .a4-document th::before,
+  .contract-print-standalone td::before, .contract-print-standalone th::before,
+  .contract-print-page td::before, .contract-print-page th::before {
+    content: none !important;
+  }
+}

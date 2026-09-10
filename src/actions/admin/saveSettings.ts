@@ -4,9 +4,10 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
-import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, ensureNotificationsTable, renderEmailNotificationHtml } from '../../site'
+import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, ensureNotificationsTable, renderEmailNotificationHtml, sanitizePlainText } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
 import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
+import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChannels'
 
 /**
  * 协议变更后通知客户。设计约束：
@@ -75,7 +76,7 @@ export async function notifyAgreementUpdate(c: Context, changedAgreements: Array
         const message = fillCustomer(bodyStatic, customer)
         const html = renderEmailNotificationHtml(subject, message, companyName)
         return c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, idempotency_key, status, subject, text_body, html_body) VALUES (?, 'AGREEMENT_UPDATE', ?, ?, 'PENDING', ?, ?, ?)")
-          .bind(`email-${crypto.randomUUID()}`, customer.email, `agreement_update:${today}:${names}:${customer.email}`, subject, message.replace(/<[^>]+>/g, ''), html)
+          .bind(`email-${crypto.randomUUID()}`, customer.email, `agreement_update:${today}:${names}:${customer.email}`, subject, sanitizePlainText(message, 20000), html)
       }))
     }
   } catch (error: any) {
@@ -174,8 +175,22 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     )
   )
   if (shouldSaveEmailTransport) await saveEmailConfig(c, emailTransportInput)
+
+  const notifyChannelsInput = payload.notifyChannels
+  const shouldSaveNotifyChannels = Boolean(
+    notifyChannelsInput &&
+    (
+      notifyChannelsInput.clear === true ||
+      notifyChannelsInput.resendApiKey || notifyChannelsInput.resendClear === true ||
+      notifyChannelsInput.resendFrom !== undefined ||
+      'telegramEnabled' in notifyChannelsInput || 'serverChanEnabled' in notifyChannelsInput || 'webhookEnabled' in notifyChannelsInput ||
+      notifyChannelsInput.telegramBotToken || notifyChannelsInput.serverChanSendKey || notifyChannelsInput.webhookUrl
+    )
+  )
+  if (shouldSaveNotifyChannels) await saveNotifyChannels(c, notifyChannelsInput)
+
   await updateSystemSettings(c, next as any)
   await loadSystemSettingsFromDB(c)
 
-  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c) })
+  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c) })
 }

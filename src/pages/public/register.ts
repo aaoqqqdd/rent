@@ -44,8 +44,9 @@ export function renderRegister(errorMessage?: string, turnstileSiteKey = '', ref
             <label class="form-label">推荐码 (选填)</label>
             <input class="form-control" name="referrer" value="${String(referralCode).replace(/[&<>"']/g, '')}" placeholder="来自朋友的推荐码" ${referralCode ? 'readonly' : ''} />
             <div class="form-row">
-              <label class="form-check">
-                <input type="checkbox" name="terms" required /> 我已阅读并同意 <a href="/terms" class="link-button">用户协议</a>、<a href="/service-terms" class="link-button">服务条款</a>、<a href="/privacy" class="link-button">隐私政策</a>和<a href="/refund-policy" class="link-button">退款政策</a>
+              <label class="form-check form-check--inline">
+                <input type="checkbox" name="terms" required />
+                <span>我已阅读并同意 <a href="/user-terms">用户协议</a>、<a href="/service-terms">服务条款</a>、<a href="/privacy">隐私政策</a> 和 <a href="/refund-policy">退款政策</a></span>
               </label>
             </div>
             <button class="button" type="submit" style="width: 100%;">立即注册</button>
