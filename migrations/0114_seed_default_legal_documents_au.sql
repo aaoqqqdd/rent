@@ -23,7 +23,7 @@
 INSERT INTO systemSettings (key, value) VALUES ('userTerms',
 '<h1>用户协议</h1>
 <p>本用户协议（下称「本协议」）由 {company_name}（ABN {company_abn}，下称「我们」）与访问或使用本网站及相关服务的用户（下称「您」）订立。注册账户、提交租赁申请或以其他方式使用服务，即表示您已阅读、理解并同意本协议。</p>
-<p><strong>版本：</strong>{user_agreement_version}　<strong>最后更新：</strong>{user_agreement_last_updated_date}</p>
+<p><strong>版本：</strong>{user_terms_version}　<strong>最后更新：</strong>{user_terms_last_updated_date}</p>
 
 <h2>一、资格与账户</h2>
 <ul>
