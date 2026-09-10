@@ -31,7 +31,7 @@ import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
 
 function assertInlineScriptsParse(html: string) {
-  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
+  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script\s*>/gi)]
     .map(match => match[1])
     .filter(Boolean)
   assert.ok(scripts.length > 0)

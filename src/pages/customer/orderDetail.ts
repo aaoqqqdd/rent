@@ -25,7 +25,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   let preSnapshot: any = {}; let returnData: any = {}
   try { preSnapshot = JSON.parse(preInspection?.snapshot_json || '{}') } catch (_) {}
   try { returnData = JSON.parse(returnInspection?.snapshot_json || '{}') } catch (_) {}
-  const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   const melbourneTime = (value: unknown) => {
     const raw = String(value || '')
     if (!raw) return '—'

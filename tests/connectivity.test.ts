@@ -19,6 +19,6 @@ test('connectivity page exposes every registered read-only probe', () => {
   assert.match(html, /\/webhooks\/stripe/)
   assert.match(html, /\/api\/device-agent\/command-results/)
   assert.match(html, /\/api\/coupons\/rental-preview/)
-  const scripts = Array.from(html.matchAll(/<script>([\s\S]*?)<\/script>/g), match => match[1])
+  const scripts = Array.from(html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script\s*>/gi), match => match[1])
   for (const script of scripts) assert.doesNotThrow(() => new Function(script))
 })
