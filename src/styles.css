@@ -5700,3 +5700,122 @@ tr:hover td {
 .payment-hourglass { display:inline-block; font-size:24px; animation:payment-hourglass 1.8s ease-in-out infinite; }
 @keyframes payment-hourglass { 0%,100% { transform:rotate(0deg) translateY(0); } 45% { transform:rotate(8deg) translateY(-2px); } 55% { transform:rotate(-8deg) translateY(-2px); } }
 @media (prefers-reduced-motion: reduce) { .payment-review-status--pending .payment-review-status__icon, .payment-hourglass { animation:none; } }
+
+/* ============================================================
+   Document tables stay real tables — never mobile "cards"
+   ------------------------------------------------------------
+   The max-width:760px layer rewrites every data table into
+   stacked cards (grid rows, empty ::before labels, blue left
+   rail). That transform is for admin data grids, not for the
+   prose tables inside a rental contract, and it also fired
+   during mobile-browser "Save as PDF" (print uses the device
+   viewport width), which is what mangled the printed contract:
+   label and value on separate lines, empty bordered boxes.
+   Keep contract / template documents rendering as genuine
+   tables everywhere, and harden it again for print. The receipt
+   table (.official-document__table) is already excluded from the
+   card transform and keeps its own right-aligned amount column.
+   ============================================================ */
+.contract-content table,
+.a4-document table,
+.template-preview-paper table,
+.contract-print-standalone table {
+  display: table !important;
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+.contract-content thead,
+.a4-document thead,
+.template-preview-paper thead,
+.contract-print-standalone thead { display: table-header-group !important; }
+.contract-content tbody,
+.a4-document tbody,
+.template-preview-paper tbody,
+.contract-print-standalone tbody { display: table-row-group !important; }
+.contract-content tr,
+.a4-document tr,
+.template-preview-paper tr,
+.contract-print-standalone tr {
+  display: table-row !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.contract-content td, .contract-content th,
+.a4-document td, .a4-document th,
+.template-preview-paper td, .template-preview-paper th,
+.contract-print-standalone td, .contract-print-standalone th {
+  display: table-cell !important;
+  min-height: 0 !important;
+  text-align: left !important;
+  justify-content: flex-start !important;
+}
+.contract-content td::before, .contract-content th::before,
+.a4-document td::before, .a4-document th::before,
+.template-preview-paper td::before, .template-preview-paper th::before,
+.contract-print-standalone td::before, .contract-print-standalone th::before {
+  content: none !important;
+}
+
+@media print {
+  .contract-content table,
+  .a4-document table,
+  .contract-print-standalone table,
+  .contract-print-page table {
+    display: table !important;
+    width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+  }
+  .contract-content thead, .a4-document thead,
+  .contract-print-standalone thead, .contract-print-page thead { display: table-header-group !important; }
+  .contract-content tbody, .a4-document tbody,
+  .contract-print-standalone tbody, .contract-print-page tbody { display: table-row-group !important; }
+  .contract-content tr, .a4-document tr,
+  .contract-print-standalone tr, .contract-print-page tr {
+    display: table-row !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .contract-content td, .contract-content th,
+  .a4-document td, .a4-document th,
+  .contract-print-standalone td, .contract-print-standalone th,
+  .contract-print-page td, .contract-print-page th {
+    display: table-cell !important;
+    min-height: 0 !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+  }
+  .contract-content td::before, .contract-content th::before,
+  .a4-document td::before, .a4-document th::before,
+  .contract-print-standalone td::before, .contract-print-standalone th::before,
+  .contract-print-page td::before, .contract-print-page th::before {
+    content: none !important;
+  }
+}
+
+/* GeekSlope 角标：统一为圆形徽标，覆盖原方块底/文字样式 */
+.logo-mark,
+.initial-load-mark {
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  color: transparent;
+  transform: none;
+  padding: 0;
+  overflow: hidden;
+}
+.logo-mark > svg,
+.initial-load-mark > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

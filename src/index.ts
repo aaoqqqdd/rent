@@ -195,6 +195,29 @@ app.get('/styles.css', (c) => {
   return c.body(siteStyles)
 })
 
+app.get('/favicon.svg', (c) => {
+  c.header('Content-Type', 'image/svg+xml')
+  c.header('Cache-Control', 'public, max-age=604800')
+  return c.body('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg>')
+})
+app.get('/favicon.ico', (c) => c.redirect('/favicon.svg', 301))
+
+app.get('/app.js', (c) => {
+  c.header('Content-Type', 'text/javascript; charset=utf-8')
+  // 与 /styles.css 同策略：带正确版本号即长期 immutable，否则短缓存。
+  const versioned = c.req.query('v') === appScriptVersion
+  c.header('Cache-Control', versioned
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=3600, stale-while-revalidate=86400')
+  c.header('ETag', `"${appScriptVersion}"`)
+  c.header('X-Content-Type-Options', 'nosniff')
+  if (c.req.header('If-None-Match') === `"${appScriptVersion}"`) return c.body(null, 304)
+  return c.body(appScriptText)
+})
+
+const SYSTEM_STATUS_CACHE_KEY = 'https://rent.internal/api/system-status'
+const SYSTEM_STATUS_TTL_MS = 15_000
+
 app.get('/api/system-status', async (c) => {
   const startedAt = Date.now()
   try {
@@ -380,7 +403,7 @@ function errorDetails(error: unknown) {
 
 app.use('*', async (c, next) => {
   // 静态资源不需要鉴权，避免每次加载 CSS 都额外查询 D1 会话表。
-  if (c.req.path === '/styles.css') return next()
+  if (c.req.path === '/styles.css' || c.req.path === '/app.js' || c.req.path === '/favicon.svg' || c.req.path === '/favicon.ico') return next()
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     c.set('user', user)
