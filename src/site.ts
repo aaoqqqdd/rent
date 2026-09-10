@@ -84,7 +84,7 @@ import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
 } from './domain/dataRetention'
 import type { RetentionAction, RetentionPolicyLike } from './domain/dataRetention'
-import { rateHealth, worstHealthLevel } from './domain/monitoring'
+import { rateHealth, worstHealthLevel, staleMonitoringAlertIds } from './domain/monitoring'
 import type { HealthLevel, MonitorMetric } from './domain/monitoring'
 import { agentCommission } from './domain/agentProgram'
 import { buildRefundAllocation, evaluatePaymentReconciliation } from './domain/refundAllocation'
@@ -106,7 +106,7 @@ export {
   isRiskFlagCurrentlyActive, findBlockingRiskFlag,
   deviceUtilisationRate, paymentMethodBreakdown,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
-  rateHealth, worstHealthLevel,
+  rateHealth, worstHealthLevel, staleMonitoringAlertIds,
   agentCommission,
   buildRefundAllocation, evaluatePaymentReconciliation,
 }
@@ -418,14 +418,18 @@ export async function collectMonitoringMetrics(c: Context): Promise<MonitorMetri
     `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')`)
   await add('scheduled_job_failure_rate', '定时任务失败率（24h）', 0.1, 0.25,
     `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM scheduled_job_runs WHERE started_at > datetime('now','-1 day')`)
+  // MONITORING_ALERT 行是本函数下游 runMonitoringSweep 自己写进 data_consistency_issues 的；
+  // 若把它们也算进积压，指标一旦 CRITICAL 就会因为自己产生的告警行而永远 CRITICAL，
+  // 每天再新增一行，无法自愈。这里只统计真正待人工处理的异常。
   await add('open_exception_backlog', '异常任务积压', 0.001, 0.001,
-    `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL) + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n, 1 AS d`,
+    `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL AND issue_type != 'MONITORING_ALERT') + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n, 1 AS d`,
     '任一条未处理即 WARN')
   return metrics
 }
 
-// 调度步骤：跑一遍监控，若有 CRITICAL 指标则写入异常任务中心（去重按当天）。
-export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number }> {
+// 调度步骤：跑一遍监控，若有 CRITICAL 指标则写入异常任务中心（去重按当天）；
+// 指标恢复后自动关闭历史 MONITORING_ALERT 行，让告警可以自愈而不是永久堆积。
+export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number; resolved: number }> {
   const metrics = await collectMonitoringMetrics(c)
   let alerts = 0
   for (const m of metrics.filter(x => x.level === 'CRITICAL')) {
@@ -433,7 +437,15 @@ export async function runMonitoringSweep(c: Context): Promise<{ metrics: number;
       .bind(`dci-${nanoid(12)}`, 'MONITORING_ALERT', 'METRIC', `${m.key}:${new Date().toISOString().slice(0, 10)}`, JSON.stringify(m)).run() as any
     if (Number(res.meta?.changes ?? res.changes ?? 0) > 0) alerts++
   }
-  return { metrics: metrics.length, alerts }
+  const criticalKeys = metrics.filter(x => x.level === 'CRITICAL').map(x => x.key)
+  const openAlerts = ((await c.env.RENT.prepare("SELECT id, entity_id FROM data_consistency_issues WHERE issue_type = 'MONITORING_ALERT' AND resolved_at IS NULL").all()).results || []) as Array<{ id: string; entity_id: string }>
+  const staleIds = staleMonitoringAlertIds(openAlerts, criticalKeys)
+  let resolved = 0
+  if (staleIds.length) {
+    await c.env.RENT.batch(staleIds.map(id => c.env.RENT.prepare("UPDATE data_consistency_issues SET resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND resolved_at IS NULL").bind(id)))
+    resolved = staleIds.length
+  }
+  return { metrics: metrics.length, alerts, resolved }
 }
 
 export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
