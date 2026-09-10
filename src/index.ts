@@ -82,6 +82,7 @@ import {
   combinePersonName,
   isStrongPassword,
   generateUniqueUserId,
+  generateTemporaryPassword,
   isContractExpired,
   getUsers,
   getAccessLevel
@@ -451,6 +452,9 @@ app.use('*', async (c, next) => {
   if (contentLength > maxBody) return c.text('Request body too large', 413)
   const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
   const isPublicRentalRequest = c.req.path === '/public/rental-request'
+  const isPublicRentalPreview = c.req.path === '/api/coupons/rental-cart-preview'
+  const isPublicRentalSetupIntent = c.req.path === '/public/rental-setup-intent'
+  const isPublicOrderLookup = c.req.path === '/public/order-lookup'
   if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicRentalRequest) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
@@ -466,6 +470,36 @@ app.use('*', async (c, next) => {
     c.header('Access-Control-Max-Age', '86400')
     if (c.req.method === 'OPTIONS') return c.body(null, 204)
   }
+  if (isPublicRentalPreview && (c.req.method === 'GET' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
+  }
+  if (isPublicRentalSetupIntent && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
+  }
+  if (isPublicOrderLookup && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
+  }
   const ip = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim()
   const rateRule = c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
     : c.req.path === '/forgot-password' && c.req.method === 'POST' ? ['forgot', 5, 3600] as const
@@ -475,7 +509,9 @@ app.use('*', async (c, next) => {
             : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
               : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
                 : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
-                  : c.req.path === '/public/rental-request' && c.req.method === 'POST' ? ['public-rental-request', 6, 900] as const : null
+                  : c.req.path === '/public/rental-request' && c.req.method === 'POST' ? ['public-rental-request', 6, 900] as const
+                    : c.req.path === '/public/rental-setup-intent' && c.req.method === 'POST' ? ['public-rental-setup', 6, 900] as const
+                    : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
@@ -2136,6 +2172,46 @@ app.get('/api/coupons/rental-preview', async (c) => {
   const discount = calculateCouponDiscount(coupon, rent)
   const deposit = Number(device.depositAmount || 0)
   return c.json({ ok: true, rent, discount, deposit, total: Number((rent + deposit - discount).toFixed(2)), message: `已优惠 AUD$${discount.toFixed(2)}` })
+})
+
+app.get('/api/coupons/rental-cart-preview', async (c) => {
+
+  app.post('/public/rental-setup-intent', async (c) => {
+    try {
+      return c.json(await actions.createPublicRentalSetupIntent(c))
+    } catch (error: any) {
+      return c.json({ ok: false, message: error?.message || '信用卡验证暂不可用，请稍后重试。' }, 400)
+    }
+  })
+  const rawIds = String(c.req.query('deviceIds') || '')
+  let deviceIds: string[] = []
+  try {
+    const parsed = JSON.parse(rawIds)
+    deviceIds = Array.isArray(parsed) ? parsed.map((id) => String(id).trim()).filter(Boolean) : []
+  } catch {
+    deviceIds = rawIds.split(',').map((id) => id.trim()).filter(Boolean)
+  }
+  const result = await actions.previewPublicRentalCoupon(
+    c,
+    [...new Set(deviceIds)],
+    Number(c.req.query('days') || 0),
+    String(c.req.query('code') || '').trim(),
+  )
+  return c.json(result, result.ok ? 200 : 400)
+})
+
+app.post('/public/order-lookup', async (c) => {
+  let body: Record<string, unknown> = {}
+  try { body = (await c.req.json()) as Record<string, unknown> } catch { return c.json({ ok: false, message: '请求格式无效。' }, 400) }
+  const orderNo = String(body.orderNo || '').trim().toUpperCase()
+  const email = String(body.email || '').trim().toLowerCase()
+  if (!orderNo || !email) return c.json({ ok: false, message: '请输入订单编号和申请邮箱。' }, 400)
+  const order = await c.env.RENT.prepare(`SELECT o.id, o.orderNo, o.status, o.startDate, o.endDate, o.totalAmount, o.depositAmount, o.deliveryMethod, o.pickupLocation, o.userId, u.email, u.account_type, d.name AS deviceName FROM orders o JOIN users u ON u.id = o.userId LEFT JOIN devices d ON d.id = o.deviceId WHERE UPPER(o.orderNo) = ? AND lower(u.email) = ?`).bind(orderNo, email).first() as any
+  if (!order) return c.json({ ok: false, message: '没有找到匹配的订单，请检查订单编号和邮箱。' }, 404)
+  if (String(order.account_type || 'formal') !== 'guest') return c.json({ ok: true, registered: true, message: '该邮箱已注册，请进入账号中心登录查看订单。', loginUrl: '/login' })
+  const temporaryPassword = generateTemporaryPassword()
+  await c.env.RENT.prepare("UPDATE users SET password_hash = ?, password_salt = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND account_type = 'guest'").bind(await hashPassword(temporaryPassword), order.userId).run()
+  return c.json({ ok: true, registered: false, order: { orderNo: order.orderNo, status: order.status, deviceName: order.deviceName, startDate: order.startDate, endDate: order.endDate, totalAmount: order.totalAmount, depositAmount: order.depositAmount, deliveryMethod: order.deliveryMethod, pickupLocation: order.pickupLocation }, temporaryPassword })
 })
 
 app.get('/api/contract-sign/coupon-preview', async (c) => {

@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance } from '../../site';
+import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../actions/stripePayments';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
 
@@ -111,6 +112,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const orderId = contract.rentalId || contract.rental_id;
   const order = await getOrderById(c, orderId);
   if (!order) return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
+  const hasSavedCard = Boolean((order as any).stripe_payment_method_id)
   await loadSystemSettingsFromDB(c)
   const systemSettings = getSystemSettings();
   const rentalTermsRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'rentalTerms'").first() as any
@@ -253,7 +255,9 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       break;
     case 4:
       title = '步骤 3/3: 选择付款方式';
-      const stripeFee = Math.round(Number(order.totalAmount) * 100 * 0.025) / 100;
+      const stripeFeeRate = getStripeProcessingFeeRate();
+      const stripeFeePercent = (stripeFeeRate * 100).toFixed(2).replace(/\.00$/, '');
+      const stripeFee = Math.round(Number(order.totalAmount) * 100 * stripeFeeRate) / 100;
       const stripeTotal = Number(order.totalAmount) + stripeFee;
 
       // 在步骤3中获取订单和设备信息
@@ -297,17 +301,18 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           </div>
 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4">
+          ${hasSavedCard ? `<input type="hidden" name="paymentMethod" value="stripe"><input type="hidden" name="refundMethod" value="${escapeAttribute(String((order as any).refundMethod || 'original'))}">` : ''}
           <div class="grid grid-2" style="margin: 20px 0;">
             ${(() => { const unavailable = getSystemSettings().rentalRules.unavailableTimeSlots || {}; const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'; const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00（早间服务费 10%）'], ['morning', '9:00–12:00（无服务费）'], ['afternoon', '13:00–20:00（无服务费）'], ['evening_service', '21:00–23:00（晚间服务费 10%）']]; const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value)); return `<div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>`; })()}
           </div>
 
             <div class="form-group" style="margin: 20px 0;"><label class="form-label" for="couponCode">优惠码（选填）</label><input class="form-control" id="couponCode" name="couponCode" maxlength="40" placeholder="输入优惠码后继续付款"><small class="form-text" id="coupon-preview" aria-live="polite"></small></div>
 
-            <div class="payment-options" style="display: flex; flex-direction: column; gap: 15px;">
+            <div class="payment-options" style="display: ${hasSavedCard ? 'none' : 'flex'}; flex-direction: column; gap: 15px;">
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
-                <span><strong>信用卡支付（Stripe）</strong><small>支付 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，包含 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（2.5%）手续费。</small></span>
+                <span><strong>信用卡支付（Stripe）</strong><small>支付 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，包含 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）手续费。</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -329,7 +334,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ${((systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl) || (systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl)) ? `<aside id="rmb-payment-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>人民币付款</strong><span class="mono">CNY</span></div><p id="rmb-payment-summary">选择支付宝或微信后获取实时汇率。</p><div class="grid grid-2">${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<div><strong>支付宝收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.alipayQrUrl)}" alt="支付宝收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<div><strong>微信收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.wechatQrUrl)}" alt="微信收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}</div><div class="grid grid-2"><div class="form-group"><label class="form-label">付款 Reference</label><input class="form-control bank-proof-input" name="transferReference" maxlength="100" placeholder="支付宝/微信交易单号"></div><div class="form-group"><label class="form-label">付款凭证图片链接</label><input class="form-control bank-proof-input" name="transferProofUrl" type="url" placeholder="https://..."></div></div><div class="form-group"><label class="form-label">备注（选填）</label><textarea class="form-control" name="transferNote" maxlength="500"></textarea></div></aside>` : ''}
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
-              <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">2.5%</span></div>
+              <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">${stripeFeePercent}%</span></div>
               <p>选择 Stripe 信用卡支付时，将在租金和押金合计金额上加收由支付提供商收取的手续费。</p>
               <small class="form-text">付款全程由 Stripe 安全处理，本网站不保存卡号、有效期或安全码。</small>
               <dl>
@@ -337,10 +342,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 <div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div>
                 <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div>
               </dl>
-              <p class="payment-fee-notice__warning">仅处理押金退款时，会同时退回实际退还押金对应的 2.5% 手续费；取消订单及其他退款不退手续费。</p>
+              <p class="payment-fee-notice__warning">仅处理押金退款时，会同时退回实际退还押金对应的 ${stripeFeePercent}% 手续费；取消订单及其他退款不退手续费。</p>
             </aside>
             ` : ''}
-            <div class="card" style="margin-top:20px; padding:16px;">
+            <div class="card" style="margin-top:20px; padding:16px;${hasSavedCard ? 'display:none;' : ''}">
               <h3 style="margin-top:0;">退款接收方式</h3>
               ${canUseBalance ? `
               <label style="display:block; margin-bottom:10px;"><input type="radio" name="refundMethod" value="balance" checked> 退回账户余额（推荐，到账更快）</label>
@@ -381,7 +386,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const balanceShort = document.querySelector('[data-balance-insufficient]');
               const applyTotal = total => {
                 currentTotal = Number(total);
-                const fee = Math.round(currentTotal * 100 * 0.025) / 100;
+                const fee = Math.round(currentTotal * 100 * ${stripeFeeRate}) / 100;
                 const stripeTotalNow = currentTotal + fee;
                 document.querySelectorAll('[data-price="orderTotal"]').forEach(el => { el.textContent = money(currentTotal); });
                 document.querySelectorAll('[data-price="stripeFee"]').forEach(el => { el.textContent = money(fee); });

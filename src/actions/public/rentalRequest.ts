@@ -25,6 +25,7 @@ import {
   type Order,
 } from '../../site'
 import { calculateCouponDiscount, checkCustomerCouponEligibility } from '../coupons'
+import { getStripePublishableKey, stripeRequest } from '../../stripe'
 
 const AU_STATES = ['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']
 const MAX_CART_ITEMS = 10
@@ -60,12 +61,64 @@ async function verifyTurnstile(c: Context, token: string): Promise<boolean> {
   return Boolean(result.success)
 }
 
+export async function createPublicRentalSetupIntent(c: Context): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams({
+    usage: 'off_session',
+    'payment_method_types[0]': 'card',
+    'metadata[source]': 'geekslope-web-rental-application',
+  })
+  const intent = await stripeRequest(c, 'setup_intents', params, `rental-setup-${nanoid(12)}`)
+  return { clientSecret: intent.client_secret, publishableKey: await getStripePublishableKey(c) }
+}
+
+async function verifyPublicRentalSetupIntent(c: Context, setupIntentId: string): Promise<{ id: string; paymentMethodId: string }> {
+  if (!/^seti_[A-Za-z0-9_]+$/.test(setupIntentId)) throw new Error('信用卡验证信息无效，请重新验证。')
+  const intent = await stripeRequest(c, `setup_intents/${setupIntentId}`)
+  const paymentMethodId = typeof intent.payment_method === 'string' ? intent.payment_method : String(intent.payment_method?.id || '')
+  if (intent.status !== 'succeeded' || !/^pm_[A-Za-z0-9_]+$/.test(paymentMethodId)) throw new Error('请先完成信用卡验证。')
+  return { id: setupIntentId, paymentMethodId }
+}
+
 function couponMatchesDevice(coupon: any, device: any): boolean {
   const text = [device.name, device.brand, device.model, device.cpu, device.ram, device.storage, device.gpu, device.os, device.description]
     .filter(Boolean).join(' ').toLowerCase()
   return (!coupon.device_id || String(coupon.device_id) === String(device.id))
     && (!coupon.brand || String(device.brand || '').trim().toLowerCase() === String(coupon.brand).trim().toLowerCase())
     && (!coupon.config_keyword || text.includes(String(coupon.config_keyword).trim().toLowerCase()))
+}
+
+export async function previewPublicRentalCoupon(c: Context, deviceIds: string[], days: number, code: string): Promise<Record<string, unknown>> {
+  if (!deviceIds.length || !Number.isInteger(days) || days < 1 || days > 365 || !code) {
+    return { ok: false, message: '请先选择有效租期并输入优惠码。' }
+  }
+  const devices: any[] = []
+  for (const deviceId of deviceIds.slice(0, MAX_CART_ITEMS)) {
+    const device = await getDeviceById(c, deviceId) as any
+    if (!device) return { ok: false, message: '购物车中有设备不存在或已下架。' }
+    devices.push(device)
+  }
+  const coupon = await c.env.RENT.prepare(
+    "SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)",
+  ).bind(code.toUpperCase().slice(0, 40)).first() as any
+  if (!coupon) return { ok: false, message: '优惠码无效、已过期或已达到使用次数上限。' }
+  const rentAmounts = devices.map((device) => Number((days * Number(device.pricePerDay || 0)).toFixed(2)))
+  const eligibleIndexes = devices.map((device, index) => couponMatchesDevice(coupon, device) ? index : -1).filter((index) => index >= 0)
+  if (!eligibleIndexes.length) return { ok: false, message: '该优惠码不适用于购物车中的设备。' }
+  const eligibleSubtotal = eligibleIndexes.reduce((sum, index) => sum + rentAmounts[index], 0)
+  if (coupon.minimum_order_amount && eligibleSubtotal < Number(coupon.minimum_order_amount)) {
+    return { ok: false, message: `订单金额未达到该优惠码要求的最低消费 AUD$${Number(coupon.minimum_order_amount).toFixed(2)}。` }
+  }
+  coupon._discountableBase = eligibleSubtotal
+  const discount = calculateCouponDiscount(coupon, eligibleSubtotal)
+  const deposit = devices.reduce((sum, device) => sum + Number(device.depositAmount || 0), 0)
+  return {
+    ok: true,
+    rent: Number(rentAmounts.reduce((sum, amount) => sum + amount, 0).toFixed(2)),
+    discount: Number(discount.toFixed(2)),
+    deposit: Number(deposit.toFixed(2)),
+    total: Number((rentAmounts.reduce((sum, amount) => sum + amount, 0) + deposit - discount).toFixed(2)),
+    message: `已优惠 AUD$${discount.toFixed(2)}`,
+  }
 }
 
 export async function handlePublicRentalRequest(c: Context, body: Record<string, unknown>): Promise<Response> {
@@ -84,6 +137,8 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
   const deliveryMethod = body.deliveryMethod === 'Delivery' ? 'Delivery' : 'Pickup'
   const rawNote = String(body.rentalNote || '').trim().slice(0, 400)
   const couponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
+  const stripeSetupIntentId = String(body.stripeSetupIntentId || '').trim()
+  const refundMethod = body.refundMethod === 'balance' ? 'balance' : 'original'
   const contact = {
     name: String(body.contactName || '').trim().slice(0, 120),
     email: String(body.contactEmail || '').trim().toLowerCase().slice(0, 200),
@@ -93,10 +148,20 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
   const agreed = ['1', 'on', 'true', 'yes'].includes(String(body.agree || '').toLowerCase())
 
   if (!startDate || !endDate) return json(c, 400, { ok: false, message: '请填写开始日期和结束日期。' })
-  if (!contact.name || !contact.email) return json(c, 400, { ok: false, message: '请填写姓名和邮箱以注册账号。' })
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) return json(c, 400, { ok: false, message: '邮箱格式不正确。' })
   if (!isStrongPassword(password)) return json(c, 400, { ok: false, message: '密码至少 8 位，且需同时包含字母、数字和符号。' })
   if (!agreed) return json(c, 400, { ok: false, message: '请先阅读并同意服务条款与隐私政策。' })
+  let stripePaymentMethodId = ''
+  if (stripeSetupIntentId) {
+    try { stripePaymentMethodId = (await verifyPublicRentalSetupIntent(c, stripeSetupIntentId)).paymentMethodId }
+    catch (error: any) { return json(c, 400, { ok: false, message: error?.message || '信用卡验证失败，请重试。' }) }
+  } else {
+    return json(c, 400, { ok: false, message: '请先填写并验证信用卡信息。' })
+  }
+  if (!contact.name) contact.name = paymentName
+  if (!contact.email) contact.email = paymentEmail
+  if (!contact.name || !contact.email) return json(c, 400, { ok: false, message: '请填写姓名和邮箱' })
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) return json(c, 400, { ok: false, message: '邮箱格式不正确。' })
 
   await loadSystemSettingsFromDB(c)
   const settings = getSystemSettings()
@@ -208,6 +273,9 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
     })
     customerId = (created as any).id || newId
   }
+  if (refundMethod === 'balance' && (isNewAccount || String(existing?.accountType || existing?.account_type || 'guest') !== 'formal')) {
+    return json(c, 400, { ok: false, message: '当前选择不可用，请改选其他选项。' })
+  }
   if (coupon) {
     try { await checkCustomerCouponEligibility(c, coupon, customerId) }
     catch (error: any) { return json(c, 400, { ok: false, message: error?.message || '该账号无法使用此优惠码。' }) }
@@ -234,6 +302,10 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
         rentalNote: `${leadLine}${rawNote ? `\n客户备注：${rawNote}` : ''}`.slice(0, 500),
         couponCode: discountAmount > 0 ? couponCode : null, discountAmount, createdAt,
       } as unknown as Order)
+      await c.env.RENT.prepare('UPDATE orders SET stripe_payment_method_id = ?, stripe_setup_intent_id = ? WHERE id = ?')
+        .bind(stripePaymentMethodId, stripeSetupIntentId, orderIds[index]).run()
+      await c.env.RENT.prepare('UPDATE orders SET refundMethod = ? WHERE id = ?')
+        .bind(refundMethod, orderIds[index]).run()
       insertedIds.push(orderIds[index])
     }
   } catch (error) {
