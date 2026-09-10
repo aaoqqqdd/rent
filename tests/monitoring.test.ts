@@ -5,9 +5,8 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory } from '../src/site'
-import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, staleMonitoringAlertIds } from '../src/domain/monitoring'
-import { renderAdminMonitoring } from '../src/pages/admin/monitoring'
+import { rateHealth, worstHealthLevel } from '../src/site'
+import { monitorOverallStatus, parseBearerToken, staleMonitoringAlertIds } from '../src/domain/monitoring'
 
 test('rateHealth classifies against warn/critical thresholds', () => {
   assert.deepEqual(rateHealth(1, 100, 0.02, 0.1), { rate: 0.01, level: 'OK' })
@@ -68,33 +67,6 @@ test('monitorOverallStatus returns the worst public probe state', () => {
   assert.equal(monitorOverallStatus([{ status: 'ok' }, { status: 'degraded' }]), 'degraded')
   assert.equal(monitorOverallStatus([{ status: 'degraded' }, { status: 'down' }]), 'down')
   assert.equal(monitorOverallStatus([]), 'ok')
-})
-
-test('monitorHttpStatus lets a monitor grade on the status code alone', () => {
-  assert.equal(monitorHttpStatus('ok'), 200)
-  assert.equal(monitorHttpStatus('degraded'), 503)
-  assert.equal(monitorHttpStatus('down'), 521)
-})
-
-test('renderAdminMonitoring draws sparklines, count values and first-breach time', () => {
-  const metrics = [
-    { key: 'api_error_rate', label: 'API 错误率（24h）', kind: 'rate' as const, numerator: 3, denominator: 100, rate: 0.03, level: 'WARN' as const },
-    { key: 'open_exception_backlog', label: '异常任务积压', kind: 'count' as const, numerator: 12, denominator: 0, rate: 0, level: 'CRITICAL' as const, note: '未处理异常条数' },
-  ]
-  const history = {
-    api_error_rate: [
-      { capturedAt: '2026-09-08T00:00:00Z', rate: 0.0, level: 'OK' as const },
-      { capturedAt: '2026-09-08T06:00:00Z', rate: 0.02, level: 'WARN' as const },
-      { capturedAt: '2026-09-08T12:00:00Z', rate: 0.03, level: 'WARN' as const },
-    ],
-    open_exception_backlog: [{ capturedAt: '2026-09-08T00:00:00Z', rate: 12, level: 'CRITICAL' as const }],
-  }
-  const html = renderAdminMonitoring({ id: 'admin-1', name: 'Admin', role: 'ADMIN' }, metrics, [], history)
-  assert.match(html, /整体：严重/)
-  assert.match(html, /class="metric-spark"/)          // api_error_rate has >=2 points
-  assert.match(html, /首次异常：/)                      // first non-OK snapshot surfaced
-  assert.match(html, /<div class="value">12<\/div>/)   // count metric shows raw count, not a %
-  assert.doesNotMatch(html.split('异常任务积压')[1].split('</div>')[0], /%/)
 })
 
 test('staleMonitoringAlertIds closes alerts whose metric is no longer CRITICAL', () => {

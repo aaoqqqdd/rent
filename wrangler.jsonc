@@ -20,13 +20,9 @@
 	//   "nodejs_compat"
 	// ],
 	"vars": {
-		// 允许独立部署的营销官网 rent-web 跨站调用 POST /public/rental-request。
-		// 只放行这一个 origin；不配置则该接口一律返回 403。
+		// 仅允许已部署的营销官网跨站提交购物车订单。
 		"PUBLIC_WEB_ORIGIN": "https://rent-web.ydnw6zt6vj.workers.dev"
 	},
-	// 注意：secret（TURNSTILE_SECRET_KEY 等，用 `wrangler secret put` 设的）不受影响；
-	// 若 rent 还有别的「明文」变量只配在 Dashboard 里，部署前要一并补进上面的 vars，
-	// 否则 config 会成为明文变量的唯一来源，Dashboard 里多出来的会被清掉。
 	// "kv_namespaces": [
 	//   {
 	//     "binding": "MY_KV_NAMESPACE",

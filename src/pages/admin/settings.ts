@@ -22,12 +22,21 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         <section class="form-section">
           <div class="form-section-title"><span class="mono">SMTP</span><div><h3>邮件 SMTP 配置</h3><p>用于邮箱验证、收据、合同、退款和其他通知。密码加密保存，留空表示保留原密码。<a href="/admin/email-templates">完整邮件变量索引</a>。</p></div></div>
           <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="smtpHost">SMTP 主机</label><input class="form-control" id="smtpHost" value="${email.host || ''}" placeholder="smtp-relay.brevo.com"></div>
-            <div class="form-group"><label class="form-label" for="smtpPort">端口</label><input class="form-control" id="smtpPort" type="number" value="${email.port || 587}"></div>
-            <div class="form-group"><label class="form-label" for="smtpUser">SMTP 用户名</label><input class="form-control" id="smtpUser" value="${email.user || ''}"></div>
-            <div class="form-group"><label class="form-label" for="smtpPassword">SMTP 密码 / Key</label><input class="form-control" id="smtpPassword" type="password" placeholder="${email.passwordMasked || '请输入 SMTP Key'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="smtpFrom">发件邮箱</label><input class="form-control" id="smtpFrom" type="email" value="${email.from || ''}" placeholder="noreply@example.com"></div>
-            <div class="form-group"><label class="form-label" for="smtpEncryption">加密方式</label><select class="form-control" id="smtpEncryption"><option value="starttls" ${email.encryption === 'starttls' ? 'selected' : ''}>STARTTLS（587）</option><option value="ssl" ${email.encryption === 'ssl' ? 'selected' : ''}>SSL/TLS（465）</option><option value="none" ${email.encryption === 'none' ? 'selected' : ''}>无加密</option></select></div>
+            <div><label class="form-label" for="companyName">公司名称</label><input id="companyName" name="companyName" class="form-control" value="${settings.companyDetails.name}"></div>
+            <div><label class="form-label" for="companyAbn">公司 ABN</label><input id="companyAbn" name="companyAbn" class="form-control" value="${settings.companyDetails.abn}" placeholder="11 位 ABN"></div>
+            <div><label class="form-label" for="gstIncluded">GST 设置</label><select id="gstIncluded" name="gstIncluded" class="form-control"><option value="true" ${settings.companyDetails.gstIncluded ? 'selected' : ''}>价格包含 GST</option><option value="false" ${!settings.companyDetails.gstIncluded ? 'selected' : ''}>价格不含 GST</option></select></div>
+            <div><label class="form-label" for="companyAddress">公司地址</label><input id="companyAddress" name="companyAddress" class="form-control" value="${settings.companyDetails.address}"></div>
+            <div><label class="form-label" for="companyContact">公司联系人</label><input id="companyContact" name="companyContact" class="form-control" value="${settings.companyDetails.contact}"></div>
+            <div><label class="form-label" for="companyPhone">公司电话</label><input id="companyPhone" name="companyPhone" class="form-control" value="${settings.companyDetails.phone}"></div>
+            <div><label class="form-label" for="companyEmail">公司邮箱</label><input type="email" id="companyEmail" name="companyEmail" class="form-control" value="${settings.companyDetails.email}"></div>
+            <div><label class="form-label" for="companyWebsite">公司网站</label><input type="url" id="companyWebsite" name="companyWebsite" class="form-control" value="${settings.companyDetails.website}" placeholder="https://"></div>
+            <div><label class="form-label" for="companyLogo">公司 Logo URL</label><input type="url" id="companyLogo" name="companyLogo" class="form-control" value="${settings.companyDetails.logo}" placeholder="https://"></div>
+            <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
+              <div class="form-group"><label class="form-label" for="deliveryAreas">配送区域</label><textarea id="deliveryAreas" name="deliveryAreas" class="form-control" rows="4" placeholder="每行一个区域">${(settings.companyDetails.deliveryAreas || []).join('\n')}</textarea><small class="form-text">官网会显示这些区域；每行一个 suburb 或区域名称。</small></div>
+              <div class="form-group"><label class="form-label" for="deliveryNote">配送说明</label><input id="deliveryNote" name="deliveryNote" class="form-control" value="${settings.companyDetails.deliveryNote || ''}" placeholder="例如：配送范围和运费以审核确认为准"><small class="form-text">官网申请页、租赁指南和设备详情会读取这段说明。</small></div>
+            <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><textarea id="unavailableDates" name="unavailableDates" class="form-control" rows="4" placeholder="2026-12-25\n2026-12-26">${settings.rentalRules.unavailableDates.join('\n')}</textarea><small class="form-text">每行一个 YYYY-MM-DD；这些日期不能取货或归还。</small></div>
+            <div class="form-group"><label class="form-label" for="unavailableTimeSlots">按日期设置不可用时间段</label><textarea id="unavailableTimeSlots" name="unavailableTimeSlots" class="form-control" rows="4" placeholder="2026-12-25: afternoon, evening_service">${Object.entries(settings.rentalRules.unavailableTimeSlots || {}).map(([date, slots]) => `${date}: ${(slots as string[]).join(', ')}`).join('\n')}</textarea><small class="form-text">每行格式：日期: 时间段；例如 2026-12-25: afternoon, evening_service。可用时间段：morning_service、morning、afternoon、evening_service。</small></div>
+            <div class="grid grid-2"><div><label class="form-label" for="minimumRentalDays">最短租赁天数</label><input id="minimumRentalDays" name="minimumRentalDays" type="number" min="1" step="1" class="form-control" value="${settings.rentalRules.minimumRentalDays}"></div><div><label class="form-label" for="bufferDays">设备周转缓冲天数</label><input id="bufferDays" name="bufferDays" type="number" min="0" step="1" class="form-control" value="${settings.rentalRules.bufferDays}"><small class="form-text">自动扩展订单前后不可预约的缓冲时间。</small></div></div>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="clearEmailTransport"><label for="clearEmailTransport">清除已保存的 SMTP 配置</label></div>
         </section>
@@ -237,6 +246,8 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             website: formData.get('companyWebsite'),
             logo: formData.get('companyLogo'),
             pickupLocations: String(formData.get('pickupLocations') || '').split(/\\n+/).map(value => value.trim()).filter(Boolean),
+                      deliveryAreas: String(formData.get('deliveryAreas') || '').split(/\\n+/).map(value => value.trim()).filter(Boolean),
+                      deliveryNote: String(formData.get('deliveryNote') || '').trim(),
           },
           rentalRules: {
             unavailableDates: String(formData.get('unavailableDates') || '').split(/\\n+/).map(value => value.trim()).filter(Boolean),

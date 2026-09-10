@@ -118,6 +118,10 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       pickupLocations: Array.isArray(payload.companyDetails?.pickupLocations)
         ? payload.companyDetails.pickupLocations.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 20)
         : getSystemSettings().companyDetails.pickupLocations,
+      deliveryAreas: Array.isArray(payload.companyDetails?.deliveryAreas)
+        ? payload.companyDetails.deliveryAreas.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 50)
+        : getSystemSettings().companyDetails.deliveryAreas,
+      deliveryNote: String(payload.companyDetails?.deliveryNote ?? getSystemSettings().companyDetails.deliveryNote).trim(),
     },
     priceStrategy: payload.priceStrategy ?? getSystemSettings().priceStrategy,
     paymentMethods: {

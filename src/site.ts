@@ -85,8 +85,8 @@ import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
 } from './domain/dataRetention'
 import type { RetentionAction, RetentionPolicyLike } from './domain/dataRetention'
-import { rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory, staleMonitoringAlertIds } from './domain/monitoring'
-import type { HealthLevel, MonitorMetric, MonitorMetricKind, MetricHistoryPoint, MetricHistorySummary } from './domain/monitoring'
+import { rateHealth, worstHealthLevel, staleMonitoringAlertIds } from './domain/monitoring'
+import type { HealthLevel, MonitorMetric } from './domain/monitoring'
 import { agentCommission } from './domain/agentProgram'
 import { buildRefundAllocation, evaluatePaymentReconciliation } from './domain/refundAllocation'
 import type {
@@ -107,7 +107,7 @@ export {
   isRiskFlagCurrentlyActive, findBlockingRiskFlag,
   deviceUtilisationRate, paymentMethodBreakdown,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
-  rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory, staleMonitoringAlertIds,
+  rateHealth, worstHealthLevel, staleMonitoringAlertIds,
   agentCommission,
   buildRefundAllocation, evaluatePaymentReconciliation,
 }
@@ -460,26 +460,30 @@ export async function collectMonitoringMetrics(c: Context): Promise<MonitorMetri
       metrics.push({ key: def.key, label: def.label, kind: def.kind, numerator: 0, denominator: 0, rate: 0, level: 'OK', note: '无数据源' })
     }
   }
+  await add('api_error_rate', 'API 错误率（24h）', 0.02, 0.1,
+    `SELECT (SELECT COUNT(*) FROM error_logs WHERE error_level IN ('ERROR','FATAL') AND created_at > datetime('now','-1 day')) AS n, (SELECT COUNT(*) FROM error_logs WHERE created_at > datetime('now','-1 day')) AS d`)
+  await add('payment_failure_rate', '付款失败率（24h）', 0.1, 0.3,
+    `SELECT SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM payments WHERE created_at > datetime('now','-1 day')`)
+  await add('email_failure_rate', '邮件失败率（24h）', 0.1, 0.3,
+    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM email_events WHERE created_at > datetime('now','-1 day')`)
+  // 离线判定按心跳时间：没有任何 sweep 会把 agent_status 从 'online' 改回
+  // 'offline'，只能靠 agent_last_seen_at 是否陈旧。5 分钟阈值与绑定设备页一致。
+  await add('device_offline_rate', '设备离线率', 0.2, 0.5,
+    `SELECT SUM(CASE WHEN agent_last_seen_at IS NULL OR agent_last_seen_at <= datetime('now', '-5 minutes') THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL`)
+  await add('remote_command_failure_rate', '远程命令失败率（24h）', 0.15, 0.4,
+    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')`)
+  await add('scheduled_job_failure_rate', '定时任务失败率（24h）', 0.1, 0.25,
+    `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM scheduled_job_runs WHERE started_at > datetime('now','-1 day')`)
+  // MONITORING_ALERT 行是本函数下游 runMonitoringSweep 自己写进 data_consistency_issues 的；
+  // 若把它们也算进积压，指标一旦 CRITICAL 就会因为自己产生的告警行而永远 CRITICAL，
+  // 每天再新增一行，无法自愈。这里只统计真正待人工处理的异常。
+  await add('open_exception_backlog', '异常任务积压', 0.001, 0.001,
+    `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL AND issue_type != 'MONITORING_ALERT') + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n, 1 AS d`,
+    '任一条未处理即 WARN')
   return metrics
 }
 
-// 近 windowHours 内的指标快照，按 metric_key 分组、时间升序，供 /admin/monitoring 画趋势。
-export async function getMonitoringHistory(c: Context, windowHours = 168): Promise<Record<string, MetricHistoryPoint[]>> {
-  const out: Record<string, MetricHistoryPoint[]> = {}
-  try {
-    const rows = (await c.env.RENT.prepare(
-      `SELECT metric_key, captured_at, rate, level FROM monitoring_metric_snapshots
-       WHERE captured_at > datetime('now', ?) ORDER BY captured_at ASC`,
-    ).bind(`-${Math.max(1, Math.floor(windowHours))} hours`).all()).results as any[]
-    for (const r of rows || []) {
-      const key = String(r.metric_key)
-      ;(out[key] ||= []).push({ capturedAt: String(r.captured_at), rate: Number(r.rate) || 0, level: r.level as HealthLevel })
-    }
-  } catch { /* 快照表尚未迁移时静默降级为空趋势 */ }
-  return out
-}
-
-// 调度步骤：跑一遍监控，落盘快照（并清理过期），若有 CRITICAL 指标则写入异常任务中心（去重按当天）。
+// 调度步骤：跑一遍监控，若有 CRITICAL 指标则写入异常任务中心（去重按当天）；
 // 指标恢复后自动关闭历史 MONITORING_ALERT 行，让告警可以自愈而不是永久堆积。
 export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number; resolved: number }> {
   const metrics = await collectMonitoringMetrics(c)
@@ -1495,8 +1499,6 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     : ''
 
   const footerCompany = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
-  // 页脚在所有页面（登录前后）保持一致：平铺三个核心法律链接，其余合规页面
-  // 统一收进「更多」折叠菜单，避免一长排链接换行。
   const footerPrimaryLinks: Array<[string, string]> = [
     ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
   ]
@@ -1506,9 +1508,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   ]
   const renderFooterLink = ([href, text]: [string, string]) => `<a href="${href}">${text}</a>`
   const footerNav = footerPrimaryLinks.map(renderFooterLink).join('')
-  const footerMore = footerMoreLinks.length
-    ? `<details class="legal-footer__more"><summary>更多</summary><div class="legal-footer__more-panel">${footerMoreLinks.map(renderFooterLink).join('')}</div></details>`
-    : ''
+  const footerMore = `<details class="legal-footer__more"><summary>更多</summary><div class="legal-footer__more-panel">${footerMoreLinks.map(renderFooterLink).join('')}</div></details>`
   const footerHtml = `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany}</span><nav aria-label="网站法律信息">${footerNav}${footerMore}</nav></footer>`
 
   return renderLayoutTemplate({

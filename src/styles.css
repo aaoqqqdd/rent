@@ -4086,16 +4086,6 @@ tr:hover td {
   text-align: right;
 }
 
-.legal-footer__inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 6px 24px;
-  max-width: 1180px;
-  margin-inline: auto;
-}
-
 .legal-footer nav {
   display: flex;
   flex-wrap: wrap;
@@ -4125,58 +4115,8 @@ tr:hover td {
 }
 
 .legal-footer a:hover,
-.legal-footer a:focus-visible,
-.legal-footer__more > summary:hover {
+.legal-footer a:focus-visible {
   opacity: 1;
-  color: var(--primary);
-}
-
-.legal-footer__more {
-  position: relative;
-}
-
-.legal-footer__more > summary {
-  list-style: none;
-  cursor: pointer;
-  user-select: none;
-}
-
-.legal-footer__more > summary::-webkit-details-marker {
-  display: none;
-}
-
-.legal-footer__more[open] > summary {
-  opacity: 1;
-  color: var(--primary);
-}
-
-.legal-footer__menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 10px);
-  display: flex;
-  flex-direction: column;
-  min-width: 136px;
-  padding: 6px;
-  background: var(--surface, #fff);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgb(15 23 42 / .14);
-  z-index: 30;
-}
-
-.legal-footer__menu a {
-  padding: 7px 10px;
-  border-radius: 6px;
-  color: var(--text-secondary);
-  text-decoration: none;
-  white-space: nowrap;
-  opacity: 1;
-}
-
-.legal-footer__menu a:hover,
-.legal-footer__menu a:focus-visible {
-  background: var(--primary-light);
   color: var(--primary);
 }
 
@@ -4194,7 +4134,6 @@ tr:hover td {
 .legal-footer__more > summary {
   list-style: none;
   cursor: pointer;
-  color: inherit;
   user-select: none;
 }
 
@@ -4209,7 +4148,9 @@ tr:hover td {
   vertical-align: middle;
 }
 
-.legal-footer__more[open] > summary {
+.legal-footer__more[open] > summary,
+.legal-footer__more > summary:hover {
+  opacity: 1;
   color: var(--primary);
 }
 
@@ -4231,6 +4172,18 @@ tr:hover td {
   border-radius: 10px;
   box-shadow: 0 12px 30px rgba(13, 27, 42, .16);
   z-index: 50;
+}
+
+.legal-footer__more-panel a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  opacity: 1;
+}
+
+.legal-footer__more-panel a:hover,
+.legal-footer__more-panel a:focus-visible {
+  color: var(--primary);
 }
 
 .legal-document {

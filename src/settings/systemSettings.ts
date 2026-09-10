@@ -64,6 +64,8 @@ export const systemSettings = {
     website: '',
     logo: '',
     pickupLocations: [] as string[],
+    deliveryAreas: ['墨尔本 CBD', 'Docklands', 'Southbank', 'South Yarra', 'Carlton', 'East Melbourne'] as string[],
+    deliveryNote: '送货上门仅限墨尔本 CBD 及周边内城区，运费由客服在审核时确认。',
   },
   rentalRules: {
     unavailableDates: [] as string[],

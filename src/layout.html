@@ -38,7 +38,469 @@
     <aside class="notification-drawer" id="notification-drawer" aria-hidden="true"><div class="notification-drawer__head"><div><span class="section-code">INBOX</span><h2>通知中心</h2></div><button type="button" class="notification-drawer__close" aria-label="关闭通知">×</button></div><div class="notification-drawer__body" id="notification-drawer-body"><p class="empty-state">正在加载通知…</p></div><a class="button button-primary notification-drawer__all" href="/notifications">查看全部通知</a></aside>
     {{FOOTER}}
   </div>
-  <script src="{{APP_SCRIPT}}" defer></script>
+  <script>
+    window.createRichTextEditor = function (selector, options) {
+      if (window.Quill) {
+        try {
+          return new window.Quill(selector, options);
+        } catch (error) {
+          console.error('Quill initialization failed, falling back to contentEditable:', error);
+        }
+      }
+      const root = document.querySelector(selector);
+      if (!root) throw new Error('Rich text editor element not found: ' + selector);
+      root.contentEditable = 'true';
+      root.setAttribute('role', 'textbox');
+      root.setAttribute('aria-multiline', 'true');
+      root.classList.add('rich-text-fallback');
+      const toolbar = document.createElement('div');
+      toolbar.className = 'rich-text-fallback-toolbar';
+      const commands = [
+        ['正文', 'formatBlock', 'p'], ['H1', 'formatBlock', 'h1'], ['H2', 'formatBlock', 'h2'],
+        ['B', 'bold'], ['I', 'italic'], ['U', 'underline'], ['S', 'strike'],
+        ['1.', 'insertOrderedList'], ['•', 'insertUnorderedList'], ['“”', 'formatBlock', 'blockquote'],
+        ['代码', 'formatBlock', 'pre'], ['颜色', 'foreColor'], ['背景', 'hiliteColor'],
+        ['左', 'justifyLeft'], ['中', 'justifyCenter'], ['右', 'justifyRight'], ['两端', 'justifyFull'],
+        ['链接', 'createLink'], ['清除', 'removeFormat']
+      ];
+      commands.forEach(function (item) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = item[0];
+        button.addEventListener('mousedown', function (event) {
+          event.preventDefault();
+          root.focus();
+          let value = item[2] || null;
+          if (item[1] === 'createLink') {
+            value = window.prompt('请输入链接地址（https://）');
+            if (!value) return;
+          }
+          document.execCommand(item[1], false, value);
+        });
+        toolbar.appendChild(button);
+      });
+      root.parentNode.insertBefore(toolbar, root);
+      return { root: root };
+    };
+
+    window.markdownToHtml = function (markdown) {
+      if (window.marked && typeof window.marked.parse === 'function') {
+        return window.marked.parse(String(markdown || ''), { breaks: true, gfm: true });
+      }
+      if (typeof window.marked === 'function') return window.marked(String(markdown || ''));
+      return String(markdown || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/^### (.*)$/gm, '<h3>$1</h3>').replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')
+        .replace(/^/, '<p>').replace(/$/, '</p>');
+    };
+
+    window.htmlToMarkdown = function (html) {
+      if (window.TurndownService) {
+        try {
+          return new window.TurndownService().turndown(String(html || ''));
+        } catch (error) {
+          return String(html || '').replace(/<[^>]+>/g, '');
+        }
+      }
+      return String(html || '').replace(/<[^>]+>/g, '').trim();
+    };
+
+    window.siteConfirm = function (message, onConfirm) {
+      const overlay = document.createElement('div');
+      overlay.className = 'site-confirm-overlay';
+      overlay.innerHTML = '<div class="site-confirm-card" role="dialog" aria-modal="true" aria-labelledby="site-confirm-title"><span class="site-confirm-card__mark">?</span><h2 id="site-confirm-title">请确认操作</h2><p></p><div class="site-confirm-actions"><button type="button" class="button button-secondary" data-confirm-cancel>取消</button><button type="button" class="button button-primary" data-confirm-ok>确认</button></div></div>';
+      overlay.querySelector('p').textContent = message || '确定继续吗？';
+      const close = function () { overlay.remove(); };
+      overlay.querySelector('[data-confirm-cancel]').addEventListener('click', close);
+      overlay.querySelector('[data-confirm-ok]').addEventListener('click', function () { close(); onConfirm(); });
+      document.body.appendChild(overlay);
+    };
+
+    document.addEventListener('submit', function (event) {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement) || !form.dataset.siteConfirm) return;
+      event.preventDefault();
+      const message = form.dataset.siteConfirm;
+      delete form.dataset.siteConfirm;
+      window.siteConfirm(message, function () { form.requestSubmit(); });
+    }, true);
+
+    // 页脚“更多”菜单：点击菜单外部或按 Esc 时收起。
+    document.addEventListener('DOMContentLoaded', function () {
+      const more = document.querySelector('details.legal-footer__more');
+      if (!more) return;
+      document.addEventListener('pointerdown', function (event) {
+        if (more.open && !more.contains(event.target)) more.open = false;
+      }, true);
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && more.open) {
+          more.open = false;
+          const summary = more.querySelector('summary');
+          if (summary) summary.focus();
+        }
+      });
+    });
+
+    // 表单提交时的加载指示；页面入场动画见 styles.css 的 site-enter。
+    document.addEventListener('DOMContentLoaded', function () {
+      const showNavigationLoading = function () {
+        if (document.getElementById('navigation-loading')) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'navigation-loading';
+        overlay.className = 'navigation-loading';
+        overlay.innerHTML = '<span class="navigation-loading__spinner" aria-hidden="true"></span><span>正在加载，请稍候…</span>';
+        document.body.appendChild(overlay);
+      };
+      document.addEventListener('submit', function (event) {
+        const form = event.target;
+        if (event.defaultPrevented || !(form instanceof HTMLFormElement) || form.dataset.loadingHandled === 'true') return;
+        form.dataset.loadingHandled = 'true';
+        const button = form.querySelector('button[type="submit"]');
+        if (button) { button.disabled = true; button.dataset.loadingText = button.textContent || ''; button.textContent = '处理中…'; }
+        showNavigationLoading();
+      });
+      const bell = document.querySelector('.notification-bell');
+      const drawer = document.getElementById('notification-drawer');
+      const body = document.getElementById('notification-drawer-body');
+      const badge = document.querySelector('.notification-bell__count');
+      let notifications = [], notificationPage = 0;
+      const refresh = function () { fetch('/notifications/recent', { headers: { Accept: 'application/json' }, credentials: 'same-origin' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (p) { notifications = p && Array.isArray(p.notifications) ? p.notifications : []; if (badge) { badge.textContent = String(p?.unreadCount || 0); badge.hidden = !(p?.unreadCount); } if (drawer?.classList.contains('is-open')) render(); }).catch(function () {}); };
+      const render = function () { if (!body) return; const pageSize = Math.max(1, Math.floor((window.innerHeight - 260) / 92)); const pageCount = Math.max(1, Math.ceil(notifications.length / pageSize)); notificationPage = Math.min(notificationPage, pageCount - 1); const pageItems = notifications.slice(notificationPage * pageSize, (notificationPage + 1) * pageSize); body.innerHTML = pageItems.length ? pageItems.map(function (item) { return '<a class="notification-drawer__item" href="/notifications/' + encodeURIComponent(item.id) + '"><strong></strong><p></p><small></small></a>'; }).join('') : '<p class="empty-state">暂无通知</p>'; pageItems.forEach(function (item, i) { const row = body.children[i]; if (row) { row.querySelector('strong').textContent = item.title || '新通知'; row.querySelector('p').textContent = item.message || ''; row.querySelector('small').textContent = item.created_at || ''; } }); if (pageCount > 1) { const pager = document.createElement('div'); pager.className = 'notification-drawer__pager'; pager.innerHTML = '<button type="button" class="button button-sm button-secondary">上一页</button><span>第 ' + (notificationPage + 1) + ' / ' + pageCount + ' 页</span><button type="button" class="button button-sm button-secondary">下一页</button>'; const buttons = pager.querySelectorAll('button'); buttons[0].disabled = notificationPage === 0; buttons[1].disabled = notificationPage >= pageCount - 1; buttons[0].addEventListener('click', function () { notificationPage--; render(); }); buttons[1].addEventListener('click', function () { notificationPage++; render(); }); body.appendChild(pager); } };
+      bell?.addEventListener('click', function () { const open = !drawer.classList.contains('is-open'); drawer.classList.toggle('is-open', open); drawer.setAttribute('aria-hidden', String(!open)); bell.setAttribute('aria-expanded', String(open)); if (open) render(); });
+      drawer?.querySelector('.notification-drawer__close')?.addEventListener('click', function () { drawer.classList.remove('is-open'); drawer.setAttribute('aria-hidden', 'true'); bell?.setAttribute('aria-expanded', 'false'); });
+      // Do not compete with the first paint; notifications refresh after the page is usable.
+      window.setTimeout(function () { refresh(); window.setInterval(refresh, 60000); }, 1500);
+      window.addEventListener('resize', function () { if (drawer?.classList.contains('is-open')) render(); });
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+      const indicator = document.getElementById('system-status-indicator');
+      const label = document.getElementById('system-status-label');
+      if (!indicator || !label || !window.fetch) return;
+      const check = function () {
+        fetch('/api/system-status', { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' })
+          .then(function (response) { return response.json().then(function (data) { return { ok: response.ok, data: data }; }); })
+          .then(function (result) {
+            const status = result.data.status || (result.ok ? 'healthy' : 'down');
+            label.textContent = result.data.label || '状态未知';
+            indicator.classList.toggle('online', status === 'healthy');
+            indicator.classList.toggle('degraded', status === 'degraded' || status === 'delayed');
+            indicator.classList.toggle('delayed', status === 'delayed');
+            indicator.classList.toggle('offline', status === 'down');
+            indicator.title = result.data.checkedAt ? '最近检查：' + result.data.checkedAt : (result.data.detail || '系统状态');
+          })
+          .catch(function () { label.textContent = '错误'; indicator.classList.remove('online', 'degraded', 'delayed'); indicator.classList.add('offline'); indicator.title = '无法连接状态检查服务'; });
+      };
+      window.setTimeout(function () { check(); window.setInterval(check, 60000); }, 2000);
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+      const pageTitle = document.title;
+      let lastNotificationIds = [];
+      const notifiedStorageKey = 'rent-notified-notification-ids';
+      const updateBrowserTitle = function (count) {
+        document.title = count > 0 ? pageTitle + ' (' + count + ')' : pageTitle;
+      };
+      const showNotification = function (notification, unreadCount) {
+        const isAnnouncement = notification.type === 'announcement';
+        const overlay = document.createElement('div');
+        overlay.className = isAnnouncement ? 'announcement-overlay' : 'notification-toast';
+        overlay.innerHTML = isAnnouncement
+          ? '<div class="announcement-card" role="dialog" aria-modal="true" aria-labelledby="announcement-title"><span class="announcement-card__label">网站通告</span><h2 id="announcement-title"></h2><p></p><button class="button button-primary" type="button">以后不再展示此通告</button></div>'
+          : '<article class="notification-toast__card" role="status"><div class="notification-toast__header"><span class="notification-toast__mark">N</span><strong></strong><button type="button" aria-label="关闭通知">×</button></div><p></p><a class="button button-sm button-secondary" href="/notifications">查看通知</a></article>';
+        overlay.querySelector('strong, h2').textContent = notification.title || (isAnnouncement ? '网站通告' : '新通知');
+        overlay.querySelector('p').innerHTML = isAnnouncement ? (notification.message_html || '') : ('你收到了 ' + unreadCount + ' 条新消息');
+        const dismiss = function () { fetch('/notifications/' + encodeURIComponent(notification.id) + '/dismiss', { method: 'POST' }).finally(function () { overlay.remove(); }); };
+        overlay.querySelector('.announcement-card button, .notification-toast__header button').addEventListener('click', dismiss);
+        document.body.appendChild(overlay);
+      };
+      const pollNotifications = function () {
+        fetch('/notifications/unread', { headers: { Accept: 'application/json' }, credentials: 'same-origin' }).then(function (response) { return response.ok ? response.json() : null; }).then(function (payload) {
+          const notifications = payload && Array.isArray(payload.notifications) ? payload.notifications : [];
+          updateBrowserTitle(notifications.length);
+          if (!notifications.length) return;
+          const currentIds = notifications.map(function (item) { return String(item.id); });
+          const storedIds = JSON.parse(localStorage.getItem(notifiedStorageKey) || '[]');
+          const newNotifications = notifications.filter(function (item) { return storedIds.indexOf(String(item.id)) === -1; });
+          if (newNotifications.length) {
+            const notification = newNotifications[0];
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification(notification.title || '新通知', { body: notification.message || '你收到了一条新通知' });
+            }
+            showNotification(notification, notifications.length);
+          }
+          localStorage.setItem(notifiedStorageKey, JSON.stringify(currentIds.slice(0, 50)));
+          lastNotificationIds = currentIds;
+        }).catch(function () {});
+      };
+      // Notification permission is requested only after a user interaction.
+      document.addEventListener('click', function requestNotificationPermission() {
+        if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+        document.removeEventListener('click', requestNotificationPermission);
+      }, { once: true });
+      window.setTimeout(function () { pollNotifications(); window.setInterval(pollNotifications, 60000); }, 2500);
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('table:not(.official-document__table)').forEach(function (table) {
+        const labels = Array.from(table.querySelectorAll('thead th')).map(function (header) { return header.textContent.trim(); });
+        table.querySelectorAll('tbody tr').forEach(function (row) {
+          Array.from(row.children).forEach(function (cell, index) {
+            if (cell instanceof HTMLElement) cell.dataset.label = labels[index] || '';
+          });
+        });
+      });
+    });
+
+    // 移动端导航抽屉：汉堡按钮滑出侧栏，点遮罩 / 链接 / Esc 关闭。
+    document.addEventListener('DOMContentLoaded', function () {
+      const body = document.body;
+      const toggle = document.querySelector('.mobile-nav-toggle');
+      const scrim = document.querySelector('.mobile-nav-scrim');
+      const sidebar = document.getElementById('app-sidebar');
+      if (!toggle || !sidebar) return;
+      const setOpen = function (open) {
+        body.classList.toggle('is-nav-open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+        if (scrim) scrim.setAttribute('aria-hidden', String(!open));
+      };
+      toggle.addEventListener('click', function () { setOpen(!body.classList.contains('is-nav-open')); });
+      if (scrim) scrim.addEventListener('click', function () { setOpen(false); });
+      sidebar.addEventListener('click', function (event) { if (event.target.closest('a')) setOpen(false); });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && body.classList.contains('is-nav-open')) setOpen(false);
+      });
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('textarea.markdown-editor').forEach(function (editor) {
+        if (editor.dataset.markdownReady === 'true') return;
+        editor.dataset.markdownReady = 'true';
+        editor.removeAttribute('disabled');
+        editor.removeAttribute('readonly');
+        editor.style.display = 'block';
+        editor.style.pointerEvents = 'auto';
+        editor.style.userSelect = 'text';
+        editor.style.visibility = 'visible';
+        editor.style.opacity = '1';
+        editor.setAttribute('spellcheck', 'false');
+        const toolbar = document.createElement('div');
+        toolbar.className = 'markdown-editor-toolbar';
+        [['标题', '# '], ['粗体', '**文字**'], ['斜体', '*文字*'], ['列表', '- 项目'], ['分隔线', '\n---\n']].forEach(function (item) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = item[0];
+          button.addEventListener('click', function () {
+            const start = editor.selectionStart || 0;
+            const end = editor.selectionEnd || start;
+            const selected = editor.value.slice(start, end) || item[1];
+            editor.setRangeText(item[0] === '标题' ? '# ' + selected : item[1].includes('文字') ? item[1].replace('文字', selected) : item[1], start, end, 'end');
+            editor.dispatchEvent(new Event('input', { bubbles: true }));
+            editor.focus();
+          });
+          toolbar.appendChild(button);
+        });
+        editor.parentNode.insertBefore(toolbar, editor);
+      });
+    });
+
+    (function () {
+      const path = window.location.pathname.replace(/\/$/, '') || '/';
+      const links = Array.from(document.querySelectorAll('.sidebar-section a'));
+      const active = links
+        .filter(function (link) {
+          const href = (link.getAttribute('href') || '').replace(/\/$/, '') || '/';
+          return path === href || (href !== '/' && path.startsWith(href + '/'));
+        })
+        .sort(function (a, b) { return b.getAttribute('href').length - a.getAttribute('href').length; })[0];
+      if (active) {
+        active.classList.add('active');
+        active.setAttribute('aria-current', 'page');
+      }
+    })();
+
+    (function () {
+      const content = document.querySelector('.content');
+      if (!content || !window.fetch) return;
+      document.documentElement.classList.add('spa-navigation-ready');
+      const shouldHandle = function (link, event) {
+        if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+        if (window.hasUnsavedChanges && window.hasUnsavedChanges() && !window.confirm('当前内容尚未保存，确定要离开吗？')) { event.preventDefault(); event.stopImmediatePropagation(); return false; }
+        if (window.hasUnsavedChanges && window.hasUnsavedChanges()) window.hasUnsavedChanges = null;
+        if (link.target === '_blank' || link.hasAttribute('download') || link.dataset.fullNavigation === 'true') return false;
+        const url = new URL(link.href, window.location.href);
+        return url.origin === window.location.origin && url.pathname !== '/logout' && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/webhooks/');
+      };
+      const runScripts = function (root) {
+        root.querySelectorAll('script').forEach(function (oldScript) {
+          const script = document.createElement('script');
+          Array.from(oldScript.attributes).forEach(function (attribute) { script.setAttribute(attribute.name, attribute.value); });
+          script.textContent = oldScript.textContent;
+          oldScript.replaceWith(script);
+        });
+      };
+      const pageCache = new Map();
+      const prefetch = function (url) {
+        if (pageCache.has(url.href)) return;
+        pageCache.set(url.href, fetch(url.href, { headers: { 'X-Site-Navigation': 'partial', Accept: 'text/html' }, credentials: 'same-origin' }).then(function (response) {
+          if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('prefetch failed');
+          return response.text();
+        }).catch(function () { pageCache.delete(url.href); return null; }));
+      };
+      const setActiveLink = function (nextPath) {
+        const path = String(nextPath || window.location.pathname).split('?')[0].replace(/\/$/, '') || '/';
+        document.querySelectorAll('.sidebar-section a').forEach(function (link) { link.classList.remove('active'); link.removeAttribute('aria-current'); });
+        const active = Array.from(document.querySelectorAll('.sidebar-section a')).filter(function (link) { const href = (link.getAttribute('href') || '').split('?')[0].replace(/\/$/, '') || '/'; return path === href || (href !== '/' && path.startsWith(href + '/')); }).sort(function (a, b) { return (b.getAttribute('href') || '').length - (a.getAttribute('href') || '').length; })[0];
+        if (active) { active.classList.add('active'); active.setAttribute('aria-current', 'page'); }
+      };
+      const navigate = async function (url, addHistory) {
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        try {
+          prefetch(url);
+          const html = await pageCache.get(url.href);
+          if (!html) throw new Error('navigation failed');
+          const parsed = new DOMParser().parseFromString(html, 'text/html');
+          const nextContent = parsed.querySelector('.content');
+          if (!nextContent) throw new Error('content missing');
+          // 轻量淡出/淡入过渡由 CSS 处理（body.is-navigating .content），不隐藏到 0，避免长表格页面白闪。
+          const swap = function () {
+            document.body.classList.add('has-navigated');
+            content.replaceChildren(...Array.from(nextContent.childNodes));
+            document.title = parsed.title;
+            runScripts(content);
+            setActiveLink(url.pathname);
+            if (window.runFilterTabMotion) window.runFilterTabMotion();
+          };
+          if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            document.body.classList.add('is-navigating');
+            await new Promise(function (resolve) { window.setTimeout(resolve, 120); });
+          }
+          swap();
+          document.body.classList.remove('is-navigating');
+          if (addHistory) window.history.pushState({}, '', url.href);
+        } catch (error) {
+          // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。
+          document.body.classList.remove('is-navigating');
+          console.error('局部页面切换失败:', error);
+        } finally {
+          document.getElementById('navigation-loading')?.remove();
+        }
+      };
+      document.addEventListener('click', function (event) {
+        const target = event.target instanceof Element ? event.target : null;
+        const link = target?.closest('a');
+        if (!shouldHandle(link, event)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        navigate(new URL(link.href), true);
+      }, true);
+      document.addEventListener('pointerover', function (event) {
+        const target = event.target instanceof Element ? event.target : null;
+        const link = target?.closest('a');
+        if (!link || link.dataset.fullNavigation === 'true' || link.target === '_blank') return;
+        const url = new URL(link.href, window.location.href);
+        if (url.origin === window.location.origin && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/webhooks/')) prefetch(url);
+      }, { passive: true });
+      window.addEventListener('popstate', function () {
+        if (window.hasUnsavedChanges && window.hasUnsavedChanges()) {
+          if (!window.confirm('当前内容尚未保存，确定要离开吗？')) { window.history.pushState({}, '', window.location.href); return; }
+          window.hasUnsavedChanges = null;
+        }
+        navigate(new URL(window.location.href), false);
+      });
+    })();
+  </script>
+  <script>
+    window.addEventListener('load', function () {
+      const curtain = document.querySelector('.initial-load-curtain');
+      if (!curtain) return;
+      curtain.classList.add('initial-load-complete');
+      curtain.setAttribute('aria-hidden', 'true');
+      window.setTimeout(function () { curtain.remove(); }, 420);
+    }, { once: true });
+  </script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      if (!location.pathname.startsWith('/notifications')) return;
+      document.querySelectorAll('.notification-item .notification-message').forEach(function (message) {
+        if (message.dataset.previewReady) return;
+        message.dataset.previewReady = '1';
+        const full = message.innerHTML;
+        const text = (message.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text.length <= 120) return;
+        message.textContent = text.slice(0, 120) + '…';
+        const details = document.createElement('details');
+        details.className = 'notification-detail';
+        const summary = document.createElement('summary');
+        summary.textContent = '查看详情';
+        const content = document.createElement('div');
+        content.className = 'notification-message';
+        content.innerHTML = full;
+        details.append(summary, content);
+        message.after(details);
+      });
+    });
+  </script>
+<script>
+(() => {
+  const anzLogo = 'https://www.google.com/s2/favicons?domain=anz.com.au&sz=128';
+  document.querySelectorAll('input[name="bsb"], #bsbInput, #refundBsb, #bankBSB').forEach(input => {
+    const wrap = document.createElement('div'); wrap.className = 'bsb-entry'; input.parentNode.insertBefore(wrap, input); wrap.appendChild(input);
+    const logo = document.createElement('span'); logo.className = 'bsb-logo'; logo.setAttribute('aria-label', 'ANZ'); logo.style.backgroundImage = `url(${anzLogo})`; wrap.appendChild(logo);
+    const update = () => {
+      const digits = input.value.replace(/\D/g, '').slice(0, 6);
+      // Only show a logo for an explicitly verified full BSB; do not guess from a prefix.
+      const known = digits === '014111';
+      logo.hidden = !known;
+      input.setAttribute('aria-describedby', known ? logo.id || 'bsb-bank-name' : '');
+    };
+    input.addEventListener('input', update);
+    update();
+  });
+})();
+</script>
+<script>
+  // 站点动画以 CSS 为主（styles.css 的 site-enter 入场、hover/焦点过渡、加载帘幕）。
+  // 这里只做纯 CSS 无法表达的轻量增强：成功/错误提示的状态图标、筛选标签的滑动指示条。
+  window.runSiteAnimations = function () {
+    var content = document.querySelector('.content');
+    if (!content) return;
+    var notices = content.querySelectorAll('.page-notification--success, .alert-success, .page-notification--error, .alert-error');
+    notices.forEach(function (notice) {
+      if (notice.querySelector('.motion-status-icon')) return;
+      var icon = document.createElement('span');
+      icon.className = 'motion-status-icon';
+      var isSuccess = notice.classList.contains('page-notification--success') || notice.classList.contains('alert-success');
+      icon.innerHTML = isSuccess
+        ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+        : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+      icon.setAttribute('aria-hidden', 'true');
+      notice.prepend(icon);
+    });
+  };
+  window.runFilterTabMotion = function () {
+    document.querySelectorAll('.filter-tabs').forEach(function (group) {
+      var active = group.querySelector('.button-primary');
+      if (!active) return;
+      group.classList.add('has-indicator');
+      var move = function () {
+        var groupRect = group.getBoundingClientRect();
+        var rect = active.getBoundingClientRect();
+        group.style.setProperty('--filter-indicator-x', (rect.left - groupRect.left) + 'px');
+        group.style.setProperty('--filter-indicator-width', rect.width + 'px');
+      };
+      move();
+      if (group.dataset.indicatorReady !== '1') {
+        group.dataset.indicatorReady = '1';
+        window.addEventListener('resize', move, { passive: true });
+      }
+    });
+  };
+  window.addEventListener('load', window.runSiteAnimations);
+  window.addEventListener('load', window.runFilterTabMotion);
+</script>
 </body>
 
 </html>
