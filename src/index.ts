@@ -1430,16 +1430,6 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
   return c.redirect('/admin/email-templates')
 })
 
-app.get('/notifications/:id', async (c) => {
-  const user = c.get('user')
-  if (!user) return c.redirect('/login')
-  const item = await c.env.RENT.prepare('SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), user.id).first() as any
-  if (!item) return c.html(renderNotFound(), 404)
-  await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
-  const body = `<div class="panel notification-detail"><div class="section-title"><div><p class="section-code">NOTIFICATION DETAIL</p><h2>${sanitizePlainText(item.title, 200)}</h2><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="notification-message">${renderNotificationMarkdown(item.message)}</div></div>`
-  return c.html(buildLayout('通知详情', body, user))
-})
-
 app.get('/notifications/announcements', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ announcements: [] }, 401)
@@ -1473,6 +1463,16 @@ app.get('/notifications/recent', async (c) => {
   const result = await c.env.RENT.prepare("SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10").bind(user.id).all() as any
   const unread = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND read_at IS NULL").bind(user.id).first() as any
   return c.json({ notifications: result.results || [], unreadCount: Number(unread?.count || 0) })
+})
+
+app.get('/notifications/:id', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.redirect('/login')
+  const item = await c.env.RENT.prepare('SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), user.id).first() as any
+  if (!item) return c.html(renderNotFound(), 404)
+  await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
+  const body = `<div class="panel notification-detail"><div class="section-title"><div><p class="section-code">NOTIFICATION DETAIL</p><h2>${sanitizePlainText(item.title, 200)}</h2><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="notification-message">${renderNotificationMarkdown(item.message)}</div></div>`
+  return c.html(buildLayout('通知详情', body, user))
 })
 
 app.post('/notifications/announcements/:id/dismiss', async (c) => {
