@@ -7,6 +7,7 @@ import { Context } from 'hono'
 import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, ensureNotificationsTable, renderEmailNotificationHtml } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
 import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
+import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChannels'
 
 /**
  * 协议变更后通知客户。设计约束：
@@ -174,8 +175,22 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     )
   )
   if (shouldSaveEmailTransport) await saveEmailConfig(c, emailTransportInput)
+
+  const notifyChannelsInput = payload.notifyChannels
+  const shouldSaveNotifyChannels = Boolean(
+    notifyChannelsInput &&
+    (
+      notifyChannelsInput.clear === true ||
+      notifyChannelsInput.resendApiKey || notifyChannelsInput.resendClear === true ||
+      notifyChannelsInput.resendFrom !== undefined ||
+      'telegramEnabled' in notifyChannelsInput || 'serverChanEnabled' in notifyChannelsInput || 'webhookEnabled' in notifyChannelsInput ||
+      notifyChannelsInput.telegramBotToken || notifyChannelsInput.serverChanSendKey || notifyChannelsInput.webhookUrl
+    )
+  )
+  if (shouldSaveNotifyChannels) await saveNotifyChannels(c, notifyChannelsInput)
+
   await updateSystemSettings(c, next as any)
   await loadSystemSettingsFromDB(c)
 
-  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c) })
+  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c) })
 }

@@ -33,6 +33,7 @@ import { parseCookie } from './lib/cookie'
 import { generateUserId, generateReferralCode } from './lib/userId'
 import { validateHostedImageUrls } from './lib/hostedImages'
 import { safeJsonParse } from './lib/json'
+import { dispatchChannelAlert } from './notifyChannels'
 
 export {
   generateReferenceNumber, generateContractNumber,
@@ -431,7 +432,19 @@ export async function runMonitoringSweep(c: Context): Promise<{ metrics: number;
   for (const m of metrics.filter(x => x.level === 'CRITICAL')) {
     const res = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
       .bind(`dci-${nanoid(12)}`, 'MONITORING_ALERT', 'METRIC', `${m.key}:${new Date().toISOString().slice(0, 10)}`, JSON.stringify(m)).run() as any
-    if (Number(res.meta?.changes ?? res.changes ?? 0) > 0) alerts++
+    if (Number(res.meta?.changes ?? res.changes ?? 0) > 0) {
+      alerts++
+      // 当天首次出现的 CRITICAL 指标推送到已启用的通知渠道；尽力而为。
+      try {
+        await dispatchChannelAlert(c, {
+          title: `监控告警：${(m as any).label || m.key}`,
+          message: `指标 ${m.key} 触发 CRITICAL${(m as any).detail ? `：${(m as any).detail}` : ''}。请打开 /admin/monitoring 查看。`,
+          url: new URL('/admin/monitoring', c.req.url).toString(),
+        })
+      } catch (error: any) {
+        console.error('monitoring alert dispatch failed:', error?.message || error)
+      }
+    }
   }
   return { metrics: metrics.length, alerts }
 }

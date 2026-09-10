@@ -5,8 +5,14 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, coupons: any[] = []) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = []) {
   const settings = getSystemSettings(); // 获取当前系统设置
+  const nc = {
+    resend: notify.resend || { from: '', apiKeyMasked: '', configured: false, usingEnvFallback: false },
+    telegram: notify.telegram || { enabled: false, chatId: '', botTokenMasked: '', configured: false },
+    serverChan: notify.serverChan || { enabled: false, sendKeyMasked: '', configured: false },
+    webhook: notify.webhook || { enabled: false, urlMasked: '', configured: false },
+  };
 
   const body = `
     <div class="panel">
@@ -24,6 +30,53 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           <div><label class="form-label" for="smtpEncryption">加密方式</label><select class="form-control" id="smtpEncryption"><option value="starttls" ${email.encryption === 'starttls' ? 'selected' : ''}>STARTTLS（587）</option><option value="ssl" ${email.encryption === 'ssl' ? 'selected' : ''}>SSL/TLS（465）</option><option value="none" ${email.encryption === 'none' ? 'selected' : ''}>无加密</option></select></div>
         </div>
         <label style="display:flex;gap:8px;align-items:center;margin-top:14px;"><input type="checkbox" id="clearEmailTransport"> 清除已保存的 SMTP 配置</label>
+      </div>
+
+      <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">
+        <h4 style="margin-top:0;">通知渠道</h4>
+        <p class="section-note">Resend 用于发送所有系统邮件（验证、收据、合同、退款、协议更新等）。Telegram / Server酱 / Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。</p>
+
+        <div style="margin-top:12px;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;">
+          <strong>Resend 邮件 API</strong>
+          <p class="section-note">当前状态：${nc.resend.configured ? (nc.resend.usingEnvFallback ? '已配置（使用环境变量 RESEND_API_KEY）' : '已配置') : '未配置'}</p>
+          <div class="grid grid-2">
+            <div><label class="form-label" for="resendApiKey">Resend API Key</label><input class="form-control" type="password" id="resendApiKey" placeholder="${nc.resend.apiKeyMasked || 're_...'}" autocomplete="new-password"></div>
+            <div><label class="form-label" for="resendFrom">发件邮箱</label><input class="form-control" type="text" id="resendFrom" value="${nc.resend.from || ''}" placeholder="PC Rental &lt;noreply@example.com&gt;"></div>
+          </div>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="resendClear"> 清除已保存的 Resend API Key</label>
+        </div>
+
+        <div style="margin-top:12px;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;">
+          <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="telegramEnabled" ${nc.telegram.enabled ? 'checked' : ''}> <strong>启用 Telegram 推送</strong></label>
+          <p class="section-note">当前状态：${nc.telegram.configured ? '已配置' : '未配置'}。用 @BotFather 创建 Bot，Chat ID 可向 @userinfobot 或群组获取。</p>
+          <div class="grid grid-2">
+            <div><label class="form-label" for="telegramBotToken">Bot Token</label><input class="form-control" type="password" id="telegramBotToken" placeholder="${nc.telegram.botTokenMasked || '123456:ABC-DEF...'}" autocomplete="new-password"></div>
+            <div><label class="form-label" for="telegramChatId">Chat ID</label><input class="form-control" type="text" id="telegramChatId" value="${nc.telegram.chatId || ''}" placeholder="-1001234567890"></div>
+          </div>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="telegramClear"> 清除 Telegram 配置</label>
+        </div>
+
+        <div style="margin-top:12px;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;">
+          <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="serverChanEnabled" ${nc.serverChan.enabled ? 'checked' : ''}> <strong>启用 Server酱 / PushPlus</strong></label>
+          <p class="section-note">当前状态：${nc.serverChan.configured ? '已配置' : '未配置'}。填 Server酱 SendKey（SCT 开头）或 PushPlus token（32 位）。</p>
+          <label class="form-label" for="serverChanSendKey">SendKey / token</label>
+          <input class="form-control" type="password" id="serverChanSendKey" placeholder="${nc.serverChan.sendKeyMasked || 'SCTxxxxx 或 pushplus token'}" autocomplete="new-password">
+          <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="serverChanClear"> 清除 Server酱 / PushPlus 配置</label>
+        </div>
+
+        <div style="margin-top:12px;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;">
+          <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="webhookEnabled" ${nc.webhook.enabled ? 'checked' : ''}> <strong>启用通用 Webhook</strong></label>
+          <p class="section-note">当前状态：${nc.webhook.configured ? `已配置（${nc.webhook.urlMasked}）` : '未配置'}。支持 Discord / Slack / 钉钉 / 飞书 的机器人 Webhook，其他地址会收到通用 JSON。</p>
+          <label class="form-label" for="webhookUrl">Webhook 地址（HTTPS）</label>
+          <input class="form-control" type="password" id="webhookUrl" placeholder="${nc.webhook.urlMasked || 'https://...'}" autocomplete="new-password">
+          <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="webhookClear"> 清除 Webhook 配置</label>
+        </div>
+
+        <div style="margin-top:14px;display:flex;gap:10px;align-items:center;">
+          <button type="button" class="button button-secondary" id="notifyChannelsTest">发送测试推送</button>
+          <span class="section-note" id="notifyChannelsTestResult"></span>
+        </div>
+        <p class="section-note">测试推送只发到 Telegram / Server酱 / Webhook，不发邮件。请先保存配置再测试。</p>
       </div>
 
       <div class="form-group" style="padding:24px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;">
@@ -187,6 +240,21 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             encryption: document.getElementById('smtpEncryption').value,
             clear: document.getElementById('clearEmailTransport').checked,
           },
+          notifyChannels: {
+            resendApiKey: document.getElementById('resendApiKey').value,
+            resendFrom: document.getElementById('resendFrom').value,
+            resendClear: document.getElementById('resendClear').checked,
+            telegramEnabled: document.getElementById('telegramEnabled').checked,
+            telegramBotToken: document.getElementById('telegramBotToken').value,
+            telegramChatId: document.getElementById('telegramChatId').value,
+            telegramClear: document.getElementById('telegramClear').checked,
+            serverChanEnabled: document.getElementById('serverChanEnabled').checked,
+            serverChanSendKey: document.getElementById('serverChanSendKey').value,
+            serverChanClear: document.getElementById('serverChanClear').checked,
+            webhookEnabled: document.getElementById('webhookEnabled').checked,
+            webhookUrl: document.getElementById('webhookUrl').value,
+            webhookClear: document.getElementById('webhookClear').checked,
+          },
           registrationSettings: {
             requireEmailVerification: document.getElementById('requireEmailVerification').checked,
           },
@@ -256,6 +324,31 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           console.error('Error saving settings:', error);
           alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。'));
         });
+        });
+      })();
+    </script>
+    <script>
+      (function() {
+        const button = document.getElementById('notifyChannelsTest');
+        if (!button || button.dataset.ready === 'true') return;
+        button.dataset.ready = 'true';
+        const result = document.getElementById('notifyChannelsTestResult');
+        button.addEventListener('click', function() {
+          button.disabled = true;
+          result.textContent = '发送中…';
+          fetch('/admin/notify-channels/test', { method: 'POST' })
+            .then(async function(response) {
+              const data = await response.json().catch(function() { return {}; });
+              if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+              return data;
+            })
+            .then(function(data) {
+              const rows = (data.results || []);
+              if (!rows.length) { result.textContent = '没有已启用的推送渠道。'; return; }
+              result.textContent = rows.map(function(r) { return r.channel + ': ' + (r.ok ? 'OK' : '失败 (' + r.detail + ')'); }).join('　');
+            })
+            .catch(function(error) { result.textContent = '测试失败：' + error.message; })
+            .finally(function() { button.disabled = false; });
         });
       })();
     </script>
