@@ -1404,13 +1404,15 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     : ''
 
   const footerCompany = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
-  // 页脚只平铺三个核心法律链接，其余合规页面收进「更多」折叠菜单，避免一长排链接换行。
-  const footerPrimaryLinks: Array<[string, string]> = currentUser
-    ? [['/service-terms', '服务条款'], ['/privacy', '隐私政策'], ['/cookies', 'Cookie 政策']]
-    : [['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策']]
-  const footerMoreLinks: Array<[string, string]> = currentUser
-    ? []
-    : [['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'], ['/complaints', '投诉与争议'], ['/acceptable-use', '可接受使用'], ['/software-terms', '软件协议']]
+  // 页脚在所有页面（登录前后）保持一致：平铺三个核心法律链接，其余合规页面
+  // 统一收进「更多」折叠菜单，避免一长排链接换行。
+  const footerPrimaryLinks: Array<[string, string]> = [
+    ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
+  ]
+  const footerMoreLinks: Array<[string, string]> = [
+    ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'],
+    ['/complaints', '投诉与争议'], ['/acceptable-use', '可接受使用'], ['/software-terms', '软件协议'],
+  ]
   const renderFooterLink = ([href, text]: [string, string]) => `<a href="${href}">${text}</a>`
   const footerNav = footerPrimaryLinks.map(renderFooterLink).join('')
   const footerMore = footerMoreLinks.length
