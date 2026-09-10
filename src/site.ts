@@ -606,18 +606,18 @@ export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
   return ids.length + Number(purgeResult.meta?.changes ?? purgeResult.changes ?? 0)
 }
 
-// systemSettings 极少变动，但 loadSystemSettingsFromDB 每次都要查 D1 + 对约 10 份
-// 大体量法律文档跑 sanitize-html。用 isolate 级短 TTL 缓存把热路径上的这些成本摊掉；
-// updateSystemSettings 写入后会主动失效。
+// 每次 loadSystemSettingsFromDB 都要跑一次 D1 查询 + 对约 10 个富文本字段做
+// sanitize-html（CPU 密集，整体 ~500ms）。设置极少变化，用 isolate 级短 TTL 缓存把
+// 连续调用（设备端轮询、各页面渲染）挡在重复计算之前。updateSystemSettings 会失效它。
+const SYSTEM_SETTINGS_CACHE_TTL_MS = 30_000
 let systemSettingsLoadedAt = 0
-const SYSTEM_SETTINGS_TTL_MS = 30_000
 
 export function invalidateSystemSettingsCache(): void {
   systemSettingsLoadedAt = 0
 }
 
 export async function loadSystemSettingsFromDB(c: Context): Promise<typeof systemSettings> {
-  if (systemSettingsLoadedAt && Date.now() - systemSettingsLoadedAt < SYSTEM_SETTINGS_TTL_MS) {
+  if (systemSettingsLoadedAt && Date.now() - systemSettingsLoadedAt < SYSTEM_SETTINGS_CACHE_TTL_MS) {
     return systemSettings
   }
   const db = getDB(c)
@@ -689,6 +689,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
   if (parsedRegistrationSettings) systemSettings.registrationSettings = { ...systemSettings.registrationSettings, ...parsedRegistrationSettings }
 
+  systemSettingsLoadedAt = Date.now()
   return systemSettings
 }
 

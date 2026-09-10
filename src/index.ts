@@ -218,15 +218,36 @@ app.get('/app.js', (c) => {
   return c.body(appScriptText)
 })
 
+const SYSTEM_STATUS_CACHE_KEY = 'https://rent.internal/api/system-status'
+const SYSTEM_STATUS_TTL_MS = 15_000
+
 app.get('/api/system-status', async (c) => {
+  // 边缘缓存：MonitorFlare 每 15 分钟探测一次，每个页面又每 60 秒轮询一次，
+  // 命中缓存即可跳过 D1 往返（原本两次串行查询 ~470ms）。
+  const cache = caches.default
+  const cacheKey = new Request(SYSTEM_STATUS_CACHE_KEY)
+  const cached = await cache.match(cacheKey)
+  if (cached) {
+    const body = await cached.json()
+    return c.json(body as any, 200, { 'Cache-Control': 'no-store' })
+  }
+
   const startedAt = Date.now()
   try {
-    await c.env.RENT.prepare('SELECT 1 AS ok').first()
-    const recent = await c.env.RENT.prepare("SELECT COUNT(*) AS total FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND datetime(created_at) >= datetime('now', '-10 minutes')").first() as any
-    const errors = Number(recent?.total || 0)
-    const latency = Date.now() - startedAt
-    const delayed = latency >= 1000
-    return c.json({ status: errors ? 'degraded' : delayed ? 'delayed' : 'healthy', label: errors ? '异常' : delayed ? '延迟' : '正常', checkedAt: new Date().toISOString() }, 200, { 'Cache-Control': 'no-store' })
+    // 单条可命中 idx_error_logs_created_at 的查询：既验证 D1 连通性，
+    // 又判断近 10 分钟内是否有错误。直接比较文本时间戳，避免 datetime() 包裹导致索引失效；
+    // 只取存在性（LIMIT 1）而非 COUNT(*)，命中即停。
+    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ')
+    const recent = await c.env.RENT.prepare("SELECT 1 AS hit FROM error_logs WHERE error_level IN ('ERROR', 'CRITICAL') AND created_at >= ? LIMIT 1").bind(since).first() as any
+    const errors = recent ? 1 : 0
+    const delayed = Date.now() - startedAt >= 1000
+    const body = { status: errors ? 'degraded' : delayed ? 'delayed' : 'healthy', label: errors ? '异常' : delayed ? '延迟' : '正常', checkedAt: new Date().toISOString() }
+    const toCache = new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${SYSTEM_STATUS_TTL_MS / 1000}` },
+    })
+    try { c.executionCtx.waitUntil(cache.put(cacheKey, toCache)) } catch (_) { }
+    return c.json(body, 200, { 'Cache-Control': 'no-store' })
   } catch (error: any) {
     console.error('System status check failed:', error?.message || error)
     return c.json({ status: 'down', label: '错误' }, 503, { 'Cache-Control': 'no-store' })
@@ -402,9 +423,22 @@ app.get('/api/device-agent/update', async (c) => {
 })
 
 app.get('/api/device-agent/software-terms', async (c) => {
+  // 设备端会定期拉取该协议，内容极少变化；边缘缓存 5 分钟，
+  // 命中时直接跳过 loadSystemSettingsFromDB（D1 + sanitize-html）。
+  const cache = caches.default
+  const cacheKey = new Request('https://rent.internal/api/device-agent/software-terms')
+  const cached = await cache.match(cacheKey)
+  if (cached) return c.json(await cached.json() as any)
+
   const settings = await loadSystemSettingsFromDB(c)
   const metadata = settings.legalMetadata.software
-  return c.json({ content: settings.softwareTerms, version: metadata.version, lastUpdatedDate: metadata.lastUpdatedDate })
+  const body = { content: settings.softwareTerms, version: metadata.version, lastUpdatedDate: metadata.lastUpdatedDate }
+  const toCache = new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' },
+  })
+  try { c.executionCtx.waitUntil(cache.put(cacheKey, toCache)) } catch (_) { }
+  return c.json(body)
 })
 
 let loginAttemptsSchemaReady: Promise<void> | null = null
