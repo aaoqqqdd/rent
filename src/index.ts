@@ -270,9 +270,14 @@ app.get('/api/monitor', async (c) => {
       return { ok: recent === 0, status: recent ? 'degraded' : 'ok', windowMinutes: 10, recent, critical }
     }),
     runCheck('scheduledJobs', 'degraded', async () => {
+      // "stuck" only counts a RUNNING row that plausibly belongs to a live job:
+      // started 1h–24h ago. scheduled_job_runs is never purged, and a worker
+      // killed mid-tick (CPU/wall-clock limit) leaves an orphan RUNNING row
+      // forever — without the lower bound one past crash pins this check to
+      // "degraded" permanently regardless of how healthy the cron now is.
       const row = await c.env.RENT.prepare(`SELECT
         SUM(CASE WHEN status = 'FAILED' AND datetime(started_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
-        SUM(CASE WHEN status = 'RUNNING' AND datetime(started_at) < datetime('now', '-1 hour') THEN 1 ELSE 0 END) AS stuck,
+        SUM(CASE WHEN status = 'RUNNING' AND datetime(started_at) < datetime('now', '-1 hour') AND datetime(started_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS stuck,
         MAX(started_at) AS last_run
         FROM scheduled_job_runs`).first() as any
       const failures = Number(row?.failures || 0)
@@ -283,22 +288,37 @@ app.get('/api/monitor', async (c) => {
       return { ok: !failures && !stuck && !overdue, status: failures || stuck || overdue ? 'degraded' : 'ok', failures24h: failures, stuck, lastRunAgeSeconds }
     }),
     runCheck('emailDelivery', 'degraded', async () => {
+      // email_events.status is one of PENDING/SENT/FAILED/SKIPPED — there is no
+      // 'SENDING'. Grade failures as a share of 24h volume (a single transient
+      // bounce must not pin the probe to "degraded" for a whole day); a PENDING
+      // row older than 30min is a genuinely stuck send and always counts.
       const row = await c.env.RENT.prepare(`SELECT
+        SUM(CASE WHEN datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS total,
         SUM(CASE WHEN status = 'FAILED' AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
-        SUM(CASE WHEN status IN ('PENDING', 'SENDING') AND datetime(created_at) < datetime('now', '-30 minutes') THEN 1 ELSE 0 END) AS stuck
+        SUM(CASE WHEN status = 'PENDING' AND datetime(created_at) < datetime('now', '-30 minutes') THEN 1 ELSE 0 END) AS stuck
         FROM email_events`).first() as any
+      const total = Number(row?.total || 0)
       const failures = Number(row?.failures || 0)
       const stuck = Number(row?.stuck || 0)
-      return { ok: !failures && !stuck, status: failures || stuck ? 'degraded' : 'ok', failures24h: failures, stuck }
+      const bad = stuck > 0 || (total > 0 && failures / total >= 0.1)
+      return { ok: !bad, status: bad ? 'degraded' : 'ok', total24h: total, failures24h: failures, stuck }
     }),
     runCheck('remoteCommands', 'degraded', async () => {
+      // EXPIRED is a normal lapse (offline device, or a long-dated cleanup
+      // command that was never meant to run soon) — only FAILED is a real
+      // failure, graded as a share of completed commands. "overdue" is bounded
+      // to the last 24h so an offline device's stale QUEUED command (only swept
+      // to EXPIRED when that device next polls) doesn't pin the probe forever.
       const row = await c.env.RENT.prepare(`SELECT
-        SUM(CASE WHEN status IN ('FAILED', 'EXPIRED') AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
-        SUM(CASE WHEN status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END) AS overdue
+        SUM(CASE WHEN status = 'FAILED' AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN status IN ('SUCCESS', 'FAILED', 'EXPIRED') AND datetime(created_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP AND datetime(expires_at) >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS overdue
         FROM device_commands`).first() as any
       const failures = Number(row?.failures || 0)
+      const completed = Number(row?.completed || 0)
       const overdue = Number(row?.overdue || 0)
-      return { ok: !failures && !overdue, status: failures || overdue ? 'degraded' : 'ok', failures24h: failures, overdue }
+      const bad = overdue > 0 || (completed > 0 && failures / completed >= 0.15)
+      return { ok: !bad, status: bad ? 'degraded' : 'ok', failures24h: failures, completed24h: completed, overdue }
     }),
   ])
 
@@ -2178,59 +2198,6 @@ app.get('/contract/print/:id', async (c) => {
   return c.html(await pages.renderContractView(c, c.req.param('id'), user, true))
 })
 
-app.get('/health', async (c) => {
-  const checks: Record<string, any> = {}
-  let unhealthy = false
-  let degraded = false
-
-  try {
-    await c.env.RENT.prepare('SELECT 1').first()
-    checks.database = { ok: true }
-  } catch (error: any) {
-    checks.database = { ok: false, error: error?.message || String(error) }
-    unhealthy = true
-  }
-
-  try {
-    const stripeSummary = await getStripeConfigSummary(c)
-    checks.stripe = { ok: true, configured: Boolean(stripeSummary.configured) }
-    if (!stripeSummary.configured) degraded = true
-  } catch (error: any) {
-    checks.stripe = { ok: false, error: error?.message || String(error) }
-    degraded = true
-  }
-
-  try {
-    const emailSummary = await getEmailConfigSummary(c)
-    checks.email = { ok: true, configured: Boolean((emailSummary as any).configured) }
-    if (!(emailSummary as any).configured) degraded = true
-  } catch (error: any) {
-    checks.email = { ok: false, error: error?.message || String(error) }
-    degraded = true
-  }
-
-  try {
-    const offline = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM devices WHERE agent_token_hash IS NOT NULL AND agent_status = 'offline'").first() as any
-    checks.devices = { ok: true, offlineCount: Number(offline?.count || 0) }
-  } catch (error: any) {
-    checks.devices = { ok: false, error: error?.message || String(error) }
-    degraded = true
-  }
-
-  try {
-    const recentFailures = await c.env.RENT.prepare("SELECT job_name, COUNT(*) AS failures FROM scheduled_job_runs WHERE status = 'FAILED' AND started_at > datetime('now', '-2 hours') GROUP BY job_name").all()
-    const failedJobs = (recentFailures.results || []) as any[]
-    checks.scheduledJobs = { ok: failedJobs.length === 0, recentFailures: failedJobs }
-    if (failedJobs.length > 0) degraded = true
-  } catch (error: any) {
-    checks.scheduledJobs = { ok: false, error: error?.message || String(error) }
-    degraded = true
-  }
-
-  const status = unhealthy ? 'unhealthy' : degraded ? 'degraded' : 'healthy'
-  return c.json({ status, checks, timestamp: new Date().toISOString() }, unhealthy ? 503 : 200)
-})
-
 app.get('/verify', async (c) => {
   const number = String(c.req.query('number') || '').trim()
   const token = String(c.req.query('token') || '').trim()
@@ -2599,7 +2566,7 @@ app.get('/admin/exceptions', async (c) => {
     ['待处理支付争议', disputes.results, '/admin/finance/payment-disputes', (item: any) => `订单 ${sanitizePlainText(item.order_id || '-', 50)} · ${sanitizePlainText(item.currency, 10)}$${Number(item.amount).toFixed(2)} · ${sanitizePlainText(item.reason || '未说明原因', 100)}`],
     ['待审核异常订单', anomalousOrders.results, '/admin/finance/anomalous-orders', (item: any) => `订单 ${sanitizePlainText(item.orderNo || item.order_id, 50)} · ${sanitizePlainText(item.anomaly_type, 100)} · 已自动暂停`],
     ['数据不一致', consistencyIssues.results, '/admin/exceptions', (item: any) => `${sanitizePlainText(item.issue_type, 60)} · ${sanitizePlainText(item.entity_type, 30)} ${sanitizePlainText(item.entity_id, 60)} · 发现于 ${formatMelbourneDateTime(item.detected_at)}`],
-    ['连续失败的定时任务', failingJobs.results, '/health', (item: any) => `${sanitizePlainText(item.job_name, 80)} · 最近失败于 ${formatMelbourneDateTime(item.last_failed_at)} · ${sanitizePlainText(item.last_error || '无错误信息', 200)}`],
+    ['连续失败的定时任务', failingJobs.results, '/admin/monitoring', (item: any) => `${sanitizePlainText(item.job_name, 80)} · 最近失败于 ${formatMelbourneDateTime(item.last_failed_at)} · ${sanitizePlainText(item.last_error || '无错误信息', 200)}`],
   ] as const
   const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和押金异常；所有充值与转账审核均在此完成。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
   return c.html(buildLayout('异常任务中心', body, admin))
