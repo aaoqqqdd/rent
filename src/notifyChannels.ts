@@ -177,14 +177,20 @@ export async function resolveResendCredentials(c: Context): Promise<{ apiKey: st
 export interface ChannelAlert { title: string; message: string; url?: string }
 export type ChannelDeliveryResult = { channel: string; ok: boolean; detail: string }
 
+// 按主机名精确匹配（等于该域名或它的子域），而不是子串包含——既避免
+// hooks.slack.com.evil.com 之类误判，也让 CodeQL 的 URL 消毒规则满意。
+function hostMatches(hostname: string, domain: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`)
+}
+
 function buildWebhookBody(url: string, alert: ChannelAlert): string {
   const text = alert.url ? `${alert.title}\n${alert.message}\n${alert.url}` : `${alert.title}\n${alert.message}`
-  let host = ''
-  try { host = new URL(url).host } catch { /* ignore */ }
-  if (host.includes('discord')) return JSON.stringify({ content: text.slice(0, 1900) })
-  if (host.includes('hooks.slack.com')) return JSON.stringify({ text })
-  if (host.includes('dingtalk')) return JSON.stringify({ msgtype: 'text', text: { content: text } })
-  if (host.includes('feishu') || host.includes('larksuite')) return JSON.stringify({ msg_type: 'text', content: { text } })
+  let hostname = ''
+  try { hostname = new URL(url).hostname.toLowerCase() } catch { /* ignore */ }
+  if (hostMatches(hostname, 'discord.com') || hostMatches(hostname, 'discordapp.com')) return JSON.stringify({ content: text.slice(0, 1900) })
+  if (hostMatches(hostname, 'slack.com')) return JSON.stringify({ text })
+  if (hostMatches(hostname, 'dingtalk.com')) return JSON.stringify({ msgtype: 'text', text: { content: text } })
+  if (hostMatches(hostname, 'feishu.cn') || hostMatches(hostname, 'larksuite.com')) return JSON.stringify({ msg_type: 'text', content: { text } })
   return JSON.stringify({ title: alert.title, message: alert.message, url: alert.url || '', text })
 }
 
