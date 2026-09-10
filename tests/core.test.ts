@@ -29,11 +29,10 @@ import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
+import { extractInlineScripts } from './helpers'
 
 function assertInlineScriptsParse(html: string) {
-  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script\s*>/gi)]
-    .map(match => match[1])
-    .filter(Boolean)
+  const scripts = extractInlineScripts(html).map(script => script.trim()).filter(Boolean)
   assert.ok(scripts.length > 0)
   for (const script of scripts) assert.doesNotThrow(() => new Function(script))
 }
