@@ -62,6 +62,7 @@
 -- ---------------------------------------------------------------------------
 
 PRAGMA foreign_keys=OFF;
+PRAGMA defer_foreign_keys=ON;
 PRAGMA legacy_alter_table=ON;
 
 -- === payments : drop customer_id -> users_old ; keep rental_id -> orders ====

@@ -1,8 +1,0 @@
-<!-- Copyright (c) 2026 jiongjiong123441. Licensed under PolyForm Noncommercial 1.0.0. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs><linearGradient id="g" x1="8" y1="8" x2="56" y2="56"><stop stop-color="#67e8f9"/><stop offset="1" stop-color="#6574ff"/></linearGradient></defs>
-  <rect width="64" height="64" rx="15" fill="#080b11"/>
-  <path d="M15 17h34a4 4 0 0 1 4 4v22H11V21a4 4 0 0 1 4-4Z" fill="none" stroke="url(#g)" stroke-width="4"/>
-  <path d="M7 46h50l-5 5H12Z" fill="url(#g)"/>
-  <path d="m25 36 6-10h5l-4 7h7l-10 10 2-7Z" fill="#eaffff"/>
-</svg>

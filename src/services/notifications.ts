@@ -42,21 +42,23 @@ export async function ensureNotificationsTable(c: Context): Promise<void> {
     sender_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     read_at TEXT,
     deleted_at TEXT,
+    expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`).run()
     try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN sender_id TEXT REFERENCES users(id) ON DELETE SET NULL').run() } catch (_) { /* column already exists */ }
     try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN deleted_at TEXT').run() } catch (_) { /* column already exists */ }
+    try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN expires_at TEXT').run() } catch (_) { /* column already exists */ }
     await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created ON notifications(recipient_id, read_at, created_at DESC)').run()
     await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_sender_created ON notifications(sender_id, deleted_at, created_at DESC)').run()
   })()
   try { await notificationsSchemaReady } catch (error) { notificationsSchemaReady = null; throw error }
 }
 
-export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string }): Promise<void> {
+export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string; expiresAt?: string | null }): Promise<void> {
   await ensureNotificationsTable(c)
   const id = `nt-${crypto.randomUUID()}`
-  await c.env.RENT.prepare('INSERT INTO notifications (id, recipient_id, type, title, message, order_id, sender_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null).run()
+  await c.env.RENT.prepare('INSERT INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null, notification.expiresAt || null).run()
 
   // 员工/管理员收到的通知同步广播到已启用的推送渠道；尽力而为，绝不影响站内信。
   try {
@@ -71,7 +73,7 @@ export async function createNotification(c: Context, notification: { recipientId
 
 export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
   await ensureNotificationsTable(c)
-  const result = await c.env.RENT.prepare('SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 100').bind(recipientId).all()
+  const result = await c.env.RENT.prepare("SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 100").bind(recipientId).all()
   return result.results || []
 }
 

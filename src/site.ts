@@ -411,26 +411,42 @@ export interface MonitorMetricDef {
 const MONITOR_SNAPSHOT_RETENTION_DAYS = 30
 
 export const MONITOR_METRIC_DEFS: MonitorMetricDef[] = [
-  { key: 'api_error_rate', label: 'API 错误率（24h）', kind: 'rate', warn: 0.02, crit: 0.1,
-    sql: `SELECT (SELECT COUNT(*) FROM error_logs WHERE error_level IN ('ERROR','FATAL') AND created_at > datetime('now','-1 day')) AS n, (SELECT COUNT(*) FROM error_logs WHERE created_at > datetime('now','-1 day')) AS d` },
-  { key: 'payment_failure_rate', label: '付款失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
-    sql: `SELECT SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM payments WHERE created_at > datetime('now','-1 day')` },
-  { key: 'webhook_failure_rate', label: 'Webhook 失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
-    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM webhook_events WHERE received_at > datetime('now','-1 day')` },
-  { key: 'email_failure_rate', label: '邮件失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
-    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM email_events WHERE created_at > datetime('now','-1 day')` },
+  {
+    key: 'api_error_rate', label: 'API 错误率（24h）', kind: 'rate', warn: 0.02, crit: 0.1,
+    sql: `SELECT (SELECT COUNT(*) FROM error_logs WHERE error_level IN ('ERROR','FATAL') AND created_at > datetime('now','-1 day')) AS n, (SELECT COUNT(*) FROM error_logs WHERE created_at > datetime('now','-1 day')) AS d`
+  },
+  {
+    key: 'payment_failure_rate', label: '付款失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
+    sql: `SELECT SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM payments WHERE created_at > datetime('now','-1 day')`
+  },
+  {
+    key: 'webhook_failure_rate', label: 'Webhook 失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
+    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM webhook_events WHERE received_at > datetime('now','-1 day')`
+  },
+  {
+    key: 'email_failure_rate', label: '邮件失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.3,
+    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM email_events WHERE created_at > datetime('now','-1 day')`
+  },
   // 离线判定按心跳时间：没有任何 sweep 会把 agent_status 从 'online' 改回 'offline'，
   // 只能靠 agent_last_seen_at 是否陈旧。5 分钟阈值与绑定设备页一致。
-  { key: 'device_offline_rate', label: '设备离线率', kind: 'rate', warn: 0.2, crit: 0.5,
-    sql: `SELECT SUM(CASE WHEN agent_last_seen_at IS NULL OR agent_last_seen_at <= datetime('now', '-5 minutes') THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL` },
-  { key: 'remote_command_failure_rate', label: '远程命令失败率（24h）', kind: 'rate', warn: 0.15, crit: 0.4,
-    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')` },
-  { key: 'scheduled_job_failure_rate', label: '定时任务失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.25,
-    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM scheduled_job_runs WHERE started_at > datetime('now','-1 day')` },
+  {
+    key: 'device_offline_rate', label: '设备离线率', kind: 'rate', warn: 0.2, crit: 0.5,
+    sql: `SELECT SUM(CASE WHEN agent_last_seen_at IS NULL OR agent_last_seen_at <= datetime('now', '-5 minutes') THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM devices WHERE agent_token_hash IS NOT NULL`
+  },
+  {
+    key: 'remote_command_failure_rate', label: '远程命令失败率（24h）', kind: 'rate', warn: 0.15, crit: 0.4,
+    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, SUM(CASE WHEN status IN ('SUCCESS','FAILED','EXPIRED') THEN 1 ELSE 0 END) AS d FROM device_commands WHERE created_at > datetime('now','-1 day')`
+  },
+  {
+    key: 'scheduled_job_failure_rate', label: '定时任务失败率（24h）', kind: 'rate', warn: 0.1, crit: 0.25,
+    sql: `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM scheduled_job_runs WHERE started_at > datetime('now','-1 day')`
+  },
   // 计数型：积压排除 MONITORING_ALERT 自身，否则「告警写回 data_consistency_issues → 抬高积压 → 再告警」自循环。
-  { key: 'open_exception_backlog', label: '异常任务积压', kind: 'count', warn: 3, crit: 10,
+  {
+    key: 'open_exception_backlog', label: '异常任务积压', kind: 'count', warn: 3, crit: 10,
     sql: `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL AND issue_type <> 'MONITORING_ALERT') + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n`,
-    note: '未处理异常条数（WARN ≥3 / CRITICAL ≥10）' },
+    note: '未处理异常条数（WARN ≥3 / CRITICAL ≥10）'
+  },
 ]
 
 // 近 minutes 分钟内 ERROR/CRITICAL 日志计数。/api/system-status 与 /api/monitor 的实时错误探针共用，
@@ -475,7 +491,7 @@ export async function getMonitoringHistory(c: Context, windowHours = 168): Promi
     ).bind(`-${Math.max(1, Math.floor(windowHours))} hours`).all()).results as any[]
     for (const r of rows || []) {
       const key = String(r.metric_key)
-      ;(out[key] ||= []).push({ capturedAt: String(r.captured_at), rate: Number(r.rate) || 0, level: r.level as HealthLevel })
+        ; (out[key] ||= []).push({ capturedAt: String(r.captured_at), rate: Number(r.rate) || 0, level: r.level as HealthLevel })
     }
   } catch { /* 快照表尚未迁移时静默降级为空趋势 */ }
   return out

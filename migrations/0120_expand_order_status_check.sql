@@ -6,6 +6,7 @@
 -- The original orders table inherited a legacy CHECK constraint from rentals.
 -- Rebuild it so the order lifecycle states used by the application are valid.
 PRAGMA foreign_keys = OFF;
+PRAGMA defer_foreign_keys = ON;
 
 CREATE TABLE orders_new (
   id TEXT PRIMARY KEY NOT NULL,
