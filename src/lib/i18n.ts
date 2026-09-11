@@ -86,7 +86,14 @@ export const languageScript = String.raw`
   };
 
   var keys = Object.keys(translations).sort(function (a, b) { return b.length - a.length; });
-  var readLanguage = function () { try { return localStorage.getItem(storageKey) === 'en' ? 'en' : 'zh'; } catch (_) { return 'zh'; } };
+  var readLanguage = function () {
+    try {
+      var stored = localStorage.getItem(storageKey);
+      if (stored === 'en' || stored === 'zh') return stored;
+    } catch (_) {}
+    var browserLanguages = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || ''];
+    return browserLanguages.some(function (language) { return /^en(?:-|$)/i.test(String(language)); }) ? 'en' : 'zh';
+  };
   var writeLanguage = function (value) { try { localStorage.setItem(storageKey, value); } catch (_) {} };
   var translateText = function (value) {
     var text = String(value || '');

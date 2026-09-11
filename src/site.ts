@@ -5,13 +5,12 @@
 
 import { Context } from 'hono'
 import rawLayoutTemplate from './layout.html'
-import { styleSheetHref, appScriptHref } from './lib/assetVersion'
+import { styleSheetHref } from './lib/assetVersion'
 import { nanoid } from 'nanoid'
 
 // 给 styles.css / app.js 链接注入内容指纹版本号，配合 ?v=<hash> 的一年期 immutable 缓存。
 const layoutTemplate = rawLayoutTemplate
   .replace('href="/styles.css"', `href="${styleSheetHref}"`)
-  .replace('src="{{APP_SCRIPT}}"', `src="${appScriptHref}"`)
 
 // ---------------------------------------------------------------------------
 // 通用工具函数已拆分到 src/lib/*。这里 import 供本文件内部使用，并在文件内

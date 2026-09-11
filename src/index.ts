@@ -117,7 +117,7 @@ import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalP
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
-import { styleSheetText as siteStyles, styleSheetVersion, appScriptText, appScriptVersion } from './lib/assetVersion'
+import { styleSheetText as siteStyles, styleSheetVersion } from './lib/assetVersion'
 import { languageScript } from './lib/i18n'
 import { getTableColumns as getCachedTableColumns } from './db/client'
 
@@ -216,19 +216,6 @@ app.get('/favicon.svg', (c) => {
   return c.body('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg>')
 })
 app.get('/favicon.ico', (c) => c.redirect('/favicon.svg', 301))
-
-app.get('/app.js', (c) => {
-  c.header('Content-Type', 'text/javascript; charset=utf-8')
-  // 与 /styles.css 同策略：带正确版本号即长期 immutable，否则短缓存。
-  const versioned = c.req.query('v') === appScriptVersion
-  c.header('Cache-Control', versioned
-    ? 'public, max-age=31536000, immutable'
-    : 'public, max-age=3600, stale-while-revalidate=86400')
-  c.header('ETag', `"${appScriptVersion}"`)
-  c.header('X-Content-Type-Options', 'nosniff')
-  if (c.req.header('If-None-Match') === `"${appScriptVersion}"`) return c.body(null, 304)
-  return c.body(appScriptText)
-})
 
 app.get('/i18n.js', (c) => {
   c.header('Content-Type', 'text/javascript; charset=utf-8')

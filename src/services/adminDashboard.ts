@@ -44,6 +44,23 @@ export interface AdminDashboardData {
   }>
 }
 
+interface RecentOrderRow {
+  id: unknown
+  orderNo?: string | null
+  status?: string | null
+  totalAmount?: number | string | null
+  customerName?: string | null
+  deviceName?: string | null
+}
+
+interface RecentDeviceRow {
+  id: unknown
+  name?: string | null
+  model?: string | null
+  status?: string | null
+  customerName?: string | null
+}
+
 export async function getAdminDashboardData(c: Context): Promise<AdminDashboardData> {
   const db = getDB(c)
 
@@ -93,8 +110,8 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
 
   const [statsRow, recentOrders, recentDevices] = await Promise.all([
     db.prepare(statsQuery).first(),
-    db.prepare(recentOrdersQuery).all().then((r: any) => (r.results || []) as any[]),
-    db.prepare(recentDevicesQuery).all().then((r: any) => (r.results || []) as any[]),
+    db.prepare(recentOrdersQuery).all().then((r: any) => (r.results || []) as RecentOrderRow[]),
+    db.prepare(recentDevicesQuery).all().then((r: any) => (r.results || []) as RecentDeviceRow[]),
   ])
 
   const s = (statsRow || {}) as any
@@ -115,7 +132,7 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
       maintenanceDevices: Number(s.maintenanceDevices || 0),
       damagedDevices: Number(s.damagedDevices || 0),
     },
-    recentOrders: recentOrders.map((o) => ({
+    recentOrders: recentOrders.map((o: RecentOrderRow) => ({
       id: String(o.id),
       orderNo: o.orderNo ?? null,
       status: String(o.status || ''),
@@ -123,7 +140,7 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
       customerName: o.customerName ?? null,
       deviceName: o.deviceName ?? null,
     })),
-    recentDevices: recentDevices.map((d) => ({
+    recentDevices: recentDevices.map((d: RecentDeviceRow) => ({
       id: String(d.id),
       name: String(d.name || ''),
       model: d.model ?? null,

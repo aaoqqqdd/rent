@@ -8,10 +8,8 @@
 // 平时浏览器 / CF 边缘完全命中缓存，不再每小时回源重新拉 ~150KB。
 
 import siteStyles from '../styles.css'
-import clientScript from '../appClient.js.txt'
 
 export const styleSheetText: string = siteStyles
-export const appScriptText: string = clientScript
 
 // FNV-1a 32-bit —— 快、稳定、无依赖，足够用作缓存版本号。
 function fnv1a(input: string): string {
@@ -26,5 +24,3 @@ function fnv1a(input: string): string {
 export const styleSheetVersion: string = fnv1a(siteStyles)
 export const styleSheetHref: string = `/styles.css?v=${styleSheetVersion}`
 
-export const appScriptVersion: string = fnv1a(clientScript)
-export const appScriptHref: string = `/app.js?v=${appScriptVersion}`
