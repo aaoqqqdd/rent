@@ -13,7 +13,7 @@ export const languageScript = String.raw`
   var originalTitle = document.title;
   var translations = {
     '跳到主要内容': 'Skip to main content', '正在加载工作台': 'Loading workspace', '正在载入工作台': 'Loading workspace',
-    '设备租赁控制台': 'Equipment rental console', '登录': 'Sign in', '注册': 'Register', '通知中心': 'Notifications',
+    '设备租赁控制台': 'Equipment rental console', '登录': 'Sign in', '注册': 'Register', '通知中心': 'Notifications', '🎉新优惠现已开启！': '🎉A new offer is now live!',
     '正在加载通知…': 'Loading notifications…', '查看全部通知': 'View all notifications', '编辑个人信息': 'Edit profile',
     '登出': 'Sign out', '导航': 'Navigation', '控制台': 'Dashboard', '租赁工作区': 'Rental workspace',
     '我的租赁': 'My rentals', '订单管理': 'Order management', '账户与钱包': 'Account & wallet', '我的钱包': 'My wallet',
@@ -100,6 +100,13 @@ export const languageScript = String.raw`
     if (!text.trim()) return text;
     var leading = text.match(/^\s*/)[0], trailing = text.match(/\s*$/)[0];
     var core = text.slice(leading.length, text.length - trailing.length || undefined);
+    var couponNotice = core.match(/^🎉新优惠现已开启！\s*\n\s*\n使用优惠码 <strong>([^<]+)<\/strong>，即可享受下次租赁 <strong>([^<]+)<\/strong>。\s*\n\s*\n有效期至 <strong>((\d{4})年(\d{1,2})月(\d{1,2})日|长期有效)<\/strong>$/);
+    if (couponNotice) {
+      var dateParts = couponNotice[3].match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
+      var expiry = dateParts ? new Date(Number(dateParts[1]), Number(dateParts[2]) - 1, Number(dateParts[3])) : null;
+      var expiryText = couponNotice[3] === '长期有效' ? 'No expiry' : expiry && !isNaN(expiry.getTime()) ? expiry.toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' }) : couponNotice[3];
+      return leading + '🎉A new offer is now live!\n\nUse promo code **' + couponNotice[1] + '** to get **' + couponNotice[2].replace(' 的折扣', ' off').replace(' 的优惠', ' off') + '** on your next rental.\n\nValid until **' + expiryText + '**' + trailing;
+    }
     if (Object.prototype.hasOwnProperty.call(translations, core)) return leading + translations[core] + trailing;
     keys.forEach(function (key) { if (core.indexOf(key) !== -1) core = core.split(key).join(translations[key]); });
     return leading + core + trailing;

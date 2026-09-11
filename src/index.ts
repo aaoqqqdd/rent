@@ -4226,9 +4226,9 @@ app.post('/admin/coupons', async (c) => {
     const noticeMessage = [
       '🎉新优惠现已开启！',
       '',
-      `使用优惠码 **${code}**，即可享受下次租赁 **${discountText}**。`,
+      `使用优惠码 <strong>${code}</strong>，即可享受下次租赁 <strong>${discountText}</strong>。`,
       '',
-      `有效期至 **${formatCouponDate(fields.expiresAt)}**`,
+      `有效期至 <strong>${formatCouponDate(fields.expiresAt)}</strong>`,
     ].join('\n')
     await Promise.all(customers.map((customer: any) => createNotification(c, {
       recipientId: customer.id,
