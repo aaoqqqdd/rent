@@ -235,6 +235,9 @@ export function renderSiteVariables(content: string, currentUser: any = {}, extr
     company_email: systemSettings.companyDetails.email,
     company_website: systemSettings.companyDetails.website,
     company_logo: systemSettings.companyDetails.logo,
+    user_terms_version: systemSettings.legalMetadata.user.version,
+    user_terms_last_updated_date: systemSettings.legalMetadata.user.lastUpdatedDate,
+    // 兼容旧模板变量名（迁移 0114 早期版本使用 user_agreement_* 而非与页面 varPrefix 一致的 user_terms_*）
     user_agreement_version: systemSettings.legalMetadata.user.version,
     user_agreement_last_updated_date: systemSettings.legalMetadata.user.lastUpdatedDate,
     service_terms_version: systemSettings.legalMetadata.service.version,

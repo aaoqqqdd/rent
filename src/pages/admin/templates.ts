@@ -80,7 +80,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind, datab
   const initialContent = JSON.stringify(content).replace(/</g, '\\u003c')
   const textareaContent = String(content ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const agreementVariables: Record<AgreementKind, string[]> = {
-    user: ['user_agreement_version', 'user_agreement_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
+    user: ['user_terms_version', 'user_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     service: ['service_terms_version', 'service_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     privacy: ['privacy_policy_version', 'privacy_policy_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     software: ['software_terms_version', 'software_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
