@@ -801,6 +801,10 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   const hasPricePerDayCamel = deviceColumns.has('pricePerDay');
   const hasDepositAmountSnake = deviceColumns.has('deposit_amount');
   const hasDepositAmountCamel = deviceColumns.has('depositAmount');
+  const hasWeeklyDiscountSnake = deviceColumns.has('weekly_discount_percent');
+  const hasWeeklyDiscountCamel = deviceColumns.has('weeklyDiscountPercent');
+  const hasMonthlyDiscountSnake = deviceColumns.has('monthly_discount_percent');
+  const hasMonthlyDiscountCamel = deviceColumns.has('monthlyDiscountPercent');
 
   // 构建插入字段和值
   const insertFields = ['id', 'name', 'model', 'status', 'description'];
@@ -856,6 +860,21 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     insertValues.push(device.depositAmount.toString());
   }
 
+  if (hasWeeklyDiscountCamel) {
+    insertFields.push('weeklyDiscountPercent');
+    insertValues.push(String((device as any).weeklyDiscountPercent ?? (device as any).weekly_discount_percent ?? 0));
+  } else if (hasWeeklyDiscountSnake) {
+    insertFields.push('weekly_discount_percent');
+    insertValues.push(String((device as any).weeklyDiscountPercent ?? (device as any).weekly_discount_percent ?? 0));
+  }
+  if (hasMonthlyDiscountCamel) {
+    insertFields.push('monthlyDiscountPercent');
+    insertValues.push(String((device as any).monthlyDiscountPercent ?? (device as any).monthly_discount_percent ?? 0));
+  } else if (hasMonthlyDiscountSnake) {
+    insertFields.push('monthly_discount_percent');
+    insertValues.push(String((device as any).monthlyDiscountPercent ?? (device as any).monthly_discount_percent ?? 0));
+  }
+
   const placeholders = insertFields.map(() => '?').join(', ');
   const sql = `INSERT INTO devices (${insertFields.join(', ')}) VALUES (${placeholders})`;
 
@@ -879,6 +898,8 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
     serialNumber: 'serialNumber', serial_number: 'serial_number',
     pricePerDay: 'pricePerDay', price_per_day: 'price_per_day',
     depositAmount: 'depositAmount', deposit_amount: 'deposit_amount',
+    weeklyDiscountPercent: 'weekly_discount_percent', weekly_discount_percent: 'weekly_discount_percent',
+    monthlyDiscountPercent: 'monthly_discount_percent', monthly_discount_percent: 'monthly_discount_percent',
     agentStatus: 'agent_status', agent_status: 'agent_status',
     deviceMode: 'device_mode', device_mode: 'device_mode',
     lifecycleStatus: 'lifecycle_status', lifecycle_status: 'lifecycle_status',
@@ -891,6 +912,8 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
     if (column === 'serialNumber' && !columns.has(column) && columns.has('serial_number')) column = 'serial_number'
     if (column === 'pricePerDay' && !columns.has(column) && columns.has('price_per_day')) column = 'price_per_day'
     if (column === 'depositAmount' && !columns.has(column) && columns.has('deposit_amount')) column = 'deposit_amount'
+    if (column === 'weekly_discount_percent' && !columns.has(column) && columns.has('weeklyDiscountPercent')) column = 'weeklyDiscountPercent'
+    if (column === 'monthly_discount_percent' && !columns.has(column) && columns.has('monthlyDiscountPercent')) column = 'monthlyDiscountPercent'
     if (column && columns.has(column) && value !== undefined) {
       setEntries.push([column, plainTextFields.has(key) ? sanitizePlainText(value, key === 'description' ? 2000 : 120) : value])
     }

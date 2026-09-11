@@ -22,12 +22,14 @@
       <span class="asset-tag mono">ASSET OPS / MEL</span>
       <nav class="main-nav">{{TOP_NAV}}</nav>
       <div class="user-block">{{USER_BLOCK}}</div>
+      {{LANGUAGE_SWITCHER}}
     </header>
     <header class="mobile-header">
       {{MOBILE_NAV_TOGGLE}}
       <a href="/" class="logo"><span class="logo-mark"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg></span><span class="logo-copy">PC Rental</span></a>
       <span class="mobile-header__label">{{MOBILE_LABEL}}</span>
       <div class="user-block">{{MOBILE_USER_BLOCK}}</div>
+      {{LANGUAGE_SWITCHER}}
     </header>
     <div class="mobile-nav-scrim" aria-hidden="true"></div>
     <div class="container">
@@ -501,6 +503,7 @@
   window.addEventListener('load', window.runSiteAnimations);
   window.addEventListener('load', window.runFilterTabMotion);
 </script>
+  <script src="/i18n.js" defer></script>
 </body>
 
 </html>

@@ -25,6 +25,10 @@ export async function renderStaffDeviceEdit(c: Context, user: any, deviceId: str
         <input class="form-control" name="serialNumber" value="${device.serialNumber}" />
         <label class="form-label">日租金</label>
         <input class="form-control" type="number" step="0.01" name="dailyRate" value="${device.dailyRate}" />
+        <label class="form-label">周租折扣（%）</label>
+        <input class="form-control" type="number" min="0" max="100" step="0.01" name="weeklyDiscountPercent" value="${device.weeklyDiscountPercent ?? device.weekly_discount_percent ?? 0}" />
+        <label class="form-label">月租折扣（%）</label>
+        <input class="form-control" type="number" min="0" max="100" step="0.01" name="monthlyDiscountPercent" value="${device.monthlyDiscountPercent ?? device.monthly_discount_percent ?? 0}" />
         <label class="form-label">设备状态</label>
         <select class="form-control" name="status">
           <option value="available" ${device.status === 'available' ? 'selected' : ''}>可用</option>

@@ -113,10 +113,12 @@ import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials,
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
+import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
 import { styleSheetText as siteStyles, styleSheetVersion, appScriptText, appScriptVersion } from './lib/assetVersion'
+import { languageScript } from './lib/i18n'
 import { getTableColumns as getCachedTableColumns } from './db/client'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
@@ -226,6 +228,13 @@ app.get('/app.js', (c) => {
   c.header('X-Content-Type-Options', 'nosniff')
   if (c.req.header('If-None-Match') === `"${appScriptVersion}"`) return c.body(null, 304)
   return c.body(appScriptText)
+})
+
+app.get('/i18n.js', (c) => {
+  c.header('Content-Type', 'text/javascript; charset=utf-8')
+  c.header('Cache-Control', 'no-cache, must-revalidate')
+  c.header('X-Content-Type-Options', 'nosniff')
+  return c.body(languageScript)
 })
 
 const SYSTEM_STATUS_CACHE_KEY = 'https://rent.internal/api/system-status'
@@ -485,7 +494,7 @@ function errorDetails(error: unknown) {
 
 app.use('*', async (c, next) => {
   // 静态资源不需要鉴权，避免每次加载 CSS 都额外查询 D1 会话表。
-  if (c.req.path === '/styles.css' || c.req.path === '/app.js' || c.req.path === '/favicon.svg' || c.req.path === '/favicon.ico') return next()
+  if (c.req.path === '/styles.css' || c.req.path === '/app.js' || c.req.path === '/i18n.js' || c.req.path === '/favicon.svg' || c.req.path === '/favicon.ico') return next()
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (user) {
     c.set('user', user)
@@ -521,7 +530,7 @@ app.use('*', async (c, next) => {
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
-    const permitted = allowedExact.has(path) || path.startsWith('/notifications/') || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css' || path === '/app.js'
+    const permitted = allowedExact.has(path) || path.startsWith('/notifications/') || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css' || path === '/app.js' || path === '/i18n.js'
     if (!permitted && path.startsWith('/customer/')) return c.redirect('/customer/guest')
   }
   await next()
@@ -1702,7 +1711,7 @@ app.post('/customer/rent/:id', async (c) => {
   if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
-  const rentAmount = rentalPeriod * device.pricePerDay
+  const rentAmount = calculateRentalFee(device, rentalPeriod)
   let discountAmount = 0
   let appliedCouponCode: string | null = null
   let eligibleCoupon: any = null
@@ -2104,9 +2113,11 @@ app.post('/staff/devices/new', async (c) => {
   const model = String(form.model || '').trim()
   const serialNumber = String(form.serialNumber || '').trim()
   const pricePerDay = Number(form.dailyRate)
+  const weeklyDiscountPercent = parseDeviceDiscountPercent(form.weeklyDiscountPercent)
+  const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
   const status = String(form.status || 'available') as any
-  if (!name || !model || !serialNumber || !Number.isFinite(pricePerDay) || pricePerDay < 0 || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(pages.renderStaffDeviceNew(user, '请填写完整有效的设备资料'), 400)
-  const device = await insertDevice(c, { name, model, serialNumber, pricePerDay, depositAmount: 0, status, description: '' })
+  if (!name || !model || !serialNumber || !Number.isFinite(pricePerDay) || pricePerDay < 0 || weeklyDiscountPercent === null || monthlyDiscountPercent === null || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(pages.renderStaffDeviceNew(user, '请填写完整有效的设备资料和 0%–100% 的折扣'), 400)
+  const device = await insertDevice(c, { name, model, serialNumber, pricePerDay, depositAmount: 0, weeklyDiscountPercent, monthlyDiscountPercent, status, description: '' })
   return c.redirect(`/staff/devices/${device.id}`)
 })
 
@@ -2121,9 +2132,11 @@ app.post('/staff/devices/:id/edit', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const form = await c.req.parseBody()
   const pricePerDay = Number(form.dailyRate)
+  const weeklyDiscountPercent = parseDeviceDiscountPercent(form.weeklyDiscountPercent)
+  const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
   const status = String(form.status || 'available')
-  if (!String(form.name || '').trim() || !String(form.model || '').trim() || !String(form.serialNumber || '').trim() || !Number.isFinite(pricePerDay) || pricePerDay < 0 || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id'), '请填写完整有效的设备资料'), 400)
-  await updateDevice(c, c.req.param('id'), { name: String(form.name), model: String(form.model), serialNumber: String(form.serialNumber), pricePerDay, status: status as any })
+  if (!String(form.name || '').trim() || !String(form.model || '').trim() || !String(form.serialNumber || '').trim() || !Number.isFinite(pricePerDay) || pricePerDay < 0 || weeklyDiscountPercent === null || monthlyDiscountPercent === null || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id'), '请填写完整有效的设备资料和 0%–100% 的折扣'), 400)
+  await updateDevice(c, c.req.param('id'), { name: String(form.name), model: String(form.model), serialNumber: String(form.serialNumber), pricePerDay, weeklyDiscountPercent, monthlyDiscountPercent, status: status as any })
   return c.redirect(`/staff/devices/${c.req.param('id')}`)
 })
 
@@ -2272,7 +2285,7 @@ app.get('/api/coupons/rental-preview', async (c) => {
   if (!deviceId || !code || !Number.isInteger(days) || days < 1 || days > 365) return c.json({ ok: false, message: '请先选择有效租期并输入优惠码' }, 400)
   const device = await getDeviceById(c, deviceId) as any
   if (!device) return c.json({ ok: false, message: '设备不存在' }, 404)
-  const rent = Number((days * Number(device.pricePerDay || device.dailyRate || 0)).toFixed(2))
+  const rent = calculateRentalFee(device, days)
   let coupon: any
   try {
     coupon = await findEligibleCoupon(c, code, device, rent)
@@ -3804,6 +3817,9 @@ app.post('/admin/devices/new', async (c) => {
   const form = parseFormBody(body)
   if (![form.name, form.brand, form.model, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号和序列号', 400)
   if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
+  const weeklyDiscountPercent = parseDeviceDiscountPercent(form.weeklyDiscountPercent)
+  const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
+  if (weeklyDiscountPercent === null || monthlyDiscountPercent === null) return c.text('周租和月租折扣必须是 0%–100% 之间的数字', 400)
   if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   if (form.lifecycleStatus && !['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'].includes(form.lifecycleStatus)) return c.text('设备生命周期状态无效', 400)
   const serialNumber = String(form.serialNumber || '').trim().slice(0, 120)
@@ -3826,6 +3842,8 @@ app.post('/admin/devices/new', async (c) => {
       os: form.os || '',
       pricePerDay: Number(form.pricePerDay) || 0,
       depositAmount: Number(form.depositAmount) || 0,
+      weeklyDiscountPercent,
+      monthlyDiscountPercent,
       status: (form.status as any) || 'available',
       description: form.description || form.remark || '',
       agentTokenHash
@@ -4064,6 +4082,9 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const form = parseFormBody(body)
   if (![form.name, form.brand, form.model, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号和序列号', 400)
   if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
+  const weeklyDiscountPercent = parseDeviceDiscountPercent(form.weeklyDiscountPercent)
+  const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
+  if (weeklyDiscountPercent === null || monthlyDiscountPercent === null) return c.text('周租和月租折扣必须是 0%–100% 之间的数字', 400)
   if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   if (form.lifecycleStatus && !['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'].includes(form.lifecycleStatus)) return c.text('设备生命周期状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
@@ -4086,6 +4107,8 @@ app.post('/admin/devices/:id/edit', async (c) => {
     os: form.os,
     pricePerDay: Number(form.pricePerDay),
     depositAmount: Number(form.depositAmount),
+    weeklyDiscountPercent,
+    monthlyDiscountPercent,
     status: form.status as any,
     agentStatus: form.agentStatus as any,
     deviceMode: form.deviceMode as any,

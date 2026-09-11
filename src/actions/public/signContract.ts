@@ -15,6 +15,7 @@ import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
 import { createOrderPaymentIntent } from '../stripePayments';
 import { getStripeRuntimeConfig } from '../../stripe';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
+import { calculateRentalFee } from '../../domain/rentalPricing';
 
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
   const token = identifier; // 明确定义 token
@@ -403,11 +404,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const previewCouponCode = String((order as any).coupon_code || (order as any).couponCode || '').trim().toUpperCase()
         const previewAlreadyReserved = Boolean((order as any).coupon_id)
         if (previewCouponCode && !previewAlreadyReserved) {
-          const rentAmountForCoupon = Number(order.rentalPeriod || 0) * Number((order as any).dailyRate || 0)
           const previousDiscount = Number((order as any).discount_amount ?? (order as any).discountAmount ?? 0)
           try {
             const orderDevice = await getDeviceById(c, order.deviceId || (order as any).device_id)
             if (!orderDevice) throw new Error('订单关联的设备不存在')
+            const rentAmountForCoupon = calculateRentalFee(orderDevice, Number(order.rentalPeriod || 0))
             const coupon = await findEligibleCoupon(c, previewCouponCode, orderDevice, rentAmountForCoupon)
             await checkCustomerCouponEligibility(c, coupon, userId)
             const discountAmount = calculateCouponDiscount(coupon, rentAmountForCoupon)
@@ -421,9 +422,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             await logError(c, 'INFO', `Preview coupon dropped at signing: ${error?.message || error}`, undefined, { token, orderId: contract.rentalId })
           }
         } else if (!previewCouponCode && enteredCouponCode) {
-          const rentAmountForCoupon = Number(order.rentalPeriod || 0) * Number((order as any).dailyRate || 0)
           const orderDevice = await getDeviceById(c, order.deviceId || (order as any).device_id)
           if (!orderDevice) throw new Error('订单关联的设备不存在')
+          const rentAmountForCoupon = calculateRentalFee(orderDevice, Number(order.rentalPeriod || 0))
           const coupon = await findEligibleCoupon(c, enteredCouponCode, orderDevice, rentAmountForCoupon)
           await checkCustomerCouponEligibility(c, coupon, userId)
           const discountAmount = calculateCouponDiscount(coupon, rentAmountForCoupon)

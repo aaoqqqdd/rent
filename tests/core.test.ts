@@ -401,11 +401,13 @@ test('user management forms use the shared identity record design', async () => 
 test('admin device forms edit every field used by staff device search', () => {
   const user = { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }
   const newHtml = renderAdminDeviceNew(user)
-  for (const field of ['name', 'brand', 'model', 'assetTag', 'serialNumber', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description']) {
+  for (const field of ['name', 'brand', 'model', 'assetTag', 'serialNumber', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'weeklyDiscountPercent', 'monthlyDiscountPercent']) {
     assert.match(newHtml, new RegExp(`name="${field}"`))
   }
-  const editHtml = renderAdminDeviceEdit(user, { id: 'd1', name: 'MacBook Pro', brand: 'Apple', model: 'A2918', asset_tag: 'RENT-001', serialNumber: 'SN1', cpu: 'M3 Pro', ram: '18GB', storage: '512GB SSD', gpu: '18-core', os: 'macOS 15', description: '14 inch', pricePerDay: 50, depositAmount: 1000, status: 'available' })
+  const editHtml = renderAdminDeviceEdit(user, { id: 'd1', name: 'MacBook Pro', brand: 'Apple', model: 'A2918', asset_tag: 'RENT-001', serialNumber: 'SN1', cpu: 'M3 Pro', ram: '18GB', storage: '512GB SSD', gpu: '18-core', os: 'macOS 15', description: '14 inch', pricePerDay: 50, depositAmount: 1000, weekly_discount_percent: 10, monthly_discount_percent: 20, status: 'available' })
   for (const expected of ['Apple', 'RENT-001', 'M3 Pro', '18GB', '512GB SSD', '18-core', 'macOS 15']) assert.match(editHtml, new RegExp(expected))
+  assert.match(editHtml, /name="weeklyDiscountPercent"[^>]*value="10"/)
+  assert.match(editHtml, /name="monthlyDiscountPercent"[^>]*value="20"/)
 })
 
 test('new contract delivery form emits valid autocomplete JavaScript', async () => {

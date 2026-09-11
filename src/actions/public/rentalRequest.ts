@@ -27,6 +27,7 @@ import {
 import { calculateCouponDiscount, checkCustomerCouponEligibility } from '../coupons'
 import { getStripePublishableKey, stripeRequest } from '../../stripe'
 import { canUseAccountBalance } from '../../lib/access'
+import { calculateRentalFee } from '../../domain/rentalPricing'
 
 const AU_STATES = ['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']
 const MAX_CART_ITEMS = 10
@@ -115,7 +116,7 @@ export async function previewPublicRentalCoupon(c: Context, deviceIds: string[],
     "SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)",
   ).bind(code.toUpperCase().slice(0, 40)).first() as any
   if (!coupon) return { ok: false, message: '优惠码无效、已过期或已达到使用次数上限。' }
-  const rentAmounts = devices.map((device) => Number((days * Number(device.pricePerDay || 0)).toFixed(2)))
+  const rentAmounts = devices.map((device) => calculateRentalFee(device, days))
   const eligibleIndexes = devices.map((device, index) => couponMatchesDevice(coupon, device) ? index : -1).filter((index) => index >= 0)
   if (!eligibleIndexes.length) return { ok: false, message: '该优惠码不适用于购物车中的设备。' }
   const eligibleSubtotal = eligibleIndexes.reduce((sum, index) => sum + rentAmounts[index], 0)
@@ -237,7 +238,7 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
     devices.push(device)
   }
 
-  const rentAmounts = devices.map((device) => rentalPeriod * Number(device.pricePerDay || 0))
+  const rentAmounts = devices.map((device) => calculateRentalFee(device, rentalPeriod))
   const discounts = devices.map(() => 0)
   let coupon: any = null
   if (couponCode) {

@@ -79,10 +79,14 @@ export interface Device {
   pricePerDay: number
   dailyRate?: number
   depositAmount: number
+  weeklyDiscountPercent?: number
+  monthlyDiscountPercent?: number
 
   // snake_case 兼容旧页面
   price_per_day?: number
   deposit_amount?: number
+  weekly_discount_percent?: number
+  monthly_discount_percent?: number
 
   status: 'available' | 'rented' | 'maintenance' | 'retired'
   lifecycleStatus?: DeviceLifecycleStatus

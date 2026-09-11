@@ -1454,6 +1454,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
   const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${getAvatarInitials(currentUser.name)}</span>` : ''
 
+  const languageSwitcher = `<button class="language-toggle" type="button" data-language-toggle data-language-label aria-label="切换到英文" title="切换到英文">English</button>`
+
   const mobileNavToggle = currentUser
     ? `<button class="mobile-nav-toggle" type="button" aria-label="打开导航菜单" aria-expanded="false" aria-controls="app-sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>`
     : ''
@@ -1523,6 +1525,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_NAV_TOGGLE: mobileNavToggle,
     MOBILE_LABEL: mobileLabel,
     MOBILE_USER_BLOCK: mobileUserBlock,
+    LANGUAGE_SWITCHER: languageSwitcher,
     SIDEBAR: sidebar,
     CONTENT: body,
     FOOTER: footerHtml

@@ -7,6 +7,7 @@ import { Context } from 'hono';
 import { User, getDeviceById, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, generateContractNumber } from '../../site';
 import { findEligibleCoupon, calculateCouponDiscount } from '../coupons';
 import { nanoid } from 'nanoid';
+import { calculateRentalFee } from '../../domain/rentalPricing';
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
   const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, returnLocation } = body;
@@ -85,7 +86,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const dailyRate = device.pricePerDay;
   const depositAmount = device.depositAmount;
   const couponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
-  const rentAmount = rentalPeriod * dailyRate
+  const rentAmount = calculateRentalFee(device, rentalPeriod)
   let discountAmount = 0
   let appliedCouponCode: string | null = null
   if (couponCode) {
