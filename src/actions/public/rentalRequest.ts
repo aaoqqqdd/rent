@@ -82,7 +82,7 @@ export async function lookupPublicAccountBalance(c: Context, email: string): Pro
     && String(user?.status || 'active').toLowerCase() !== 'inactive'
     && String(user?.account_status || 'active').toLowerCase() !== 'banned'
   const available = getSystemSettings().paymentMethods.balancePayment && accountEligible && Number(user?.balance || 0) > 0
-  return { ok: true, available, accountEligible }
+  return { ok: true, available, accountEligible, balance: accountEligible ? Number(user?.balance || 0) : 0 }
 }
 
 async function verifyPublicRentalSetupIntent(c: Context, setupIntentId: string): Promise<{ id: string; paymentMethodId: string }> {
