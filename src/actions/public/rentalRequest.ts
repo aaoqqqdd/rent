@@ -165,7 +165,6 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
 
   if (!startDate || !endDate) return json(c, 400, { ok: false, message: '请填写开始日期和结束日期。' })
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) return json(c, 400, { ok: false, message: '邮箱格式不正确。' })
-  if (!isStrongPassword(password)) return json(c, 400, { ok: false, message: '密码至少 8 位，且需同时包含字母、数字和符号。' })
   if (!agreed) return json(c, 400, { ok: false, message: '请先阅读并同意服务条款与隐私政策。' })
   let stripePaymentMethodId = ''
   if (paymentMethod === 'card' && stripeSetupIntentId) {
