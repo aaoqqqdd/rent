@@ -263,7 +263,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先填写您的个人信息。');
         }
 
-        const paymentMethod = (order as any).stripe_payment_method_id ? 'stripe' : String(body.paymentMethod || '')
+        const paymentMethod = (order as any).stripe_payment_method_id ? 'stripe' : String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || '')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']

@@ -63,13 +63,26 @@ async function verifyTurnstile(c: Context, token: string): Promise<boolean> {
 }
 
 export async function createPublicRentalSetupIntent(c: Context): Promise<Record<string, unknown>> {
+  await loadSystemSettingsFromDB(c)
   const params = new URLSearchParams({
     usage: 'off_session',
-    'payment_method_types[0]': 'card',
-    'metadata[source]': 'geekslope-web-rental-application',
+    'automatic_payment_methods[enabled]': 'true',
+    'metadata[source]': 'rent-web-rental-application',
   })
   const intent = await stripeRequest(c, 'setup_intents', params, `rental-setup-${nanoid(12)}`)
-  return { clientSecret: intent.client_secret, publishableKey: await getStripePublishableKey(c) }
+  return { clientSecret: intent.client_secret, publishableKey: await getStripePublishableKey(c), feeRate: getSystemSettings().paymentMethods.processingFeeRate ?? 0.025 }
+}
+
+export async function lookupPublicAccountBalance(c: Context, email: string): Promise<Record<string, unknown>> {
+  const normalizedEmail = email.trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) return { ok: true, available: false, accountEligible: false }
+  await loadSystemSettingsFromDB(c)
+  const user = await findUserByEmail(c, normalizedEmail) as any
+  const accountEligible = canUseAccountBalance(user)
+    && String(user?.status || 'active').toLowerCase() !== 'inactive'
+    && String(user?.account_status || 'active').toLowerCase() !== 'banned'
+  const available = getSystemSettings().paymentMethods.balancePayment && accountEligible && Number(user?.balance || 0) > 0
+  return { ok: true, available, accountEligible }
 }
 
 async function verifyPublicRentalSetupIntent(c: Context, setupIntentId: string): Promise<{ id: string; paymentMethodId: string }> {
@@ -138,6 +151,7 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
   const deliveryMethod = body.deliveryMethod === 'Delivery' ? 'Delivery' : 'Pickup'
   const rawNote = String(body.rentalNote || '').trim().slice(0, 400)
   const couponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
+  const paymentMethod = body.paymentMethod === 'balance' ? 'balance' : 'card'
   const stripeSetupIntentId = String(body.stripeSetupIntentId || '').trim()
   const refundMethod = body.refundMethod === 'balance' ? 'balance' : 'original'
   const contact = {
@@ -153,10 +167,10 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
   if (!isStrongPassword(password)) return json(c, 400, { ok: false, message: '密码至少 8 位，且需同时包含字母、数字和符号。' })
   if (!agreed) return json(c, 400, { ok: false, message: '请先阅读并同意服务条款与隐私政策。' })
   let stripePaymentMethodId = ''
-  if (stripeSetupIntentId) {
+  if (paymentMethod === 'card' && stripeSetupIntentId) {
     try { stripePaymentMethodId = (await verifyPublicRentalSetupIntent(c, stripeSetupIntentId)).paymentMethodId }
     catch (error: any) { return json(c, 400, { ok: false, message: error?.message || '信用卡验证失败，请重试。' }) }
-  } else {
+  } else if (paymentMethod === 'card') {
     return json(c, 400, { ok: false, message: '请先填写并验证信用卡信息。' })
   }
   if (!contact.name || !contact.email) return json(c, 400, { ok: false, message: '请填写姓名和邮箱' })
@@ -275,6 +289,13 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
   if (refundMethod === 'balance' && (isNewAccount || !canUseAccountBalance(existing))) {
     return json(c, 400, { ok: false, message: '当前选择不可用，请改选其他选项。' })
   }
+  if (paymentMethod === 'balance') {
+    const settings = getSystemSettings()
+    const requestedTotal = rentAmounts.reduce((sum, amount, index) => sum + amount + Number(devices[index].depositAmount || 0) - discounts[index], 0)
+    if (!settings.paymentMethods.balancePayment || isNewAccount || !canUseAccountBalance(existing) || Number(existing?.balance || 0) < requestedTotal) {
+      return json(c, 400, { ok: false, message: '当前账户余额不足以支付这笔申请，或余额支付尚未启用。' })
+    }
+  }
   if (coupon) {
     try { await checkCustomerCouponEligibility(c, coupon, customerId) }
     catch (error: any) { return json(c, 400, { ok: false, message: error?.message || '该账号无法使用此优惠码。' }) }
@@ -295,7 +316,7 @@ export async function handlePublicRentalRequest(c: Context, body: Record<string,
       await insertOrder(c, {
         id: orderIds[index], orderNo: null, userId: customerId, deviceId: device.id,
         startDate, endDate, startPeriod, endPeriod, rentalPeriod, status: 'pending_approval',
-        paymentMethod: 'bank_transfer', totalAmount: rentAmounts[index] + depositAmount - discountAmount,
+        paymentMethod: paymentMethod === 'balance' ? 'balance' : 'bank_transfer', totalAmount: rentAmounts[index] + depositAmount - discountAmount,
         depositAmount, dailyRate: Number(device.pricePerDay || 0), contractId: '', signedAt: null,
         pickupLocation: pickupLocationValue, returnLocation: '到店归还', deliveryMethod, deliveryFee: 0,
         rentalNote: `${leadLine}${rawNote ? `\n客户备注：${rawNote}` : ''}`.slice(0, 500),

@@ -535,6 +535,7 @@ app.use('*', async (c, next) => {
   const isPublicRentalRequest = c.req.path === '/public/rental-request'
   const isPublicRentalPreview = c.req.path === '/api/coupons/rental-cart-preview'
   const isPublicRentalSetupIntent = c.req.path === '/public/rental-setup-intent'
+  const isPublicAccountBalance = c.req.path === '/public/account-balance'
   const isPublicOrderLookup = c.req.path === '/public/order-lookup'
   if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicRentalRequest && !isPublicRentalSetupIntent && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
@@ -571,6 +572,16 @@ app.use('*', async (c, next) => {
     c.header('Access-Control-Max-Age', '86400')
     if (c.req.method === 'OPTIONS') return c.body(null, 204)
   }
+  if (isPublicAccountBalance && (c.req.method === 'GET' || c.req.method === 'OPTIONS')) {
+    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
+    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
+    c.header('Access-Control-Allow-Origin', publicWebOrigin)
+    c.header('Vary', 'Origin')
+    c.header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
+    c.header('Access-Control-Max-Age', '86400')
+    if (c.req.method === 'OPTIONS') return c.body(null, 204)
+  }
   if (isPublicOrderLookup && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
     const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
     if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
@@ -592,7 +603,8 @@ app.use('*', async (c, next) => {
                 : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
                   : c.req.path === '/public/rental-request' && c.req.method === 'POST' ? ['public-rental-request', 6, 900] as const
                     : c.req.path === '/public/rental-setup-intent' && c.req.method === 'POST' ? ['public-rental-setup', 6, 900] as const
-                    : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
+                      : c.req.path === '/public/account-balance' && c.req.method === 'GET' ? ['public-account-balance', 20, 900] as const
+                        : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
@@ -2296,6 +2308,11 @@ app.post('/public/rental-setup-intent', async (c) => {
   } catch (error: any) {
     return c.json({ ok: false, message: error?.message || '信用卡验证暂不可用，请稍后重试。' }, 400)
   }
+})
+
+app.get('/public/account-balance', async (c) => {
+  const email = String(c.req.query('email') || '')
+  return c.json(await actions.lookupPublicAccountBalance(c, email), 200, { 'Cache-Control': 'no-store' })
 })
 
 app.post('/public/order-lookup', async (c) => {
