@@ -65,29 +65,39 @@ export interface ReconInput {
   refunds: { id: string; payment_id: string | null; refund_amount: number; status: string }[]
   refundAllocations: { refund_id: string; payment_id: string; amount: number }[]
 }
-export type ReconSeverity = 'error' | 'warning'
+export type ReconSeverity = 'error' | 'warning' | 'info'
 export interface ReconIssue { code: string; severity: ReconSeverity; detail: string }
 export interface ReconResult {
-  /** 完全干净：没有任何 error / warning。 */
+  /** 完全干净：没有任何 error / warning / info。 */
   ok: boolean
-  /** 账目平衡：钱能对上（没有 error 级问题），可能仍有待补录的 warning。 */
+  /** 账目平衡：钱能对上（没有 error 级问题），可能仍有待补录的 warning 或待确认的付款。 */
   balanced: boolean
   paidTotal: number
   refundedTotal: number
+  /** 状态为 pending、尚未计入 paidTotal 的付款合计（未确认收款，不代表"账已收"）。 */
+  pendingTotal: number
   issues: ReconIssue[]
   errors: ReconIssue[]
   warnings: ReconIssue[]
+  infos: ReconIssue[]
 }
 
 // 纯函数对账：给定订单的付款 / 分配 / 退款行，分级列出问题。
 //   error   —— 钱对不上：拆分不符、超退、分配指向不属于本单的付款。
 //   warning —— 钱能对上，只是台账没登全（退款已关联付款但缺来源分配行）。
+//   info    —— 有付款仍是 pending（未确认到账），不计入实付，但不应误报"账目一致"。
 export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
   const issues: ReconIssue[] = []
   const EPS = 1 // 1 分容差
   const paidPayments = input.payments.filter(p => p.status === 'paid' || p.status === 'refunded')
   const paidTotalC = paidPayments.reduce((s, p) => s + toCents(p.amount), 0)
   const paymentIds = new Set(input.payments.map(p => p.id))
+
+  const pendingPayments = input.payments.filter(p => p.status === 'pending')
+  const pendingTotalC = pendingPayments.reduce((s, p) => s + toCents(p.amount), 0)
+  for (const p of pendingPayments) {
+    issues.push({ code: 'PENDING_PAYMENT', severity: 'info', detail: `付款 ${p.id}（${money(toCents(p.amount))}）状态为待确认（pending），尚未计入实付统计` })
+  }
 
   for (const p of paidPayments) {
     const allocC = input.paymentAllocations.filter(a => a.payment_id === p.id).reduce((s, a) => s + toCents(a.amount), 0)
@@ -121,13 +131,16 @@ export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
 
   const errors = issues.filter(i => i.severity === 'error')
   const warnings = issues.filter(i => i.severity === 'warning')
+  const infos = issues.filter(i => i.severity === 'info')
   return {
     ok: issues.length === 0,
     balanced: errors.length === 0,
     paidTotal: paidTotalC / 100,
     refundedTotal: refundedTotalC / 100,
+    pendingTotal: pendingTotalC / 100,
     issues,
     errors,
     warnings,
+    infos,
   }
 }

@@ -4828,6 +4828,15 @@ export default {
 
     // Import and run the cleanup function
     const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob, deliverPendingAgreementUpdates } = await import('./site')
+
+    // The hourly cron ("0 * * * *") only enforces the 24h unpaid-order
+    // cancellation SLA — running the rest of the daily batch (notifications,
+    // purges, etc.) every hour instead of once a day is not the intent.
+    if (event.cron === '0 * * * *') {
+      ctx.waitUntil(runScheduledJob(c, 'cancel_expired_pending_payments', () => cancelExpiredPendingPaymentOrders(c)))
+      return
+    }
+
     ctx.waitUntil(
       (async () => {
         // Each step below runs through runScheduledJob so it's isolated: a step
