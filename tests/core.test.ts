@@ -25,11 +25,12 @@ import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
 import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
-import { allocateProportionalRefund, refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile } from '../src/actions/stripePayments'
+import { allocateProportionalRefund, refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile, summarizeOrderPriceAdjustment, resolveOrderPriceAdjustmentRefundMethod } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
+import { renderStaffInspection } from '../src/pages/staff/inspection'
 import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
 
@@ -166,6 +167,28 @@ test('order numbers are created once after payment with the public reference for
   assert.equal(await ensureOrderNumber(context, 'o1', 'pi_different'), generated)
 })
 
+test('return inspection is available for every active rental status', async () => {
+  const statuses = ['active', 'extended', 'overdue', 'suspended', 'pending_return']
+  for (const status of statuses) {
+    const db = {
+      prepare(sql: string) {
+        const statement = {
+          bind() { return this },
+          async first() {
+            if (sql.includes('FROM orders')) return { id: 'o1', userId: 'u1', deviceId: 'd1', status, totalAmount: 100, depositAmount: 50, startDate: '2026-09-01', endDate: '2026-09-10' }
+            if (sql.includes('FROM devices')) return { id: 'd1', name: '测试设备', pricePerDay: 10, depositAmount: 50 }
+            return null
+          },
+        }
+        return statement
+      },
+    }
+    const html = await renderStaffInspection({ env: { RENT: db } } as any, { id: 'staff-1', role: 'STAFF', name: 'Staff' }, 'o1')
+    assert.match(html, /<h2>归还验机<\/h2>/)
+    assert.doesNotMatch(html, /当前订单不能执行归还验机/)
+  }
+})
+
 test('order updates never bind undefined values into D1', async () => {
   let bound: unknown[] = []
   let preparedSql = ''
@@ -257,6 +280,25 @@ test('Stripe checkout contains rent and processing fee but no deposit', () => {
     { name: '设备租金（5 天，2026-08-10 至 2026-08-15）', amountCents: 10000 },
     { name: 'Stripe 租金及服务费支付手续费（2.5%）', amountCents: 250 },
   ])
+})
+
+test('price adjustment summary exposes only the unpaid increase and tracks transfer refunds for deposit settlement', () => {
+  const order = { totalAmount: 120, depositAmount: 20, paymentMethod: 'bank_transfer', status: 'active' }
+  const payments = [{ amount: 110, rental_amount: 110, deposit_amount: 0, processing_fee: 0, status: 'paid' }]
+  const decrease = summarizeOrderPriceAdjustment(order, payments, [{ direction: 'decrease', status: 'succeeded', amount: 10, refund_method: 'pending_deposit', deposit_refunded: 0 }])
+  assert.equal(decrease.amountDue, 0)
+  assert.equal(decrease.pendingDepositRefund, 10)
+  const increase = summarizeOrderPriceAdjustment({ ...order, totalAmount: 130 }, payments, [{ direction: 'decrease', status: 'succeeded', amount: 10, refund_method: 'pending_deposit', deposit_refunded: 0 }])
+  assert.equal(increase.amountDue, 0)
+})
+
+test('price adjustment refund selection is applied to the appropriate channel', () => {
+  const card = { payment_method: 'card', stripe_payment_intent_id: 'pi_123' }
+  assert.equal(resolveOrderPriceAdjustmentRefundMethod('original', 'card', card), 'stripe')
+  assert.equal(resolveOrderPriceAdjustmentRefundMethod('balance', 'card', card), 'balance')
+  assert.equal(resolveOrderPriceAdjustmentRefundMethod('pending_deposit', 'bank_transfer', null), 'pending_deposit')
+  assert.throws(() => resolveOrderPriceAdjustmentRefundMethod('pending_deposit', 'card', card), /转账类订单/)
+  assert.throws(() => resolveOrderPriceAdjustmentRefundMethod('original', 'card', null), /Stripe 信用卡付款记录/)
 })
 
 test('payment results distinguish Stripe, bank transfer, and immediate balance payment', () => {

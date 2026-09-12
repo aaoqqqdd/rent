@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, ensureContractForOrder, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site'
+import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, ensureContractForOrder, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, formatOrderChangeActor, reconcileOrderPayments } from '../../site'
 import { renderReconciliationPanel } from '../partials/reconciliationPanel'
 import type { Context } from 'hono'
 
@@ -18,7 +18,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   if (user.role !== 'ADMIN' && customer?.staffId !== user.id) {
     return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2></div>', user)
   }
-  const [device, existingContract, timeChanges, changeHistory] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT change_type, before_json, after_json, reason, changed_by, created_at FROM order_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all()])
+  const [device, existingContract, timeChanges, changeHistory] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT h.change_type, h.before_json, h.after_json, h.reason, h.changed_by, h.created_at, u.name AS changed_by_name FROM order_change_history h LEFT JOIN users u ON u.id = h.changed_by WHERE h.order_id = ? ORDER BY h.created_at DESC LIMIT 20').bind(order.id).all()])
   const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
@@ -81,7 +81,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         try { after = JSON.parse(item.after_json || '{}') } catch (_) {}
         const diffs = diffOrderSnapshots(before, after)
         const detail = diffs.length ? diffs.map(d => `<div>${esc(d.label)}：<span class="mono">${esc(String(d.before ?? '—'))}</span> → <strong class="mono">${esc(String(d.after ?? '—'))}</strong></div>`).join('') : '—'
-        return `<tr><td class="mono">${esc(formatMelbourneDateTime(item.created_at))}</td><td>${esc(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${esc(item.reason || '—')}</td><td class="mono">${esc(item.changed_by || '—')}</td></tr>`
+        return `<tr><td class="mono">${esc(formatMelbourneDateTime(item.created_at))}</td><td>${esc(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${esc(item.reason || '—')}</td><td>${esc(formatOrderChangeActor(item.changed_by_name, item.changed_by))}</td></tr>`
       }).join('')}</tbody></table></div></section>` : ''}
 
       ${renderReconciliationPanel({ reconciliation, paymentSources, refundRows }, { readOnly: true, margin: '20px 0 0' })}

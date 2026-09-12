@@ -117,7 +117,7 @@ import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
@@ -2462,18 +2462,36 @@ app.post('/customer/orders/:id/stripe/intent', async (c) => {
   }
 })
 
+app.post('/customer/orders/:id/price-adjustment/stripe/intent', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    const result = await createOrderPriceAdjustmentIntent(c, user, c.req.param('id'))
+    if (result.alreadyPaid) return c.json({ alreadyPaid: true })
+    return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法创建差价支付' }, 400)
+  }
+})
+
 app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || order.userId !== user.id || order.status !== 'pending_payment' || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
+  if (!order || order.userId !== user.id || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
   const form = await c.req.parseBody()
   const reference = String(form.referenceNumber || '').trim().slice(0, 100)
   const note = String(form.note || '').trim().slice(0, 500)
   let proofImageUrl = ''
   try { proofImageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) }
   if (!reference) return c.text('请填写付款 Reference', 400)
-  const payment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, order.paymentMethod).first() as any
+  const isAdjustment = String(form.priceAdjustment || '') === '1'
+  if (isAdjustment && order.status === 'pending_payment') return c.text('当前订单尚未完成首次付款', 409)
+  if (!isAdjustment && order.status !== 'pending_payment') return c.text('订单不能提交首次付款凭证', 409)
+  const adjustmentPayment = isAdjustment ? await createOrderPriceAdjustmentTransferPayment(c, user, order.id) : null
+  const payment = adjustmentPayment
+    ? { id: adjustmentPayment.paymentId }
+    : await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, order.paymentMethod).first() as any
   if (!payment) return c.text('未找到待审核的转账付款记录', 409)
   await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'superseded' WHERE payment_id = ? AND status = 'submitted'").bind(payment.id).run()
   await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')").bind(`proof-${nanoid(12)}`, payment.id, reference, note || null, proofImageUrl).run()
@@ -3228,10 +3246,11 @@ app.post('/admin/orders/:id/changes', async (c) => {
   }
 
   const after = { ...before, ...plan.patch }
+  const changeId = `och-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare('UPDATE orders SET deviceId = ?, startDate = ?, endDate = ?, rentalPeriod = ?, totalAmount = ?, depositAmount = ?, discount_amount = ?, pickupLocation = ?, returnLocation = ?, deliveryMethod = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?')
       .bind(after.deviceId, after.startDate, after.endDate, after.rentalPeriod, after.totalAmount, after.depositAmount, after.discountAmount, after.pickupLocation || null, after.returnLocation || null, after.deliveryMethod, order.id),
-    c.env.RENT.prepare('INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`och-${nanoid(12)}`, order.id, type, JSON.stringify(before), JSON.stringify(after), reason, admin.id),
+    c.env.RENT.prepare('INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(changeId, order.id, type, JSON.stringify(before), JSON.stringify(after), reason, admin.id),
   ])
   if (type === 'DEVICE_SWAP') { await releaseDeviceIfUnbooked(c, before.deviceId); await recordDeviceLifecycle(c, after.deviceId, 'RESERVED', { orderId: order.id, reason: '订单换机', changedBy: admin.id }) }
 
@@ -3253,6 +3272,15 @@ app.post('/admin/orders/:id/changes', async (c) => {
           .bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ couponCode: (order as any).coupon_code, discountAmount: droppedDiscount }), JSON.stringify({ couponCode: null, discountAmount: 0 }), `订单变更后可打折金额 AUD$${base.toFixed(2)} 低于优惠码最低消费 AUD$${Number(coupon.minimum_order_amount).toFixed(2)}，已移除优惠码`, admin.id).run()
         await createAuditLog(c, { actor: admin, action: 'COUPON_REVALIDATED', targetType: 'ORDER', targetId: order.id, before: { couponCode: (order as any).coupon_code, discountAmount: droppedDiscount }, after: { couponCode: null, discountAmount: 0 }, reason: '订单变更后不再满足优惠码条件' })
       }
+    }
+  }
+  const finalOrder = await getOrderById(c, order.id) as any
+  if (finalOrder && Number(finalOrder.totalAmount) < Number(before.totalAmount)) {
+    try {
+      const adjustment = await applyOrderPriceAdjustment(c, { orderId: order.id, beforeTotal: Number(before.totalAmount), afterTotal: Number(finalOrder.totalAmount), adjustmentId: `opa-${changeId}`, actorId: admin.id, refundMethod: form.priceRefundMethod })
+      if (adjustment.pendingDepositRefund) await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'order_price_adjustment', title: '订单价格已下调', message: `您的订单 ${order.orderNo || order.id} 已下调 ${adjustment.amount.toFixed(2)} AUD，转账类付款差价将在押金退款时一并退还。`, orderId: order.id })
+    } catch (error: any) {
+      return c.text(error?.message || '订单降价退款失败，请联系管理员处理', 502)
     }
   }
   await createAuditLog(c, { actor: admin, action: 'ORDER_CHANGED', targetType: 'ORDER', targetId: order.id, before, after, reason })
@@ -3294,14 +3322,26 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || order.status !== 'pending_payment' || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单状态不允许审核', 409)
-  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!order || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单状态不允许审核', 409)
+  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
   if (!proof) return c.text('没有待审核的转账信息', 409)
+  if (!proof.adjustment_id && order.status !== 'pending_payment') return c.text('订单状态不允许审核首次付款', 409)
+  if (proof.adjustment_id) {
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
+      c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
+      c.env.RENT.prepare("UPDATE order_price_adjustments SET status = 'succeeded', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.adjustment_id),
+    ])
+    await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title: '差价付款审核已通过', message: `您的订单 ${order.orderNo || order.id} 差价付款凭证已审核通过，补交 ${Number(proof.adjustment_amount || 0).toFixed(2)} AUD。`, orderId: order.id })
+    await createAuditLog(c, { actor: user, action: 'PRICE_ADJUSTMENT_PAYMENT_APPROVED', targetType: 'ORDER_PRICE_ADJUSTMENT', targetId: proof.adjustment_id, after: { orderId: order.id, reference: proof.reference_number } })
+    return c.redirect('/admin/exceptions')
+  }
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
     c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
   ])
+  await ensureContractForOrder(c, order, user.id)
   await recordDeviceLifecycle(c, order.deviceId, 'RESERVED', { orderId: order.id, reason: '付款凭证审核通过', changedBy: user.id })
   await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(order.id).run()
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
@@ -3423,6 +3463,9 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   const refundText = String(form.refundAmount ?? '').trim()
   const refundAmount = Number(refundText)
   const depositAmount = Number(order.depositAmount || 0)
+  const pendingPriceRefund = Number((await c.env.RENT.prepare("SELECT COALESCE(SUM(amount), 0) AS amount FROM order_price_adjustments WHERE order_id = ? AND direction = 'decrease' AND status = 'succeeded' AND refund_method = 'pending_deposit' AND deposit_refunded = 0").bind(order.id).first() as any)?.amount || 0)
+  const remainingDepositRefund = Number((await c.env.RENT.prepare("SELECT COALESCE(SUM(refund_amount), 0) AS amount FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded'").bind(order.id).first() as any)?.amount || 0)
+  const maxRefundAmount = Number((Math.max(0, depositAmount - remainingDepositRefund) + pendingPriceRefund).toFixed(2))
   const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
   let deductionAmount = 0
   if (isSetupIntentDeposit) {
@@ -3430,8 +3473,10 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
     deductionAmount = Number(deductionText)
     if (!/^\d+(\.\d{1,2})?$/.test(deductionText) || !Number.isFinite(deductionAmount) || deductionAmount < 0 || deductionAmount > depositAmount) return c.text('扣款金额无效：不能高于押金金额', 400)
   } else {
-    if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > depositAmount) return c.text('退款金额无效：不能高于押金金额', 400)
-    deductionAmount = Number((depositAmount - refundAmount).toFixed(2))
+    if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > maxRefundAmount || (pendingPriceRefund > 0 && refundAmount < pendingPriceRefund)) return c.text(`退款金额无效：本次应至少包含差价 ${pendingPriceRefund.toFixed(2)} AUD，最多可退 ${maxRefundAmount.toFixed(2)} AUD`, 400)
+    const includedPriceRefund = Math.min(pendingPriceRefund, refundAmount)
+    const depositRefundAmount = Number((refundAmount - includedPriceRefund).toFixed(2))
+    deductionAmount = Number((depositAmount - depositRefundAmount).toFixed(2))
   }
   const deductionCategory = String(form.deductionCategory || '').trim()
   const deductionReason = String(form.deductionReason || '').trim()
@@ -3439,7 +3484,7 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   if (!['balance', 'original', 'bank_transfer'].includes(refundMethod)) return c.text('退款方式无效', 400)
   if (deductionAmount > 0 && !['DAMAGE', 'MISSING_ACCESSORY', 'LATE_FEE', 'DEVICE_NOT_RETURNED', 'OTHER'].includes(deductionCategory)) return c.text('请选择有效的押金扣款类别', 400)
   if (deductionAmount > 0 && !deductionReason) return c.text('扣除押金时必须填写原因', 400)
-  const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, refundAmount: isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
+  const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, pendingPriceRefund, refundAmount: isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
   const settlementId = `dst-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),

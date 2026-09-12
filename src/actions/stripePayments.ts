@@ -390,6 +390,189 @@ export function stripePaymentAmounts(orderTotal: number, depositAmount = 0, serv
   return { baseCents: immediatelyPaidCents, feeCents, chargedCents: immediatelyPaidCents + feeCents }
 }
 
+const TRANSFER_PAYMENT_METHODS = new Set(['bank_transfer', 'alipay', 'wechat'])
+
+function orderChargeableAmount(order: any): number {
+  const total = Math.max(0, Number(order.totalAmount ?? order.total_amount ?? 0))
+  const deposit = orderDeposit(order)
+  // 押金始终在订单价格调整之外单独结算；差价只针对租金、服务费等实际收取项目。
+  return Number(Math.max(0, total - deposit).toFixed(2))
+}
+
+function paymentPrincipal(payment: any): number {
+  if (Number(payment.rental_amount || 0) === 0 && Number(payment.deposit_amount || 0) > 0) return 0
+  const componentTotal = Number(payment.rental_amount || 0) + Number(payment.deposit_amount || 0)
+  return Number((componentTotal || Math.max(0, Number(payment.amount || 0) - Number(payment.processing_fee || 0))).toFixed(2))
+}
+
+export interface OrderPriceAdjustmentSummary {
+  chargeableTotal: number
+  paidPrincipal: number
+  refundedPrincipal: number
+  netPaidPrincipal: number
+  amountDue: number
+  processingFee: number
+  chargedAmount: number
+  pendingIncrease: any | null
+  pendingDepositRefund: number
+}
+
+export function summarizeOrderPriceAdjustment(order: any, payments: any[], adjustments: any[]): OrderPriceAdjustmentSummary {
+  const chargeableTotal = orderChargeableAmount(order)
+  const paidPrincipal = Number(payments.filter(payment => ['paid', 'refunded'].includes(String(payment.status))).reduce((sum, payment) => sum + paymentPrincipal(payment), 0).toFixed(2))
+  const refundedPrincipal = Number(adjustments.filter(adjustment => adjustment.direction === 'decrease' && adjustment.status === 'succeeded' && !(adjustment.refund_method === 'pending_deposit' && !Number(adjustment.deposit_refunded || 0))).reduce((sum, adjustment) => sum + Number(adjustment.amount || 0), 0).toFixed(2))
+  const netPaidPrincipal = Math.max(0, Number((paidPrincipal - refundedPrincipal).toFixed(2)))
+  const amountDue = Math.max(0, Number((chargeableTotal - netPaidPrincipal).toFixed(2)))
+  const processingFee = Number((amountDue ? cents(amountDue) * getStripeProcessingFeeRate() : 0).toFixed(2)) / 100
+  const pendingIncrease = adjustments.find(adjustment => adjustment.direction === 'increase' && adjustment.status === 'pending') || null
+  const pendingDepositRefund = Number(adjustments.filter(adjustment => adjustment.direction === 'decrease' && adjustment.status === 'succeeded' && adjustment.refund_method === 'pending_deposit' && !Number(adjustment.deposit_refunded || 0)).reduce((sum, adjustment) => sum + Number(adjustment.amount || 0), 0).toFixed(2))
+  return { chargeableTotal, paidPrincipal, refundedPrincipal, netPaidPrincipal, amountDue, processingFee, chargedAmount: Number((amountDue + processingFee).toFixed(2)), pendingIncrease, pendingDepositRefund }
+}
+
+export async function getOrderPriceAdjustmentSummary(c: Context, order: any): Promise<OrderPriceAdjustmentSummary> {
+  const [payments, adjustments] = await Promise.all([
+    c.env.RENT.prepare("SELECT amount, deposit_amount, rental_amount, processing_fee, status FROM payments WHERE rental_id = ?").bind(order.id).all(),
+    c.env.RENT.prepare("SELECT * FROM order_price_adjustments WHERE order_id = ? ORDER BY created_at DESC").bind(order.id).all(),
+  ])
+  return summarizeOrderPriceAdjustment(order, (payments.results || []) as any[], (adjustments.results || []) as any[])
+}
+
+async function priceAdjustmentRows(c: Context, orderId: string): Promise<any[]> {
+  return ((await c.env.RENT.prepare("SELECT * FROM order_price_adjustments WHERE order_id = ? ORDER BY created_at DESC").bind(orderId).all()).results || []) as any[]
+}
+
+async function priceAdjustmentPaymentSources(c: Context, orderId: string): Promise<any[]> {
+  const result = await c.env.RENT.prepare("SELECT p.*, COALESCE((SELECT SUM(ra.amount) FROM refund_allocations ra WHERE ra.payment_id = p.id), 0) AS allocated_refunds, COALESCE((SELECT SUM(a.amount) FROM order_price_adjustments a WHERE a.payment_id = p.id AND a.direction = 'decrease' AND a.status = 'succeeded'), 0) AS adjustment_refunds FROM payments p WHERE p.rental_id = ? AND p.status IN ('paid', 'refunded') ORDER BY p.created_at").bind(orderId).all()
+  return (result.results || []) as any[]
+}
+
+export type OrderPriceAdjustmentRefundMethod = 'balance' | 'stripe' | 'pending_deposit'
+
+/** 把订单修改表单中的退款选择映射到实际执行渠道，并拒绝不适用的渠道。 */
+export function resolveOrderPriceAdjustmentRefundMethod(requested: unknown, orderPaymentMethod: unknown, source: any): OrderPriceAdjustmentRefundMethod {
+  const choice = String(requested || '').trim()
+  const paymentMethod = String(orderPaymentMethod || '').trim()
+  if (!choice || choice === 'auto') {
+    if (TRANSFER_PAYMENT_METHODS.has(paymentMethod)) return 'pending_deposit'
+    if (source?.payment_method === 'card' && source.stripe_payment_intent_id) return 'stripe'
+    return 'balance'
+  }
+  if (choice === 'balance') return 'balance'
+  if (choice === 'pending_deposit') {
+    if (!TRANSFER_PAYMENT_METHODS.has(paymentMethod)) throw new Error('只有转账类订单可以将差价并入押金退款')
+    return 'pending_deposit'
+  }
+  if (choice === 'original') {
+    if (source?.payment_method !== 'card' || !source.stripe_payment_intent_id) throw new Error('原路退款需要可用的 Stripe 信用卡付款记录')
+    return 'stripe'
+  }
+  throw new Error('降价退款方式无效')
+}
+
+export async function createOrderPriceAdjustmentIntent(c: Context, user: any, orderId: string): Promise<{ clientSecret: string; publishableKey: string; amountCents: number; alreadyPaid?: boolean }> {
+  await loadSystemSettingsFromDB(c)
+  if (!getSystemSettings().paymentMethods.stripe) throw new Error('Stripe 支付当前未启用')
+  if (user?.role !== 'CUSTOMER') throw new Error('差价支付必须使用客户资料')
+  const order = await getOrderById(c, orderId)
+  if (!order || order.userId !== user.id) throw new Error('订单不存在或无权访问')
+  if (['pending_payment', 'completed', 'cancelled'].includes(String(order.status))) throw new Error('该订单当前不能支付差价')
+  const summary = await getOrderPriceAdjustmentSummary(c, order)
+  if (summary.amountDue <= 0) return { clientSecret: '', publishableKey: '', amountCents: 0, alreadyPaid: true }
+  const feeCents = cents(summary.processingFee)
+  const amountCents = cents(summary.amountDue) + feeCents
+  const pending = summary.pendingIncrease
+  const adjustmentId = String(pending?.id || `opa-${nanoid(12)}`)
+  if (pending) {
+    await c.env.RENT.prepare('UPDATE order_price_adjustments SET before_total = ?, after_total = ?, amount = ?, processing_fee = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = \'pending\'')
+      .bind(Number(order.totalAmount) - summary.amountDue, Number(order.totalAmount), summary.amountDue, summary.processingFee, adjustmentId).run()
+  } else {
+    await c.env.RENT.prepare("INSERT INTO order_price_adjustments (id, order_id, direction, before_total, after_total, amount, processing_fee, status, created_by) VALUES (?, ?, 'increase', ?, ?, ?, ?, 'pending', ?)")
+      .bind(adjustmentId, order.id, Number(order.totalAmount) - summary.amountDue, Number(order.totalAmount), summary.amountDue, summary.processingFee, user.id).run()
+  }
+  const existingPayment = pending?.payment_id ? await c.env.RENT.prepare('SELECT * FROM payments WHERE id = ?').bind(pending.payment_id).first() as any : null
+  const intent = await upsertPaymentIntent(c, {
+    existingIntentId: existingPayment?.stripe_payment_intent_id ? String(existingPayment.stripe_payment_intent_id) : '',
+    amountCents,
+    receiptEmail: user.email,
+    customerId: await ensureStripeCustomerForPaymentMethod(c, user, ''),
+    metadata: { order_id: order.id, customer_id: String(user.id), type: 'price_adjustment', adjustment_id: adjustmentId, amount: String(cents(summary.amountDue)), processing_fee: String(feeCents) },
+    idempotencyKey: `price-adjustment-pi-${adjustmentId}`,
+  })
+  const alreadyPaid = intent.status === 'succeeded'
+  const paymentId = String(existingPayment?.id || `p-${nanoid(12)}`)
+  if (existingPayment) {
+    await c.env.RENT.prepare("UPDATE payments SET amount = ?, rental_amount = ?, processing_fee = ?, stripe_payment_intent_id = ?, status = ?, paid_at = CASE WHEN ? = 'paid' THEN COALESCE(paid_at, CURRENT_TIMESTAMP) ELSE paid_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(amountCents / 100, summary.amountDue, summary.processingFee, intent.id, alreadyPaid ? 'paid' : 'pending', alreadyPaid ? 'paid' : 'pending', paymentId).run()
+  } else {
+    await c.env.RENT.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, processing_fee, currency, status, stripe_payment_intent_id, paid_at) VALUES (?, ?, ?, 'card', ?, 0, ?, ?, 'AUD', ?, ?, CASE WHEN ? = 'paid' THEN CURRENT_TIMESTAMP ELSE NULL END)")
+      .bind(paymentId, order.id, user.id, amountCents / 100, summary.amountDue, summary.processingFee, alreadyPaid ? 'paid' : 'pending', intent.id, alreadyPaid ? 'paid' : 'pending').run()
+  }
+  await c.env.RENT.prepare("UPDATE order_price_adjustments SET payment_id = ?, status = CASE WHEN ? = 'paid' THEN 'succeeded' ELSE status END, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(paymentId, alreadyPaid ? 'paid' : 'pending', adjustmentId).run()
+  if (alreadyPaid) return { clientSecret: '', publishableKey: '', amountCents: 0, alreadyPaid: true }
+  return { clientSecret: intent.client_secret as string, publishableKey: await getStripePublishableKey(c), amountCents }
+}
+
+export async function createOrderPriceAdjustmentTransferPayment(c: Context, user: any, orderId: string): Promise<{ paymentId: string; amount: number; cnyAmount?: number }> {
+  if (user?.role !== 'CUSTOMER') throw new Error('差价支付必须使用客户资料')
+  const order = await getOrderById(c, orderId)
+  if (!order || order.userId !== user.id) throw new Error('订单不存在或无权访问')
+  if (['pending_payment', 'completed', 'cancelled'].includes(String(order.status)) || !TRANSFER_PAYMENT_METHODS.has(String(order.paymentMethod))) throw new Error('该订单当前不能提交转账差价')
+  const summary = await getOrderPriceAdjustmentSummary(c, order)
+  if (summary.amountDue <= 0) throw new Error('当前没有待支付差价')
+  const adjustmentId = String(summary.pendingIncrease?.id || `opa-${nanoid(12)}`)
+  if (summary.pendingIncrease) await c.env.RENT.prepare("UPDATE order_price_adjustments SET before_total = ?, after_total = ?, amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(Number(order.totalAmount) - summary.amountDue, Number(order.totalAmount), summary.amountDue, adjustmentId).run()
+  else await c.env.RENT.prepare("INSERT INTO order_price_adjustments (id, order_id, direction, before_total, after_total, amount, processing_fee, status, created_by) VALUES (?, ?, 'increase', ?, ?, ?, 0, 'pending', ?)").bind(adjustmentId, order.id, Number(order.totalAmount) - summary.amountDue, Number(order.totalAmount), summary.amountDue, user.id).run()
+  const payment = summary.pendingIncrease?.payment_id ? await c.env.RENT.prepare("SELECT id FROM payments WHERE id = ? AND status = 'pending'").bind(summary.pendingIncrease.payment_id).first() as any : null
+  if (payment) return { paymentId: payment.id, amount: summary.amountDue }
+  const paymentId = `p-${nanoid(12)}`
+  await c.env.RENT.batch([
+    c.env.RENT.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, processing_fee, currency, status) VALUES (?, ?, ?, ?, ?, 0, ?, 0, 'AUD', 'pending')").bind(paymentId, order.id, user.id, order.paymentMethod, summary.amountDue, summary.amountDue),
+    c.env.RENT.prepare('UPDATE order_price_adjustments SET payment_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(paymentId, adjustmentId),
+  ])
+  return { paymentId, amount: summary.amountDue }
+}
+
+export async function applyOrderPriceAdjustment(c: Context, opts: { orderId: string; beforeTotal: number; afterTotal: number; adjustmentId: string; actorId?: string | null; refundMethod?: unknown }): Promise<{ amount: number; pendingDepositRefund?: boolean }> {
+  if (opts.afterTotal >= opts.beforeTotal) return { amount: 0 }
+  const order = await getOrderById(c, opts.orderId)
+  if (!order) throw new Error('价格调整对应的订单不存在')
+  const beforeOrder = { ...order, totalAmount: opts.beforeTotal }
+  const difference = Number(Math.max(0, orderChargeableAmount(beforeOrder) - orderChargeableAmount(order)).toFixed(2))
+  if (!difference) return { amount: 0 }
+  const rows = await priceAdjustmentRows(c, order.id)
+  const existing = rows.find(row => row.id === opts.adjustmentId)
+  if (existing?.status === 'succeeded') return { amount: Number(existing.amount || 0), pendingDepositRefund: existing.refund_method === 'pending_deposit' }
+  const payments = await priceAdjustmentPaymentSources(c, order.id)
+  const paidPrincipal = payments.reduce((sum, payment) => sum + paymentPrincipal(payment), 0)
+  const priorRefunds = rows.filter(row => row.id !== opts.adjustmentId && row.direction === 'decrease' && row.status === 'succeeded').reduce((sum, row) => sum + Number(row.amount || 0), 0)
+  const refundAmount = Number(Math.min(difference, Math.max(0, paidPrincipal - priorRefunds - orderChargeableAmount(order))).toFixed(2))
+  if (refundAmount <= 0) return { amount: 0 }
+  if (!existing) await c.env.RENT.prepare("INSERT INTO order_price_adjustments (id, order_id, direction, before_total, after_total, amount, status, created_by) VALUES (?, ?, 'decrease', ?, ?, ?, 'pending', ?)").bind(opts.adjustmentId, order.id, opts.beforeTotal, opts.afterTotal, refundAmount, opts.actorId || null).run()
+  const adjustment = existing || { id: opts.adjustmentId, amount: refundAmount, status: 'pending' }
+  const source = payments.find(payment => Number(payment.amount || 0) - Number(payment.allocated_refunds || 0) - Number(payment.adjustment_refunds || 0) >= refundAmount)
+  const orderPaymentMethod = String(order.paymentMethod || '')
+  const refundMethod = resolveOrderPriceAdjustmentRefundMethod(opts.refundMethod, orderPaymentMethod, source)
+  let stripeRefundId: string | null = null
+  if (refundMethod === 'stripe') {
+    if (await hasOpenPaymentDispute(c, source.id)) throw new Error('该笔付款存在未解决的拒付争议，暂不能自动退款')
+    if (!adjustment.stripe_refund_id) {
+      const refund = await stripeRequest(c, 'refunds', new URLSearchParams({ payment_intent: source.stripe_payment_intent_id, amount: String(cents(refundAmount)), 'metadata[order_id]': order.id, 'metadata[type]': 'price_adjustment', 'metadata[adjustment_id]': opts.adjustmentId }), `price-adjustment-refund-${opts.adjustmentId}`)
+      if (refund.status !== 'succeeded') throw new Error('价格差价 Stripe 退款尚未成功，请稍后重试')
+      stripeRefundId = refund.id
+    } else stripeRefundId = adjustment.stripe_refund_id
+  }
+  const statements = [c.env.RENT.prepare("UPDATE order_price_adjustments SET amount = ?, refund_method = ?, stripe_refund_id = ?, status = 'succeeded', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(refundAmount, refundMethod, stripeRefundId, opts.adjustmentId)]
+  if (refundMethod === 'balance') statements.push(c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(refundAmount, order.userId))
+  await c.env.RENT.batch(statements)
+  if (refundMethod === 'balance') await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '订单降价差价退回账户余额', opts.actorId || null)
+  const completed = await c.env.RENT.prepare('SELECT id FROM order_price_adjustments WHERE id = ? AND status = \'succeeded\'').bind(opts.adjustmentId).first() as any
+  if (completed && refundMethod !== 'pending_deposit') {
+    await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -refundAmount, customerId: order.userId, orderId: order.id, sourceType: 'ORDER_PRICE_ADJUSTMENT', sourceId: completed.id, description: '订单降价差价退款', createdBy: opts.actorId || null, metadata: { refundMethod } })
+    await issueCreditNote(c, order.id, refundAmount, 0, `price-adjustment-${opts.adjustmentId}`)
+  }
+  return { amount: refundAmount, pendingDepositRefund: refundMethod === 'pending_deposit' }
+}
+
 export function stripeCheckoutItems(order: any): Array<{ name: string; amountCents: number }> {
   const totalCents = cents(order.totalAmount)
   const serviceFeeCents = cents(order.serviceFee ?? order.service_fee ?? 0)
@@ -489,14 +672,27 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
     const topupId = String(session?.metadata?.topup_id || '')
     const paidCents = Number(session?.amount_received ?? session?.amount ?? 0)
     if (session?.status !== 'succeeded' || String(session?.currency).toLowerCase() !== 'aud') return c.text('Stripe 支付状态无效', 400)
-    const authorization = await c.env.RENT.prepare('SELECT id, rental_id, customer_id FROM payments WHERE stripe_payment_intent_id = ? AND rental_amount = 0 AND deposit_amount > 0').bind(session.id).first() as any
-    if (authorization) {
+    const adjustmentId = String(session?.metadata?.adjustment_id || '')
+    if (String(session?.metadata?.type || '') === 'price_adjustment' && adjustmentId) {
+      const adjustment = await c.env.RENT.prepare("SELECT * FROM order_price_adjustments WHERE id = ? AND direction = 'increase'").bind(adjustmentId).first() as any
+      const payment = await c.env.RENT.prepare('SELECT * FROM payments WHERE stripe_payment_intent_id = ?').bind(session.id).first() as any
+      const order = adjustment ? await getOrderById(c, adjustment.order_id) : null
+      const expected = adjustment ? cents(adjustment.amount) + cents(adjustment.processing_fee) : 0
+      if (!adjustment || !payment || !order || adjustment.payment_id !== payment.id || payment.rental_id !== order.id || payment.customer_id !== String(order.userId) || String(session?.metadata?.customer_id || '') !== String(order.userId) || paidCents !== expected) return c.text('Stripe 差价支付数据不匹配', 400)
+      statements.push(
+        c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), payment.id),
+        c.env.RENT.prepare("UPDATE order_price_adjustments SET status = 'succeeded', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(adjustment.id),
+      )
+      paidOrderId = ''
+    } else {
+      const authorization = await c.env.RENT.prepare('SELECT id, rental_id, customer_id FROM payments WHERE stripe_payment_intent_id = ? AND rental_amount = 0 AND deposit_amount > 0').bind(session.id).first() as any
+      if (authorization) {
       const order = await getOrderById(c, authorization.rental_id)
       if (!order || authorization.customer_id !== String(order.userId) || paidCents <= 0 || paidCents > cents(orderDeposit(order))) return c.text('Stripe 押金预授权数据不匹配', 400)
       statements.push(c.env.RENT.prepare("UPDATE payments SET status = 'paid', amount = ?, transaction_id = COALESCE(transaction_id, ?), paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         .bind(paidCents / 100, session.id, authorization.id))
       paidOrderId = ''
-    } else if (topupId) {
+      } else if (topupId) {
       const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND stripe_payment_intent_id = ? AND status = 'pending'").bind(topupId, session.id).first() as any
       const customerId = String(session?.metadata?.customer_id || '')
       const expected = topup ? cents(topup.amount) + Math.round(cents(topup.amount) * getStripeProcessingFeeRate()) : 0
@@ -508,7 +704,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
         c.env.RENT.prepare('UPDATE users SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(next, customerId),
         c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) VALUES (?, ?, ?, ?, 'top_up_card', ?, NULL)").bind(`bt-${nanoid(12)}`, customerId, topup.amount, next, `信用卡充值（含手续费 ${Number(topup.processing_fee || 0).toFixed(2)} AUD）`),
       )
-    } else {
+      } else {
       const orderId = String(session?.metadata?.order_id || '')
       const customerId = String(session?.metadata?.customer_id || '')
       const order = await getOrderById(c, orderId)
@@ -526,6 +722,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
           .bind(generateReferenceNumber('TXN'), session.id),
         c.env.RENT.prepare("UPDATE orders SET status = 'paid', paymentMethod = 'card', stripe_payment_method_id = COALESCE(stripe_payment_method_id, ?), updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(String(session.payment_method || ''), order.id),
       )
+      }
     }
   } else if (event.type === 'payment_intent.payment_failed') {
     statements.push(
@@ -613,7 +810,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
 }
 
 async function paidPayment(c: Context, order: any): Promise<any> {
-  let payment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
+  let payment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY CASE WHEN rental_amount > 0 THEN 0 ELSE 1 END, rental_amount DESC, paid_at DESC LIMIT 1").bind(order.id).first() as any
   if (payment) return payment
   const method = ['card', 'bank_transfer', 'balance'].includes(order.paymentMethod) ? order.paymentMethod : 'bank_transfer'
   const paymentId = `p-${nanoid(12)}`
@@ -754,12 +951,16 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   }
   const refundText = String(form.refundAmount ?? '').trim()
   const refundAmount = Number(refundText)
-  const depositAmount = Number(payment.deposit_amount ?? order.depositAmount)
+  const depositAmount = Math.max(Number(payment.deposit_amount || 0), orderDeposit(order))
   const remainingRefundable = Number(Math.max(0, depositAmount - previouslyRefunded).toFixed(2))
-  if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > remainingRefundable) return c.text(`退款金额无效：本次最多可退 ${remainingRefundable.toFixed(2)}`, 400)
-  const totalRefunded = Number((previouslyRefunded + refundAmount).toFixed(2))
+  const pendingPriceRefund = Number((await c.env.RENT.prepare("SELECT COALESCE(SUM(amount), 0) AS amount FROM order_price_adjustments WHERE order_id = ? AND direction = 'decrease' AND status = 'succeeded' AND refund_method = 'pending_deposit' AND deposit_refunded = 0").bind(order.id).first() as any)?.amount || 0)
+  const remainingTotalRefundable = Number((remainingRefundable + pendingPriceRefund).toFixed(2))
+  if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > remainingTotalRefundable || (pendingPriceRefund > 0 && refundAmount < pendingPriceRefund)) return c.text(`退款金额无效：本次应至少包含差价 ${pendingPriceRefund.toFixed(2)} AUD，最多可退 ${remainingTotalRefundable.toFixed(2)} AUD`, 400)
+  const priceRefundAmount = Math.min(pendingPriceRefund, refundAmount)
+  const depositRefundAmount = Number((refundAmount - priceRefundAmount).toFixed(2))
+  const totalRefunded = Number((previouslyRefunded + depositRefundAmount).toFixed(2))
   const deductionAmount = Number(Math.max(0, depositAmount - totalRefunded).toFixed(2))
-  const refundedProcessingFee = refundableDepositFee(refundAmount, payment)
+  const refundedProcessingFee = refundableDepositFee(depositRefundAmount, payment)
   const totalRefundAmount = Number((refundAmount + refundedProcessingFee).toFixed(2))
   const refundItem = String(form.refundItem || 'deposit').trim()
   const customRefundItem = String(form.customRefundItem || '').trim()
@@ -779,7 +980,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (channel === 'unavailable' && refundAmount > 0) return c.text('历史信用卡付款没有 Stripe 交易编号，无法原路退款；请先将退款方式改为余额', 409)
   if (channel === 'unavailable') channel = 'balance'
   if (channel === 'bank_transfer' && (!order.refundBsb || !order.refundAccountNumber || !order.refundAccountName)) return c.text('订单缺少银行退款账户信息', 409)
-  if (refundAmount > 0 && channel === 'stripe') {
+  if (depositRefundAmount > 0 && channel === 'stripe') {
     const params = new URLSearchParams({
       payment_intent: payment.stripe_payment_intent_id,
       amount: String(cents(totalRefundAmount)),
@@ -793,7 +994,8 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
 
   await c.env.RENT.batch([
     c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, remainingRefundable, refundAmount, refundedProcessingFee, deductionAmount, deductionAmount > 0 ? deductionCategory : null, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, remainingRefundable, depositRefundAmount, refundedProcessingFee, deductionAmount, deductionAmount > 0 ? deductionCategory : null, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
+    ...(priceRefundAmount > 0 ? [c.env.RENT.prepare("UPDATE order_price_adjustments SET deposit_refunded = 1, updated_at = CURRENT_TIMESTAMP WHERE order_id = ? AND direction = 'decrease' AND status = 'succeeded' AND refund_method = 'pending_deposit' AND deposit_refunded = 0").bind(order.id)] : []),
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(totalRefunded >= depositAmount ? 'REFUNDED' : totalRefunded <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED', deductionAmount, totalRefunded, order.id),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),

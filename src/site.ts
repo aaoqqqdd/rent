@@ -46,6 +46,7 @@ export {
   parseCookie,
   generateUserId, generateReferralCode,
   validateHostedImageUrls,
+  formatOrderChangeActor,
 }
 export type { Role, AccessLevel }
 
@@ -60,7 +61,7 @@ export function getCustomerSigningUser(user: User | null | undefined): User | nu
 import { canTransitionOrder } from './domain/orderStatus'
 import {
   ORDER_CHANGE_TYPES, ORDER_CHANGE_TYPE_LABELS,
-  orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan,
+  orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan, formatOrderChangeActor,
 } from './domain/orderChanges'
 import type { OrderChangeType, OrderChangePlan } from './domain/orderChanges'
 import {

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, formatCurrency, formatMelbourneDateTime, validateHostedImageUrls, isContractFinalized, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site';
+import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, ensureContractForOrder, formatCurrency, formatMelbourneDateTime, validateHostedImageUrls, isContractFinalized, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, formatOrderChangeActor, reconcileOrderPayments } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 import { renderReconciliationPanel } from '../partials/reconciliationPanel';
@@ -20,19 +20,21 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user);
   }
 
-  const [customer, device, contract, completedRefund, depositRefundSummary, transferProof, statusHistory, depositSettlement, changeHistory, swapDevices] = await Promise.all([
+  const [customer, device, existingContract, completedRefund, depositRefundSummary, pendingPriceRefundSummary, transferProof, statusHistory, depositSettlement, changeHistory, swapDevices] = await Promise.all([
     getUserById(c, order.userId), getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id),
     c.env.RENT.prepare("SELECT type, status, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, refund_bsb, refund_account_number, refund_account_name FROM payment_refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
     c.env.RENT.prepare("SELECT COALESCE(SUM(refund_amount), 0) AS refunded_amount FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded'").bind(order.id).first(),
+    c.env.RENT.prepare("SELECT COALESCE(SUM(amount), 0) AS amount FROM order_price_adjustments WHERE order_id = ? AND direction = 'decrease' AND status = 'succeeded' AND refund_method = 'pending_deposit' AND deposit_refunded = 0").bind(order.id).first(),
     c.env.RENT.prepare("SELECT pp.* FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first(),
     c.env.RENT.prepare('SELECT old_status, new_status, trigger_type, triggered_by, reason, created_at FROM rental_status_history WHERE rental_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all(),
     c.env.RENT.prepare('SELECT * FROM deposit_settlements WHERE order_id = ? ORDER BY requested_at DESC LIMIT 1').bind(order.id).first(),
-    c.env.RENT.prepare('SELECT change_type, before_json, after_json, reason, changed_by, created_at FROM order_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all(),
+    c.env.RENT.prepare('SELECT h.change_type, h.before_json, h.after_json, h.reason, h.changed_by, h.created_at, u.name AS changed_by_name FROM order_change_history h LEFT JOIN users u ON u.id = h.changed_by WHERE h.order_id = ? ORDER BY h.created_at DESC LIMIT 20').bind(order.id).all(),
     c.env.RENT.prepare("SELECT id, name, status FROM devices WHERE id != ? AND status NOT IN ('retired') ORDER BY name LIMIT 200").bind(order.deviceId).all()
   ]) as any[];
+  const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
-    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee, stripe_payment_intent_id FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ]);
   const canModifyOrder = !['completed', 'cancelled'].includes(String(order.status));
@@ -42,6 +44,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   };
   const paymentMethod = String(order.paymentMethod || (order as any).payment_method || 'card');
   const paymentMethodLabel = paymentMethodLabels[paymentMethod] || paymentMethod;
+  const isCardPayment = ['card', 'stripe'].includes(paymentMethod)
+  const isTransferPayment = ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)
   const contractFinalized = Boolean(contract && isContractFinalized(contract));
   const rentalPaid = ['paid', 'pending_pickup', 'active', 'extended', 'overdue', 'suspended', 'pending_return', 'returned', 'completed'].includes(String(order.status));
   const signingStep = !contract
@@ -65,6 +69,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const depositAmount = Number(order.depositAmount || order.deposit_amount || 0)
   const refundedDepositAmount = Number(depositRefundSummary?.refunded_amount || 0)
   const remainingDepositRefund = Math.max(0, Number((depositAmount - refundedDepositAmount).toFixed(2)))
+  const pendingPriceRefund = Math.max(0, Number(Number(pendingPriceRefundSummary?.amount || 0).toFixed(2)))
+  const remainingRefundTotal = Number((remainingDepositRefund + pendingPriceRefund).toFixed(2))
+  const hasTransferPriceRefund = pendingPriceRefund > 0 && isTransferPayment
+  const hasStripeRefundSource = isCardPayment && paymentSources.some((payment: any) => payment.payment_method === 'card' && payment.stripe_payment_intent_id)
+  const defaultPriceRefundMethod = hasStripeRefundSource ? 'original' : isTransferPayment ? 'pending_deposit' : 'balance'
   const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
   const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, isSetupIntentDeposit ? 'card_hold' : 'bank_transfer')
   let proofImage = ''
@@ -117,7 +126,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       try { after = JSON.parse(item.after_json || '{}') } catch { }
       const diffs = diffOrderSnapshots(before, after);
       const detail = diffs.length ? diffs.map(d => `<div>${escapeHtml(d.label)}：<span class="mono">${escapeHtml(String(d.before ?? '—'))}</span> → <strong class="mono">${escapeHtml(String(d.after ?? '—'))}</strong></div>`).join('') : '—';
-      return `<tr><td class="mono">${escapeHtml(formatMelbourneDateTime(item.created_at))}</td><td>${escapeHtml(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${escapeHtml(item.reason || '—')}</td><td class="mono">${escapeHtml(item.changed_by || '—')}</td></tr>`;
+      return `<tr><td class="mono">${escapeHtml(formatMelbourneDateTime(item.created_at))}</td><td>${escapeHtml(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${escapeHtml(item.reason || '—')}</td><td>${escapeHtml(formatOrderChangeActor(item.changed_by_name, item.changed_by))}</td></tr>`;
     }).join('')}</tbody></table></div></section>` : ''}
     ${renderReconciliationPanel({ reconciliation, paymentSources, refundRows })}
     <div class="grid grid-2" style="gap: 24px; margin-bottom: 24px;">
@@ -220,6 +229,17 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
               <input class="form-control" type="number" min="0" step="0.01" name="depositAmount" value="${Number(order.depositAmount || 0)}">
               <label class="form-label">优惠金额</label>
               <input class="form-control" type="number" min="0" step="0.01" name="discountAmount" value="${Number((order as any).discount_amount || 0)}">
+              <div style="margin-top:12px;padding:16px;background:linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%);border-radius:12px">
+                <strong style="display:block;color:#c2410c;margin-bottom:6px">退款处理</strong>
+                <p class="section-note" style="margin:0 0 10px">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。管理员可选择本次降价退款方式，提交后按所选方式处理。</p>
+                <label class="form-label" for="priceRefundMethod">降价退款方式</label>
+                <select class="form-control" id="priceRefundMethod" name="priceRefundMethod">
+                  <option value="balance" ${defaultPriceRefundMethod === 'balance' ? 'selected' : ''}>退回账户余额</option>
+                  ${hasStripeRefundSource ? `<option value="original" ${defaultPriceRefundMethod === 'original' ? 'selected' : ''}>原路退回（Stripe 信用卡）</option>` : ''}
+                  ${isTransferPayment ? `<option value="pending_deposit" ${defaultPriceRefundMethod === 'pending_deposit' ? 'selected' : ''}>并入后续押金退款</option>` : ''}
+                </select>
+                <small class="form-text">仅当新订单总额低于当前总额时处理退款；涨价时该选择不生效。</small>
+              </div>
             </div>
             <div class="order-change-fields" data-for="LOCATION_CHANGE" hidden>
               <label class="form-label">配送方式</label>
@@ -241,7 +261,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           <script>(function(){var sel=document.getElementById('changeType');if(!sel)return;var form=sel.closest('form');function sync(){var groups=form.querySelectorAll('.order-change-fields');for(var i=0;i<groups.length;i++){groups[i].hidden=groups[i].getAttribute('data-for')!==sel.value;}}sel.addEventListener('change',sync);sync();})();</script>
         </div>` : ''}
         ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>设备归还</h4><p>${String(order.status) === 'pending_return' ? '客户已获批提前归还，请完成归还验机。' : order.early_return_requested_at ? '客户已申请提前归还，等待审批。' : '订单租赁中，可申请提前归还并安排验机。'}</p>${String(order.status) === 'active' && order.early_return_requested_at ? `<form method="post" action="/staff/orders/${order.id}/early-return/approve" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-warning" type="submit">批准提前归还</button></form>` : ''}<a class="button button-info" href="/staff/orders/${order.id}/inspection">归还验机</a></div>` : ''}
-        ${order.paymentMethod === 'bank_transfer' && String(order.status) !== 'active' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>银行转账审核</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>备注：${escapeHtml(transferProof.note || '-')}</p>${proofImage ? `<a href="${escapeHtml(proofImage)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(proofImage)}" alt="转账凭证" loading="lazy" referrerpolicy="no-referrer" style="max-width:100%;max-height:320px;border-radius:8px"></a>` : '<p class="alert">凭证图片链接缺失或无效</p>'}<p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交转账 Reference。</p>'}</div>` : ''}
+        ${order.paymentMethod === 'bank_transfer' && (String(order.status) !== 'active' || transferProof?.status === 'submitted') ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>银行转账审核</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>备注：${escapeHtml(transferProof.note || '-')}</p>${proofImage ? `<a href="${escapeHtml(proofImage)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(proofImage)}" alt="转账凭证" loading="lazy" referrerpolicy="no-referrer" style="max-width:100%;max-height:320px;border-radius:8px"></a>` : '<p class="alert">凭证图片链接缺失或无效</p>'}<p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交转账 Reference。</p>'}</div>` : ''}
         ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}付款审核</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交付款凭证。</p>'}</div>` : ''}
         ${['card', 'stripe'].includes(paymentMethod) && String(order.status) === 'pending_payment' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>Stripe 信用卡支付</h4><p>客户完成合同签署后，通过订单详情页的 Stripe 安全支付组件支付租金及服务费。银行卡信息不会保存到本站。</p></div>` : ''}
         <div style="padding: 24px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 16px;">
@@ -267,9 +287,10 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         <div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #c2410c;">退款处理</h4>
           <p class="section-note">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。管理员可选择本次退款方式，提交后按所选方式处理。</p>
+          ${hasTransferPriceRefund ? `<div class="alert"><strong>转账类付款待退差价：${formatCurrency(pendingPriceRefund)}</strong><br>该金额将在本次押金退款中一并退还；押金可退 ${formatCurrency(remainingDepositRefund)}，本次最多合计 ${formatCurrency(remainingRefundTotal)}。</div>` : ''}
           ${completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${depositSettlement && completedRefund?.status !== 'succeeded' ? `<div class="alert">结算单 ${escapeHtml(depositSettlement.settlement_number)}：${escapeHtml(depositSettlement.status)}${depositSettlement.review_note ? ` · ${escapeHtml(depositSettlement.review_note)}` : ''}</div>` : ''}
-          ${order.status === 'completed' && (isSetupIntentDeposit || remainingDepositRefund > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED') ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" onsubmit="return confirm('${depositSettlement?.status === 'APPROVED' ? '确认按已批准结算单执行本次押金结算吗？' : '确认提交本次押金结算供 Manager 审批吗？'}');">
+          ${order.status === 'completed' && (isSetupIntentDeposit || remainingRefundTotal > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED') ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" onsubmit="return confirm('${depositSettlement?.status === 'APPROVED' ? '确认按已批准结算单执行本次押金结算吗？' : '确认提交本次押金结算供 Manager 审批吗？'}');">
             ${isSetupIntentDeposit ? `<input type="hidden" name="refundMethod" value="original"><p class="section-note">长期租赁：押金未预扣。无损坏或逾期时填 0；只有发生实际费用时才从已保存卡片扣款。</p>` : `<label class="form-label" for="refundMethod">退款方式</label>
             <select class="form-control" id="refundMethod" name="refundMethod" required>
               <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额</option>
@@ -284,8 +305,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
               <option value="other">其他退款项目</option>
             </select>
             <input class="form-control" id="customRefundItem" name="customRefundItem" maxlength="100" placeholder="请输入退款项目名称" hidden>
-            ${isSetupIntentDeposit ? `<label class="form-label" for="deductionAmount">本次实际扣款金额（押金额度 ${formatCurrency(depositAmount)}）</label><input class="form-control" id="deductionAmount" name="deductionAmount" type="number" min="0" max="${depositAmount}" step="0.01" value="${Number(depositSettlement?.deduction_amount || 0)}" required>` : `<label class="form-label" for="refundAmount">释放押金额度（本次最多 ${formatCurrency(remainingDepositRefund)}）</label>
-            <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${remainingDepositRefund}" step="0.01" value="${Math.min(Number(depositSettlement?.refund_amount ?? remainingDepositRefund), remainingDepositRefund)}" required>`}
+            ${isSetupIntentDeposit ? `<label class="form-label" for="deductionAmount">本次实际扣款金额（押金额度 ${formatCurrency(depositAmount)}）</label><input class="form-control" id="deductionAmount" name="deductionAmount" type="number" min="0" max="${depositAmount}" step="0.01" value="${Number(depositSettlement?.deduction_amount || 0)}" required>` : `<label class="form-label" for="refundAmount">本次退款合计（押金 + 差价，最多 ${formatCurrency(remainingRefundTotal)}）</label>
+            <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${remainingRefundTotal}" step="0.01" value="${Math.min(Number(depositSettlement?.refund_amount ?? remainingRefundTotal), remainingRefundTotal)}" required>`}
             <label class="form-label" for="deductionReason">扣款原因（发生损坏或逾期时必填）</label>
             <select class="form-control" id="deductionCategory" name="deductionCategory">
               <option value="">无扣款</option><option value="DAMAGE" ${depositSettlement?.deduction_category === 'DAMAGE' ? 'selected' : ''}>设备损坏</option><option value="MISSING_ACCESSORY" ${depositSettlement?.deduction_category === 'MISSING_ACCESSORY' ? 'selected' : ''}>配件遗失</option><option value="LATE_FEE" ${depositSettlement?.deduction_category === 'LATE_FEE' ? 'selected' : ''}>逾期费用</option><option value="DEVICE_NOT_RETURNED" ${depositSettlement?.deduction_category === 'DEVICE_NOT_RETURNED' ? 'selected' : ''}>设备未归还</option><option value="OTHER" ${depositSettlement?.deduction_category === 'OTHER' ? 'selected' : ''}>其他</option>
