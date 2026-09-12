@@ -71,7 +71,7 @@ test('scheduled delivery combines queued agreements into one customer notificati
   assert.equal(notificationBatches.length, 1)
   assert.equal(notificationWrites.length, 2)
   assert.ok(notificationWrites.every(({ args }) => args.some((value) => String(value).includes('用户协议、租赁协议'))))
-  assert.ok(notificationWrites.some(({ args }) => args.some((value) => String(value).includes('您好，客户甲：'))))
+  assert.ok(notificationWrites.some(({ args }) => args.some((value) => String(value).includes('尊敬的 客户甲：'))))
   assert.ok(notificationWrites.every(({ args }) => args.every((value) => !String(value).includes('请登录后查看'))))
   assert.equal(batches.filter((batch) => batch.some(({ sql }) => /email_events/i.test(sql))).length, 1)
   assert.equal(batches.filter((batch) => batch.some(({ sql }) => /DELETE FROM agreement_update_queue/i.test(sql))).length, 1)

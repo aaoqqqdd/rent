@@ -131,8 +131,8 @@ export async function deliverPendingAgreementNotifications(c: Context): Promise<
   await ensureAgreementEmailEventsTable(c)
   const template = await c.env.RENT.prepare("SELECT subject, body, enabled FROM email_templates WHERE id = 'agreement_update'").first() as any
   const disabled = template?.enabled === 0
-  const fallbackMessage = `我们已更新以下协议内容：${names}。请查看通知详情中的最新版本。`
-  const subjectTpl = disabled ? '协议内容已更新' : String(template?.subject || '协议内容已更新')
+  const fallbackMessage = '我们已更新《{changed_agreements}》，最新版本已在我们的网站相关页面公布。继续使用我们的服务，即表示您接受更新后的条款。'
+  const subjectTpl = disabled ? '{changed_agreements}更新通知' : String(template?.subject || '{changed_agreements}更新通知')
   const bodyTpl = disabled ? fallbackMessage : normalizeAgreementUpdateTemplate(String(template?.body || fallbackMessage))
   const fillStatic = (value: string) => value
     .replace(/\{changed_agreements\}/g, names)
@@ -147,7 +147,7 @@ export async function deliverPendingAgreementNotifications(c: Context): Promise<
   // Site notifications have one stable, actionable sentence. Email templates
   // remain configurable, but an old default template must not tell an already
   // signed-in customer to log in again.
-  const siteMessageStatic = `您好，{customer_name}：我们已更新以下协议内容：${names}。请查看通知详情中的最新版本。`
+  const siteMessageStatic = `尊敬的 {customer_name}：我们已更新《${names}》，最新版本已在我们的网站相关页面公布。继续使用我们的服务，即表示您接受更新后的条款。`
 
   await ensureNotificationsTable(c)
   const recipients = ((await c.env.RENT.prepare("SELECT id, name, email FROM users WHERE role = 'CUSTOMER' AND status = 'active'").all()) as any).results || []
