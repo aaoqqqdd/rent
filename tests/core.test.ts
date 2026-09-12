@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import styles from '../src/styles.css'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getCustomerSigningUser } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getContractCustomerSnapshot } from '../src/site'
 import { generateWindowsPassword } from '../src/lib/password'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
@@ -330,6 +330,24 @@ test('all registered contract variables render without leftovers', () => {
   const template = names.map(name => `\${${name}}`).join('|')
   const result = renderContractVariables(template, { id: 'c', rentalId: 'o', contractNumber: 'CN1', content: template, signedAt: null, status: 'signed', contract_data: values }, {}, {}, {}, values, true)
   assert.equal(result.includes('${'), false)
+})
+
+test('website contract customer identity uses the locked snapshot over account data', () => {
+  const contract = {
+    id: 'c', rentalId: 'o', contractNumber: 'CN1', content: '', signedAt: null, status: 'signed',
+    contract_data: JSON.stringify({
+      customer_name: '网站填写姓名',
+      customer_email: 'website@example.com',
+      customer_phone: '+61412345678',
+      customer_identity_locked_at: '2026-09-13T01:02:03.000Z',
+    }),
+  } as any
+  assert.deepEqual(getContractCustomerSnapshot(contract), {
+    name: '网站填写姓名', email: 'website@example.com', phone: '+61412345678', lockedAt: '2026-09-13T01:02:03.000Z',
+  })
+  assert.equal(renderContractVariables('{customer_name}|{customer_email}|{customer_phone}', contract, {}, {}, {
+    name: '账号姓名', email: 'account@example.com', phone: '+8613800000000',
+  }, { customer_name: '其他姓名' }, true), '网站填写姓名|website@example.com|+61412345678')
 })
 
 test('contract ID number is masked for internal viewers unless sensitive reveal is on', () => {

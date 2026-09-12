@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -208,11 +208,40 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error(errorMessages[phoneCode] || '电话号码格式不正确，请检查国家代码和手机号。');
         }
 
+        const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
+        const lockedCustomerSnapshot = isWebsiteOrderContract ? getContractCustomerSnapshot(contract) : null
+        if (lockedCustomerSnapshot && (
+          lockedCustomerSnapshot.name !== name ||
+          lockedCustomerSnapshot.email !== email ||
+          lockedCustomerSnapshot.phone !== fullPhone
+        )) {
+          throw new Error('该网站订单的承租方资料已锁定，不能修改姓名、邮箱或联系电话。')
+        }
+
+        if (isWebsiteOrderContract && !lockedCustomerSnapshot) {
+          const lockedAt = new Date().toISOString()
+          const lockedData = {
+            ...contractData,
+            customer_name: name,
+            customer_email: email,
+            customer_phone: fullPhone,
+            customer_identity_locked_at: lockedAt,
+          }
+          const lockResult = await c.env.RENT.prepare(`UPDATE contracts SET contract_data = ? WHERE id = ? AND COALESCE(json_extract(contract_data, '$.customer_identity_locked_at'), '') = ''`)
+            .bind(JSON.stringify(lockedData), contract.id).run() as any
+          if (Number(lockResult?.meta?.changes ?? lockResult?.changes ?? 0) < 1) {
+            throw new Error('该网站订单的承租方资料已锁定，请刷新页面后继续。')
+          }
+          contractData.customer_name = name
+          contractData.customer_email = email
+          contractData.customer_phone = fullPhone
+          contractData.customer_identity_locked_at = lockedAt
+        }
+
         // 从数据库检查邮箱是否已存在
         const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() as any
         if (currentUser) {
           if (existingUser && existingUser.id !== currentUser.id) throw new Error('该邮箱已被其他账户使用，请更换电子邮箱。')
-          const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
           await updateUser(c, currentUser.id, { name, email, phone: fullPhone })
           await updateSignSession(c, token, { userIdToLink: currentUser.id });
         } else if (existingUser) {
@@ -243,7 +272,6 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         // 保存用户信息到会话
-        const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
         const windowsPassword = String(signSession.windowsPassword || generateWindowsPassword())
         await updateSignSession(c, token, { windowsPassword,
           userInfo: { ...body, windowsPassword, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, ...(signature ? { esignSignature: signature } : {}) }

@@ -5,12 +5,14 @@
 
 import { Context } from 'hono'
 import rawLayoutTemplate from './layout.html'
-import { styleSheetHref } from './lib/assetVersion'
+import { styleSheetHref, appScriptHref, languageScriptHref } from './lib/assetVersion'
 import { nanoid } from 'nanoid'
 
 // 给 styles.css / app.js 链接注入内容指纹版本号，配合 ?v=<hash> 的一年期 immutable 缓存。
 const layoutTemplate = rawLayoutTemplate
   .replace('href="/styles.css"', `href="${styleSheetHref}"`)
+  .replace('src="{{APP_SCRIPT}}"', `src="${appScriptHref}"`)
+  .replace('src="/i18n.js"', `src="${languageScriptHref}"`)
 
 // ---------------------------------------------------------------------------
 // 通用工具函数已拆分到 src/lib/*。这里 import 供本文件内部使用，并在文件内
@@ -964,6 +966,25 @@ export const CONTRACT_VARIABLE_GROUPS = [
 // 完善.md — 普通 STAFF 不得查看完整证件号码。
 export const SENSITIVE_CONTRACT_FIELDS = new Set(['customer_id_number'])
 
+export type ContractCustomerSnapshot = {
+  name: string
+  email: string
+  phone: string
+  lockedAt: string
+}
+
+export function getContractCustomerSnapshot(contract: Pick<Contract, 'contract_data'>): ContractCustomerSnapshot | null {
+  const stored = typeof contract.contract_data === 'string'
+    ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {})
+    : (contract.contract_data || {})
+  const lockedAt = String(stored.customer_identity_locked_at || '').trim()
+  const name = String(stored.customer_name || '').trim()
+  const email = String(stored.customer_email || '').trim()
+  const phone = String(stored.customer_phone || '').trim()
+  if (!lockedAt || !name || !email || !phone) return null
+  return { name, email, phone, lockedAt }
+}
+
 export async function logSensitiveDataAccess(
   c: Context,
   input: { actorId: string; targetUserId: string; field: string; purpose: string },
@@ -993,9 +1014,9 @@ export function renderContractVariables(content: string, contract: Contract, ord
     company_contact: systemSettings.companyDetails.contact,
     company_website: systemSettings.companyDetails.website,
     company_logo: systemSettings.companyDetails.logo,
-    customer_name: customer?.name,
-    customer_phone: customer?.phone,
-    customer_email: customer?.email,
+    customer_name: stored.customer_name || customer?.name,
+    customer_phone: stored.customer_phone || customer?.phone,
+    customer_email: stored.customer_email || customer?.email,
     customer_address: stored.customer_address || customer?.address,
     customer_dob: stored.customer_dob || customer?.dob,
     customer_country: stored.customer_country || customer?.country,
@@ -1284,7 +1305,16 @@ export async function ensureContractForOrder(c: Context, order: Order, createdBy
   const signExpiresAt = new Date(now)
   signExpiresAt.setDate(signExpiresAt.getDate() + 7)
   const device = await getDeviceById(c, order.deviceId)
+  const customer = order.userId ? await getUserById(c, order.userId) : null
   const template = await getContractTemplate(c)
+  const customerSnapshot = customer?.role === 'CUSTOMER' && customer.name && customer.email && customer.phone
+    ? {
+        customer_name: customer.name,
+        customer_email: customer.email,
+        customer_phone: customer.phone,
+        customer_identity_locked_at: now.toISOString(),
+      }
+    : {}
   const contract: Contract = {
     id: `ct-${nanoid(10)}`,
     rentalId: order.id,
@@ -1306,6 +1336,7 @@ export async function ensureContractForOrder(c: Context, order: Order, createdBy
     return_location: order.returnLocation || null,
     contract_data: {
       website_order: true,
+      ...customerSnapshot,
       invoice_number: '',
       delivery_method: order.deliveryMethod || 'Pickup',
       delivery_fee: Number(order.deliveryFee || order.delivery_fee || 0).toFixed(2),

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getDeviceRentalRules } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot } from '../../site';
 import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../actions/stripePayments';
 import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
 import { Context } from 'hono';
@@ -55,8 +55,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const escapeAttribute = (value: unknown) => sanitizePlainText(value, 500)
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   tokenOrNumber = escapeAttribute(tokenOrNumber)
-  errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
-  userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
   const viewerUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null);
   const currentUser = getCustomerSigningUser(viewerUser);
   if (currentUser) {
@@ -122,6 +120,21 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const contractData = typeof contract.contract_data === 'string'
     ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })()
     : (contract.contract_data || {})
+  const customerSnapshot = getContractCustomerSnapshot(contract)
+  if (customerSnapshot) {
+    const snapshotName = splitPersonName(customerSnapshot.name)
+    const snapshotPhone = splitContractPhone(customerSnapshot.phone)
+    userInput = {
+      ...userInput,
+      firstName: snapshotName.firstName,
+      lastName: snapshotName.lastName,
+      email: customerSnapshot.email,
+      phoneCode: snapshotPhone.phoneCode,
+      phone: snapshotPhone.phone,
+    }
+  }
+  errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
+  userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
   // 网站订单由系统审批后自动生成合同；兼容已经生成但尚未写入标记的旧合同。
   const isWebsiteOrderContract = Boolean(contractData.website_order) || String(order.status) === 'approved'
   const hasSavedCard = Boolean((order as any).stripe_payment_method_id)
@@ -225,15 +238,15 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
 
           <form method="POST" action="/contract/sign?token=${token}&step=2" id="sign-form" class="signing-form" novalidate>
             ${currentUser ? `
-              <section class="recorded-account"><div class="recorded-account__header"><div><span class="mono">ACCOUNT LINKED</span><h3>已关联账户</h3></div><span class="badge badge-success">已登录</span></div><p>已自动填写账户资料，您可以在签署前修改；保存后将同步更新账户。</p></section>
+              <section class="recorded-account"><div class="recorded-account__header"><div><span class="mono">ACCOUNT LINKED</span><h3>已关联账户</h3></div><span class="badge badge-success">已登录</span></div><p>${customerSnapshot ? '本网站订单的承租方资料已锁定，姓名、邮箱和联系电话不能修改。' : '已自动填写账户资料，您可以在签署前修改；保存后将同步更新账户。'}</p></section>
             ` : ''}
             <div class="grid grid-2">
-              <div class="form-group"><label class="form-label" for="firstName">名 / Given name</label><input id="firstName" class="form-control" name="firstName" value="${userInput.firstName ?? ''}" autocomplete="given-name" required><span class="field-error" data-error-for="firstName"></span></div>
-              <div class="form-group"><label class="form-label" for="lastName">姓 / Family name</label><input id="lastName" class="form-control" name="lastName" value="${userInput.lastName ?? ''}" autocomplete="family-name" required><span class="field-error" data-error-for="lastName"></span></div>
-              <div class="form-group"><label class="form-label" for="email">电子邮箱</label><input id="email" class="form-control" type="email" name="email" value="${userInput.email ?? ''}" autocomplete="email" required><span class="field-error" data-error-for="email"></span></div>
+              <div class="form-group"><label class="form-label" for="firstName">名 / Given name</label><input id="firstName" class="form-control" name="firstName" value="${userInput.firstName ?? ''}" autocomplete="given-name" required ${customerSnapshot ? 'readonly' : ''}><span class="field-error" data-error-for="firstName"></span></div>
+              <div class="form-group"><label class="form-label" for="lastName">姓 / Family name</label><input id="lastName" class="form-control" name="lastName" value="${userInput.lastName ?? ''}" autocomplete="family-name" required ${customerSnapshot ? 'readonly' : ''}><span class="field-error" data-error-for="lastName"></span></div>
+              <div class="form-group"><label class="form-label" for="email">电子邮箱</label><input id="email" class="form-control" type="email" name="email" value="${userInput.email ?? ''}" autocomplete="email" required ${customerSnapshot ? 'readonly' : ''}><span class="field-error" data-error-for="email"></span></div>
               ${currentUser ? '' : `<div class="form-group"><label class="form-label" for="referrer">推荐人代码（选填）</label><input id="referrer" class="form-control" name="referrer" value="${userInput.referrer ?? ''}" maxlength="64" placeholder="如有推荐人请填写"></div>`}
             </div>
-            <div class="form-group"><label class="form-label" for="phone">联系电话</label><div class="phone-field"><select id="phoneCode" name="phoneCode" class="form-control" required><option value="+61" ${!userInput.phoneCode || userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option><option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option><option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option><option value="+44" ${userInput.phoneCode === '+44' ? 'selected' : ''}>+44 英国</option><option value="+852" ${userInput.phoneCode === '+852' ? 'selected' : ''}>+852 香港</option><option value="+886" ${userInput.phoneCode === '+886' ? 'selected' : ''}>+886 台湾</option><option value="+65" ${userInput.phoneCode === '+65' ? 'selected' : ''}>+65 新加坡</option><option value="+82" ${userInput.phoneCode === '+82' ? 'selected' : ''}>+82 韩国</option><option value="+81" ${userInput.phoneCode === '+81' ? 'selected' : ''}>+81 日本</option></select><input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" autocomplete="tel-national" required placeholder="例如 0412 345 678"></div><span class="field-error" data-error-for="phone"></span></div>
+            <div class="form-group"><label class="form-label" for="phone">联系电话</label><div class="phone-field"><select id="phoneCode" name="phoneCode" class="form-control" required ${customerSnapshot ? 'disabled' : ''}><option value="+61" ${!userInput.phoneCode || userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option><option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option><option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option><option value="+44" ${userInput.phoneCode === '+44' ? 'selected' : ''}>+44 英国</option><option value="+852" ${userInput.phoneCode === '+852' ? 'selected' : ''}>+852 香港</option><option value="+886" ${userInput.phoneCode === '+886' ? 'selected' : ''}>+886 台湾</option><option value="+65" ${userInput.phoneCode === '+65' ? 'selected' : ''}>+65 新加坡</option><option value="+82" ${userInput.phoneCode === '+82' ? 'selected' : ''}>+82 韩国</option><option value="+81" ${userInput.phoneCode === '+81' ? 'selected' : ''}>+81 日本</option></select>${customerSnapshot ? `<input type="hidden" name="phoneCode" value="${userInput.phoneCode ?? ''}">` : ''}<input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" autocomplete="tel-national" required placeholder="例如 0412 345 678" ${customerSnapshot ? 'readonly' : ''}></div><span class="field-error" data-error-for="phone"></span></div>
             ${currentUser ? '' : `
               <label class="account-choice"><input type="checkbox" id="createAccountCheckbox" name="createAccount" ${userInput.createAccount === 'true' ? 'checked' : ''}><span><strong>注册正式账户</strong><small>勾选后设置自己的密码；不勾选将自动创建访客账户并在签署完成后显示临时密码。</small></span></label>
               <p class="form-text account-consent-note">选择注册即表示默认同意<a href="/user-terms" target="_blank" rel="noopener">用户协议</a>、<a href="/service-terms" target="_blank" rel="noopener">服务条款</a>和<a href="/privacy" target="_blank" rel="noopener">隐私政策</a>。</p>
