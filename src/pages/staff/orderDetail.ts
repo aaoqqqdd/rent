@@ -98,14 +98,15 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
       ${order.status === 'pending_payment' ? `
         <div class="section-title" style="margin-top: 24px;"><h3>支付信息</h3></div>
         <div class="payment-options" style="display: flex; gap: 20px; margin-top: 16px;">
-          <div class="payment-card">
+          ${order.paymentMethod === 'bank_transfer' ? `<div class="payment-card">
             <h4>银行转账</h4>
             <p><strong>银行名称:</strong> ${systemSettings.bankDetails.bankName || '—'}</p>
             <p><strong>BSB:</strong> ${systemSettings.bankDetails.bsb}</p>
             <p><strong>账号:</strong> ${systemSettings.bankDetails.account}</p>
             <p>客户需转账 ${formatCurrency(order.totalAmount)} 到以上账户。</p>
-          </div>
-          ${systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : ''}
+          </div>` : ''}
+          ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p>客户需扫码支付并提交付款凭证等待审核。</p></div>` : ''}
+          ${order.paymentMethod === 'card' || !order.paymentMethod ? (systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : '') : ''}
         </div>
       ` : ''}
     </div>
