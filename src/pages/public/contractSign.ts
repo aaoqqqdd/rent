@@ -334,7 +334,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       const stripeImmediatelyPaidAmount = Math.max(0, Number(order.totalAmount) - orderDepositAmount);
       const stripeFee = Math.round(stripeImmediatelyPaidAmount * 100 * stripeFeeRate) / 100;
       const stripePrincipal = Number(order.totalAmount) - orderDepositAmount;
-      const stripeTotal = stripePrincipal + stripeFee;
+      const stripeTotal = depositPaymentMode === 'PREAUTH' ? Number(order.totalAmount) + stripeFee : stripePrincipal + stripeFee;
 
       // 在步骤3中获取订单和设备信息
 
@@ -389,7 +389,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
-                <span><strong>信用卡支付（Stripe）</strong><small>租金及已确定的时段服务费即时扣款 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，其中支付手续费 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）。${depositPaymentMode === 'PREAUTH' ? `押金 ${formatCurrency(orderDepositAmount)} 另作预授权（Visa/Mastercard 请求最多保留 30 天，其他卡 7 天）。` : depositPaymentMode === 'SETUP_INTENT' ? '本订单使用 SetupIntent 保存卡片，押金不预扣。' : ''}</small></span>
+                <span><strong>信用卡支付（Stripe）</strong><small>${depositPaymentMode === 'PREAUTH' ? `一次性预授权总额 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>（包含租金及服务费、押金和手续费）；归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。` : `租金及已确定的时段服务费即时扣款 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，其中支付手续费 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）。${depositPaymentMode === 'SETUP_INTENT' ? '本订单使用 SetupIntent 保存卡片，押金不预扣。' : ''}`}</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -412,13 +412,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">${stripeFeePercent}%</span></div>
-              <p>选择 Stripe 信用卡支付时，租金及已确定的时段服务费会立即扣款；手续费按这两项计算，不按押金计算。</p>
-              <dl>
-                <div><dt>租金及服务费</dt><dd data-price="stripePrincipal">${formatCurrency(stripePrincipal)}</dd></div>
-                <div><dt>${depositPaymentMode === 'PREAUTH' ? '押金预授权（不扣款）' : depositPaymentMode === 'SETUP_INTENT' ? '押金（SetupIntent，不预扣）' : '押金'}</dt><dd>${formatCurrency(orderDepositAmount)}</dd></div>
-                <div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div>
-                <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div>
-              </dl>
+              <p>${depositPaymentMode === 'PREAUTH' ? '信用卡只创建一笔预授权；手续费按租金及服务费计算，不按押金计算。归还时再捕获实际应收金额。' : '选择 Stripe 信用卡支付时，租金及已确定的时段服务费会立即扣款；手续费按这两项计算，不按押金计算。'}</p>
+              ${depositPaymentMode === 'PREAUTH' ? `<dl><div class="payment-fee-notice__total"><dt>信用卡预授权总额</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div></dl>` : `<dl><div><dt>租金及服务费</dt><dd data-price="stripePrincipal">${formatCurrency(stripePrincipal)}</dd></div><div><dt>${depositPaymentMode === 'SETUP_INTENT' ? '押金（SetupIntent，不预扣）' : '押金'}</dt><dd>${formatCurrency(orderDepositAmount)}</dd></div><div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div><div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div></dl>`}
               <small class="payment-fee-notice__warning">付款全程由 Stripe 安全处理，本网站不存储您的银行卡号、有效期或安全码。继续付款即表示您已阅读并同意我们的《服务条款》和《隐私政策》，并同意 Stripe 的相关服务条款及隐私政策。</small>
             </aside>
             ` : ''}
@@ -462,6 +457,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const balanceRadio = document.getElementById('balance-payment-radio');
               const balanceShort = document.querySelector('[data-balance-insufficient]');
               const ORDER_DEPOSIT = ${orderDepositAmount};
+              const FULL_AUTHORIZATION = ${depositPaymentMode === 'PREAUTH' ? 'true' : 'false'};
               const RENT_ONLY = ${Number((stripePrincipal - orderServiceFee).toFixed(2))};
               const SERVICE_FEE_SLOTS = ['morning_service', 'evening_service'];
               const pickupTimeSlotSelect = document.getElementById('pickupTimeSlot');
@@ -470,7 +466,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 currentTotal = Number(total);
                 const stripePrincipalNow = Math.max(0, currentTotal - ORDER_DEPOSIT);
                 const fee = Math.round(stripePrincipalNow * 100 * ${stripeFeeRate}) / 100;
-                const stripeTotalNow = stripePrincipalNow + fee;
+                const stripeTotalNow = stripePrincipalNow + fee + (FULL_AUTHORIZATION ? ORDER_DEPOSIT : 0);
                 document.querySelectorAll('[data-price="orderTotal"]').forEach(el => { el.textContent = money(stripePrincipalNow); });
                 document.querySelectorAll('[data-price="stripePrincipal"]').forEach(el => { el.textContent = money(stripePrincipalNow); });
                 document.querySelectorAll('[data-price="stripeFee"]').forEach(el => { el.textContent = money(fee); });
