@@ -6,7 +6,7 @@
 import { buildLayout, getOrderById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, systemSettings, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS } from '../../site';
 import { Context } from 'hono';
 import { renderStripePaymentBox } from '../partials/stripePaymentSection';
-import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
+import { depositPaymentModeForOrder, normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   stripe: '信用卡（Stripe）', card: '信用卡（Stripe）', bank_transfer: '银行转账', alipay: '支付宝', wechat: '微信',
@@ -22,6 +22,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const [device, contract, transferProof, timeChanges, preInspection, returnInspection, depositRefund, refundStatus, changeHistory, paymentSources, refundRows] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), ['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod)) ? c.env.RENT.prepare("SELECT pp.status, pp.reference_number, pp.rejection_reason FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() : Promise.resolve(null), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare("SELECT snapshot_json, created_at FROM device_inspections WHERE rental_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(), c.env.RENT.prepare("SELECT snapshot_json, created_at FROM device_inspections WHERE rental_id = ? AND inspection_type = 'after_return' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(), c.env.RENT.prepare("SELECT deduction_amount, deduction_reason FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(), c.env.RENT.prepare("SELECT status, refundable_amount, refund_amount FROM payment_refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first(), c.env.RENT.prepare("SELECT change_type, before_json, after_json, reason, created_at FROM order_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 20").bind(order.id).all(), c.env.RENT.prepare("SELECT payment_method, amount, status FROM payments WHERE rental_id = ? AND status IN ('paid','refunded') ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]), c.env.RENT.prepare("SELECT type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[])]) as any[]
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const depositMode = depositPaymentModeForOrder(order)
+  const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, depositMode === 'PAID' ? 'bank_transfer' : 'card_hold')
   const deposit = Number(order.depositAmount || 0)
   const serviceFee = Number(order.serviceFee || order.service_fee || 0)
   const immediatelyPaidAmount = Math.max(0, Number(order.totalAmount) - deposit)
@@ -58,7 +59,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           <p><strong>领取/归还地点:</strong> ${order.pickupLocation || '待确认'} / ${order.returnLocation || '待确认'}</p>
           <p><strong>预约时间:</strong> ${order.pickupTimeSlot || '待确认'} / ${order.returnTimeSlot || '待确认'}</p>
           <p><strong>租金及服务费:</strong> ${formatCurrency(Number(order.totalAmount) - deposit)}</p>
-          <p><strong>押金:</strong> ${formatCurrency(deposit)}（${depositMode === 'PREAUTH' ? '预授权' : depositMode === 'SETUP_INTENT' ? 'SetupIntent 保存卡片，不预扣' : '按旧规则处理'}）</p>
+          <p><strong>押金:</strong> ${formatCurrency(deposit)}（${securityDepositMethodLabel(depositMethod)}；${depositMode === 'PREAUTH' ? '预授权' : depositMode === 'SETUP_INTENT' ? 'SetupIntent 保存卡片，不预扣' : '单独处理'}）</p>
           <p><strong>订单合计:</strong> ${formatCurrency(order.totalAmount)}</p>
           ${refundLabel ? `<p><strong>退款状态:</strong> ${esc(refundLabel)}</p>` : ''}
         </div>
@@ -107,7 +108,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
       ${order.status === 'pending_payment' ? `
         ${transferProof ? `<div class="payment-review-status payment-review-status--${transferProof.status === 'submitted' ? 'pending' : transferProof.status === 'rejected' ? 'failed' : 'success'}"><span class="payment-review-status__icon" aria-hidden="true"></span><div><strong>${transferProof.status === 'submitted' ? '转账凭证待审核' : transferProof.status === 'rejected' ? '转账审核未通过' : '转账审核已通过'}</strong><p>${transferProof.status === 'submitted' ? '管理员正在核对付款信息，请耐心等待。' : transferProof.status === 'rejected' ? `已驳回（${String(transferProof.rejection_reason || '').replace(/[&<>"']/g, '')}）` : '付款已确认，订单正在继续处理。'}</p></div></div>` : ''}
         <div class="section-title" style="margin-top: 24px;"><h3>支付信息</h3></div>
-        <div class="alert"><strong>收款明细：</strong>租金 ${formatCurrency(rentalAmount)} ＋ 时段服务费 ${formatCurrency(serviceFee)} ＝ ${formatCurrency(immediatelyPaidAmount)}；${depositMode === 'PREAUTH' ? `押金 ${formatCurrency(deposit)} 仅预授权` : depositMode === 'SETUP_INTENT' ? `长期押金 ${formatCurrency(deposit)} 不预扣` : `押金 ${formatCurrency(deposit)}`}。Stripe 手续费按租金及服务费计算 ${formatCurrency(stripeFee)}，付款合计 ${formatCurrency(stripeTotal)}。</div>
+        <div class="alert"><strong>收款明细：</strong>租金 ${formatCurrency(rentalAmount)} ＋ 时段服务费 ${formatCurrency(serviceFee)} ＝ ${formatCurrency(immediatelyPaidAmount)}；${depositMode === 'PREAUTH' ? `押金 ${formatCurrency(deposit)} 仅预授权` : depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 不预扣` : `押金 ${formatCurrency(deposit)} 按${securityDepositMethodLabel(depositMethod)}单独处理`}。Stripe 手续费按租金及服务费计算 ${formatCurrency(stripeFee)}，付款合计 ${formatCurrency(stripeTotal)}。</div>
         <div class="payment-options" style="display: flex; gap: 20px; margin-top: 16px;">
           ${order.paymentMethod === 'bank_transfer' ? `<div class="payment-card">
             <h4>银行转账</h4>

@@ -13,6 +13,7 @@ import {
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
 import { completeOrderSetupIntent, createOrderPaymentIntent, createOrderSetupIntent, resolveDepositPaymentMode } from '../stripePayments';
+import { normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
 import { getStripeRuntimeConfig } from '../../stripe';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 import { calculateRentalFee } from '../../domain/rentalPricing';
@@ -271,6 +272,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         const paymentMethod = (order as any).stripe_payment_method_id ? 'stripe' : String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || '')
+        const depositMethod = normalizeSecurityDepositMethod(body.depositMethod, normalizeSecurityDepositMethod((order as any).deposit_method, paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer'))
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
@@ -320,10 +322,13 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
 
-        const selectedDepositMode = paymentMethod === 'stripe'
+        if (depositMethod === 'card_hold' && paymentMethod !== 'stripe') throw new Error('信用卡预授权押金需要同时使用 Stripe 信用卡支付租金')
+        const selectedDepositMode = depositMethod === 'card_hold' && paymentMethod === 'stripe'
           ? await resolveDepositPaymentMode(c, order)
           : 'PAID'
-        await c.env.RENT.prepare('UPDATE orders SET deposit_payment_mode = ? WHERE id = ?').bind(selectedDepositMode, contract.rentalId).run()
+        await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ?, deposit_status = CASE WHEN depositAmount > 0 THEN ? ELSE \'NOT_REQUIRED\' END WHERE id = ?')
+          .bind(depositMethod, selectedDepositMode, selectedDepositMode === 'PAID' ? 'PENDING' : 'NOT_REQUIRED', contract.rentalId).run()
+        ; (order as any).deposit_method = depositMethod
         ; (order as any).deposit_payment_mode = selectedDepositMode
 
         // **核心签约逻辑**
@@ -457,8 +462,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any;
             const currentBalance = user?.balance || 0;
             // 获取订单总金额
-            const rental = await c.env.RENT.prepare('SELECT totalAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
-            const totalAmount = rental?.totalAmount || 0;
+            const rental = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
+            const totalAmount = Math.max(0, Number(rental?.totalAmount || 0) - Number(rental?.depositAmount || 0));
 
             if (currentBalance >= totalAmount) {
               // 扣除余额
@@ -497,8 +502,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         if (paymentMethod === 'balance' || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {
           const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
-          const paymentTotal = Number(paymentOrder?.totalAmount || 0)
-          const paymentDeposit = Number(paymentOrder?.depositAmount || 0)
+          const paymentTotal = Math.max(0, Number(paymentOrder?.totalAmount || 0) - Number(paymentOrder?.depositAmount || 0))
           const existingPayment = await c.env.RENT.prepare('SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(contract.rentalId, paymentMethod).first() as any
           const paymentId = existingPayment?.id || `p-${nanoid(12)}`
           if (!existingPayment) {
@@ -507,7 +511,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?, ?)
             `).bind(
               paymentId, contract.rentalId, userId, paymentMethod,
-              paymentTotal, paymentDeposit, paymentTotal - paymentDeposit,
+              paymentTotal, 0, paymentTotal,
               paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? generateReferenceNumber('TXN') : null, paymentMethod === 'balance' ? new Date().toISOString() : null
             ).run()
           }

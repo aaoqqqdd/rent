@@ -7,6 +7,20 @@
 export const LONG_TERM_RENTAL_DAYS = 30
 
 export type DepositPaymentMode = 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
+export type SecurityDepositMethod = 'bank_transfer' | 'cash' | 'card_hold'
+
+export function normalizeSecurityDepositMethod(value: unknown, fallback: SecurityDepositMethod = 'card_hold'): SecurityDepositMethod {
+  const method = String(value || '').trim().toLowerCase()
+  return method === 'bank_transfer' || method === 'cash' || method === 'card_hold' ? method : fallback
+}
+
+export function securityDepositMethodLabel(value: unknown): string {
+  return normalizeSecurityDepositMethod(value) === 'bank_transfer'
+    ? '银行转账'
+    : normalizeSecurityDepositMethod(value) === 'cash'
+      ? '现金'
+      : '信用卡预授权 / SetupIntent'
+}
 
 export function depositAuthorizationWindowDays(cardBrand: unknown): 7 | 30 {
   const brand = String(cardBrand || '').trim().toLowerCase()
