@@ -3471,9 +3471,12 @@ app.post('/admin/orders/:id/delete', async (c) => {
   }
   await releaseCouponForOrder(c, order.id)
   await c.env.RENT.prepare('DELETE FROM invoices WHERE order_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM order_time_change_history WHERE order_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM inspection_disputes WHERE order_id = ?').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM payment_refunds WHERE order_id = ?').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM payment_proofs WHERE payment_id IN (SELECT id FROM payments WHERE rental_id = ?)').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM payments WHERE rental_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM sign_sessions WHERE contract_token IN (SELECT sign_token FROM contracts WHERE orderId = ? AND sign_token IS NOT NULL)').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM contracts WHERE orderId = ?').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(order.id).run()
   return c.redirect('/admin/orders?success=' + encodeURIComponent('订单已删除'))

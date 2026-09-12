@@ -52,6 +52,11 @@ WHERE type='table'
 | `error_logs` | `user_id`→`users_old` (ON DELETE SET NULL) | — |
 | `device_command_results` | `command_id`→`device_commands_legacy` | — |
 
+> **Update:** `commission_records` was itself `DROP TABLE`d by
+> `0108_unify_referral_reward_ledger.sql` (folded into `referral_rewards`)
+> before the fix migration below was ever applied, so it's no longer part of
+> the rebuild — see "What migration 0121 does".
+
 ## Fix policy
 
 * `→ "users_old"` — **drop the clause.** `users_old` is backfilled only once
@@ -66,11 +71,68 @@ WHERE type='table'
 * Clauses already pointing at live tables (`orders`, `payments`, `devices`)
   are kept unchanged.
 
-## What migration 0103 does
+## What migration 0129 does, and the deeper bug found while applying it
 
-`0103_drop_dangling_foreign_keys.sql` rebuilds **10 of the 11 tables** with
-the SQLite 12-step pattern, wrapped in `PRAGMA foreign_keys=OFF/ON` (same
-family as `0044`/`0060`/`0074`):
+`0129_drop_dangling_foreign_keys.sql` (numbered `0103`, then `0121`, in
+earlier drafts) rebuilds the 9 originally-planned tables — `commission_records`
+dropped out from under it, see above — plus, after two failed production
+apply attempts, several more tables that turned out to need the same
+treatment. The original plan was: rebuild `orders` separately (in what was
+then `0120_expand_order_status_check.sql`) and leave the other 9 tables'
+`REFERENCES orders(id)` clauses alone, since "`0121` never renames `orders`
+itself, so those clauses stay valid whichever order the two files run in."
+
+That reasoning was wrong. Applying against production surfaced a platform
+constraint neither migration accounted for:
+
+* D1 always wraps a migration file (even a plain `d1 execute --file`) in an
+  already-open transaction. This makes `PRAGMA foreign_keys=OFF` a genuine
+  no-op — confirmed by direct reproduction with both raw SQLite and
+  `wrangler d1 execute --local`, not just inferred from the docs.
+* With FK enforcement therefore always effectively on, `DROP TABLE parent`
+  fails immediately with `FOREIGN KEY constraint failed` if any other live
+  table still has a plain (non-`CASCADE`) FK clause pointing at it —
+  regardless of `defer_foreign_keys`. For an `ON DELETE CASCADE` clause it's
+  worse: the drop doesn't error, it silently **cascades**, deleting the
+  referencing rows.
+* `payments` is referenced by `payment_proofs.payment_id` and
+  `payment_refunds.payment_id` (both plain) in addition to being one of the
+  9 originally-planned tables. `contracts` is referenced by
+  `sign_sessions.contract_token` (`CASCADE`). Both of these were live
+  production data, not empty tables — the first production apply attempt
+  failed on `orders` (referenced by `payments`, which had live rows), and a
+  second attempt would have failed identically on `payments` inside `0129`
+  once `orders` was fixed, or silently dropped `sign_sessions` rows via
+  `contracts`'s cascade.
+
+The fix: every table that references `payments`, `contracts`, or `orders`
+must have that specific FK clause stripped **before** the referenced table is
+dropped and rebuilt, in dependency order:
+
+```
+payment_proofs, payment_refunds  (children of payments)
+  -> payments                      (also drops its own orders reference)
+sign_sessions                    (child of contracts)
+  -> contracts                     (also drops its own orders reference)
+invoices, order_time_change_history, inspection_disputes,
+order_fulfillment_records, damage_cases   (orders' remaining plain/CASCADE children)
+  -> [0130 rebuilds orders itself, now safe]
+```
+
+D1 doesn't enforce these FKs in production anyway (see "Why it matters"
+above), and the app already deletes `payments`/`contracts`/`invoices`/
+`payment_refunds`/`payment_proofs` explicitly in code
+(`src/index.ts`, `/admin/orders/:id/delete`) rather than relying on DB-level
+`CASCADE`, so dropping these clauses for good — matching the `users_old`
+policy, not attempting to re-add them — changes no production behavior.
+`order_time_change_history` and `inspection_disputes` were the only two
+`CASCADE`-linked `orders` children the app did **not** already clean up
+manually; that handler now deletes them (and `sign_sessions`, for
+`contracts`'s cascade) explicitly too, so no orphaned rows accumulate now
+that the DB won't do it automatically.
+
+`0129` rebuilds each affected table with the SQLite 12-step pattern, wrapped
+in `PRAGMA foreign_keys=OFF/ON` (same family as `0044`/`0060`/`0074`):
 
 ```
 CREATE TABLE <t>__fk_rebuild ( <clean schema> );
@@ -81,54 +143,81 @@ ALTER TABLE <t>__fk_rebuild RENAME TO <t>;
 ```
 
 Renaming the `__fk_rebuild` table rather than the original means SQLite never
-rewrites child `REFERENCES` clauses, so `contracts` and `payments` (which are
-themselves FK targets) can be rebuilt without corrupting `sign_sessions`,
-`payment_proofs`, or `payment_refunds`. Verified with a scratch parent/child
-pair plus `PRAGMA foreign_key_check`.
+rewrites child `REFERENCES` clauses. `PRAGMA legacy_alter_table=ON` around
+the rename steps is still necessary for a *different* reason than the FK
+issue above: it stops SQLite's post-3.25 `RENAME` from re-parsing every
+trigger/view in the schema, which would otherwise fail on ones that
+reference a table momentarily absent mid-rebuild (e.g.
+`deposit_refunds_cannot_exceed_paid_deposit` references `payments` in its
+body). It does **not** by itself avoid the FK constraint-check problem —
+only the dependency-ordered stripping above does that. This was verified by
+directly reproducing the failure with a throwaway local D1 database and a
+two-row synthetic schema before touching the real migration files, and again
+end-to-end afterward: a fresh `db:migrate:local` from empty (proves
+schema/syntax only), and a seeded populated database mirroring production's
+exact FK shape (one row in each of `orders`/`payments`/`contracts`/
+`payment_proofs`/`payment_refunds`/`sign_sessions`/`invoices`/
+`order_time_change_history`/`inspection_disputes`/`order_fulfillment_records`/
+`damage_cases`) run through `0129`+`0130`, confirming every row survives and
+`PRAGMA foreign_key_check` comes back empty.
 
-## What is deferred: `orders`
+Also fixed in passing: the original `0121` draft's `payments__fk_rebuild`
+was missing `idx_payments_stripe_payment_intent` (added later by
+`0116_stripe_payment_intents.sql`, after the draft was written) — it would
+have silently dropped that unique index. `0129` recreates it.
 
-`orders` is **not** touched by `0103`. It is the hub of the schema:
+## `orders`: rebuilt by `0130_expand_order_status_check.sql`, after `0129`
 
-* **8 child tables** FK-reference it — `commission_records`, `contracts`,
-  `damage_cases`, `inspection_disputes`, `invoices`,
-  `order_fulfillment_records`, `order_time_change_history`, `payments` — three
-  of them `ON DELETE CASCADE` (`contracts`, `inspection_disputes`,
-  `order_time_change_history`).
+`orders` is the hub of the schema:
+
+* **7 child tables** currently FK-reference it — `contracts`, `damage_cases`,
+  `inspection_disputes`, `invoices`, `order_fulfillment_records`,
+  `order_time_change_history`, `payments` (`commission_records` did too,
+  historically) — three of them `ON DELETE CASCADE` (`contracts`,
+  `inspection_disputes`, `order_time_change_history`).
 * **~58 columns** accreted across dozens of migrations, several with `CHECK`
   constraints and non-obvious defaults.
 * 4 non-auto indexes (`idx_orders_deposit_status`, `idx_orders_order_status`,
   `idx_orders_payment_status`, `idx_orders_rental_status`) and the
   `update_orders_updated_at` trigger.
 
-All three of its FK clauses are dangling and, per the policy above, all three
-would simply be **dropped** — the clean `orders` has no `FOREIGN KEY` clauses
-at all. The rebuild itself is mechanically the same 12-step pattern and is
-safe in principle, but:
+`0130` (originally `0120_expand_order_status_check.sql`, renumbered to run
+after `0129`) rebuilds it with the same 12-step pattern (its primary purpose
+is expanding the `status` CHECK constraint; the FK cleanup rides along since
+it already has to touch every column). Unlike the blanket "drop the clause"
+policy above, `0130` **re-points** `userId` → `users(id)` and `deviceId` →
+`devices(id)` (keeping `referrerId` → `users(id) ON DELETE SET NULL`)
+instead of dropping them outright. That's a deliberate deviation: unlike
+`users_old`/`devices_before_retired_status`, the live `users`/`devices`
+tables are exactly what `orders.userId`/`orders.deviceId` have always
+logically pointed at in application code (every join already assumes this),
+so re-pointing there is strictly more correct than leaving no constraint at
+all, and D1 doesn't enforce FKs in production regardless. By the time `0130`
+runs, `0129` has already stripped every child table's `orders`-referencing
+clause, so this `DROP TABLE orders` is safe.
 
-1. The column list must be reproduced exactly; a transcription error is a
-   silent data-loss bug in the core rental/finance table.
-2. It should be tested against a **populated** database (a fresh
-   `db:migrate:local` runs the `INSERT ... SELECT` over zero rows, which
-   proves only schema/syntax validity, not data preservation).
-3. On remote D1 the `PRAGMA foreign_keys=OFF` window during
-   `DROP TABLE orders` / `RENAME` needs a maintenance check, since `orders`
-   has inbound `ON DELETE CASCADE` edges.
+**`0130` must run after `0129`, not before or independently** — this is the
+opposite of what the docs previously said, and was the actual root cause of
+the original production incident. Renumbering `0130` after `0129` (both
+still unapplied at the time) made this ordering explicit in the filenames
+rather than relying on it being a lucky lexicographic accident.
 
-### Procedure for the follow-up migration (`0104`)
+## Aside: duplicate migration numbers
 
-1. Dump the live definition and dependents first:
-   ```sql
-   SELECT name, sql FROM sqlite_master WHERE sql LIKE '%orders%';
-   SELECT cid, name, type, "notnull", dflt_value, pk FROM pragma_table_info('orders');
-   ```
-2. Build `orders__fk_rebuild` with the identical column list/types/defaults/
-   `CHECK`s, **minus** all three `FOREIGN KEY` clauses.
-3. `INSERT INTO orders__fk_rebuild (<explicit cols>) SELECT <same cols> FROM orders;`
-4. `DROP TABLE orders; ALTER TABLE orders__fk_rebuild RENAME TO orders;`
-5. Recreate the 4 indexes and `update_orders_updated_at` verbatim.
-6. `PRAGMA foreign_key_check;` — expect zero rows.
-7. Verify each of the 8 child tables still shows `REFERENCES orders(id)` (not
-   `orders__fk_rebuild`) via `SELECT sql FROM sqlite_master`.
-8. `npm run db:migrate:local && npm test && npx tsc --noEmit`, then dry-run
-   against a copy of production data before `db:migrate:remote`.
+`migrations/` has several pairs of files sharing the same leading number
+(`0014`, `0102`, `0118`, `0119`, and previously `0120`) — fallout from
+independent feature branches each claiming the next available number before
+merging into `main`. (The `0120` pair was the one directly involved in this
+incident: `0120_richen_email_templates.sql`, unrelated and already applied,
+and what was `0120_expand_order_status_check.sql` — now renumbered to
+`0130` since it's still unapplied and needed to move anyway. `0121` was
+similarly renumbered to `0129`.) This looks alarming but is **not** by
+itself a functional bug: `wrangler d1 migrations`
+tracks applied migrations by full filename in the `d1_migrations` table, not
+by numeric prefix, and applies files in lexicographic order of the full
+filename, which is well-defined even for a shared prefix. All of these
+duplicate pairs are already applied in production. **Do not rename them** —
+renaming an already-applied file desyncs it from the tracking table and makes
+wrangler try to reapply it as new. They're left as historical debt,
+documented here rather than "fixed", because fixing them would be riskier
+than the problem they cause.
