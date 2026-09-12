@@ -210,12 +210,16 @@ test('saved customer bank details prefill an editable bank refund form', () => {
 })
 
 test('contract signing progress renders readable step labels and one current step', () => {
-  const html = renderSigningProgress(2)
-  assert.match(html, /signing-step--complete[^>]*>[\s\S]*同意协议/)
-  assert.match(html, /signing-step--current" aria-current="step"[\s\S]*填写资料并完成签署/)
-  assert.doesNotMatch(html, /选择支付|付款方式/)
-  assert.equal((html.match(/aria-current="step"/g) || []).length, 1)
-  assert.doesNotMatch(html, /\*\*/)
+  const websiteHtml = renderSigningProgress(2, false)
+  assert.match(websiteHtml, /signing-step--complete[^>]*>[\s\S]*同意协议/)
+  assert.match(websiteHtml, /signing-step--current" aria-current="step"[\s\S]*填写资料并完成签署/)
+  assert.doesNotMatch(websiteHtml, /选择支付|付款方式/)
+  assert.equal((websiteHtml.match(/aria-current="step"/g) || []).length, 1)
+  const staffSigningHtml = renderSigningProgress(2)
+  assert.match(staffSigningHtml, /signing-step--current" aria-current="step"[\s\S]*填写资料并签署/)
+  const staffPaymentHtml = renderSigningProgress(3)
+  assert.match(staffPaymentHtml, /signing-step--current" aria-current="step"[\s\S]*选择支付/)
+  assert.doesNotMatch(websiteHtml, /\*\*/)
 })
 
 test('Stripe adds 2.5% to rent and service fees while excluding the deposit', () => {

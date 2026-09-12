@@ -39,12 +39,18 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
     return new Response('合同链接无效或已过期', { status: 404 });
   }
 
+  const contractData = typeof contract.contract_data === 'string'
+    ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })()
+    : (contract.contract_data || {})
+  const signingOrderForRouting = await getOrderById(c, contract.rentalId || contract.rental_id)
+  const isWebsiteOrderContract = Boolean(contractData.website_order) || String(signingOrderForRouting?.status || '') === 'approved'
+
   // 步骤 5 完成后合同已签署；访客没有登录态，返回/重复提交时不能再次进入付款选择页。
   if (step === 5 && (contract.status === 'signed' || contract.signedAt)) {
     const orderId = contract.rentalId || contract.rental_id
     return new Response(null, {
       status: 303,
-      headers: { Location: `/customer/orders/${encodeURIComponent(String(orderId || ''))}` },
+      headers: { Location: isWebsiteOrderContract ? `/customer/orders/${encodeURIComponent(String(orderId || ''))}` : `/payment/result?orderId=${encodeURIComponent(String(orderId || ''))}` },
     })
   }
 
@@ -133,15 +139,14 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             hasPhoneCode: !!phoneCode,
             hasPhone: !!submittedPhone
           });
-          throw new Error('请完整填写姓名、邮箱和联系电话；电子签名必须与姓名一致。');
-        }
-        const typedSignature = String(esignSignature || '').trim()
-        const signature = typedSignature
-        if (!signature || signature !== name) {
-          throw new Error('请输入与姓名一致的签名，或完成手写签名。')
+          throw new Error('请完整填写姓名、邮箱和联系电话。');
         }
         if (cleanFirstName.length > 100 || cleanLastName.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           throw new Error('姓名或电子邮箱格式不正确。')
+        }
+        const signature = String(esignSignature || '').trim()
+        if (!isWebsiteOrderContract && (!signature || signature !== name)) {
+          throw new Error('请输入与姓名一致的签名。')
         }
 
         // 如果选择创建账户，密码是必填的
@@ -241,11 +246,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
         const windowsPassword = String(signSession.windowsPassword || generateWindowsPassword())
         await updateSignSession(c, token, { windowsPassword,
-          userInfo: { ...body, windowsPassword, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, esignSignature: signature }
+          userInfo: { ...body, windowsPassword, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, ...(signature ? { esignSignature: signature } : {}) }
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
 
-        redirectUrl = `/contract/sign?token=${token}&step=4`;
+        redirectUrl = `/contract/sign?token=${token}&step=${isWebsiteOrderContract ? 3 : 3}`;
         break;
 
       case 3: {
@@ -254,8 +259,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const signature = typedSignature;
         if (!signature || signature !== String(signSession.userInfo.name || '').trim()) throw new Error('请输入与姓名一致的签名。');
         await updateSignSession(c, token, { userInfo: { ...signSession.userInfo, esignSignature: signature } });
-        redirectUrl = `/contract/sign?token=${token}&step=4`;
-        break;
+        if (!isWebsiteOrderContract) {
+          redirectUrl = `/contract/sign?token=${token}&step=4`;
+          break;
+        }
       }
 
       case 4:
@@ -271,7 +278,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先填写您的个人信息。');
         }
 
-        const noPayment = true
+        const noPayment = isWebsiteOrderContract
         const paymentMethod = String((order as any).paymentMethod || (order as any).payment_method || 'bank_transfer')
         // 押金处理方式不再由客户手选：跟着支付方式自动走——信用卡预授权 / SetupIntent，否则银行转账。
         const depositMethod = normalizeSecurityDepositMethod(paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer')
@@ -637,8 +644,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             orderId: contract.rentalId,
             contractNumber: signedContractNumber,
             guest: guestPassword ? { email: userInfo.email, password: guestPassword } : null,
-            redirectTarget: `/customer/orders/${contract.rentalId}`,
-            resultUrl: `/customer/orders/${encodeURIComponent(contract.rentalId)}`,
+            redirectTarget: noPayment ? `/customer/orders/${contract.rentalId}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`,
+            resultUrl: noPayment ? `/customer/orders/${encodeURIComponent(contract.rentalId)}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`,
           })
           res.headers.append('Set-Cookie', draftCookie)
           if (guestPassword) {
@@ -648,8 +655,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           return res
         }
         if (guestPassword) {
-          const paymentUrl = `/customer/orders/${encodeURIComponent(contract.rentalId)}`
-          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">查看订单详情</a></div></div>`
+          const paymentUrl = noPayment ? `/customer/orders/${encodeURIComponent(contract.rentalId)}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
+          const guestActionText = noPayment ? '查看订单详情' : '查看付款结果'
+          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${guestActionText}</a></div></div>`
           const response = c.html(buildLayout('保存访客登录资料', guestPage))
           response.headers.append('Set-Cookie', draftCookie)
           const session = await createAuthSession(c, userId)
@@ -662,7 +670,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           response.headers.append('Set-Cookie', draftCookie)
           return response
         }
-        redirectUrl = `/customer/orders/${contract.rentalId}`;
+        redirectUrl = noPayment ? `/customer/orders/${contract.rentalId}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`;
         await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, {
           token,
           contractId: contract.id,

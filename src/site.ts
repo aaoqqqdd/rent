@@ -1304,6 +1304,7 @@ export async function ensureContractForOrder(c: Context, order: Order, createdBy
     pickup_location: order.pickupLocation || null,
     return_location: order.returnLocation || null,
     contract_data: {
+      website_order: true,
       invoice_number: '',
       delivery_method: order.deliveryMethod || 'Pickup',
       delivery_fee: Number(order.deliveryFee || order.delivery_fee || 0).toFixed(2),
