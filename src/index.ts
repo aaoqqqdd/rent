@@ -243,9 +243,14 @@ app.get('/favicon.ico', (c) => c.redirect('/favicon.svg', 301))
 
 app.get('/i18n.js', (c) => {
   c.header('Content-Type', 'text/javascript; charset=utf-8')
-  c.header('Cache-Control', 'no-cache, must-revalidate')
+  const versioned = c.req.query('v') === languageScriptVersion
+  c.header('Cache-Control', versioned
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=3600, stale-while-revalidate=86400')
+  c.header('ETag', `"${languageScriptVersion}"`)
   c.header('X-Content-Type-Options', 'nosniff')
-  return c.body(languageScript)
+  if (c.req.header('If-None-Match') === `"${languageScriptVersion}"`) return c.body(null, 304)
+  return c.body(languageScriptText)
 })
 
 const SYSTEM_STATUS_CACHE_KEY = 'https://rent.internal/api/system-status'
