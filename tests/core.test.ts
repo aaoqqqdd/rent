@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import styles from '../src/styles.css'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getCustomerSigningUser } from '../src/site'
 import { generateWindowsPassword } from '../src/lib/password'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
@@ -44,6 +44,13 @@ test('PBKDF2 passwords verify without storing plaintext', async () => {
   assert.equal(await verifyPassword('A-secure-password-123', hash), true)
   assert.equal(await verifyPassword('wrong-password', hash), false)
   assert.equal(await verifyPassword('A-secure-password-123', 'pbkdf2$210000$salt$hash'), false)
+})
+
+test('only customer accounts are treated as contract signers', () => {
+  const staff = { id: 'staff-1', name: 'Minkang He', role: 'ADMIN' }
+  const customer = { id: 'customer-1', name: '真实客户', role: 'CUSTOMER' }
+  assert.equal(getCustomerSigningUser(staff as any), null)
+  assert.equal(getCustomerSigningUser(customer as any), customer)
 })
 
 test('new account passwords require letters, numbers, symbols, and eight characters', () => {

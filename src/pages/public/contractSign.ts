@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser } from '../../site';
 import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../actions/stripePayments';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
@@ -54,7 +54,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   tokenOrNumber = escapeAttribute(tokenOrNumber)
   errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
   userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
-  const currentUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null);
+  const viewerUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null);
+  const currentUser = getCustomerSigningUser(viewerUser);
   if (currentUser) {
     const accountName = splitPersonName(currentUser.name)
     const accountPhone = splitContractPhone(String(currentUser.phone || ''))
@@ -78,7 +79,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   }
 
   const signSession = await getOrCreateSignSession(c, token, contract.signToken || token)
-  const paymentUser = currentUser || (signSession.userIdToLink ? await getUserById(c, signSession.userIdToLink) : null)
+  const paymentUser = currentUser || (signSession.userIdToLink ? getCustomerSigningUser(await getUserById(c, signSession.userIdToLink)) : null)
   const canUseBalance = canUseAccountBalance(paymentUser)
   const bankRefundPrefill = getBankRefundPrefill(paymentUser)
 
@@ -119,19 +120,19 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const rentalTerms = sanitizeRichHtml(rentalTermsRow?.value ?? systemSettings.rentalTerms)
   const [device, contractCustomer, variableData] = await Promise.all([
     getDeviceById(c, order.deviceId),
-    currentUser ? Promise.resolve(currentUser) : (order.userId ? getUserById(c, order.userId) : Promise.resolve(null)),
+    currentUser ? Promise.resolve(currentUser) : (order.userId ? getUserById(c, order.userId).then(getCustomerSigningUser) : Promise.resolve(null)),
     getContractVariableData(c, contract, order),
   ])
 
   if (contract.status === 'signed' || contract.signedAt) {
-    const orderLink = currentUser?.role === 'CUSTOMER' && order.userId === currentUser.id
+    const orderLink = viewerUser?.role === 'CUSTOMER' && order.userId === viewerUser.id
       ? `/customer/orders/${order.id}`
       : `/login?redirect=${encodeURIComponent(`/customer/orders/${order.id}`)}`;
     const signedContractData = typeof contract.contract_data === 'string'
       ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })()
       : (contract.contract_data || {})
     const windowsPassword = String(signedContractData.windows_password || '')
-    const canViewWindowsPassword = currentUser?.role === 'CUSTOMER' && String(order.userId || '') === String(currentUser.id)
+    const canViewWindowsPassword = viewerUser?.role === 'CUSTOMER' && String(order.userId || '') === String(viewerUser.id)
     const paymentStatusLabel = order.status === 'paid'
       ? '付款已完成，发票与收据已生成。'
       : '合同已签署，订单仍未完成付款。请前往订单查看付款状态或联系工作人员。';
@@ -148,10 +149,13 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
         </div>
       </div>
     `;
-    return buildLayout('合同已签署 - 电脑租赁管理系统', completedContent, currentUser);
+    return buildLayout('合同已签署 - 电脑租赁管理系统', completedContent, viewerUser);
   }
 
-  const activeAgreementContent = renderContractVariables(rentalTerms, contract, order, device, contractCustomer, variableData);
+  const activeAgreementContent = renderContractVariables(rentalTerms, contract, order, device, contractCustomer, {
+    ...variableData,
+    ...(!contractCustomer ? { customer_name: '待签署人填写' } : {}),
+  });
 
   const agreementHtml = /<[^>]+>/.test(activeAgreementContent)
     ? activeAgreementContent
@@ -624,5 +628,5 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   }
 
   const signingPage = `<main class="signing-shell"><div class="entity-header signing-page-header"><div class="identity-strip mono"><span>E-SIGN / ${escapeAttribute(contract.contractNumber)}</span><span>SECURE SIGNING</span></div><div class="entity-heading"><div><p class="section-code">RENTAL AGREEMENT</p><h2 id="signing-page-title">租赁协议签署</h2><p>${escapeAttribute(device?.name || '租赁设备')} · ${escapeAttribute(order.startDate)} 至 ${escapeAttribute(order.endDate)}</p></div><span class="badge badge-warning">待签署</span></div></div>${content}</main>`
-  return buildLayout(title, signingPage, currentUser);
+  return buildLayout(title, signingPage, viewerUser);
 }

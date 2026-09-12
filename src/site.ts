@@ -49,6 +49,10 @@ export {
 }
 export type { Role, AccessLevel }
 
+export function getCustomerSigningUser(user: User | null | undefined): User | null {
+  return user?.role === 'CUSTOMER' ? user : null
+}
+
 // ---------------------------------------------------------------------------
 // 纯业务逻辑 / 状态机已拆分到 src/domain/*（均有独立单元测试）。同样 import
 // 供本文件使用并统一 re-export。
