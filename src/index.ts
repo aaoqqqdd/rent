@@ -123,8 +123,14 @@ import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalP
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
-import { styleSheetText as siteStyles, styleSheetVersion } from './lib/assetVersion'
-import { languageScript } from './lib/i18n'
+import {
+  styleSheetText as siteStyles,
+  styleSheetVersion,
+  appScriptText,
+  appScriptVersion,
+  languageScriptText,
+  languageScriptVersion,
+} from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
@@ -214,6 +220,18 @@ app.get('/styles.css', (c) => {
   c.header('X-Content-Type-Options', 'nosniff')
   if (c.req.header('If-None-Match') === `"${styleSheetVersion}"`) return c.body(null, 304)
   return c.body(siteStyles)
+})
+
+app.get('/app.js', (c) => {
+  c.header('Content-Type', 'text/javascript; charset=utf-8')
+  const versioned = c.req.query('v') === appScriptVersion
+  c.header('Cache-Control', versioned
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=3600, stale-while-revalidate=86400')
+  c.header('ETag', `"${appScriptVersion}"`)
+  c.header('X-Content-Type-Options', 'nosniff')
+  if (c.req.header('If-None-Match') === `"${appScriptVersion}"`) return c.body(null, 304)
+  return c.body(appScriptText)
 })
 
 app.get('/favicon.svg', (c) => {
@@ -1942,9 +1960,22 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const order = await getOrderById(c, c.req.param('orderId'))
   const customer = order ? await getUserById(c, order.userId) : null
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
   await loadSystemSettingsFromDB(c)
   const orderRentalRules = order ? await getDeviceRentalRules(c, order.deviceId) : null
   if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, orderRentalRules?.bufferDays ?? 0)) return c.text('订单状态无效或设备档期冲突', 409)
+  const requestedDeliveryMethod = form.deliveryMethod == null ? String(order.deliveryMethod || order.delivery_method || 'Pickup') : String(form.deliveryMethod)
+  if (!['Pickup', 'Delivery'].includes(requestedDeliveryMethod)) return c.text('配送方式无效', 400)
+  const deliveryFeeText = String(form.deliveryFee ?? '').trim()
+  const deliveryFee = requestedDeliveryMethod === 'Delivery' ? Number(deliveryFeeText) : 0
+  if (requestedDeliveryMethod === 'Delivery' && (!deliveryFeeText || !Number.isFinite(deliveryFee) || deliveryFee < 0)) return c.text('选择送货上门时必须填写有效的配送费', 400)
+  const previousDeliveryFee = Number(order.deliveryFee || order.delivery_fee || 0)
+  const totalAmount = Number((Number(order.totalAmount || 0) - (Number.isFinite(previousDeliveryFee) ? previousDeliveryFee : 0) + deliveryFee).toFixed(2))
+  await c.env.RENT.prepare('UPDATE orders SET deliveryMethod = ?, deliveryFee = ?, totalAmount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = ?')
+    .bind(requestedDeliveryMethod, deliveryFee, totalAmount, order.id, 'pending_approval').run()
+  order.deliveryMethod = requestedDeliveryMethod
+  order.deliveryFee = deliveryFee
+  order.totalAmount = totalAmount
   await updateOrderStatus(c, order.id, 'approved')
   await deleteRentalApplicationNotifications(c, order.id)
   const contract = await ensureContractForOrder(c, order, user.id)
