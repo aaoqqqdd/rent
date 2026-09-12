@@ -35,9 +35,10 @@ export function stripePaymentHelperScript(): string {
       ready: ready,
       elements: elements,
       confirm: function(){
+        var absoluteReturnUrl = opts.returnUrl ? new URL(opts.returnUrl, window.location.href).href : '';
         return stripe.confirmPayment({
           elements: elements,
-          confirmParams: opts.returnUrl ? { return_url: opts.returnUrl } : {},
+          confirmParams: absoluteReturnUrl ? { return_url: absoluteReturnUrl } : {},
           redirect: 'if_required'
         }).then(function(res){
           if (res.error) return { ok: false, error: res.error.message || '支付未完成，请检查卡信息后重试。' };
@@ -61,9 +62,10 @@ export function stripePaymentHelperScript(): string {
     return {
       ready: ready,
       confirm: function(){
+        var absoluteReturnUrl = opts.returnUrl ? new URL(opts.returnUrl, window.location.href).href : '';
         return stripe.confirmSetup({
           elements: elements,
-          confirmParams: opts.returnUrl ? { return_url: opts.returnUrl } : {},
+          confirmParams: absoluteReturnUrl ? { return_url: absoluteReturnUrl } : {},
           redirect: 'if_required'
         }).then(function(res){
           if (res.error) return { ok: false, error: res.error.message || '卡片验证未完成，请检查卡信息后重试。' };
