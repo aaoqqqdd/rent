@@ -1716,7 +1716,7 @@ app.post('/customer/rent/:id', async (c) => {
   await insertOrder(c, {
     id: orderId, orderNo: generateReferenceNumber('OD'), userId: user.id,
     deviceId: device.id, startDate, endDate, rentalPeriod, status: 'pending_approval',
-    paymentMethod: 'bank_transfer', totalAmount: rentAmount + device.depositAmount - discountAmount,
+    paymentMethod: 'card', totalAmount: rentAmount + device.depositAmount - discountAmount,
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
     deliveryMethod, deliveryFee: 0, rentalNote, couponCode: appliedCouponCode, discountAmount,
     createdAt: new Date().toISOString()

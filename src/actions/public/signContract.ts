@@ -279,7 +279,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         const noPayment = isWebsiteOrderContract
-        const paymentMethod = String((order as any).paymentMethod || (order as any).payment_method || 'bank_transfer')
+        const paymentMethod = String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || 'card')
         // 押金处理方式不再由客户手选：跟着支付方式自动走——信用卡预授权 / SetupIntent，否则银行转账。
         const depositMethod = normalizeSecurityDepositMethod(paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)

@@ -223,6 +223,7 @@ test('contract signing progress renders readable step labels and one current ste
 })
 
 test('Stripe adds 2.5% to rent and service fees while excluding the deposit', () => {
+  assert.deepEqual(stripePaymentAmounts(220, 200), { baseCents: 2000, feeCents: 50, chargedCents: 2050 })
   assert.deepEqual(stripePaymentAmounts(1100), { baseCents: 110000, feeCents: 2750, chargedCents: 112750 })
   assert.deepEqual(stripePaymentAmounts(99.99), { baseCents: 9999, feeCents: 250, chargedCents: 10249 })
   assert.deepEqual(stripePaymentAmounts(1100, 1000), { baseCents: 10000, feeCents: 250, chargedCents: 10250 })

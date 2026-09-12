@@ -124,7 +124,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     rentalNote: String(body.rentalNote || '').trim().slice(0, 500) as any,
     rentalPeriod: rentalPeriod, // 添加 rentalPeriod
     status: 'draft',
-    paymentMethod: 'bank_transfer',
+    paymentMethod: 'card',
     totalAmount: totalAmount,
     depositAmount: depositAmount,
     dailyRate: dailyRate,

@@ -143,6 +143,8 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
   const customerId = await ensureStripeCustomerForPaymentMethod(c, customer, paymentMethodId)
   const cardBrand = String(paymentMethod.card?.brand || '').toLowerCase()
   const authorizationWindowDays = depositAuthorizationWindowDays(cardBrand)
+  const rentalPeriod = Number(order.rentalPeriod ?? order.rental_period ?? 0)
+  const requiresExtendedWindow = rentalPeriod > authorizationWindowDays
   const params = new URLSearchParams({
     amount: String(cents(depositAmount)),
     currency: 'aud',
@@ -158,7 +160,7 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     'metadata[card_brand]': cardBrand || 'unknown',
     'metadata[authorization_window_days]': String(authorizationWindowDays),
   })
-  if (authorizationWindowDays === 30) params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
+  if (authorizationWindowDays === 30 && requiresExtendedWindow) params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
   let intent: any
   try {
     intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-${order.id}`)
@@ -168,8 +170,6 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-standard-${order.id}`)
   }
   if (!['requires_capture', 'succeeded'].includes(String(intent.status))) throw new Error('押金预授权未完成，请重新验证信用卡。')
-  const rentalPeriod = Number(order.rentalPeriod ?? order.rental_period ?? 0)
-  const requiresExtendedWindow = authorizationWindowDays === 30 && rentalPeriod > 7
   if (requiresExtendedWindow) {
     const cardDetails = intent.latest_charge?.payment_method_details?.card
     const captureBefore = Number(cardDetails?.capture_before || 0)
@@ -262,6 +262,7 @@ async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, payme
     const existing = await stripeRequest(c, `customers/${encodeURIComponent(storedCustomerId)}`).catch(() => null)
     if (existing?.id) {
       await syncStripeCustomerProfile(c, storedCustomerId, user)
+      if (paymentMethodId) await stripeRequest(c, `payment_methods/${paymentMethodId}/attach`, new URLSearchParams({ customer: storedCustomerId }), `rent-payment-method-attach-${paymentMethodId}`)
       return storedCustomerId
     }
   }
@@ -276,6 +277,7 @@ async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, payme
     if (existing?.id) {
       const existingId = String(existing.id)
       await syncStripeCustomerProfile(c, existingId, user)
+      if (paymentMethodId) await stripeRequest(c, `payment_methods/${paymentMethodId}/attach`, new URLSearchParams({ customer: existingId }), `rent-payment-method-attach-${paymentMethodId}`)
       await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(existingId, userId).run()
       return existingId
     }
@@ -334,7 +336,8 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     await c.env.RENT.prepare("UPDATE orders SET deposit_status = 'NOT_REQUIRED', deposit_held_amount = 0 WHERE id = ?").bind(order.id).run()
   }
 
-  const existing = await c.env.RENT.prepare("SELECT id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  // 押金预授权也会记录为 card，但 rental_amount = 0；这里只能复用租金付款记录。
+  const existing = await c.env.RENT.prepare("SELECT id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND payment_method = 'card' AND rental_amount > 0 ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
 
   const intent = await upsertPaymentIntent(c, {
     existingIntentId: existing?.stripe_payment_intent_id ? String(existing.stripe_payment_intent_id) : '',
