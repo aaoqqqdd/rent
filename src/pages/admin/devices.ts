@@ -49,12 +49,11 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
       <table>
         <thead>
           <tr>
-            <th>ID</th>
+            <th>资产编号</th>
             <th>设备名称</th>
             <th>分类</th>
             <th>品牌</th>
             <th>型号</th>
-            <th>资产编号</th>
             <th>序列号</th>
             <th>日租金</th>
             <th>押金</th>
@@ -78,12 +77,11 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
             const lifecycle = device.lifecycleStatus || device.lifecycle_status || '-'
             return `
               <tr>
-                <td>${device.id}</td>
+                <td class="mono">${device.assetTag || device.asset_tag || '-'}</td>
                 <td><strong>${device.name}</strong></td>
                 <td>${device.category || '其他'}</td>
                 <td>${device.brand || '-'}</td>
                 <td>${device.model || '-'}</td>
-                <td class="mono">${device.assetTag || device.asset_tag || '-'}</td>
                 <td style="font-family: monospace; font-size: 0.85rem;">${device.serialNumber || device.serial_number || '-'}</td>
                 <td>${formatCurrency(device.pricePerDay || device.dailyRate)}</td>
                 <td>${formatCurrency(device.depositAmount)}</td>

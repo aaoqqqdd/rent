@@ -3783,7 +3783,7 @@ app.post('/admin/devices/new', async (c) => {
       category: form.category || '其他',
       brand: form.brand || '',
       model: form.model || '',
-      assetTag: String(form.assetTag || '').trim().slice(0, 80) || await generateAssetTag(c, form.brand || ''),
+      assetTag: await generateAssetTag(c, form.brand || ''),
       serialNumber,
       cpu: form.cpu || '',
       ram: form.ram || '',
