@@ -404,6 +404,7 @@
     document.addEventListener('DOMContentLoaded', function () {
       if (!location.pathname.startsWith('/notifications')) return;
       document.querySelectorAll('.notification-item .notification-message').forEach(function (message) {
+        if (message.closest('a.notification-item')) return;
         if (message.dataset.previewReady) return;
         message.dataset.previewReady = '1';
         const full = message.innerHTML;

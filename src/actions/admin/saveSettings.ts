@@ -4,85 +4,19 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
-import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, ensureNotificationsTable, renderEmailNotificationHtml, sanitizePlainText } from '../../site'
+import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
 import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChannels'
+import { enqueueAgreementUpdate } from '../../services/notifications'
 
-/**
- * 协议变更后通知客户。设计约束：
- * 1. 站内信是可靠通道——用一条批量 INSERT 写给所有活跃客户，不再逐个往返，
- *    也不会因为其中一条失败而整体丢通知。
- * 2. 邮件改成异步：这里只把待发邮件写进 email_events 队列，真正的外呼由
- *    定时任务 deliverPendingAgreementEmails 分批完成，避免在保存请求里打
- *    成百上千个 fetch（会撞上 Workers 子请求上限而整体抛错）。
- * 3. 整个函数吞掉所有异常——通知失败绝不能把「协议已保存」变成一次报错。
- */
-export async function notifyAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, companyDetails: any, changedContent = ''): Promise<void> {
+/** 保存协议更新记录，实际通知由定时任务统一发送。 */
+export async function notifyAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, _companyDetails?: any, _changedContent = ''): Promise<void> {
   if (!changedAgreements.length) return
-  const names = changedAgreements.map(([, label]) => label).join('、')
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${names}\n${changedContent}`))
-  const dedupeKey = `agreement_update:${Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, '0')).join('')}`
-  const companyName = String(companyDetails?.name || '')
-  const companyEmail = String(companyDetails?.email || '')
   try {
-    await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
-    await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS email_events (
-      id TEXT PRIMARY KEY NOT NULL, event_type TEXT NOT NULL, recipient TEXT NOT NULL,
-      order_id TEXT, template_id TEXT, idempotency_key TEXT NOT NULL UNIQUE,
-      status TEXT NOT NULL, provider_message_id TEXT, error_message TEXT, sent_at TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      subject TEXT, text_body TEXT, html_body TEXT,
-      retry_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3, last_attempt_at TEXT
-    )`).run()
-
-    const template = await c.env.RENT.prepare("SELECT subject, body, enabled FROM email_templates WHERE id = 'agreement_update'").first() as any
-    const disabled = template?.enabled === 0
-    const fallbackMessage = `我们已更新以下协议内容：${names}。请打开通知详情查看最新版本。`
-    const subjectTpl = disabled ? '协议内容已更新' : String(template?.subject || '协议内容已更新')
-    const bodyTpl = disabled ? fallbackMessage : String(template?.body || fallbackMessage)
-
-    // 先把「每个收件人都一样」的占位符替换掉，剩下的 {customer_name} /
-    // {customer_email} 交给下面按人填充（站内信在 SQL 里填，邮件在 JS 里填）。
-    const fillStatic = (value: string) => value
-      .replace(/\{changed_agreements\}/g, names)
-      .replace(/\{company_name\}/g, companyName)
-      .replace(/\{company_email\}/g, companyEmail)
-    const subjectStatic = fillStatic(subjectTpl)
-    const bodyStatic = fillStatic(bodyTpl)
-    const fillCustomer = (value: string, customer: any) => value
-      .replace(/\{customer_name\}/g, String(customer?.name || ''))
-      .replace(/\{customer_email\}/g, String(customer?.email || ''))
-
-    // 站内信：一条语句写给所有活跃客户（含未填有效邮箱的正式客户和访客）。
-    await ensureNotificationsTable(c)
-    await c.env.RENT.prepare(`
-      INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, dedupe_key)
-      SELECT 'nt-' || lower(hex(randomblob(16))), id, 'agreement_update',
-             REPLACE(REPLACE(?, '{customer_name}', COALESCE(name, '')), '{customer_email}', COALESCE(email, '')),
-             REPLACE(REPLACE(?, '{customer_name}', COALESCE(name, '')), '{customer_email}', COALESCE(email, '')), ?
-      FROM users WHERE role = 'CUSTOMER' AND status = 'active'
-    `).bind(subjectStatic, bodyStatic, dedupeKey).run()
-
-    // 邮件：写入 email_events 队列（PENDING），外呼交给定时任务分批处理。
-    const recipients = ((await c.env.RENT.prepare("SELECT name, email FROM users WHERE role = 'CUSTOMER' AND status = 'active'").all()) as any).results || []
-    const today = new Date().toISOString().slice(0, 10)
-    const queued = recipients.filter((customer: any) => {
-      const email = String(customer?.email || '')
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !email.endsWith('@invalid.local')
-    })
-    for (let i = 0; i < queued.length; i += 50) {
-      const chunk = queued.slice(i, i + 50)
-      await c.env.RENT.batch(chunk.map((customer: any) => {
-        const subject = fillCustomer(subjectStatic, customer)
-        const message = fillCustomer(bodyStatic, customer)
-        const html = renderEmailNotificationHtml(subject, message, companyName)
-        return c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, idempotency_key, status, subject, text_body, html_body) VALUES (?, 'AGREEMENT_UPDATE', ?, ?, 'PENDING', ?, ?, ?)")
-          .bind(`email-${crypto.randomUUID()}`, customer.email, `agreement_update:${today}:${names}:${customer.email}`, subject, sanitizePlainText(message, 20000), html)
-      }))
-    }
+    await enqueueAgreementUpdate(c, changedAgreements, _changedContent)
   } catch (error: any) {
-    console.error('notifyAgreementUpdate failed:', error?.message || error)
+    console.error('enqueueAgreementUpdate failed:', error?.message || error)
   }
 }
 

@@ -182,7 +182,8 @@ export type { ErrorLevel }
 import { recordBalanceTransaction, recordFinancialLedgerEntry } from './services/ledger'
 import {
   ensureNotificationsTable, createNotification, getNotifications,
-  createDueDateNotifications, deliverPendingAgreementEmails, notifyOverduePaymentProofs,
+  createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
+  deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
 } from './services/notifications'
 import {
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
@@ -199,7 +200,8 @@ import { getPendingOrdersWithDetails, getStaffDashboardData } from './services/s
 export {
   recordBalanceTransaction, recordFinancialLedgerEntry,
   ensureNotificationsTable, createNotification, getNotifications,
-  createDueDateNotifications, deliverPendingAgreementEmails, notifyOverduePaymentProofs,
+  createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
+  deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,

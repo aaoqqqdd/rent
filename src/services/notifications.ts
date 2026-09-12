@@ -7,7 +7,8 @@
 // 依赖 settings（公司信息、发件人）与 lib/html（邮件模板）。
 
 import type { Context } from 'hono'
-import { renderEmailNotificationHtml } from '../lib/html'
+import { renderEmailNotificationHtml, sanitizePlainText } from '../lib/html'
+import { safeJsonParse } from '../lib/json'
 import { getSystemSettings } from '../settings/systemSettings'
 import { resolveResendCredentials, dispatchChannelAlert } from '../notifyChannels'
 
@@ -57,6 +58,133 @@ export async function ensureNotificationsTable(c: Context): Promise<void> {
   try { await notificationsSchemaReady } catch (error) { notificationsSchemaReady = null; throw error }
 }
 
+async function ensureAgreementUpdateQueueTable(c: Context): Promise<void> {
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS agreement_update_queue (
+    agreement_key TEXT PRIMARY KEY NOT NULL,
+    agreement_label TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run()
+}
+
+async function ensureAgreementEmailEventsTable(c: Context): Promise<void> {
+  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS email_events (
+    id TEXT PRIMARY KEY NOT NULL, event_type TEXT NOT NULL, recipient TEXT NOT NULL,
+    order_id TEXT, template_id TEXT, idempotency_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL, provider_message_id TEXT, error_message TEXT, sent_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    subject TEXT, text_body TEXT, html_body TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3, last_attempt_at TEXT
+  )`).run()
+}
+
+function normalizeCustomerName(value: unknown): string {
+  const name = String(value || '').trim().replace(/\s+/g, ' ')
+  return name.replace(/([\p{Script=Han}])\s+(?=[\p{Script=Han}])/gu, '$1')
+}
+
+function normalizeAgreementUpdateTemplate(value: string): string {
+  return value
+    .replace(/请登录后查看最新版本/g, '请查看通知详情中的最新版本')
+    .replace(/请打开通知详情查看最新版本/g, '请查看通知详情中的最新版本')
+}
+
+// 保存协议时只排队，不创建客户通知，也不调用外部邮件服务。
+// 同一协议在下一次定时任务前重复保存只保留一项；不同协议会在发送时合并成一条通知。
+export async function enqueueAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, changedContent = ''): Promise<void> {
+  const changes = new Map<string, string>()
+  for (const [key, label] of changedAgreements) {
+    if (key && label) changes.set(key, label)
+  }
+  if (!changes.size) return
+  await ensureAgreementUpdateQueueTable(c)
+  const revisions = await Promise.all([...changes].map(async ([key, label]) => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${key}\n${label}\n${changedContent}`))
+    return [key, label, Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, '0')).join('')] as const
+  }))
+  await c.env.RENT.batch(revisions.map(([key, label, revision]) => c.env.RENT.prepare(`
+    INSERT INTO agreement_update_queue (agreement_key, agreement_label, revision)
+    VALUES (?, ?, ?)
+    ON CONFLICT(agreement_key) DO UPDATE SET
+      agreement_label = excluded.agreement_label,
+      revision = excluded.revision,
+      queued_at = CURRENT_TIMESTAMP
+  `).bind(key, label, revision)))
+}
+
+// 定时任务统一创建协议更新通知和邮件事件。返回本次处理的客户数。
+export async function deliverPendingAgreementNotifications(c: Context): Promise<number> {
+  await ensureAgreementUpdateQueueTable(c)
+  const rows = (((await c.env.RENT.prepare('SELECT agreement_key, agreement_label, revision, queued_at FROM agreement_update_queue ORDER BY queued_at, agreement_key').all()) as any).results || []) as any[]
+  if (!rows.length) return 0
+
+  const names = rows.map((row) => String(row.agreement_label)).join('、')
+  const batchKey = rows.map((row) => `${row.agreement_key}:${row.revision}`).join('|')
+  const dedupeKey = `agreement_update:${batchKey}`
+  const companyRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'companyDetails'").first() as any
+  const storedCompanyDetails = safeJsonParse<any>(companyRow?.value) || {}
+  const companyDetails = { ...getSystemSettings().companyDetails, ...storedCompanyDetails }
+  const companyName = String(companyDetails?.name || '')
+  const companyEmail = String(companyDetails?.email || '')
+
+  await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
+  await ensureAgreementEmailEventsTable(c)
+  const template = await c.env.RENT.prepare("SELECT subject, body, enabled FROM email_templates WHERE id = 'agreement_update'").first() as any
+  const disabled = template?.enabled === 0
+  const fallbackMessage = `我们已更新以下协议内容：${names}。请查看通知详情中的最新版本。`
+  const subjectTpl = disabled ? '协议内容已更新' : String(template?.subject || '协议内容已更新')
+  const bodyTpl = disabled ? fallbackMessage : normalizeAgreementUpdateTemplate(String(template?.body || fallbackMessage))
+  const fillStatic = (value: string) => value
+    .replace(/\{changed_agreements\}/g, names)
+    .replace(/\{company_name\}/g, companyName)
+    .replace(/\{company_email\}/g, companyEmail)
+  const subjectStatic = fillStatic(subjectTpl)
+  const bodyStatic = fillStatic(bodyTpl)
+  const fillCustomer = (value: string, customer: any) => value
+    .replace(/\{customer_name\}/g, normalizeCustomerName(customer?.name))
+    .replace(/\{customer_email\}/g, String(customer?.email || ''))
+
+  // Site notifications have one stable, actionable sentence. Email templates
+  // remain configurable, but an old default template must not tell an already
+  // signed-in customer to log in again.
+  const siteMessageStatic = `您好，{customer_name}：我们已更新以下协议内容：${names}。请查看通知详情中的最新版本。`
+
+  await ensureNotificationsTable(c)
+  const recipients = ((await c.env.RENT.prepare("SELECT id, name, email FROM users WHERE role = 'CUSTOMER' AND status = 'active'").all()) as any).results || []
+  for (let i = 0; i < recipients.length; i += 50) {
+    const chunk = recipients.slice(i, i + 50)
+    await c.env.RENT.batch(chunk.map((customer: any) => c.env.RENT.prepare(
+      'INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, dedupe_key) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(
+      `nt-${crypto.randomUUID()}`,
+      customer.id,
+      'agreement_update',
+      fillCustomer(subjectStatic, customer),
+      fillCustomer(siteMessageStatic, customer),
+      dedupeKey,
+    )))
+  }
+
+  const queued = recipients.filter((customer: any) => {
+    const email = String(customer?.email || '')
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !email.endsWith('@invalid.local')
+  })
+  for (let i = 0; i < queued.length; i += 50) {
+    const chunk = queued.slice(i, i + 50)
+    await c.env.RENT.batch(chunk.map((customer: any) => {
+      const subject = fillCustomer(subjectStatic, customer)
+      const message = fillCustomer(bodyStatic, customer)
+      const html = renderEmailNotificationHtml(subject, message, companyName)
+      return c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, template_id, idempotency_key, status, subject, text_body, html_body) VALUES (?, 'AGREEMENT_UPDATE', ?, 'agreement_update_batch', ?, 'PENDING', ?, ?, ?)")
+        .bind(`email-${crypto.randomUUID()}`, customer.email, `${dedupeKey}:${customer.email}`, subject, sanitizePlainText(message, 20000), html)
+    }))
+  }
+
+  // 先完成站内信与邮件事件，再删除本批队列；保存期间新 revision 的行会被保留到下一批。
+  await c.env.RENT.batch(rows.map((row) => c.env.RENT.prepare('DELETE FROM agreement_update_queue WHERE agreement_key = ? AND revision = ?').bind(row.agreement_key, row.revision)))
+  return queued.length
+}
+
 export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string; expiresAt?: string | null; dedupeKey?: string | null }): Promise<void> {
   await ensureNotificationsTable(c)
   const id = `nt-${crypto.randomUUID()}`
@@ -76,7 +204,7 @@ export async function createNotification(c: Context, notification: { recipientId
 
 export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
   await ensureNotificationsTable(c)
-  const result = await c.env.RENT.prepare("SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT 100").bind(recipientId).all()
+  const result = await c.env.RENT.prepare("SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 100").bind(recipientId).all()
   return result.results || []
 }
 
@@ -117,10 +245,18 @@ export async function deliverPendingAgreementEmails(c: Context): Promise<number>
   const { apiKey, from } = await resolveResendCredentials(c)
   if (!apiKey || !from) return 0
   const rows = (((await c.env.RENT.prepare(
-    "SELECT id, recipient, subject, text_body, html_body FROM email_events WHERE event_type = 'AGREEMENT_UPDATE' AND status IN ('PENDING', 'FAILED') AND retry_count < max_attempts ORDER BY created_at LIMIT 90"
+    "SELECT id, recipient, subject, text_body, html_body FROM email_events WHERE event_type = 'AGREEMENT_UPDATE' AND template_id = 'agreement_update_batch' AND ((status IN ('PENDING', 'FAILED') AND retry_count < max_attempts) OR (status = 'SENDING' AND retry_count < max_attempts AND last_attempt_at <= datetime('now', '-15 minutes'))) ORDER BY created_at LIMIT 90"
   ).all()) as any).results || []) as any[]
   let sent = 0
   for (const row of rows) {
+    // Claim before the external request. Cron retries/overlapping invocations
+    // must never send the same event twice just because its old read status or
+    // a previous invocation has not been written back yet.
+    const claimed = await c.env.RENT.prepare(
+      "UPDATE email_events SET status = 'SENDING', retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP WHERE id = ? AND ((status IN ('PENDING', 'FAILED') AND retry_count < max_attempts) OR (status = 'SENDING' AND retry_count < max_attempts AND last_attempt_at <= datetime('now', '-15 minutes')))"
+    ).bind(row.id).run() as any
+    const claimChanges = Number(claimed.meta?.changes ?? claimed.changes ?? 0)
+    if (claimChanges !== 1) continue
     try {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
@@ -129,16 +265,24 @@ export async function deliverPendingAgreementEmails(c: Context): Promise<number>
       })
       const result = await response.json().catch(() => ({})) as any
       await c.env.RENT.prepare(
-        "UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?"
+        "UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ? AND status = 'SENDING'"
       ).bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status).slice(0, 500), response.ok ? 1 : 0, row.id).run()
       if (response.ok) sent += 1
     } catch (error: any) {
       await c.env.RENT.prepare(
-        "UPDATE email_events SET status = 'FAILED', error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP WHERE id = ?"
+        "UPDATE email_events SET status = 'FAILED', error_message = ? WHERE id = ? AND status = 'SENDING'"
       ).bind(String(error?.message || error).slice(0, 500), row.id).run()
     }
   }
   return sent
+}
+
+// 协议更新只使用一个调度入口：先把窗口内的变更生成站内信和邮件事件，
+// 再在同一个任务中投递邮件，避免两个独立定时任务重复处理同一批数据。
+export async function deliverPendingAgreementUpdates(c: Context): Promise<{ queuedRecipients: number; sentEmails: number }> {
+  const queuedRecipients = await deliverPendingAgreementNotifications(c)
+  const sentEmails = await deliverPendingAgreementEmails(c)
+  return { queuedRecipients, sentEmails }
 }
 
 export async function notifyOverduePaymentProofs(c: Context): Promise<number> {

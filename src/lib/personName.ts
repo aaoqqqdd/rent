@@ -14,7 +14,14 @@ export function splitPersonName(value: unknown): { firstName: string; lastName: 
 }
 
 export function combinePersonName(firstName: unknown, lastName: unknown): string {
-  return `${sanitizePlainText(firstName, 100).trim()} ${sanitizePlainText(lastName, 100).trim()}`.trim()
+  const first = sanitizePlainText(firstName, 100).trim()
+  const last = sanitizePlainText(lastName, 100).trim()
+  const combined = `${first}${last}`
+  // Chinese names are entered as separate 名 / 姓 fields in some forms, but
+  // Chinese text should not be displayed with an artificial space between the
+  // two parts. Keep the space for Western names such as "John Smith".
+  if (first && last && /^[\p{Script=Han}]+$/u.test(combined)) return combined
+  return `${first} ${last}`.trim()
 }
 
 export function getAvatarInitials(name: unknown): string {
