@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency } from '../../site';
+import { buildLayout, formatCurrency, staffOrderPath } from '../../site';
 
 export function renderStaffDashboard(user: any, dashboardData: any) {
   const { stats, recentOrders, recentDevices } = dashboardData;
@@ -45,7 +45,7 @@ export function renderStaffDashboard(user: any, dashboardData: any) {
           const statusClass = order.status === 'completed' ? 'badge-success' : 
                              order.status === 'pending_payment' || order.status === 'pending_approval' ? 'badge-warning' : 
                              order.status === 'active' ? 'badge-primary' : 'badge-info';
-          return `<tr><td>${order.orderNo || 'N/A'}</td><td>${order.customerName ?? '未知用户'}</td><td>${order.deviceName ?? '未知设备'}</td><td><span class="badge ${statusClass}">${order.status}</span></td><td><a class="link-button" href="/staff/orders/${order.id}">查看详情</a></td></tr>`
+          return `<tr><td>${order.orderNo || 'N/A'}</td><td>${order.customerName ?? '未知用户'}</td><td>${order.deviceName ?? '未知设备'}</td><td><span class="badge ${statusClass}">${order.status}</span></td><td><a class="link-button" href="${staffOrderPath(order)}">查看详情</a></td></tr>`
         }).join('')}
       </tbody></table>
     </div>

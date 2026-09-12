@@ -17,7 +17,7 @@ const layoutTemplate = rawLayoutTemplate
 // 统一 re-export，让既有 `import { ... } from './site'`（页面 / action / 测试）
 // 保持零改动。
 // ---------------------------------------------------------------------------
-import { generateReferenceNumber, generateContractNumber } from './lib/reference'
+import { generateReferenceNumber, generateContractNumber, splitOrderNo, staffOrderPath } from './lib/reference'
 import {
   sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
   renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
@@ -35,7 +35,7 @@ import { safeJsonParse } from './lib/json'
 import { dispatchChannelAlert } from './notifyChannels'
 
 export {
-  generateReferenceNumber, generateContractNumber,
+  generateReferenceNumber, generateContractNumber, splitOrderNo, staffOrderPath,
   sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
   renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
   splitPersonName, combinePersonName, getAvatarInitials,
@@ -148,7 +148,7 @@ import {
   normalizeUserRow, userHasColumn,
   generateUniqueUserId, getUserById, findUserByEmail, verifyUserCredentials, findUserByReferralCode,
   getUsers, getUsersByIds, getUsersAsync, insertUser, updateUser,
-  getOrderById, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
+  getOrderById, getOrderByOrderNo, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
   insertOrder, ensureOrderNumber, updateOrder, updateOrderInDB, hasDeviceBookingConflict,
   getDeviceById, getDeviceBySerialNumber, getDevices, getDevicesByIds, getDevicesAsync,
   insertDevice, updateDevice, deleteDevice, updateDeviceStatus, recordDeviceLifecycle, releaseDeviceIfUnbooked,
@@ -159,7 +159,7 @@ import {
 export {
   generateUniqueUserId, getUserById, findUserByEmail, verifyUserCredentials, findUserByReferralCode,
   getUsers, getUsersByIds, getUsersAsync, insertUser, updateUser,
-  getOrderById, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
+  getOrderById, getOrderByOrderNo, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
   insertOrder, ensureOrderNumber, updateOrder, updateOrderInDB, hasDeviceBookingConflict,
   getDeviceById, getDeviceBySerialNumber, getDevices, getDevicesByIds, getDevicesAsync,
   insertDevice, updateDevice, deleteDevice, updateDeviceStatus, recordDeviceLifecycle, releaseDeviceIfUnbooked,
