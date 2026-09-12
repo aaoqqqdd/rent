@@ -19,6 +19,7 @@ import {
   verifyUserCredentials,
   findUserBySession,
   getDeviceById,
+  getDeviceRentalRules,
   updateUser,
   verifyPassword,
   insertUser,
@@ -1340,6 +1341,15 @@ function normalizeDisplayedNotification(item: any): string {
     .replace(/([\p{Script=Han}])\s+(?=[\p{Script=Han}])/gu, '$1')
 }
 
+// 列表/抽屉里展示一句话摘要；完整条款更新说明只在通知详情页展开。
+function notificationListMessage(item: any): string {
+  if (item?.type === 'agreement_update') {
+    const names = String(item?.title || '').replace(/更新通知\s*$/, '').trim()
+    return `我们的${names || '相关条款'}已更新，请查看最新内容。`
+  }
+  return normalizeDisplayedNotification(item)
+}
+
 app.get('/notifications', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
@@ -1358,7 +1368,7 @@ app.get('/notifications', async (c) => {
   const emailTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM email_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
   const emailTemplateOptions = `<option value="custom">自定义通知</option>${emailTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
   const recipientOptions = recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')
-  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};search.addEventListener('input',update);select.addEventListener('change',update);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<a class="notification-item ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><div><strong>${sanitizePlainText(item.title, 200)}</strong><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div>${item.order_id ? `<span class="button button-sm button-secondary">查看订单</span>` : ''}</a>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
+  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};search.addEventListener('input',update);select.addEventListener('change',update);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<a class="notification-item ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><div><strong>${sanitizePlainText(item.title, 200)}</strong><div class="notification-message">${renderNotificationMarkdown(notificationListMessage(item))}</div><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div>${item.order_id ? `<span class="button button-sm button-secondary">查看订单</span>` : ''}</a>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
   const pagination = pageCount > 1 ? `<nav class="pagination" aria-label="通知分页">${Array.from({ length: pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === page ? 'button-primary' : 'button-secondary'}" href="/notifications?page=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''
   const bodyWithAnnouncementExpiry = body.replace('name="message" maxlength="2000" required></textarea>', 'name="message" maxlength="2000" required></textarea><div class="form-group"><label class="form-label" for="announcementExpiresAt">下架日期和时间（选填）</label><input class="form-control" id="announcementExpiresAt" name="expiresAt" type="datetime-local"><small class="form-text">到时间后，所有用户都不会再看到这条通告。</small></div>')
   const bodyWithSendAnchor = bodyWithAnnouncementExpiry.replace('<form method="post" action="/notifications/send" class="panel notification-compose">', '<form id="send-notification" method="post" action="/notifications/send" class="panel notification-compose">')
@@ -1563,7 +1573,7 @@ app.get('/notifications/recent', async (c) => {
   if (!user) return c.json({ notifications: [], unreadCount: 0 }, 401)
   const result = await c.env.RENT.prepare("SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 10").bind(user.id).all() as any
   const unread = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND read_at IS NULL AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid))))").bind(user.id).first() as any
-  return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message: normalizeDisplayedNotification(item) })), unreadCount: Number(unread?.count || 0) })
+  return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message: notificationListMessage(item) })), unreadCount: Number(unread?.count || 0) })
 })
 
 app.get('/notifications/:id', async (c) => {
@@ -1661,8 +1671,7 @@ app.post('/customer/rent/:id', async (c) => {
   const riskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, status, expires_at FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE'").bind(user.id).all()).results as any[]
   if (findBlockingRiskFlag(riskFlags)) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
   const device = await getDeviceById(c, c.req.param('id'))
-  await loadSystemSettingsFromDB(c)
-  const rentalRules = getSystemSettings().rentalRules
+  const rentalRules = await getDeviceRentalRules(c, c.req.param('id'))
   const deviceUnavailable = new Set(((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).all()).results || []).map((row: any) => row.unavailable_date))
   const form = await c.req.parseBody()
   const startDate = String(form.startDate || '')
@@ -1676,8 +1685,8 @@ app.post('/customer/rent/:id', async (c) => {
   const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
   const unavailable = new Set(rentalRules.unavailableDates)
   let blockedDate = ''
-  for (let day = new Date(start); day < end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
-  if (!blockedDate) for (let day = new Date(start); day < end; day.setUTCDate(day.getUTCDate() + 1)) { if (deviceUnavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
+  for (let day = new Date(start); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
+  if (!blockedDate) for (let day = new Date(start); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { if (deviceUnavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
   if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
@@ -1909,7 +1918,8 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const customer = order ? await getUserById(c, order.userId) : null
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   await loadSystemSettingsFromDB(c)
-  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, getSystemSettings().rentalRules.bufferDays)) return c.text('订单状态无效或设备档期冲突', 409)
+  const orderRentalRules = order ? await getDeviceRentalRules(c, order.deviceId) : null
+  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, orderRentalRules?.bufferDays ?? 0)) return c.text('订单状态无效或设备档期冲突', 409)
   await updateOrderStatus(c, order.id, 'approved')
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。`, orderId: order.id })
   return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
@@ -3182,7 +3192,8 @@ app.post('/admin/orders/:id/changes', async (c) => {
     const device = await getDeviceById(c, plan.deviceAvailabilityCheck)
     if (!device || ['maintenance', 'retired'].includes(String(device.status))) return c.text('替换设备不可用', 409)
   }
-  if (plan.bookingCheck && await hasDeviceBookingConflict(c, plan.bookingCheck.deviceId, plan.bookingCheck.startDate, plan.bookingCheck.endDate, order.id)) {
+  const bookingRules = plan.bookingCheck ? await getDeviceRentalRules(c, plan.bookingCheck.deviceId) : null
+  if (plan.bookingCheck && await hasDeviceBookingConflict(c, plan.bookingCheck.deviceId, plan.bookingCheck.startDate, plan.bookingCheck.endDate, order.id, bookingRules?.bufferDays ?? 0)) {
     return c.text('目标设备在该租期存在预约冲突', 409)
   }
 
@@ -3355,7 +3366,10 @@ app.post('/admin/orders/:id/deposit-refund', async (c) => {
   if (!settlement || settlement.status !== 'APPROVED') return c.text('押金结算须先由 Manager 审批通过', 409)
   try {
     const form = await c.req.parseBody()
-    if (Number(form.refundAmount) !== Number(settlement.refund_amount) || String(form.deductionCategory || '') !== String(settlement.deduction_category || '') || String(form.deductionReason || '').trim() !== String(settlement.deduction_reason || '')) return c.text('执行金额或扣款说明必须与已批准的结算单一致', 409)
+    const isSetupIntentDeposit = String((await getOrderById(c, c.req.param('id')) as any)?.deposit_payment_mode || '') === 'SETUP_INTENT'
+    const submittedAmount = isSetupIntentDeposit ? Number(form.deductionAmount || 0) : Number(form.refundAmount)
+    const approvedAmount = isSetupIntentDeposit ? Number(settlement.deduction_amount || 0) : Number(settlement.refund_amount)
+    if (submittedAmount !== approvedAmount || String(form.deductionCategory || '') !== String(settlement.deduction_category || '') || String(form.deductionReason || '').trim() !== String(settlement.deduction_reason || '')) return c.text('执行金额或扣款说明必须与已批准的结算单一致', 409)
     const response = await refundDeposit(c, user, c.req.param('id'), form)
     if (response.status < 400) {
       await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'EXECUTED', executed_by = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'APPROVED'").bind(user.id, settlement.id).run()
@@ -3379,18 +3393,26 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   const refundText = String(form.refundAmount ?? '').trim()
   const refundAmount = Number(refundText)
   const depositAmount = Number(order.depositAmount || 0)
-  if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > depositAmount) return c.text('退款金额无效：不能高于押金金额', 400)
-  const deductionAmount = Number((depositAmount - refundAmount).toFixed(2))
+  const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
+  let deductionAmount = 0
+  if (isSetupIntentDeposit) {
+    const deductionText = String(form.deductionAmount ?? '0').trim()
+    deductionAmount = Number(deductionText)
+    if (!/^\d+(\.\d{1,2})?$/.test(deductionText) || !Number.isFinite(deductionAmount) || deductionAmount < 0 || deductionAmount > depositAmount) return c.text('扣款金额无效：不能高于押金金额', 400)
+  } else {
+    if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > depositAmount) return c.text('退款金额无效：不能高于押金金额', 400)
+    deductionAmount = Number((depositAmount - refundAmount).toFixed(2))
+  }
   const deductionCategory = String(form.deductionCategory || '').trim()
   const deductionReason = String(form.deductionReason || '').trim()
   const refundMethod = String(form.refundMethod || 'balance').trim()
   if (!['balance', 'original', 'bank_transfer'].includes(refundMethod)) return c.text('退款方式无效', 400)
   if (deductionAmount > 0 && !['DAMAGE', 'MISSING_ACCESSORY', 'LATE_FEE', 'DEVICE_NOT_RETURNED', 'OTHER'].includes(deductionCategory)) return c.text('请选择有效的押金扣款类别', 400)
   if (deductionAmount > 0 && !deductionReason) return c.text('扣除押金时必须填写原因', 400)
-  const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
+  const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, refundAmount: isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
   const settlementId = `dst-${nanoid(12)}`
   await c.env.RENT.batch([
-    c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),
+    c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),
     c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING' WHERE id = ?").bind(order.id),
   ])
   await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_AUTO_APPROVED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, after: { ...snapshot, status: 'APPROVED' }, reason: deductionReason || '管理员提交，自动审批通过' })
@@ -3462,9 +3484,12 @@ app.post('/admin/orders/:id/delete', async (c) => {
   }
   await releaseCouponForOrder(c, order.id)
   await c.env.RENT.prepare('DELETE FROM invoices WHERE order_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM order_time_change_history WHERE order_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM inspection_disputes WHERE order_id = ?').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM payment_refunds WHERE order_id = ?').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM payment_proofs WHERE payment_id IN (SELECT id FROM payments WHERE rental_id = ?)').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM payments WHERE rental_id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('DELETE FROM sign_sessions WHERE contract_token IN (SELECT sign_token FROM contracts WHERE orderId = ? AND sign_token IS NOT NULL)').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM contracts WHERE orderId = ?').bind(order.id).run()
   await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(order.id).run()
   return c.redirect('/admin/orders?success=' + encodeURIComponent('订单已删除'))
@@ -3790,8 +3815,13 @@ app.get('/admin/devices/:id/edit', async (c) => {
     return c.redirect('/admin/devices')
   }
   const unavailableDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(device.id).all()).results || []).map((row: any) => row.unavailable_date)
+  const unavailableTimeSlots = ((await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? ORDER BY unavailable_date, time_slot').bind(device.id).all().catch(() => ({ results: [] }))).results || []).reduce((result: Record<string, string[]>, row: any) => {
+    const date = String(row.unavailable_date)
+    ;(result[date] ||= []).push(String(row.time_slot))
+    return result
+  }, {})
   const lifecycleEvents = (await c.env.RENT.prepare('SELECT previous_status, next_status, reason, changed_by, created_at FROM device_lifecycle_events WHERE device_id = ? ORDER BY created_at DESC LIMIT 8').bind(device.id).all()).results || []
-  return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates, lifecycleEvents }))
+  return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates, unavailableTimeSlots, lifecycleEvents }))
 })
 
 app.get('/admin/devices/:id/control', async (c) => {
@@ -4010,6 +4040,9 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const weeklyDiscountPercent = parseDeviceDiscountPercent(form.weeklyDiscountPercent)
   const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
   if (weeklyDiscountPercent === null || monthlyDiscountPercent === null) return c.text('周租和月租折扣必须是 0%–100% 之间的数字', 400)
+  const minimumRentalDays = String(form.minimumRentalDays || '').trim() ? Number(form.minimumRentalDays) : null
+  const bufferDays = String(form.bufferDays || '').trim() ? Number(form.bufferDays) : null
+  if ((minimumRentalDays !== null && (!Number.isInteger(minimumRentalDays) || minimumRentalDays < 1)) || (bufferDays !== null && (!Number.isInteger(bufferDays) || bufferDays < 0))) return c.text('设备最短租赁天数必须为至少 1 天，缓冲天数必须为非负整数', 400)
   if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   if (form.lifecycleStatus && !['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'].includes(form.lifecycleStatus)) return c.text('设备生命周期状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
@@ -4035,6 +4068,8 @@ app.post('/admin/devices/:id/edit', async (c) => {
     depositAmount: Number(form.depositAmount),
     weeklyDiscountPercent,
     monthlyDiscountPercent,
+    minimumRentalDays,
+    bufferDays,
     status: form.status as any,
     agentStatus: form.agentStatus as any,
     deviceMode: form.deviceMode as any,
@@ -4051,6 +4086,19 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]
   await c.env.RENT.prepare('DELETE FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).run()
   if (dates.length) await c.env.RENT.batch(dates.map(date => c.env.RENT.prepare('INSERT INTO device_unavailable_dates (device_id, unavailable_date) VALUES (?, ?)').bind(c.req.param('id'), date)))
+  const allowedDeviceTimeSlots = new Set(['morning_service', 'morning', 'afternoon', 'evening_service', 'delivery_morning', 'delivery_afternoon'])
+  const timeSlots = new Map<string, string[]>()
+  for (const line of String(form.unavailableTimeSlots || '').split(/\n+/)) {
+    const separator = line.indexOf(':')
+    if (separator < 0) continue
+    const date = line.slice(0, separator).trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue
+    const slots = [...new Set(line.slice(separator + 1).split(',').map(value => value.trim()).filter(value => allowedDeviceTimeSlots.has(value)))]
+    if (slots.length) timeSlots.set(date, slots)
+  }
+  await c.env.RENT.prepare('DELETE FROM device_unavailable_time_slots WHERE device_id = ?').bind(c.req.param('id')).run()
+  const timeSlotStatements = [...timeSlots.entries()].flatMap(([date, slots]) => slots.map(slot => c.env.RENT.prepare('INSERT INTO device_unavailable_time_slots (device_id, unavailable_date, time_slot) VALUES (?, ?, ?)').bind(c.req.param('id'), date, slot)))
+  if (timeSlotStatements.length) await c.env.RENT.batch(timeSlotStatements)
   return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/edit?success=设备资料已保存`)
 })
 

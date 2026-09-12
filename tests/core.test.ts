@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import styles from '../src/styles.css'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getCustomerSigningUser } from '../src/site'
 import { generateWindowsPassword } from '../src/lib/password'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
@@ -30,6 +30,7 @@ import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
+import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
 
 function assertInlineScriptsParse(html: string) {
@@ -44,6 +45,13 @@ test('PBKDF2 passwords verify without storing plaintext', async () => {
   assert.equal(await verifyPassword('A-secure-password-123', hash), true)
   assert.equal(await verifyPassword('wrong-password', hash), false)
   assert.equal(await verifyPassword('A-secure-password-123', 'pbkdf2$210000$salt$hash'), false)
+})
+
+test('only customer accounts are treated as contract signers', () => {
+  const staff = { id: 'staff-1', name: 'Minkang He', role: 'ADMIN' }
+  const customer = { id: 'customer-1', name: '真实客户', role: 'CUSTOMER' }
+  assert.equal(getCustomerSigningUser(staff as any), null)
+  assert.equal(getCustomerSigningUser(customer as any), customer)
 })
 
 test('new account passwords require letters, numbers, symbols, and eight characters', () => {
@@ -202,16 +210,39 @@ test('contract signing progress renders readable step labels and one current ste
   assert.doesNotMatch(html, /\*\*/)
 })
 
-test('Stripe adds 2.5% to the full order principal without changing the refundable base', () => {
+test('Stripe adds 2.5% to rent and service fees while excluding the deposit', () => {
   assert.deepEqual(stripePaymentAmounts(1100), { baseCents: 110000, feeCents: 2750, chargedCents: 112750 })
   assert.deepEqual(stripePaymentAmounts(99.99), { baseCents: 9999, feeCents: 250, chargedCents: 10249 })
+  assert.deepEqual(stripePaymentAmounts(1100, 1000), { baseCents: 10000, feeCents: 250, chargedCents: 10250 })
+  assert.deepEqual(stripePaymentAmounts(1100, 1000, 50), { baseCents: 10000, feeCents: 250, chargedCents: 10250 })
 })
 
-test('Stripe checkout separates rent, deposit, and processing fee', () => {
+test('rental length selects preauthorization or SetupIntent deposit handling', () => {
+  assert.equal(depositPaymentModeForRental(7, true, 'amex'), 'PREAUTH')
+  assert.equal(depositPaymentModeForRental(8, true, 'amex'), 'SETUP_INTENT')
+  assert.equal(depositPaymentModeForRental(29, true, 'visa'), 'PREAUTH')
+  assert.equal(depositPaymentModeForRental(30, true, 'visa'), 'SETUP_INTENT')
+  assert.equal(depositPaymentModeForRental(90, false), 'PAID')
+})
+
+test('Visa and Mastercard request a 30-day deposit authorization window', () => {
+  assert.equal(depositAuthorizationWindowDays('visa'), 30)
+  assert.equal(depositAuthorizationWindowDays('mastercard'), 30)
+  assert.equal(depositAuthorizationWindowDays('amex'), 7)
+  assert.equal(depositAuthorizationWindowDays('unknown'), 7)
+})
+
+test('security deposit methods are explicit and separate from Stripe rent payment', () => {
+  assert.equal(normalizeSecurityDepositMethod('bank_transfer'), 'bank_transfer')
+  assert.equal(normalizeSecurityDepositMethod('cash'), 'cash')
+  assert.equal(normalizeSecurityDepositMethod('card_hold'), 'card_hold')
+  assert.equal(normalizeSecurityDepositMethod('unknown'), 'card_hold')
+})
+
+test('Stripe checkout contains rent and processing fee but no deposit', () => {
   assert.deepEqual(stripeCheckoutItems({ totalAmount: 1100, depositAmount: 1000, rentalPeriod: 5, startDate: '2026-08-10', endDate: '2026-08-15' }), [
     { name: '设备租金（5 天，2026-08-10 至 2026-08-15）', amountCents: 10000 },
-    { name: '设备押金', amountCents: 100000 },
-    { name: 'Stripe 支付手续费（2.5%）', amountCents: 2750 },
+    { name: 'Stripe 租金及服务费支付手续费（2.5%）', amountCents: 250 },
   ])
 })
 
@@ -221,10 +252,10 @@ test('payment results distinguish Stripe, bank transfer, and immediate balance p
   assert.equal(paymentResultState({ paymentMethod: 'balance', status: 'paid' }, { status: 'paid' }), 'success')
 })
 
-test('only deposit refunds return the fee attributable to the refunded deposit principal', () => {
+test('deposit refunds do not return a processing fee because the fee excludes deposits', () => {
   const stripePayment = { payment_method: 'card', processing_fee: 27.5 }
-  assert.equal(refundableDepositFee(1000, stripePayment), 25)
-  assert.equal(refundableDepositFee(499.99, stripePayment), 12.5)
+  assert.equal(refundableDepositFee(1000, stripePayment), 0)
+  assert.equal(refundableDepositFee(499.99, stripePayment), 0)
   assert.equal(refundableDepositFee(1000, { payment_method: 'bank_transfer', processing_fee: 0 }), 0)
   assert.equal(refundableDepositFee(1000, { payment_method: 'card', processing_fee: 0 }), 0)
 })

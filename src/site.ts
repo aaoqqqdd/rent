@@ -49,6 +49,10 @@ export {
 }
 export type { Role, AccessLevel }
 
+export function getCustomerSigningUser(user: User | null | undefined): User | null {
+  return user?.role === 'CUSTOMER' ? user : null
+}
+
 // ---------------------------------------------------------------------------
 // 纯业务逻辑 / 状态机已拆分到 src/domain/*（均有独立单元测试）。同样 import
 // 供本文件使用并统一 re-export。
@@ -565,9 +569,9 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
     cancelled: { order: 'CANCELLED', payment: 'PAYMENT_FAILED', rental: 'CANCELLED' },
   }
   const next = mapping[status] || { order: status.toUpperCase(), payment: 'UNPAID', rental: status.toUpperCase() }
-  const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount FROM orders WHERE id = ?').bind(orderId).first() as any
+  const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount, deposit_payment_mode FROM orders WHERE id = ?').bind(orderId).first() as any
   await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
-  if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
+  if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && String(previous?.deposit_payment_mode || 'PAID') === 'PAID' && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
     await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
   }
   if (previous && previous.rental_status !== next.rental) {
@@ -801,6 +805,42 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
 
   systemSettingsLoadedAt = Date.now()
   return systemSettings
+}
+
+/** 返回设备实际使用的租赁规则；设备未单独配置的项目继承全局设置。 */
+export async function getDeviceRentalRules(c: Context, deviceId: string): Promise<typeof systemSettings.rentalRules> {
+  await loadSystemSettingsFromDB(c)
+  const globalRules = getSystemSettings().rentalRules
+  const device = await getDeviceById(c, deviceId)
+  if (!device) return globalRules
+
+  const deviceDates = ((await c.env.RENT.prepare(
+    'SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date'
+  ).bind(deviceId).all().catch(() => ({ results: [] }))).results || [])
+    .map((row: any) => String(row.unavailable_date).slice(0, 10))
+
+  const deviceSlots = ((await c.env.RENT.prepare(
+    'SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? ORDER BY unavailable_date, time_slot'
+  ).bind(deviceId).all().catch(() => ({ results: [] }))).results || []) as any[]
+  const unavailableTimeSlots: Record<string, string[]> = Object.fromEntries(
+    Object.entries(globalRules.unavailableTimeSlots || {}).map(([date, slots]) => [date, [...slots]])
+  )
+  for (const row of deviceSlots) {
+    const date = String(row.unavailable_date).slice(0, 10)
+    const slots = unavailableTimeSlots[date] || []
+    if (!slots.includes(String(row.time_slot))) slots.push(String(row.time_slot))
+    unavailableTimeSlots[date] = slots
+  }
+
+  const deviceMinimum = Number(device.minimumRentalDays ?? device.minimum_rental_days)
+  const deviceBuffer = Number(device.bufferDays ?? device.buffer_days)
+  return {
+    ...globalRules,
+    unavailableDates: [...new Set([...(globalRules.unavailableDates || []), ...deviceDates])],
+    unavailableTimeSlots,
+    minimumRentalDays: Number.isInteger(deviceMinimum) && deviceMinimum >= 1 ? deviceMinimum : globalRules.minimumRentalDays,
+    bufferDays: Number.isInteger(deviceBuffer) && deviceBuffer >= 0 ? deviceBuffer : globalRules.bufferDays,
+  }
 }
 
 export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {

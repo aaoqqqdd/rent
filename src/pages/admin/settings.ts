@@ -86,32 +86,6 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">INFO</span><div><h3>公司税务信息</h3><p>用于合同、发票和收据的抬头信息。</p></div></div>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="companyName">公司名称</label><input id="companyName" name="companyName" class="form-control" value="${settings.companyDetails.name}"></div>
-            <div class="form-group"><label class="form-label" for="companyAbn">公司 ABN</label><input id="companyAbn" name="companyAbn" class="form-control" value="${settings.companyDetails.abn}" placeholder="11 位 ABN"></div>
-            <div class="form-group"><label class="form-label" for="gstIncluded">GST 设置</label><select id="gstIncluded" name="gstIncluded" class="form-control"><option value="true" ${settings.companyDetails.gstIncluded ? 'selected' : ''}>价格包含 GST</option><option value="false" ${!settings.companyDetails.gstIncluded ? 'selected' : ''}>价格不含 GST</option></select></div>
-            <div class="form-group"><label class="form-label" for="companyAddress">公司地址</label><input id="companyAddress" name="companyAddress" class="form-control" value="${settings.companyDetails.address}"></div>
-            <div class="form-group"><label class="form-label" for="companyContact">公司联系人</label><input id="companyContact" name="companyContact" class="form-control" value="${settings.companyDetails.contact}"></div>
-            <div class="form-group"><label class="form-label" for="companyPhone">公司电话</label><input id="companyPhone" name="companyPhone" class="form-control" value="${settings.companyDetails.phone}"></div>
-            <div class="form-group"><label class="form-label" for="companyEmail">公司邮箱</label><input type="email" id="companyEmail" name="companyEmail" class="form-control" value="${settings.companyDetails.email}"></div>
-            <div class="form-group"><label class="form-label" for="companyWebsite">公司网站</label><input type="url" id="companyWebsite" name="companyWebsite" class="form-control" value="${settings.companyDetails.website}" placeholder="https://"></div>
-            <div class="form-group"><label class="form-label" for="companyLogo">公司 Logo URL</label><input type="url" id="companyLogo" name="companyLogo" class="form-control" value="${settings.companyDetails.logo}" placeholder="https://"></div>
-          </div>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-title"><span class="mono">RULE</span><div><h3>租赁规则</h3><p>控制取货/归还地点、不可用时间以及最短租期。</p></div></div>
-          <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
-          <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><textarea id="unavailableDates" name="unavailableDates" class="form-control" rows="4" placeholder="2026-12-25\n2026-12-26">${settings.rentalRules.unavailableDates.join('\n')}</textarea><small class="form-text">每行一个 YYYY-MM-DD；这些日期不能取货或归还。</small></div>
-          <div class="form-group"><label class="form-label" for="unavailableTimeSlots">按日期设置不可用时间段</label><textarea id="unavailableTimeSlots" name="unavailableTimeSlots" class="form-control" rows="4" placeholder="2026-12-25: afternoon, evening_service">${Object.entries(settings.rentalRules.unavailableTimeSlots || {}).map(([date, slots]) => `${date}: ${(slots as string[]).join(', ')}`).join('\n')}</textarea><small class="form-text">每行格式：日期: 时间段；例如 2026-12-25: afternoon, evening_service。可用时间段：morning_service、morning、afternoon、evening_service。</small></div>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="minimumRentalDays">最短租赁天数</label><input id="minimumRentalDays" name="minimumRentalDays" type="number" min="1" step="1" class="form-control" value="${settings.rentalRules.minimumRentalDays}"></div>
-            <div class="form-group"><label class="form-label" for="bufferDays">设备周转缓冲天数</label><input id="bufferDays" name="bufferDays" type="number" min="0" step="1" class="form-control" value="${settings.rentalRules.bufferDays}"><small class="form-text">自动扩展订单前后不可预约的缓冲时间。</small></div>
-          </div>
-        </section>
-
-        <section class="form-section">
           <div class="form-section-title"><span class="mono">RATE</span><div><h3>价格策略配置</h3><p>用于计算租金与押金的策略文本。</p></div></div>
           <div class="form-group"><textarea id="priceStrategy" name="priceStrategy" rows="5" class="form-control">${settings.priceStrategy}</textarea></div>
         </section>
@@ -121,7 +95,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           <div class="form-group">
             <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
             <input class="form-control" id="processingFeeRate" name="processingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.processingFeeRate ?? 0.025) * 100).toFixed(2)}">
-            <small class="form-text">Stripe 信用卡支付和押金退款手续费按此比例计算。</small>
+            <small class="form-text">Stripe 手续费按租金及立即支付的时段服务费（不含押金）计算；押金预授权、释放和长期押金扣款不加手续费。</small>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}><label for="enableStripe">启用 Stripe 信用卡支付</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableBankTransfer" name="enableBankTransfer" ${settings.paymentMethods.bankTransfer ? 'checked' : ''}><label for="enableBankTransfer">启用银行转账</label></div>
@@ -182,6 +156,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         event.preventDefault();
 
         const formData = new FormData(this);
+        const inputValue = (id) => document.getElementById(id)?.value || '';
         const newSettings = {
           priceStrategy: formData.get('priceStrategy'),
           paymentMethods: {
@@ -199,13 +174,13 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             clear: formData.has('clearStripeConfig'),
           },
           emailTransport: {
-            host: document.getElementById('smtpHost').value,
-            port: document.getElementById('smtpPort').value,
-            user: document.getElementById('smtpUser').value,
-            password: document.getElementById('smtpPassword').value,
-            from: document.getElementById('smtpFrom').value,
-            encryption: document.getElementById('smtpEncryption').value,
-            clear: document.getElementById('clearEmailTransport').checked,
+            host: inputValue('smtpHost'),
+            port: inputValue('smtpPort'),
+            user: inputValue('smtpUser'),
+            password: inputValue('smtpPassword'),
+            from: inputValue('smtpFrom'),
+            encryption: inputValue('smtpEncryption') || 'tls',
+            clear: document.getElementById('clearEmailTransport')?.checked || false,
           },
           notifyChannels: {
             resendApiKey: document.getElementById('resendApiKey').value,

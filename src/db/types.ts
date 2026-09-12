@@ -82,6 +82,10 @@ export interface Device {
   depositAmount: number
   weeklyDiscountPercent?: number
   monthlyDiscountPercent?: number
+  minimumRentalDays?: number | null
+  minimum_rental_days?: number | null
+  bufferDays?: number | null
+  buffer_days?: number | null
 
   // snake_case 兼容旧页面
   price_per_day?: number
@@ -145,6 +149,11 @@ export interface Order {
   paymentMethod: 'card' | 'bank_transfer' | 'alipay' | 'wechat' | 'balance'
   totalAmount: number
   depositAmount: number
+  deposit_method?: 'bank_transfer' | 'cash' | 'card_hold'
+  depositMethod?: 'bank_transfer' | 'cash' | 'card_hold'
+  deposit_payment_mode?: 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
+  depositPaymentMode?: 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
+  stripe_deposit_payment_intent_id?: string | null
   couponCode?: string | null
   discountAmount?: number
   dailyRate: number

@@ -8,11 +8,12 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
-import { createOrderPaymentIntent } from '../stripePayments';
+import { completeOrderSetupIntent, createOrderPaymentIntent, createOrderSetupIntent, resolveDepositPaymentMode } from '../stripePayments';
+import { normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
 import { getStripeRuntimeConfig } from '../../stripe';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 import { calculateRentalFee } from '../../domain/rentalPricing';
@@ -20,7 +21,8 @@ import { generateWindowsPassword } from '../../lib/password';
 
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
   const token = identifier; // 明确定义 token
-  const currentUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null)
+  const viewerUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null)
+  const currentUser = getCustomerSigningUser(viewerUser)
   // 「异步 Stripe」模式：前端第 3 步选 Stripe 时用 fetch 提交，期望拿到 JSON（含 Stripe 链接）而非整页跳转。
   const wantsJson = (c.req.header('accept') || '').includes('application/json') || String((body as any).asyncStripe || '') === '1'
 
@@ -270,12 +272,13 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         const paymentMethod = (order as any).stripe_payment_method_id ? 'stripe' : String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || '')
+        const depositMethod = normalizeSecurityDepositMethod(body.depositMethod, normalizeSecurityDepositMethod((order as any).deposit_method, paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer'))
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
         const pickupTimeSlot = allowedTimeSlots.includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
         const returnTimeSlot = allowedTimeSlots.includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
-        const unavailableTimeSlots = getSystemSettings().rentalRules.unavailableTimeSlots || {}
+        const unavailableTimeSlots = (await getDeviceRentalRules(c, order.deviceId)).unavailableTimeSlots || {}
         if (!pickupTimeSlot || !returnTimeSlot || (unavailableTimeSlots[order.startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[order.endDate] || []).includes(returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
         const deliveryMethod = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup')
         const serviceSlots = deliveryMethod === 'Delivery' ? 0 : [pickupTimeSlot, returnTimeSlot].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length
@@ -318,6 +321,15 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           if (!transferReference) throw new Error('请填写付款 Reference')
           try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
+
+        if (depositMethod === 'card_hold' && paymentMethod !== 'stripe') throw new Error('信用卡预授权押金需要同时使用 Stripe 信用卡支付租金')
+        const selectedDepositMode = depositMethod === 'card_hold' && paymentMethod === 'stripe'
+          ? await resolveDepositPaymentMode(c, order)
+          : 'PAID'
+        await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ?, deposit_status = CASE WHEN depositAmount > 0 THEN ? ELSE \'NOT_REQUIRED\' END WHERE id = ?')
+          .bind(depositMethod, selectedDepositMode, selectedDepositMode === 'PAID' ? 'PENDING' : 'NOT_REQUIRED', contract.rentalId).run()
+        ; (order as any).deposit_method = depositMethod
+        ; (order as any).deposit_payment_mode = selectedDepositMode
 
         // **核心签约逻辑**
         const userInfo = signSession.userInfo;
@@ -450,8 +462,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             const user = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(userId).first() as any;
             const currentBalance = user?.balance || 0;
             // 获取订单总金额
-            const rental = await c.env.RENT.prepare('SELECT totalAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
-            const totalAmount = rental?.totalAmount || 0;
+            const rental = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any;
+            const totalAmount = Math.max(0, Number(rental?.totalAmount || 0) - Number(rental?.depositAmount || 0));
 
             if (currentBalance >= totalAmount) {
               // 扣除余额
@@ -490,8 +502,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         if (paymentMethod === 'balance' || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {
           const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
-          const paymentTotal = Number(paymentOrder?.totalAmount || 0)
-          const paymentDeposit = Number(paymentOrder?.depositAmount || 0)
+          const paymentTotal = Math.max(0, Number(paymentOrder?.totalAmount || 0) - Number(paymentOrder?.depositAmount || 0))
           const existingPayment = await c.env.RENT.prepare('SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(contract.rentalId, paymentMethod).first() as any
           const paymentId = existingPayment?.id || `p-${nanoid(12)}`
           if (!existingPayment) {
@@ -500,7 +511,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
               VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?, ?)
             `).bind(
               paymentId, contract.rentalId, userId, paymentMethod,
-              paymentTotal, paymentDeposit, paymentTotal - paymentDeposit,
+              paymentTotal, 0, paymentTotal,
               paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? generateReferenceNumber('TXN') : null, paymentMethod === 'balance' ? new Date().toISOString() : null
             ).run()
           }
@@ -520,12 +531,20 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             await Promise.all((admins as any[]).map(admin => createNotification(c, { recipientId: admin.id, type: 'payment_review_submitted', title: '新的付款凭证待审核', message: `客户已提交订单 ${order.orderNo || order.id} 的付款凭证，请及时审核。`, orderId: order.id })))
           }
         }
-        let stripePayment: { clientSecret: string; publishableKey: string } | null = null
+        let stripePayment: { clientSecret?: string; publishableKey?: string; setupIntent?: boolean } | null = null
         if (paymentMethod === 'stripe') {
           const stripeUser = await getUserById(c, userId)
           if (!stripeUser) throw new Error('无法读取付款用户信息')
-          const intent = await createOrderPaymentIntent(c, stripeUser, contract.rentalId, Boolean((order as any).stripe_payment_method_id))
-          if (!intent.alreadyPaid && !(order as any).stripe_payment_method_id) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
+          const setupIntentId = String(body.stripeSetupIntentId || '').trim()
+          if (selectedDepositMode === 'SETUP_INTENT' && !(order as any).stripe_payment_method_id && !setupIntentId) {
+            const setup = await createOrderSetupIntent(c, stripeUser, contract.rentalId)
+            stripePayment = { clientSecret: setup.clientSecret, publishableKey: setup.publishableKey, setupIntent: true }
+          } else {
+            const intent = setupIntentId
+              ? await completeOrderSetupIntent(c, stripeUser, contract.rentalId, setupIntentId)
+              : await createOrderPaymentIntent(c, stripeUser, contract.rentalId, Boolean((order as any).stripe_payment_method_id))
+            if (!intent.alreadyPaid && intent.clientSecret) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
+          }
         }
         if (paymentMethod === 'balance') {
           await ensureOrderNumber(c, contract.rentalId)
@@ -598,7 +617,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await lockReferralRelationship(c, referrerId, newUserId, String(userInfo.referrer || ''))
 
         // 5. 清理会话
-        await deleteSignSession(c, token);
+        // 长期租赁首次输入卡片时，SetupIntent 成功后还需要用同一签约会话
+        // 回传 setup_intent id，再收取租金；收到该 id 后才清理会话。
+        if (!(stripePayment && stripePayment.setupIntent)) await deleteSignSession(c, token);
         signingCompleted = true;
         await logError(c, 'INFO', `Sign session deleted after successful completion`, undefined, { token });
 

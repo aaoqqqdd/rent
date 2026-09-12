@@ -105,6 +105,25 @@ test('an unallocated refund that is linked and within capacity is a warning, not
   assert.doesNotMatch(r.warnings[0].detail, /（200）/)
 })
 
+test('a pending payment is excluded from paidTotal and flagged instead of vacuously passing', () => {
+  const r = evaluatePaymentReconciliation({
+    payments: [{ id: 'p-nmCMelpipfZb', amount: 943, status: 'pending' }],
+    paymentAllocations: [],
+    refunds: [],
+    refundAllocations: [],
+  })
+  assert.equal(r.paidTotal, 0)
+  assert.equal(r.refundedTotal, 0)
+  assert.equal(r.pendingTotal, 943)
+  assert.equal(r.ok, false)
+  assert.equal(r.balanced, true)
+  assert.equal(r.errors.length, 0)
+  assert.equal(r.warnings.length, 0)
+  assert.deepEqual(r.infos.map(i => i.code), ['PENDING_PAYMENT'])
+  assert.match(r.infos[0].detail, /AUD\$943\.00/)
+  assert.match(r.infos[0].detail, /待确认/)
+})
+
 test('an unallocated refund with no linked payment asks for a manual check', () => {
   const r = evaluatePaymentReconciliation({
     payments: [{ id: 'p1', amount: 300, status: 'paid' }],
