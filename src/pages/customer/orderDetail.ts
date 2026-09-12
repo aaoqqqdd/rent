@@ -58,7 +58,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           <p><strong>领取/归还地点:</strong> ${order.pickupLocation || '待确认'} / ${order.returnLocation || '待确认'}</p>
           <p><strong>预约时间:</strong> ${order.pickupTimeSlot || '待确认'} / ${order.returnTimeSlot || '待确认'}</p>
           <p><strong>租金及服务费:</strong> ${formatCurrency(Number(order.totalAmount) - deposit)}</p>
-          <p><strong>押金:</strong> ${formatCurrency(deposit)}（${depositMode === 'PREAUTH' ? '短期预授权' : depositMode === 'SETUP_INTENT' ? '长期不预扣' : '按旧规则处理'}）</p>
+          <p><strong>押金:</strong> ${formatCurrency(deposit)}（${depositMode === 'PREAUTH' ? '预授权' : depositMode === 'SETUP_INTENT' ? 'SetupIntent 保存卡片，不预扣' : '按旧规则处理'}）</p>
           <p><strong>订单合计:</strong> ${formatCurrency(order.totalAmount)}</p>
           ${refundLabel ? `<p><strong>退款状态:</strong> ${esc(refundLabel)}</p>` : ''}
         </div>
@@ -135,7 +135,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
               <div><dt>Stripe 租金及服务费支付手续费（2.5%）</dt><dd>${formatCurrency(stripeFee)}</dd></div>
               <div><dt><strong>信用卡最终扣款</strong></dt><dd><strong>${formatCurrency(stripeTotal)}</strong></dd></div>
             </dl>
-            <p class="form-text">${depositMode === 'PREAUTH' ? `押金 ${formatCurrency(deposit)} 仅预授权（Visa/Mastercard 请求最多保留 30 天，其他卡 7 天），归还无损坏时释放。` : depositMode === 'SETUP_INTENT' ? `长期租赁押金 ${formatCurrency(deposit)} 不预扣，仅在损坏或逾期时按实际费用扣款。` : '押金按订单约定处理。'} 手续费不计入押金。</p>
+            <p class="form-text">${depositMode === 'PREAUTH' ? `押金 ${formatCurrency(deposit)} 仅预授权（Visa/Mastercard 请求最多保留 30 天，其他卡 7 天），归还无损坏时释放。` : depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 使用 SetupIntent 保存卡片，不预扣，仅在损坏或逾期时按实际费用扣款。` : '押金按订单约定处理。'} 手续费不计入押金。</p>
             ${renderStripePaymentBox({ intentUrl: `/customer/orders/${order.id}/stripe/intent`, returnUrl: `/payment/result?orderId=${encodeURIComponent(order.id)}`, buttonLabel: `支付 ${formatCurrency(stripeTotal)}`, domId: 'order-stripe-pay' })}
           </div>` : ''}
         </div>

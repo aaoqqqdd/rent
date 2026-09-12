@@ -218,8 +218,10 @@ test('Stripe adds 2.5% to rent and service fees while excluding the deposit', ()
 })
 
 test('rental length selects preauthorization or SetupIntent deposit handling', () => {
-  assert.equal(depositPaymentModeForRental(29, true), 'PREAUTH')
-  assert.equal(depositPaymentModeForRental(30, true), 'SETUP_INTENT')
+  assert.equal(depositPaymentModeForRental(7, true, 'amex'), 'PREAUTH')
+  assert.equal(depositPaymentModeForRental(8, true, 'amex'), 'SETUP_INTENT')
+  assert.equal(depositPaymentModeForRental(29, true, 'visa'), 'PREAUTH')
+  assert.equal(depositPaymentModeForRental(30, true, 'visa'), 'SETUP_INTENT')
   assert.equal(depositPaymentModeForRental(90, false), 'PAID')
 })
 

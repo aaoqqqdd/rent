@@ -12,8 +12,7 @@ import {
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
-import { completeOrderSetupIntent, createOrderPaymentIntent, createOrderSetupIntent } from '../stripePayments';
-import { depositPaymentModeForRental } from '../../domain/paymentPlan';
+import { completeOrderSetupIntent, createOrderPaymentIntent, createOrderSetupIntent, resolveDepositPaymentMode } from '../stripePayments';
 import { getStripeRuntimeConfig } from '../../stripe';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 import { calculateRentalFee } from '../../domain/rentalPricing';
@@ -321,7 +320,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
 
-        const selectedDepositMode = depositPaymentModeForRental(Number(order.rentalPeriod || 0), paymentMethod === 'stripe')
+        const selectedDepositMode = paymentMethod === 'stripe'
+          ? await resolveDepositPaymentMode(c, order)
+          : 'PAID'
         await c.env.RENT.prepare('UPDATE orders SET deposit_payment_mode = ? WHERE id = ?').bind(selectedDepositMode, contract.rentalId).run()
         ; (order as any).deposit_payment_mode = selectedDepositMode
 

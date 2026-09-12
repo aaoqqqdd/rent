@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid'
 import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus } from '../site'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
-import { depositAuthorizationWindowDays, depositPaymentModeForOrder } from '../domain/paymentPlan'
+import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, type DepositPaymentMode } from '../domain/paymentPlan'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
@@ -35,6 +35,17 @@ function orderServiceFee(order: any): number {
 
 function orderDeposit(order: any): number {
   return Math.max(0, Number(order.depositAmount ?? order.deposit_amount ?? 0))
+}
+
+export async function resolveDepositPaymentMode(c: Context, order: any, paymentMethodId = ''): Promise<DepositPaymentMode> {
+  const rentalPeriod = Number(order.rentalPeriod ?? order.rental_period ?? 0)
+  const savedPaymentMethodId = paymentMethodId || String(order.stripe_payment_method_id || '')
+  let cardBrand = ''
+  if (/^pm_[A-Za-z0-9_]+$/.test(savedPaymentMethodId)) {
+    const paymentMethod = await stripeRequest(c, `payment_methods/${savedPaymentMethodId}`).catch(() => null)
+    cardBrand = String(paymentMethod?.card?.brand || '')
+  }
+  return depositPaymentModeForRental(rentalPeriod, true, cardBrand)
 }
 
 // 余额充值改用站内 Payment Element：创建（或按金额变化更新）一个 PaymentIntent，
@@ -129,6 +140,7 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     capture_method: 'manual',
     confirm: 'true',
     off_session: 'true',
+    'expand[]': 'latest_charge',
     'metadata[order_id]': String(order.id),
     'metadata[type]': 'deposit_authorization',
     'metadata[deposit_amount]': String(cents(depositAmount)),
@@ -136,8 +148,28 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     'metadata[authorization_window_days]': String(authorizationWindowDays),
   })
   if (authorizationWindowDays === 30) params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
-  const intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-${order.id}`)
+  let intent: any
+  try {
+    intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-${order.id}`)
+  } catch (error) {
+    if (authorizationWindowDays !== 30) throw error
+    params.delete('payment_method_options[card][request_extended_authorization]')
+    intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-standard-${order.id}`)
+  }
   if (!['requires_capture', 'succeeded'].includes(String(intent.status))) throw new Error('押金预授权未完成，请重新验证信用卡。')
+  const rentalPeriod = Number(order.rentalPeriod ?? order.rental_period ?? 0)
+  const requiresExtendedWindow = authorizationWindowDays === 30 && rentalPeriod > 7
+  if (requiresExtendedWindow) {
+    const cardDetails = intent.latest_charge?.payment_method_details?.card
+    const captureBefore = Number(cardDetails?.capture_before || 0)
+    const extendedEnabled = String(cardDetails?.extended_authorization?.status || '').toLowerCase() === 'enabled'
+    const requiredCaptureBefore = Math.floor(Date.now() / 1000) + rentalPeriod * 86400
+    if (!extendedEnabled || captureBefore < requiredCaptureBefore) {
+      if (intent.status === 'requires_capture') await stripeRequest(c, `payment_intents/${intent.id}/cancel`, new URLSearchParams())
+      await c.env.RENT.prepare("UPDATE orders SET deposit_payment_mode = 'SETUP_INTENT', stripe_deposit_payment_intent_id = NULL, deposit_status = 'NOT_REQUIRED', deposit_held_amount = 0 WHERE id = ?").bind(order.id).run()
+      return
+    }
+  }
   const paymentId = `p-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare(`INSERT OR IGNORE INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, stripe_payment_intent_id)
@@ -185,8 +217,10 @@ export async function completeOrderSetupIntent(c: Context, user: any, orderId: s
   if (String(intent.metadata?.order_id || '') !== String(order.id) || String(intent.metadata?.customer_id || '') !== String(user.id)) throw new Error('信用卡验证信息与订单不匹配')
   const paymentMethodId = typeof intent.payment_method === 'string' ? intent.payment_method : String(intent.payment_method?.id || '')
   if (intent.status !== 'succeeded' || !/^pm_[A-Za-z0-9_]+$/.test(paymentMethodId)) throw new Error('请先完成信用卡验证')
+  const depositMode = await resolveDepositPaymentMode(c, order, paymentMethodId)
   await c.env.RENT.prepare('UPDATE orders SET stripe_setup_intent_id = ?, stripe_payment_method_id = ? WHERE id = ?')
     .bind(setupIntentId, paymentMethodId, order.id).run()
+  await c.env.RENT.prepare('UPDATE orders SET deposit_payment_mode = ? WHERE id = ?').bind(depositMode, order.id).run()
   return createOrderPaymentIntent(c, user, order.id, true)
 }
 
@@ -203,8 +237,12 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
   const { baseCents, feeCents, chargedCents } = stripePaymentAmounts(order.totalAmount, orderDeposit(order), orderServiceFee(order))
   if (!Number.isInteger(baseCents) || baseCents <= 0) throw new Error('订单金额无效')
 
-  const depositMode = depositPaymentModeForOrder(order)
   const savedPaymentMethodId = String((order as any).stripe_payment_method_id || '')
+  const depositMode = await resolveDepositPaymentMode(c, order, savedPaymentMethodId)
+  if (depositMode === 'SETUP_INTENT' && !savedPaymentMethodId) throw new Error('该订单需要先验证并保存信用卡')
+  if (depositMode !== depositPaymentModeForOrder(order)) {
+    await c.env.RENT.prepare('UPDATE orders SET deposit_payment_mode = ? WHERE id = ?').bind(depositMode, order.id).run()
+  }
   const shouldAuthorizeDeposit = confirmNow && Boolean(savedPaymentMethodId) && depositMode === 'PREAUTH'
   if (depositMode === 'SETUP_INTENT') {
     await c.env.RENT.prepare("UPDATE orders SET deposit_status = 'NOT_REQUIRED', deposit_held_amount = 0 WHERE id = ?").bind(order.id).run()

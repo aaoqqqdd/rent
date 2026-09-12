@@ -13,9 +13,10 @@ export function depositAuthorizationWindowDays(cardBrand: unknown): 7 | 30 {
   return brand === 'visa' || brand === 'mastercard' ? 30 : 7
 }
 
-export function depositPaymentModeForRental(rentalPeriod: number, cardPayment = true): DepositPaymentMode {
+export function depositPaymentModeForRental(rentalPeriod: number, cardPayment = true, cardBrand?: unknown): DepositPaymentMode {
   if (!cardPayment) return 'PAID'
-  return rentalPeriod >= LONG_TERM_RENTAL_DAYS ? 'SETUP_INTENT' : 'PREAUTH'
+  const days = Number(rentalPeriod || 0)
+  return days >= LONG_TERM_RENTAL_DAYS || days > depositAuthorizationWindowDays(cardBrand) ? 'SETUP_INTENT' : 'PREAUTH'
 }
 
 export function depositPaymentModeForOrder(order: { deposit_payment_mode?: unknown; depositPaymentMode?: unknown; rentalPeriod?: unknown; rental_period?: unknown }): DepositPaymentMode {
