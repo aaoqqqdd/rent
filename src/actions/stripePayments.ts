@@ -86,6 +86,7 @@ async function upsertPaymentIntent(c: Context, opts: {
   metadata: Record<string, string>
   idempotencyKey: string
   paymentMethodId?: string
+  customerId?: string
   confirmNow?: boolean
 }): Promise<any> {
   const reusableStatuses = ['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing']
@@ -94,6 +95,7 @@ async function upsertPaymentIntent(c: Context, opts: {
     if (current && reusableStatuses.includes(String(current.status)) && String(current.status) !== 'processing') {
       const params = new URLSearchParams({ amount: String(opts.amountCents), currency: 'aud' })
       if (opts.paymentMethodId) params.set('payment_method', opts.paymentMethodId)
+      if (opts.customerId) params.set('customer', opts.customerId)
       if (opts.confirmNow) { params.set('confirm', 'true'); params.set('off_session', 'true') }
       Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
       if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
@@ -110,6 +112,7 @@ async function upsertPaymentIntent(c: Context, opts: {
     'automatic_payment_methods[enabled]': 'true',
   })
   if (opts.paymentMethodId) params.set('payment_method', opts.paymentMethodId)
+  if (opts.customerId) params.set('customer', opts.customerId)
   if (opts.confirmNow) { params.set('confirm', 'true'); params.set('off_session', 'true') }
   if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
   Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
@@ -132,11 +135,13 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     if (existing && ['requires_capture', 'succeeded'].includes(String(existing.status))) return
   }
   const paymentMethod = await stripeRequest(c, `payment_methods/${paymentMethodId}`)
+  const customerId = typeof paymentMethod.customer === 'string' ? paymentMethod.customer : String(paymentMethod.customer?.id || '')
   const cardBrand = String(paymentMethod.card?.brand || '').toLowerCase()
   const authorizationWindowDays = depositAuthorizationWindowDays(cardBrand)
   const params = new URLSearchParams({
     amount: String(cents(depositAmount)),
     currency: 'aud',
+    ...(customerId ? { customer: customerId } : {}),
     payment_method: paymentMethodId,
     capture_method: 'manual',
     confirm: 'true',
@@ -193,11 +198,13 @@ export async function createOrderSetupIntent(c: Context, user: any, orderId: str
   const existingId = String((order as any).stripe_setup_intent_id || '')
   if (/^seti_[A-Za-z0-9_]+$/.test(existingId)) {
     const existing = await stripeRequest(c, `setup_intents/${existingId}`).catch(() => null)
-    if (existing && ['requires_payment_method', 'requires_confirmation', 'requires_action'].includes(String(existing.status)) && existing.client_secret) {
+    if (existing && existing.customer && ['requires_payment_method', 'requires_confirmation', 'requires_action'].includes(String(existing.status)) && existing.client_secret) {
       return { clientSecret: existing.client_secret, publishableKey: await getStripePublishableKey(c) }
     }
   }
+  const customer = await ensureStripeCustomerForPaymentMethod(c, user, '')
   const intent = await stripeRequest(c, 'setup_intents', new URLSearchParams({
+    customer,
     usage: 'off_session',
     'automatic_payment_methods[enabled]': 'true',
     'metadata[order_id]': String(order.id),
@@ -206,6 +213,25 @@ export async function createOrderSetupIntent(c: Context, user: any, orderId: str
   }), `order-setup-${order.id}`)
   await c.env.RENT.prepare('UPDATE orders SET stripe_setup_intent_id = ? WHERE id = ?').bind(intent.id, order.id).run()
   return { clientSecret: intent.client_secret as string, publishableKey: await getStripePublishableKey(c) }
+}
+
+async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, paymentMethodId: string): Promise<string> {
+  if (paymentMethodId) {
+    const paymentMethod = await stripeRequest(c, `payment_methods/${paymentMethodId}`)
+    const existingCustomer = typeof paymentMethod.customer === 'string' ? paymentMethod.customer : String(paymentMethod.customer?.id || '')
+    if (existingCustomer) return existingCustomer
+  }
+  const customer = await stripeRequest(c, 'customers', new URLSearchParams({
+    email: String(user.email || ''),
+    name: String(user.name || ''),
+    phone: String(user.phone || ''),
+    'metadata[source]': 'rent-rental-payment',
+    'metadata[user_id]': String(user.id || ''),
+  }), `rent-customer-${String(user.id || crypto.randomUUID())}`)
+  const customerId = String(customer.id || '')
+  if (!/^cus_[A-Za-z0-9_]+$/.test(customerId)) throw new Error('Stripe 客户资料创建失败，请重试')
+  if (paymentMethodId) await stripeRequest(c, `payment_methods/${paymentMethodId}/attach`, new URLSearchParams({ customer: customerId }), `rent-payment-method-attach-${paymentMethodId}`)
+  return customerId
 }
 
 /** 校验长期订单的 SetupIntent 后，使用已保存的 PaymentMethod 收取租金。 */
@@ -239,6 +265,9 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
   if (!Number.isInteger(baseCents) || baseCents <= 0) throw new Error('订单金额无效')
 
   const savedPaymentMethodId = String((order as any).stripe_payment_method_id || '')
+  const stripeCustomerId = savedPaymentMethodId
+    ? await ensureStripeCustomerForPaymentMethod(c, user, savedPaymentMethodId)
+    : ''
   const depositMethod = normalizeSecurityDepositMethod(order.deposit_method, 'card_hold')
   const depositMode = depositMethod === 'card_hold' ? await resolveDepositPaymentMode(c, order, savedPaymentMethodId) : 'PAID'
   if (depositMode === 'SETUP_INTENT' && !savedPaymentMethodId) throw new Error('该订单需要先验证并保存信用卡')
@@ -266,6 +295,7 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     },
     idempotencyKey: `order-pi-${order.id}`,
     paymentMethodId: savedPaymentMethodId,
+    customerId: stripeCustomerId,
     confirmNow,
   })
   const alreadyPaid = intent.status === 'succeeded'
@@ -612,8 +642,10 @@ async function settleSetupIntentDeposit(c: Context, admin: any, order: any, form
   }
   const paymentMethodId = String((order as any).stripe_payment_method_id || '')
   if (!/^pm_[A-Za-z0-9_]+$/.test(paymentMethodId)) return c.text('订单没有可用于长期租赁结算的已验证信用卡', 409)
+  const paymentMethod = await stripeRequest(c, `payment_methods/${paymentMethodId}`)
+  const customerId = typeof paymentMethod.customer === 'string' ? paymentMethod.customer : String(paymentMethod.customer?.id || '')
   const intent = await stripeRequest(c, 'payment_intents', new URLSearchParams({
-    amount: String(cents(deductionAmount)), currency: 'aud', payment_method: paymentMethodId,
+    amount: String(cents(deductionAmount)), currency: 'aud', ...(customerId ? { customer: customerId } : {}), payment_method: paymentMethodId,
     confirm: 'true', off_session: 'true',
     'metadata[order_id]': String(order.id), 'metadata[type]': 'deposit_charge',
     'metadata[deduction_amount]': String(cents(deductionAmount)),
