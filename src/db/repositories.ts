@@ -113,6 +113,7 @@ function normalizeOrderRow(orderRow: any): Order {
   const orderNo = orderRow.orderNo ?? orderRow.order_no
   const contractId = orderRow.contractId ?? orderRow.contract_id
   const signedAt = orderRow.signedAt ?? orderRow.signed_at
+  const depositPaymentMode = orderRow.deposit_payment_mode ?? orderRow.depositPaymentMode
 
   return {
     ...orderRow,
@@ -138,6 +139,8 @@ function normalizeOrderRow(orderRow: any): Order {
     contract_id: contractId,
     signedAt,
     signed_at: signedAt,
+    depositPaymentMode,
+    deposit_payment_mode: depositPaymentMode,
     refundAccountNumber,
     refundAccountName,
     status: orderRow.status ?? orderRow.order_status

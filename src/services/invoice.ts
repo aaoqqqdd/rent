@@ -23,7 +23,7 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const discountAmount = Math.max(0, Number((order as any).discountAmount || (order as any).discount_amount || 0))
   const taxableGross = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount) + discountAmount)
   const gstAmount = getSystemSettings().companyDetails.gstIncluded ? taxableGross / 11 : 0
-  const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
+  const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' AND COALESCE(rental_amount, 0) > 0 ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
   const invoiceId = `inv-${order.id}`
   const invoiceNumber = /^INV-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.invoice_number || '')) ? String(data.invoice_number) : generateReferenceNumber('INV')

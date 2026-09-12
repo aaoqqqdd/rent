@@ -30,6 +30,7 @@ import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
+import { depositPaymentModeForRental } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
 
 function assertInlineScriptsParse(html: string) {
@@ -209,16 +210,24 @@ test('contract signing progress renders readable step labels and one current ste
   assert.doesNotMatch(html, /\*\*/)
 })
 
-test('Stripe adds 2.5% to the full order principal without changing the refundable base', () => {
+test('Stripe adds 2.5% to rent and service fees while excluding the deposit', () => {
   assert.deepEqual(stripePaymentAmounts(1100), { baseCents: 110000, feeCents: 2750, chargedCents: 112750 })
   assert.deepEqual(stripePaymentAmounts(99.99), { baseCents: 9999, feeCents: 250, chargedCents: 10249 })
+  assert.deepEqual(stripePaymentAmounts(1100, 1000), { baseCents: 10000, feeCents: 250, chargedCents: 10250 })
+  assert.deepEqual(stripePaymentAmounts(1100, 1000, 50), { baseCents: 10000, feeCents: 250, chargedCents: 10250 })
+})
+
+test('rental length selects preauthorization or SetupIntent deposit handling', () => {
+  assert.equal(depositPaymentModeForRental(29, true), 'PREAUTH')
+  assert.equal(depositPaymentModeForRental(30, true), 'SETUP_INTENT')
+  assert.equal(depositPaymentModeForRental(90, false), 'PAID')
 })
 
 test('Stripe checkout separates rent, deposit, and processing fee', () => {
   assert.deepEqual(stripeCheckoutItems({ totalAmount: 1100, depositAmount: 1000, rentalPeriod: 5, startDate: '2026-08-10', endDate: '2026-08-15' }), [
     { name: '设备租金（5 天，2026-08-10 至 2026-08-15）', amountCents: 10000 },
     { name: '设备押金', amountCents: 100000 },
-    { name: 'Stripe 支付手续费（2.5%）', amountCents: 2750 },
+    { name: 'Stripe 租金及服务费支付手续费（2.5%）', amountCents: 250 },
   ])
 })
 
@@ -228,10 +237,10 @@ test('payment results distinguish Stripe, bank transfer, and immediate balance p
   assert.equal(paymentResultState({ paymentMethod: 'balance', status: 'paid' }, { status: 'paid' }), 'success')
 })
 
-test('only deposit refunds return the fee attributable to the refunded deposit principal', () => {
+test('deposit refunds do not return a processing fee because the fee excludes deposits', () => {
   const stripePayment = { payment_method: 'card', processing_fee: 27.5 }
-  assert.equal(refundableDepositFee(1000, stripePayment), 25)
-  assert.equal(refundableDepositFee(499.99, stripePayment), 12.5)
+  assert.equal(refundableDepositFee(1000, stripePayment), 0)
+  assert.equal(refundableDepositFee(499.99, stripePayment), 0)
   assert.equal(refundableDepositFee(1000, { payment_method: 'bank_transfer', processing_fee: 0 }), 0)
   assert.equal(refundableDepositFee(1000, { payment_method: 'card', processing_fee: 0 }), 0)
 })

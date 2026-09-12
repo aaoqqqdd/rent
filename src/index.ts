@@ -3366,7 +3366,10 @@ app.post('/admin/orders/:id/deposit-refund', async (c) => {
   if (!settlement || settlement.status !== 'APPROVED') return c.text('押金结算须先由 Manager 审批通过', 409)
   try {
     const form = await c.req.parseBody()
-    if (Number(form.refundAmount) !== Number(settlement.refund_amount) || String(form.deductionCategory || '') !== String(settlement.deduction_category || '') || String(form.deductionReason || '').trim() !== String(settlement.deduction_reason || '')) return c.text('执行金额或扣款说明必须与已批准的结算单一致', 409)
+    const isSetupIntentDeposit = String((await getOrderById(c, c.req.param('id')) as any)?.deposit_payment_mode || '') === 'SETUP_INTENT'
+    const submittedAmount = isSetupIntentDeposit ? Number(form.deductionAmount || 0) : Number(form.refundAmount)
+    const approvedAmount = isSetupIntentDeposit ? Number(settlement.deduction_amount || 0) : Number(settlement.refund_amount)
+    if (submittedAmount !== approvedAmount || String(form.deductionCategory || '') !== String(settlement.deduction_category || '') || String(form.deductionReason || '').trim() !== String(settlement.deduction_reason || '')) return c.text('执行金额或扣款说明必须与已批准的结算单一致', 409)
     const response = await refundDeposit(c, user, c.req.param('id'), form)
     if (response.status < 400) {
       await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'EXECUTED', executed_by = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'APPROVED'").bind(user.id, settlement.id).run()
@@ -3390,18 +3393,26 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   const refundText = String(form.refundAmount ?? '').trim()
   const refundAmount = Number(refundText)
   const depositAmount = Number(order.depositAmount || 0)
-  if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > depositAmount) return c.text('退款金额无效：不能高于押金金额', 400)
-  const deductionAmount = Number((depositAmount - refundAmount).toFixed(2))
+  const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
+  let deductionAmount = 0
+  if (isSetupIntentDeposit) {
+    const deductionText = String(form.deductionAmount ?? '0').trim()
+    deductionAmount = Number(deductionText)
+    if (!/^\d+(\.\d{1,2})?$/.test(deductionText) || !Number.isFinite(deductionAmount) || deductionAmount < 0 || deductionAmount > depositAmount) return c.text('扣款金额无效：不能高于押金金额', 400)
+  } else {
+    if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > depositAmount) return c.text('退款金额无效：不能高于押金金额', 400)
+    deductionAmount = Number((depositAmount - refundAmount).toFixed(2))
+  }
   const deductionCategory = String(form.deductionCategory || '').trim()
   const deductionReason = String(form.deductionReason || '').trim()
   const refundMethod = String(form.refundMethod || 'balance').trim()
   if (!['balance', 'original', 'bank_transfer'].includes(refundMethod)) return c.text('退款方式无效', 400)
   if (deductionAmount > 0 && !['DAMAGE', 'MISSING_ACCESSORY', 'LATE_FEE', 'DEVICE_NOT_RETURNED', 'OTHER'].includes(deductionCategory)) return c.text('请选择有效的押金扣款类别', 400)
   if (deductionAmount > 0 && !deductionReason) return c.text('扣除押金时必须填写原因', 400)
-  const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
+  const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, refundAmount: isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
   const settlementId = `dst-${nanoid(12)}`
   await c.env.RENT.batch([
-    c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),
+    c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),
     c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING' WHERE id = ?").bind(order.id),
   ])
   await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_AUTO_APPROVED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, after: { ...snapshot, status: 'APPROVED' }, reason: deductionReason || '管理员提交，自动审批通过' })

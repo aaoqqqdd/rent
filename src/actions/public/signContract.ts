@@ -12,7 +12,8 @@ import {
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
-import { createOrderPaymentIntent } from '../stripePayments';
+import { completeOrderSetupIntent, createOrderPaymentIntent, createOrderSetupIntent } from '../stripePayments';
+import { depositPaymentModeForRental } from '../../domain/paymentPlan';
 import { getStripeRuntimeConfig } from '../../stripe';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 import { calculateRentalFee } from '../../domain/rentalPricing';
@@ -320,6 +321,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
 
+        const selectedDepositMode = depositPaymentModeForRental(Number(order.rentalPeriod || 0), paymentMethod === 'stripe')
+        await c.env.RENT.prepare('UPDATE orders SET deposit_payment_mode = ? WHERE id = ?').bind(selectedDepositMode, contract.rentalId).run()
+        ; (order as any).deposit_payment_mode = selectedDepositMode
+
         // **核心签约逻辑**
         const userInfo = signSession.userInfo;
         const userIdToLink = signSession.userIdToLink;
@@ -521,12 +526,20 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             await Promise.all((admins as any[]).map(admin => createNotification(c, { recipientId: admin.id, type: 'payment_review_submitted', title: '新的付款凭证待审核', message: `客户已提交订单 ${order.orderNo || order.id} 的付款凭证，请及时审核。`, orderId: order.id })))
           }
         }
-        let stripePayment: { clientSecret: string; publishableKey: string } | null = null
+        let stripePayment: { clientSecret?: string; publishableKey?: string; setupIntent?: boolean } | null = null
         if (paymentMethod === 'stripe') {
           const stripeUser = await getUserById(c, userId)
           if (!stripeUser) throw new Error('无法读取付款用户信息')
-          const intent = await createOrderPaymentIntent(c, stripeUser, contract.rentalId, Boolean((order as any).stripe_payment_method_id))
-          if (!intent.alreadyPaid && !(order as any).stripe_payment_method_id) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
+          const setupIntentId = String(body.stripeSetupIntentId || '').trim()
+          if (selectedDepositMode === 'SETUP_INTENT' && !(order as any).stripe_payment_method_id && !setupIntentId) {
+            const setup = await createOrderSetupIntent(c, stripeUser, contract.rentalId)
+            stripePayment = { clientSecret: setup.clientSecret, publishableKey: setup.publishableKey, setupIntent: true }
+          } else {
+            const intent = setupIntentId
+              ? await completeOrderSetupIntent(c, stripeUser, contract.rentalId, setupIntentId)
+              : await createOrderPaymentIntent(c, stripeUser, contract.rentalId, Boolean((order as any).stripe_payment_method_id))
+            if (!intent.alreadyPaid && intent.clientSecret) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
+          }
         }
         if (paymentMethod === 'balance') {
           await ensureOrderNumber(c, contract.rentalId)
@@ -596,7 +609,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await lockReferralRelationship(c, referrerId, newUserId, String(userInfo.referrer || ''))
 
         // 5. 清理会话
-        await deleteSignSession(c, token);
+        // 长期租赁首次输入卡片时，SetupIntent 成功后还需要用同一签约会话
+        // 回传 setup_intent id，再收取租金；收到该 id 后才清理会话。
+        if (!(stripePayment && stripePayment.setupIntent)) await deleteSignSession(c, token);
         signingCompleted = true;
         await logError(c, 'INFO', `Sign session deleted after successful completion`, undefined, { token });
 

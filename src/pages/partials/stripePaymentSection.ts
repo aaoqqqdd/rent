@@ -19,7 +19,7 @@ export function stripeJsTag(): string {
 export function stripePaymentHelperScript(): string {
   return `<script>
 (function(){
-  if (window.__mountStripePayment) return;
+  if (window.__mountStripePayment && window.__mountStripeSetup) return;
   var APPEARANCE = { theme: 'stripe', variables: { colorPrimary: '#2563eb', fontfamily: 'inherit', borderRadius: '10px' } };
   window.__mountStripePayment = function(container, opts){
     var node = typeof container === 'string' ? document.querySelector(container) : container;
@@ -45,6 +45,32 @@ export function stripePaymentHelperScript(): string {
           if (pi.status === 'succeeded' || pi.status === 'processing' || pi.status === 'requires_capture') return { ok: true, status: pi.status };
           return { ok: false, error: '支付未完成（' + (pi.status || '未知状态') + '）。' };
         }).catch(function(err){ return { ok: false, error: (err && err.message) || '支付请求失败，请稍后重试。' }; });
+      }
+    };
+  };
+  window.__mountStripeSetup = function(container, opts){
+    var node = typeof container === 'string' ? document.querySelector(container) : container;
+    if (!node) throw new Error('缺少 Setup Element 容器');
+    if (!window.Stripe) throw new Error('Stripe.js 未能加载');
+    if (!opts || !opts.clientSecret || !opts.publishableKey) throw new Error('缺少卡片验证凭据');
+    var stripe = window.Stripe(opts.publishableKey);
+    var elements = stripe.elements({ clientSecret: opts.clientSecret, appearance: APPEARANCE });
+    var paymentElement = elements.create('payment', { layout: 'tabs' });
+    paymentElement.mount(node);
+    var ready = new Promise(function(resolve){ paymentElement.on('ready', resolve); });
+    return {
+      ready: ready,
+      confirm: function(){
+        return stripe.confirmSetup({
+          elements: elements,
+          confirmParams: opts.returnUrl ? { return_url: opts.returnUrl } : {},
+          redirect: 'if_required'
+        }).then(function(res){
+          if (res.error) return { ok: false, error: res.error.message || '卡片验证未完成，请检查卡信息后重试。' };
+          var si = res.setupIntent || {};
+          if (si.status === 'succeeded') return { ok: true, setupIntentId: si.id };
+          return { ok: false, error: '卡片验证未完成（' + (si.status || '未知状态') + '）。' };
+        }).catch(function(err){ return { ok: false, error: (err && err.message) || '卡片验证请求失败，请稍后重试。' }; });
       }
     };
   };

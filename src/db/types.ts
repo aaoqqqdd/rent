@@ -149,6 +149,9 @@ export interface Order {
   paymentMethod: 'card' | 'bank_transfer' | 'alipay' | 'wechat' | 'balance'
   totalAmount: number
   depositAmount: number
+  deposit_payment_mode?: 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
+  depositPaymentMode?: 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
+  stripe_deposit_payment_intent_id?: string | null
   couponCode?: string | null
   discountAmount?: number
   dailyRate: number

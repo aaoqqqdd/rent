@@ -95,7 +95,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           <div class="form-group">
             <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
             <input class="form-control" id="processingFeeRate" name="processingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.processingFeeRate ?? 0.025) * 100).toFixed(2)}">
-            <small class="form-text">Stripe 信用卡支付和押金退款手续费按此比例计算。</small>
+            <small class="form-text">Stripe 手续费按租金及立即支付的时段服务费（不含押金）计算；押金预授权、释放和长期押金扣款不加手续费。</small>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}><label for="enableStripe">启用 Stripe 信用卡支付</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableBankTransfer" name="enableBankTransfer" ${settings.paymentMethods.bankTransfer ? 'checked' : ''}><label for="enableBankTransfer">启用银行转账</label></div>

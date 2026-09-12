@@ -569,9 +569,9 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
     cancelled: { order: 'CANCELLED', payment: 'PAYMENT_FAILED', rental: 'CANCELLED' },
   }
   const next = mapping[status] || { order: status.toUpperCase(), payment: 'UNPAID', rental: status.toUpperCase() }
-  const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount FROM orders WHERE id = ?').bind(orderId).first() as any
+  const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount, deposit_payment_mode FROM orders WHERE id = ?').bind(orderId).first() as any
   await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
-  if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
+  if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && String(previous?.deposit_payment_mode || 'PAID') === 'PAID' && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
     await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
   }
   if (previous && previous.rental_status !== next.rental) {

@@ -5,6 +5,7 @@
 
 import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getDeviceRentalRules } from '../../site';
 import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../actions/stripePayments';
+import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
 
@@ -270,8 +271,13 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       title = '步骤 3/3: 选择付款方式';
       const stripeFeeRate = getStripeProcessingFeeRate();
       const stripeFeePercent = (stripeFeeRate * 100).toFixed(2).replace(/\.00$/, '');
-      const stripeFee = Math.round(Number(order.totalAmount) * 100 * stripeFeeRate) / 100;
-      const stripeTotal = Number(order.totalAmount) + stripeFee;
+      const depositPaymentMode = depositPaymentModeForOrder(order);
+      const orderDepositAmount = Math.max(0, Number(order.depositAmount || 0));
+      const orderServiceFee = Math.max(0, Number((order as any).serviceFee || (order as any).service_fee || 0));
+      const stripeImmediatelyPaidAmount = Math.max(0, Number(order.totalAmount) - orderDepositAmount);
+      const stripeFee = Math.round(stripeImmediatelyPaidAmount * 100 * stripeFeeRate) / 100;
+      const stripePrincipal = Number(order.totalAmount) - orderDepositAmount;
+      const stripeTotal = stripePrincipal + stripeFee;
 
       // 在步骤3中获取订单和设备信息
 
@@ -310,10 +316,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
           
           <div class="alert" id="coupon-total-preview">
-            <strong>应付总额: ${formatCurrency(order.totalAmount)}</strong> (租金 + 押金)
+            <strong>租金及服务费: ${formatCurrency(stripePrincipal)}</strong>${depositPaymentMode === 'PREAUTH' ? `（押金 ${formatCurrency(orderDepositAmount)} 仅预授权，不立即扣款）` : depositPaymentMode === 'SETUP_INTENT' ? `（长期租赁押金 ${formatCurrency(orderDepositAmount)} 不预扣）` : `（含押金 ${formatCurrency(orderDepositAmount)}）`}
           </div>
 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4">
+          <input type="hidden" name="stripeSetupIntentId" value="">
           ${hasSavedCard ? `<input type="hidden" name="paymentMethod" value="stripe"><input type="hidden" name="refundMethod" value="${escapeAttribute(String((order as any).refundMethod || 'original'))}">` : ''}
           <div class="grid grid-2" style="margin: 20px 0;">
             ${(() => { const unavailable = rentalRules.unavailableTimeSlots || {}; const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'; const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00（早间服务费 10%）'], ['morning', '9:00–12:00（无服务费）'], ['afternoon', '13:00–20:00（无服务费）'], ['evening_service', '21:00–23:00（晚间服务费 10%）']]; const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value)); return `<div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>`; })()}
@@ -325,7 +332,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
-                <span><strong>信用卡支付（Stripe）</strong><small>支付 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，包含 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）手续费。</small></span>
+                <span><strong>信用卡支付（Stripe）</strong><small>租金及已确定的时段服务费即时扣款 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，其中支付手续费 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）。${depositPaymentMode === 'PREAUTH' ? `押金 ${formatCurrency(orderDepositAmount)} 另作预授权。` : depositPaymentMode === 'SETUP_INTENT' ? '长期租赁押金不预扣。' : ''}</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -348,14 +355,15 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">${stripeFeePercent}%</span></div>
-              <p>选择 Stripe 信用卡支付时，将在租金和押金合计金额上加收由支付提供商收取的手续费。</p>
+              <p>选择 Stripe 信用卡支付时，租金及已确定的时段服务费会立即扣款；手续费按这两项计算，不按押金计算。</p>
               <small class="form-text">付款全程由 Stripe 安全处理，本网站不保存卡号、有效期或安全码。</small>
               <dl>
-                <div><dt>订单本金（含押金）</dt><dd data-price="orderTotal">${formatCurrency(order.totalAmount)}</dd></div>
+                <div><dt>租金及服务费</dt><dd data-price="stripePrincipal">${formatCurrency(stripePrincipal)}</dd></div>
+                <div><dt>${depositPaymentMode === 'PREAUTH' ? '押金预授权（不扣款）' : depositPaymentMode === 'SETUP_INTENT' ? '长期租赁押金（不预扣）' : '押金'}</dt><dd>${formatCurrency(orderDepositAmount)}</dd></div>
                 <div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div>
                 <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div>
               </dl>
-              <p class="payment-fee-notice__warning">仅处理押金退款时，会同时退回实际退还押金对应的 ${stripeFeePercent}% 手续费；取消订单及其他退款不退手续费。</p>
+              <p class="payment-fee-notice__warning">押金不会计入手续费。短期押金归还无损坏时释放预授权；长期租赁无损坏时不会产生押金交易。</p>
             </aside>
             ` : ''}
             <div class="card" style="margin-top:20px; padding:16px;${hasSavedCard ? 'display:none;' : ''}">
@@ -397,11 +405,14 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const money = value => 'AUD$' + Number(value).toFixed(2);
               const balanceRadio = document.getElementById('balance-payment-radio');
               const balanceShort = document.querySelector('[data-balance-insufficient]');
+              const ORDER_DEPOSIT = ${orderDepositAmount};
               const applyTotal = total => {
                 currentTotal = Number(total);
-                const fee = Math.round(currentTotal * 100 * ${stripeFeeRate}) / 100;
-                const stripeTotalNow = currentTotal + fee;
+                const stripePrincipalNow = Math.max(0, currentTotal - ORDER_DEPOSIT);
+                const fee = Math.round(stripePrincipalNow * 100 * ${stripeFeeRate}) / 100;
+                const stripeTotalNow = stripePrincipalNow + fee;
                 document.querySelectorAll('[data-price="orderTotal"]').forEach(el => { el.textContent = money(currentTotal); });
+                document.querySelectorAll('[data-price="stripePrincipal"]').forEach(el => { el.textContent = money(stripePrincipalNow); });
                 document.querySelectorAll('[data-price="stripeFee"]').forEach(el => { el.textContent = money(fee); });
                 document.querySelectorAll('[data-price="stripeTotal"]').forEach(el => { el.textContent = money(stripeTotalNow); });
                 if (balanceRadio) {
@@ -580,11 +591,64 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                       return;
                     }
                     ctx = { guest: d.guest || null, redirectTarget: d.redirectTarget || RESULT_URL };
-                    if (d.stripe && d.stripe.clientSecret) { showStripeForm(d.stripe); }
+                    if (d.stripe && d.stripe.setupIntent && d.stripe.clientSecret) { showStripeSetupForm(d.stripe); }
+                    else if (d.stripe && d.stripe.clientSecret) { showStripeForm(d.stripe); }
                     else { showWaiting(false); }
                   })
                   .catch(() => { restoreBtn(); });
               });
+
+              function submitAfterSetup(setupIntentId) {
+                var setupInput = form.querySelector('input[name="stripeSetupIntentId"]');
+                if (setupInput) setupInput.value = setupIntentId || '';
+                var fd = new FormData(form);
+                fd.set('asyncStripe', '1');
+                return fetch(form.action, { method: 'POST', body: fd, headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+                  .then(r => r.json().then(d => ({ ok: r.ok, d })))
+                  .then(({ ok, d }) => {
+                    if (!ok || !d || !d.ok) throw new Error((d && d.error) || '卡片验证成功，但租金支付初始化失败。');
+                    ctx = { guest: d.guest || null, redirectTarget: d.redirectTarget || RESULT_URL };
+                    if (d.stripe && d.stripe.clientSecret) showStripeForm(d.stripe); else showWaiting(false);
+                  });
+              }
+
+              function showStripeSetupForm(stripe) {
+                stopPoll();
+                panel.innerHTML =
+                  '<div class="payment-wait" style="max-width:520px">'
+                  + '<h2>保存卡片并支付租金</h2>'
+                  + '<p>长期租赁先由 Stripe 验证并保存卡片，租金立即支付；押金不会预扣。</p>'
+                  + '<div id="sign-stripe-element" style="margin:14px 0;min-height:44px;text-align:left"></div>'
+                  + '<p id="sign-stripe-error" role="alert" style="color:#b42318;display:none;margin:8px 0"></p>'
+                  + '<div class="record-actions" style="justify-content:center;margin-top:6px">'
+                  + '<button type="button" class="button button-secondary" data-stripe-cancel>放弃 / 重新选择</button>'
+                  + '<button type="button" class="button button-primary" data-stripe-pay disabled>保存卡片并支付租金</button>'
+                  + '</div></div>';
+                var errEl = panel.querySelector('#sign-stripe-error');
+                var payBtn = panel.querySelector('[data-stripe-pay]');
+                var showErr = function (msg) { errEl.textContent = msg || ''; errEl.style.display = msg ? 'block' : 'none'; };
+                panel.querySelector('[data-stripe-cancel]').addEventListener('click', function () { handleResult('fail'); });
+                var handle;
+                try {
+                  handle = window.__mountStripeSetup(panel.querySelector('#sign-stripe-element'), {
+                    clientSecret: stripe.clientSecret, publishableKey: stripe.publishableKey, returnUrl: window.location.href
+                  });
+                } catch (e) { showErr((e && e.message) || '卡片验证组件加载失败，请刷新重试。'); return; }
+                handle.ready.then(function () { payBtn.disabled = false; });
+                payBtn.addEventListener('click', function () {
+                  showErr(''); payBtn.disabled = true; payBtn.textContent = '处理中…';
+                  handle.confirm().then(function (out) {
+                    if (out.ok && out.setupIntentId) {
+                      submitAfterSetup(out.setupIntentId).catch(function (error) { showErr(error.message); payBtn.disabled = false; payBtn.textContent = '保存卡片并支付租金'; });
+                      return;
+                    }
+                    showErr(out.error); payBtn.disabled = false; payBtn.textContent = '保存卡片并支付租金';
+                  });
+                });
+              }
+
+              var returnedSetupIntent = new URLSearchParams(window.location.search).get('setup_intent');
+              if (returnedSetupIntent) submitAfterSetup(returnedSetupIntent).catch(function () {});
 
               function showStripeForm(stripe) {
                 stopPoll();
