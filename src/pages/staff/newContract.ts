@@ -54,7 +54,7 @@ export async function renderNewContractPage(c: Context, user: any) {
       <div class="device-catalog-grid">
         ${groupDevices.sort((left, right) => String(left.model || '').localeCompare(String(right.model || ''), 'zh-CN')).map(device => {
       const serial = device.serialNumber || device.serial_number || '未登记'
-      const assetTag = device.assetTag || device.asset_tag || device.id
+      const assetTag = device.assetTag || device.asset_tag || '未生成'
       const configuration = [device.cpu, device.ram, device.storage, device.gpu, device.os].filter(Boolean).join(' · ') || device.description || '暂无配置说明'
       const searchText = [device.name, device.brand, device.model, serial, assetTag, configuration].filter(Boolean).join(' ').toLocaleLowerCase('zh-CN')
       const isBooked = bookedDeviceIds.has(device.id)
