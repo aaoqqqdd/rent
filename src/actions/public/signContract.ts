@@ -44,7 +44,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
     const orderId = contract.rentalId || contract.rental_id
     return new Response(null, {
       status: 303,
-      headers: { Location: `/payment/result?orderId=${encodeURIComponent(String(orderId || ''))}` },
+      headers: { Location: `/customer/orders/${encodeURIComponent(String(orderId || ''))}` },
     })
   }
 
@@ -259,8 +259,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
       }
 
       case 4:
-        // Step 4: 选择支付方式并完成签约
-        await logError(c, 'DEBUG', `Processing step 4: Payment method selection and contract finalization`, undefined, { token });
+        // Step 4: 确认取还时间并完成签约；合同签署流程不处理付款。
+        await logError(c, 'DEBUG', `Processing step 4: Contract finalization without payment`, undefined, { token });
         await loadSystemSettingsFromDB(c)
         const signingOrder = await getOrderById(c, contract.rentalId)
         if (!signingOrder) throw new Error('合同关联的订单不存在。')
@@ -271,7 +271,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先填写您的个人信息。');
         }
 
-        const paymentMethod = (order as any).stripe_payment_method_id ? 'stripe' : String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || '')
+        const noPayment = true
+        const paymentMethod = String((order as any).paymentMethod || (order as any).payment_method || 'bank_transfer')
         // 押金处理方式不再由客户手选：跟着支付方式自动走——信用卡预授权 / SetupIntent，否则银行转账。
         const depositMethod = normalizeSecurityDepositMethod(paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
@@ -455,8 +456,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         // 2. 更新订单信息
         // 处理余额支付
-        let orderStatus: Order['status'] = 'pending_payment';
-        if (paymentMethod === 'balance') {
+        let orderStatus: Order['status'] = noPayment ? 'approved' : 'pending_payment';
+        if (!noPayment && paymentMethod === 'balance') {
           const existingBalancePayment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'balance' AND status = 'paid' LIMIT 1").bind(contract.rentalId).first()
           if (existingBalancePayment) {
             orderStatus = 'paid'
@@ -486,7 +487,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           }
         }
 
-        if (orderStatus === 'paid') {
+        if (noPayment || orderStatus === 'paid') {
           await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(contract.rentalId).run()
         }
 
@@ -503,7 +504,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await c.env.RENT.prepare(`UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?`)
           .bind(refundMethod, refundMethod === 'original' ? refundBsb || null : null, refundMethod === 'original' ? refundAccountNumber || null : null, refundMethod === 'original' ? refundAccountName || null : null, contract.rentalId).run()
 
-        if (paymentMethod === 'balance' || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {
+        if (!noPayment && (paymentMethod === 'balance' || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod))) {
           const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
           const paymentTotal = Math.max(0, Number(paymentOrder?.totalAmount || 0) - Number(paymentOrder?.depositAmount || 0))
           const existingPayment = await c.env.RENT.prepare('SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(contract.rentalId, paymentMethod).first() as any
@@ -535,7 +536,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           }
         }
         let stripePayment: { clientSecret?: string; publishableKey?: string; setupIntent?: boolean } | null = null
-        if (paymentMethod === 'stripe') {
+        if (!noPayment && paymentMethod === 'stripe') {
           const stripeUser = await getUserById(c, userId)
           if (!stripeUser) throw new Error('无法读取付款用户信息')
           const setupIntentId = String(body.stripeSetupIntentId || '').trim()
@@ -549,7 +550,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             if (!intent.alreadyPaid && intent.clientSecret) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
           }
         }
-        if (paymentMethod === 'balance') {
+        if (!noPayment && paymentMethod === 'balance') {
           await ensureOrderNumber(c, contract.rentalId)
           await issueInvoice(c, contract.rentalId)
           await enqueueRentalUserCreation(c, await getOrderById(c, contract.rentalId))
@@ -637,7 +638,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             contractNumber: signedContractNumber,
             guest: guestPassword ? { email: userInfo.email, password: guestPassword } : null,
             redirectTarget: `/customer/orders/${contract.rentalId}`,
-            resultUrl: `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`,
+            resultUrl: `/customer/orders/${encodeURIComponent(contract.rentalId)}`,
           })
           res.headers.append('Set-Cookie', draftCookie)
           if (guestPassword) {
@@ -647,8 +648,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           return res
         }
         if (guestPassword) {
-          const paymentUrl = stripePayment ? `/customer/orders/${encodeURIComponent(contract.rentalId)}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
-          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${stripePayment ? '前往付款' : '查看付款结果'}</a></div></div>`
+          const paymentUrl = `/customer/orders/${encodeURIComponent(contract.rentalId)}`
+          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">查看订单详情</a></div></div>`
           const response = c.html(buildLayout('保存访客登录资料', guestPage))
           response.headers.append('Set-Cookie', draftCookie)
           const session = await createAuthSession(c, userId)
@@ -661,7 +662,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           response.headers.append('Set-Cookie', draftCookie)
           return response
         }
-        redirectUrl = `/payment/result?orderId=${contract.rentalId}`;
+        redirectUrl = `/customer/orders/${contract.rentalId}`;
         await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, {
           token,
           contractId: contract.id,

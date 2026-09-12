@@ -186,6 +186,7 @@ export type { ErrorLevel }
 import { recordBalanceTransaction, recordFinancialLedgerEntry } from './services/ledger'
 import {
   ensureNotificationsTable, createNotification, getNotifications,
+  deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications,
   createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
 } from './services/notifications'
@@ -204,6 +205,7 @@ import { getPendingOrdersWithDetails, getStaffDashboardData } from './services/s
 export {
   recordBalanceTransaction, recordFinancialLedgerEntry,
   ensureNotificationsTable, createNotification, getNotifications,
+  deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications,
   createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
@@ -1269,6 +1271,52 @@ export async function getContractTemplate(c: Context): Promise<ContractTemplate>
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+// 为已审核订单准备客户签署用的合同。审批和订单详情页都会调用此函数，
+// 因此必须先查已有合同，避免重复生成签约链接。
+export async function ensureContractForOrder(c: Context, order: Order, createdBy?: string | null): Promise<Contract> {
+  const existing = await getContractByOrderId(c, order.id)
+  if (existing && existing.status !== 'cancelled' && !existing.deleted_at) return existing
+
+  const now = new Date()
+  const signExpiresAt = new Date(now)
+  signExpiresAt.setDate(signExpiresAt.getDate() + 7)
+  const device = await getDeviceById(c, order.deviceId)
+  const template = await getContractTemplate(c)
+  const contract: Contract = {
+    id: `ct-${nanoid(10)}`,
+    rentalId: order.id,
+    contractNumber: generateContractNumber(),
+    content: template.content,
+    signedAt: null,
+    createdAt: now.toISOString(),
+    signToken: nanoid(32),
+    status: 'pending_sign',
+    validFrom: order.startDate || null,
+    validUntil: order.endDate || null,
+    signExpiresAt: signExpiresAt.toISOString(),
+    createdBy: createdBy || null,
+    device_condition: '交付时以设备验机记录为准。',
+    device_accessories: null,
+    late_fee_per_day: 0,
+    repair_cost: null,
+    pickup_location: order.pickupLocation || null,
+    return_location: order.returnLocation || null,
+    contract_data: {
+      invoice_number: '',
+      delivery_method: order.deliveryMethod || 'Pickup',
+      delivery_fee: Number(order.deliveryFee || order.delivery_fee || 0).toFixed(2),
+      pickup_location: order.pickupLocation || '',
+      return_location: order.returnLocation || '',
+      agreement_version: '1.0',
+      device_name: device?.name || '',
+    },
+  }
+
+  await insertContract(c, contract)
+  await c.env.RENT.prepare('UPDATE orders SET contractId = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(contract.id, order.id).run()
+  return contract
 }
 
 export async function updateContractTemplate(c: Context, newTemplate: { id: string; name: string; content: string }): Promise<ContractTemplate> {

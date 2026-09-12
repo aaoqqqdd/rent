@@ -212,8 +212,8 @@ test('saved customer bank details prefill an editable bank refund form', () => {
 test('contract signing progress renders readable step labels and one current step', () => {
   const html = renderSigningProgress(2)
   assert.match(html, /signing-step--complete[^>]*>[\s\S]*同意协议/)
-  assert.match(html, /signing-step--current" aria-current="step"[\s\S]*确认资料/)
-  assert.match(html, /signing-step--upcoming[^>]*>[\s\S]*选择支付/)
+  assert.match(html, /signing-step--current" aria-current="step"[\s\S]*填写资料并完成签署/)
+  assert.doesNotMatch(html, /选择支付|付款方式/)
   assert.equal((html.match(/aria-current="step"/g) || []).length, 1)
   assert.doesNotMatch(html, /\*\*/)
 })

@@ -39,7 +39,7 @@ function splitContractPhone(value: string): { phoneCode: string; phone: string }
 }
 
 export function renderSigningProgress(step: number): string {
-  const items = [['01', '同意协议'], ['02', '确认资料与签署'], ['03', '选择支付']]
+  const items = [['01', '同意协议'], ['02', '填写资料并完成签署']]
   return `<ol class="signing-steps" aria-label="合同签署进度">${items.map(([number, label], index) => {
     const itemStep = index + 1
     const state = itemStep < step ? 'complete' : itemStep === step ? 'current' : 'upcoming'
@@ -69,7 +69,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       ...userInput,
     }
   }
-  let contract = await getContractBySignToken(c, tokenOrNumber);
+  let contract = (await getContractBySignToken(c, tokenOrNumber))!;
 
 
   // 在模板中使用的 `token` 变量，映射传入的 tokenOrNumber
@@ -115,7 +115,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   // }
 
   const orderId = contract.rentalId || contract.rental_id;
-  const order = await getOrderById(c, orderId);
+  const order = (await getOrderById(c, orderId))!;
   if (!order) return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
   const hasSavedCard = Boolean((order as any).stripe_payment_method_id)
   await loadSystemSettingsFromDB(c)
@@ -140,9 +140,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
     const isGuestAccount = contractCustomer?.accountType === 'guest'
     const canViewGuestPassword = isGuestAccount && (!viewerUser || String(viewerUser.id) === String(order.userId || ''))
     const guestPassword = canViewGuestPassword ? String(signedContractData.guest_password || '') : ''
-    const paymentStatusLabel = order.status === 'paid'
-      ? '付款已完成，发票与收据已生成。'
-      : '合同已签署，订单仍未完成付款。请前往订单查看付款状态或联系工作人员。';
+    const paymentStatusLabel = '合同已签署，订单已确认，无需在线付款。';
     const completedContent = `
       <div class="panel">
         <div class="entity-header"><div class="identity-strip mono"><span>E-SIGN / ${escapeAttribute(contract.contractNumber)}</span><span>合同已签署</span></div><div class="entity-heading"><div><p class="section-code">RENTAL AGREEMENT</p><h2>租赁协议已完成</h2><p>${escapeAttribute(device?.name || '租赁设备')} · ${escapeAttribute(order.startDate)} 至 ${escapeAttribute(order.endDate)}</p></div><span class="badge badge-success">已签署</span></div></div>
@@ -172,7 +170,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   let content = '';
   let title = '合同签署';
 
-  const progressBar = renderSigningProgress(step)
+  const progressBar = renderSigningProgress(step === 4 ? 2 : step)
 
   switch (step) {
     case 1:
@@ -271,7 +269,30 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       content = `<div class="panel">${progressBar}<div class="contract-toolbar"><button class="button button-secondary" type="button" onclick="document.getElementById('esignSignature')?.focus();document.getElementById('signatureCanvas')?.scrollIntoView({behavior:'smooth',block:'center'})">开始签署</button><button class="button button-danger" type="button" onclick="location.href='/contract/sign?token=${token}&step=1'">拒绝</button><span class="section-note">签名后点击完成签署</span></div><h2>${title}</h2>${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}<p class="section-note">可输入姓名，或在签名板上手写签名。</p><form method="POST" action="/contract/sign?token=${token}&step=3" id="signature-form"><div class="form-group"><label class="form-label" for="esignSignature">输入姓名签名</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name"><small class="form-text">输入时必须与步骤2填写的完整姓名一致。</small></div><div class="form-group"><label class="form-label" for="signatureCanvas">手写签名</label><canvas id="signatureCanvas" class="signature-pad" width="700" height="180" aria-label="手写签名区域"></canvas><input type="hidden" id="handSignature" name="handSignature"><button class="button button-secondary button-sm" type="button" id="clearSignature">清除手写签名</button></div><div class="record-actions"><a href="/contract/sign?token=${token}&step=2" class="button button-secondary">返回上一步</a><button class="button" type="submit">完成签署并进入付款</button></div></form><script>(()=>{const canvas=document.getElementById('signatureCanvas'), hidden=document.getElementById('handSignature'), input=document.getElementById('esignSignature'), clear=document.getElementById('clearSignature');if(!canvas)return;const ctx=canvas.getContext('2d');ctx.lineWidth=2;ctx.lineCap='round';let drawing=false;const point=e=>{const r=canvas.getBoundingClientRect(),t=e.touches?.[0]||e;return{x:(t.clientX-r.left)*canvas.width/r.width,y:(t.clientY-r.top)*canvas.height/r.height}};const finish=()=>{if(drawing)hidden.value=canvas.toDataURL('image/png');drawing=false};const start=e=>{drawing=true;ctx.beginPath();ctx.moveTo(point(e).x,point(e).y);e.preventDefault()};const move=e=>{if(!drawing)return;const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke();e.preventDefault()};['mousedown','touchstart'].forEach(x=>canvas.addEventListener(x,start,{passive:false}));['mousemove','touchmove'].forEach(x=>canvas.addEventListener(x,move,{passive:false}));['mouseup','mouseleave','touchend'].forEach(x=>canvas.addEventListener(x,finish));clear.addEventListener('click',()=>{ctx.clearRect(0,0,canvas.width,canvas.height);hidden.value='';});document.getElementById('signature-form').addEventListener('submit',e=>{if(!input.value.trim()&&!hidden.value){e.preventDefault();input.focus();}});setTimeout(()=>document.getElementById('esignSignature')?.focus(),100)})();</script></div>`;
       break;
     case 4:
-      title = '步骤 3/3: 选择付款方式';
+      title = '步骤 2/2: 确认取还时间并完成签约';
+      if (true) {
+        const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
+        const unavailable = rentalRules.unavailableTimeSlots || {}
+        const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00'], ['morning', '9:00–12:00'], ['afternoon', '13:00–20:00'], ['evening_service', '21:00–23:00']]
+        const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value))
+        content = `
+          <div class="panel">
+            ${progressBar}
+            <h2>${title}</h2>
+            ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+            <p class="section-note">合同签署不需要在线付款。请确认取货和归还时间，提交后合同立即完成签署。</p>
+            <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4">
+              <input type="hidden" name="noPayment" value="1">
+              <div class="grid grid-2" style="margin: 20px 0;">
+                <div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>
+                <div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>
+              </div>
+              <div class="record-actions"><a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=2" class="button button-secondary">返回上一步</a><button class="button" type="submit">确认并完成签约</button></div>
+            </form>
+          </div>
+        `
+        break
+      }
       const stripeFeeRate = getStripeProcessingFeeRate();
       const stripeFeePercent = (stripeFeeRate * 100).toFixed(2).replace(/\.00$/, '');
       const depositPaymentMode = depositPaymentModeForOrder(order);

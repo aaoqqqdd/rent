@@ -203,8 +203,21 @@ export async function createNotification(c: Context, notification: { recipientId
   }
 }
 
+export async function deleteRentalApplicationNotifications(c: Context, orderId: string): Promise<void> {
+  await ensureNotificationsTable(c)
+  await c.env.RENT.prepare("UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE order_id = ? AND type = 'rental_application' AND deleted_at IS NULL").bind(orderId).run()
+}
+
+export async function cleanupCompletedRentalApplicationNotifications(c: Context, recipientId?: string): Promise<void> {
+  await ensureNotificationsTable(c)
+  const recipientFilter = recipientId ? ' AND recipient_id = ?' : ''
+  const bindings = recipientId ? [recipientId] : []
+  await c.env.RENT.prepare(`UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE type = 'rental_application' AND deleted_at IS NULL${recipientFilter} AND EXISTS (SELECT 1 FROM orders WHERE orders.id = notifications.order_id AND orders.status <> 'pending_approval')`).bind(...bindings).run()
+}
+
 export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
   await ensureNotificationsTable(c)
+  await cleanupCompletedRentalApplicationNotifications(c, recipientId)
   const result = await c.env.RENT.prepare("SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 100").bind(recipientId).all()
   return result.results || []
 }

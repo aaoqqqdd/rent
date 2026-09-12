@@ -70,6 +70,7 @@ import {
   getContractById,
   getContractByOrderId,
   getContractByContractNumber,
+  ensureContractForOrder,
   updateContractTemplate,
   CONTRACT_OPERATIONAL_FIELDS,
   CONTRACT_SIGNED_FIELDS,
@@ -95,6 +96,8 @@ import {
   getAccessLevel
   , createNotification
   , getNotifications
+  , deleteRentalApplicationNotifications
+  , cleanupCompletedRentalApplicationNotifications
   , createDueDateNotifications
   , sanitizePlainText
   , renderNotificationMarkdown
@@ -1384,7 +1387,7 @@ app.get('/admin/notifications', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
   const notifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
-  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(item.type || 'SYSTEM', 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>`).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
+  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => { const typeLabel = item.type === 'rental_application' ? '租赁申请' : item.type || '系统通知'; return `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(typeLabel, 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>` }).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
   return c.html(buildLayout('管理员通知中心', body, user))
 })
 
@@ -1555,6 +1558,7 @@ app.get('/notifications/unread', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [] }, 401)
   await ensureNotificationsTable(c)
+  await cleanupCompletedRentalApplicationNotifications(c, user.id)
   const query = "SELECT id, type, title, message, order_id, created_at FROM notifications WHERE recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 10"
   let result: any
   try {
@@ -1573,6 +1577,7 @@ app.get('/notifications/unread', async (c) => {
 app.get('/notifications/recent', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [], unreadCount: 0 }, 401)
+  await cleanupCompletedRentalApplicationNotifications(c, user.id)
   const result = await c.env.RENT.prepare("SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 10").bind(user.id).all() as any
   const unread = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND read_at IS NULL AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid))))").bind(user.id).first() as any
   return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message: notificationListMessage(item) })), unreadCount: Number(unread?.count || 0) })
@@ -1581,6 +1586,7 @@ app.get('/notifications/recent', async (c) => {
 app.get('/notifications/:id', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
+  await cleanupCompletedRentalApplicationNotifications(c, user.id)
   const item = await c.env.RENT.prepare("SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)").bind(c.req.param('id'), user.id).first() as any
   if (!item) return c.html(renderNotFound(), 404)
   await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
@@ -1881,7 +1887,8 @@ app.get('/staff/orders/:orderId/handover', async (c) => {
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
   const customer = order ? await getUserById(c, order.userId) : null
-  if (!order || !['paid', 'pending_pickup'].includes(String(order.status)) || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
+  const handoverContract = order ? await getContractByOrderId(c, order.id) : null
+  if (!order || !(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && handoverContract?.status === 'signed')) || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, order.deviceId)
   const body = `<div class="page-header"><div><p class="section-code">HANDOVER RECORD</p><h2>交付设备</h2><p>确认设备、配件和客户确认后，订单才会进入租赁中。</p></div><a class="button button-secondary" href="${staffOrderPath(order)}">返回订单</a></div><form class="panel" method="post" action="/staff/orders/${encodeURIComponent(order.id)}/pickup" data-site-confirm="确认交付记录无误并开始租赁？"><div class="grid grid-2"><div><label class="form-label">设备</label><input class="form-control" value="${sanitizePlainText(device?.name || order.deviceId, 160)}" readonly></div><div><label class="form-label" for="deviceSerialNumber">设备序列号</label><input class="form-control" id="deviceSerialNumber" name="deviceSerialNumber" value="${sanitizePlainText(device?.serialNumber || '', 160)}" required></div></div><div class="form-group"><label class="form-label" for="accessories">交付配件</label><textarea class="form-control" id="accessories" name="accessories" maxlength="1000" required placeholder="例如：电源适配器、充电线、电脑包"></textarea></div><div class="form-group"><label class="form-label" for="conditionNotes">设备状态与备注</label><textarea class="form-control" id="conditionNotes" name="conditionNotes" maxlength="2000" required placeholder="例如：外观正常，屏幕无划痕，电池状态正常"></textarea></div><label class="form-check"><input type="checkbox" name="customerConfirmed" value="1" required> 客户已当场确认设备序列号、配件及状态</label><div class="form-group"><label class="form-label" for="customerConfirmationName">客户确认姓名</label><input class="form-control" id="customerConfirmationName" name="customerConfirmationName" maxlength="120" value="${sanitizePlainText(customer?.name || '', 120)}" required></div><button class="button button-primary" type="submit">保存交付记录并开始租赁</button></form>`
   return c.html(buildLayout('交付设备 - 电脑租赁管理系统', body, user))
@@ -1894,7 +1901,8 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
   }
   const orderId = c.req.param('orderId')
   const pickupOrder = await getOrderById(c, orderId)
-  if (!pickupOrder || !['paid', 'pending_pickup'].includes(String(pickupOrder.status))) return c.json({ success: false, message: '只有待取货订单可以确认交付' }, 409)
+  const pickupContract = pickupOrder ? await getContractByOrderId(c, pickupOrder.id) : null
+  if (!pickupOrder || !(['paid', 'pending_pickup'].includes(String(pickupOrder.status)) || (pickupOrder.status === 'approved' && pickupContract?.status === 'signed'))) return c.json({ success: false, message: '只有已签署合同的待交付订单可以确认交付' }, 409)
   const customer = await getUserById(c, pickupOrder.userId)
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, pickupOrder.deviceId)
@@ -1938,25 +1946,10 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const orderRentalRules = order ? await getDeviceRentalRules(c, order.deviceId) : null
   if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, orderRentalRules?.bufferDays ?? 0)) return c.text('订单状态无效或设备档期冲突', 409)
   await updateOrderStatus(c, order.id, 'approved')
-  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。`, orderId: order.id })
-
-  // 官网信用卡申请：押金在提交时已预授权 / 已保存卡片，审核通过后无需客户再次操作，
-  // 直接用已保存的支付方式自动扣租金（不含押金）。扣款失败则回退到人工付款页面。
-  const savedPaymentMethodId = String((order as any).stripe_payment_method_id || '')
-  if (order.paymentMethod === 'card' && savedPaymentMethodId && customer) {
-    try {
-      await updateOrderStatus(c, order.id, 'pending_payment')
-      const result = await createOrderPaymentIntent(c, customer, order.id, true)
-      if (result.alreadyPaid) {
-        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_charged', title: '租金已自动扣款', message: '审核通过后已使用您预留的信用卡自动扣取租金，押金已按之前的方式预授权 / 保存卡片处理。', orderId: order.id })
-      } else {
-        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '请完成租金付款', message: '审核通过后自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
-      }
-    } catch (error: any) {
-      console.error('Auto-charge rent on approval failed:', error?.message || error)
-      await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '请完成租金付款', message: '审核通过后自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
-    }
-  }
+  await deleteRentalApplicationNotifications(c, order.id)
+  const contract = await ensureContractForOrder(c, order, user.id)
+  const signUrl = new URL(`/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1`, c.req.url).toString()
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核，合同待签署', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。请打开以下链接签署租赁合同：${signUrl}`, orderId: order.id })
   return c.redirect(staffOrderPath(order))
 })
 
@@ -1969,6 +1962,7 @@ app.post('/staff/orders/:orderId/reject', async (c) => {
   if (order) {
     await updateOrderStatus(c, order.id, 'cancelled')
     await updateDeviceStatus(c, order.deviceId, 'available')
+    await deleteRentalApplicationNotifications(c, order.id)
     await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_rejected', title: '租赁申请未通过', message: `您的设备租赁申请已由${user.name || '工作人员'}拒绝，请联系工作人员了解详情。`, orderId: order.id })
   }
   return c.redirect(order ? staffOrderPath(order) : `/staff/orders/${c.req.param('orderId')}`)

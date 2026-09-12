@@ -6,9 +6,9 @@
 import { buildLayout, formatCurrency, getDevices, getOrders, getUsers, sanitizePlainText, staffOrderPath } from '../../site'
 import type { Context } from 'hono'
 
-const ongoingStatuses = new Set(['pending_payment', 'paid', 'pending_pickup', 'active', 'extended', 'overdue', 'suspended', 'pending_return'])
+const ongoingStatuses = new Set(['approved', 'pending_payment', 'paid', 'pending_pickup', 'active', 'extended', 'overdue', 'suspended', 'pending_return'])
 const statusLabels: Record<string, string> = {
-  pending_payment: '等待付款', paid: '待交付', pending_pickup: '待客户取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还验机',
+  approved: '等待合同签署', pending_payment: '等待付款', paid: '待交付', pending_pickup: '待客户取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还验机',
 }
 
 export async function renderStaffOrdersOngoing(c: Context, user: any) {
