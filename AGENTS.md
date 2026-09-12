@@ -50,7 +50,7 @@ tests/                node:test 测试；text-module-loader.mjs 让测试能 imp
 ## 关键约定与注意事项
 
 - **无构建步骤**：不要引入需要打包/编译的工具链。`.html` 和 `.css` 通过 `wrangler.jsonc` 的 `rules`（Text 模块）被 `import` 成字符串；测试侧由 `tests/text-module-loader.mjs` 提供同等能力。
-- **配置文件**：`wrangler.jsonc` 是生效配置（优先于 `wrangler.toml`）。D1 binding 是 `RENT`，cron 为每日 `0 0 * * *`（清理过期合同、访客账户、未付款订单）。
+- **配置文件**：`wrangler.jsonc` 是唯一配置文件。D1 binding 是 `RENT`，cron 为每日 `0 0 * * *`（清理过期合同、访客账户、未付款订单）。
 - **`src/index.ts` 顶部有 `@ts-nocheck`**：该文件不参与严格类型检查，其余源码文件都应保持类型正确。新逻辑尽量放进 `src/site.ts` 或 `src/pages`/`src/actions` 并保证类型通过。
 - **认证**：基于 session cookie，`findUserBySession` 查用户；角色为 `CUSTOMER` / `STAFF` / `ADMIN`，`getAccessLevel(user)` 返回细分权限（如 `MANAGER`、`ADMIN`）。路由里逐个手动校验 `user.role`，新增受保护路由要照做。
 - **中间件顺序**（`src/index.ts` 内 `app.use('*', ...)`）：静态资源短路 → 通知 → 访客账户限制 → 请求体大小限制 + 限流（`enforceRateLimit`）→ 其它。新增高风险 POST 路由应加对应限流规则。
