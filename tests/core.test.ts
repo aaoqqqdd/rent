@@ -30,7 +30,7 @@ import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
-import { depositAuthorizationWindowDays, depositPaymentModeForRental } from '../src/domain/paymentPlan'
+import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
 
 function assertInlineScriptsParse(html: string) {
@@ -232,10 +232,16 @@ test('Visa and Mastercard request a 30-day deposit authorization window', () => 
   assert.equal(depositAuthorizationWindowDays('unknown'), 7)
 })
 
-test('Stripe checkout separates rent, deposit, and processing fee', () => {
+test('security deposit methods are explicit and separate from Stripe rent payment', () => {
+  assert.equal(normalizeSecurityDepositMethod('bank_transfer'), 'bank_transfer')
+  assert.equal(normalizeSecurityDepositMethod('cash'), 'cash')
+  assert.equal(normalizeSecurityDepositMethod('card_hold'), 'card_hold')
+  assert.equal(normalizeSecurityDepositMethod('unknown'), 'card_hold')
+})
+
+test('Stripe checkout contains rent and processing fee but no deposit', () => {
   assert.deepEqual(stripeCheckoutItems({ totalAmount: 1100, depositAmount: 1000, rentalPeriod: 5, startDate: '2026-08-10', endDate: '2026-08-15' }), [
     { name: '设备租金（5 天，2026-08-10 至 2026-08-15）', amountCents: 10000 },
-    { name: '设备押金', amountCents: 100000 },
     { name: 'Stripe 租金及服务费支付手续费（2.5%）', amountCents: 250 },
   ])
 })

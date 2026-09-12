@@ -7,6 +7,7 @@ import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrd
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 import { renderReconciliationPanel } from '../partials/reconciliationPanel';
+import { normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
@@ -39,6 +40,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const refundedDepositAmount = Number(depositRefundSummary?.refunded_amount || 0)
   const remainingDepositRefund = Math.max(0, Number((depositAmount - refundedDepositAmount).toFixed(2)))
   const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
+  const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, isSetupIntentDeposit ? 'card_hold' : 'bank_transfer')
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
@@ -235,7 +237,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
         <div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #c2410c;">退款处理</h4>
-          <p class="section-note">管理员可选择本次退款方式，提交后按所选方式处理。</p>
+          <p class="section-note">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。管理员可选择本次退款方式，提交后按所选方式处理。</p>
           ${completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${depositSettlement && completedRefund?.status !== 'succeeded' ? `<div class="alert">结算单 ${escapeHtml(depositSettlement.settlement_number)}：${escapeHtml(depositSettlement.status)}${depositSettlement.review_note ? ` · ${escapeHtml(depositSettlement.review_note)}` : ''}</div>` : ''}
           ${order.status === 'completed' && (isSetupIntentDeposit || remainingDepositRefund > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED') ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" onsubmit="return confirm('${depositSettlement?.status === 'APPROVED' ? '确认按已批准结算单执行本次押金结算吗？' : '确认提交本次押金结算供 Manager 审批吗？'}');">

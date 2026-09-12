@@ -149,6 +149,8 @@ export interface Order {
   paymentMethod: 'card' | 'bank_transfer' | 'alipay' | 'wechat' | 'balance'
   totalAmount: number
   depositAmount: number
+  deposit_method?: 'bank_transfer' | 'cash' | 'card_hold'
+  depositMethod?: 'bank_transfer' | 'cash' | 'card_hold'
   deposit_payment_mode?: 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
   depositPaymentMode?: 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
   stripe_deposit_payment_intent_id?: string | null

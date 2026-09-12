@@ -136,8 +136,8 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     // created_by 在部分旧代码/表结构中存在，这里与 Order 类型对齐使用 createdAt
     // createdAtBy: user.id,
   } as any;
-  await c.env.RENT.prepare('UPDATE orders SET deposit_payment_mode = ? WHERE id = ?')
-    .bind(depositPaymentModeForRental(rentalPeriod, false), orderId).run()
+  await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ? WHERE id = ?')
+    .bind('bank_transfer', depositPaymentModeForRental(rentalPeriod, false), orderId).run()
 
   // 设置签约链接过期时间，使用用户选择的天数
   const signExpiresDate = new Date();

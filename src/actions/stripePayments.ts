@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid'
 import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus } from '../site'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
-import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, type DepositPaymentMode } from '../domain/paymentPlan'
+import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
@@ -120,6 +120,7 @@ async function upsertPaymentIntent(c: Context, opts: {
 
 /** 短期订单的押金只做预授权，不与租金放进同一笔可结算付款。 */
 async function createDepositAuthorization(c: Context, order: any, paymentMethodId: string): Promise<void> {
+  if (normalizeSecurityDepositMethod(order.deposit_method, 'card_hold') !== 'card_hold') return
   const depositAmount = orderDeposit(order)
   if (depositAmount <= 0) {
     await c.env.RENT.prepare("UPDATE orders SET deposit_payment_mode = 'PREAUTH', deposit_status = 'NOT_REQUIRED', deposit_held_amount = 0 WHERE id = ?").bind(order.id).run()
@@ -238,7 +239,8 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
   if (!Number.isInteger(baseCents) || baseCents <= 0) throw new Error('订单金额无效')
 
   const savedPaymentMethodId = String((order as any).stripe_payment_method_id || '')
-  const depositMode = await resolveDepositPaymentMode(c, order, savedPaymentMethodId)
+  const depositMethod = normalizeSecurityDepositMethod(order.deposit_method, 'card_hold')
+  const depositMode = depositMethod === 'card_hold' ? await resolveDepositPaymentMode(c, order, savedPaymentMethodId) : 'PAID'
   if (depositMode === 'SETUP_INTENT' && !savedPaymentMethodId) throw new Error('该订单需要先验证并保存信用卡')
   if (depositMode !== depositPaymentModeForOrder(order)) {
     await c.env.RENT.prepare('UPDATE orders SET deposit_payment_mode = ? WHERE id = ?').bind(depositMode, order.id).run()
@@ -298,19 +300,17 @@ export function stripePaymentAmounts(orderTotal: number, depositAmount = 0, serv
 
 export function stripeCheckoutItems(order: any): Array<{ name: string; amountCents: number }> {
   const totalCents = cents(order.totalAmount)
-  const depositCents = cents(order.depositAmount || 0)
   const serviceFeeCents = cents(order.serviceFee ?? order.service_fee ?? 0)
+  const depositCents = cents(order.depositAmount || 0)
   if (depositCents < 0 || depositCents > totalCents) throw new Error('订单押金金额无效')
   const rentalCents = totalCents - depositCents - serviceFeeCents
   const period = Number(order.rentalPeriod ?? order.rental_period ?? 0)
-  const depositMode = depositPaymentModeForOrder(order)
   const rentalLabel = period > 0
     ? `设备租金（${period} 天，${order.startDate} 至 ${order.endDate}）`
     : `设备租金（${order.startDate} 至 ${order.endDate}）`
   const feeCents = stripePaymentAmounts(order.totalAmount, order.depositAmount || 0, order.serviceFee ?? order.service_fee ?? 0).feeCents
   return [
     { name: rentalLabel, amountCents: rentalCents },
-    ...(depositMode === 'PAID' ? [{ name: '设备押金', amountCents: depositCents }] : []),
     { name: '自取/归还时段服务费', amountCents: serviceFeeCents },
     { name: `Stripe 租金及服务费支付手续费（${(getStripeProcessingFeeRate() * 100).toString()}%）`, amountCents: feeCents },
   ].filter(item => item.amountCents > 0)
