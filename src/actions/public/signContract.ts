@@ -280,8 +280,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         const noPayment = isWebsiteOrderContract
         const paymentMethod = String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || 'card')
+        const stripePaymentSelected = paymentMethod === 'stripe' || paymentMethod === 'card'
         // 押金处理方式不再由客户手选：跟着支付方式自动走——信用卡预授权 / SetupIntent，否则银行转账。
-        const depositMethod = normalizeSecurityDepositMethod(paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer')
+        const depositMethod = normalizeSecurityDepositMethod(stripePaymentSelected ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
@@ -312,7 +313,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请选择一种支付方式。');
         }
         const enabledMethods = [
-          ...(getSystemSettings().paymentMethods.stripe ? ['stripe'] : []),
+          ...(getSystemSettings().paymentMethods.stripe ? ['stripe', 'card'] : []),
           ...(getSystemSettings().paymentMethods.bankTransfer ? ['bank_transfer'] : []),
           ...(getSystemSettings().paymentMethods.alipay && getSystemSettings().rmbPayment.alipayQrUrl ? ['alipay'] : []),
           ...(getSystemSettings().paymentMethods.wechat && getSystemSettings().rmbPayment.wechatQrUrl ? ['wechat'] : []),
@@ -320,7 +321,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         ]
         if (paymentMethod === 'balance' && !canUseBalance) throw new Error('只有已登录的正式客户账户可以使用余额支付')
         if (!enabledMethods.includes(paymentMethod)) throw new Error('所选支付方式当前不可用')
-        if (paymentMethod === 'stripe') await getStripeRuntimeConfig(c)
+        if (stripePaymentSelected) await getStripeRuntimeConfig(c)
         if (paymentMethod === 'bank_transfer' && refundMethod === 'original') {
           if (!/^\d{3}-?\d{3}$/.test(refundBsb) || !/^\d{4,10}$/.test(refundAccountNumber) || !refundAccountName) {
             throw new Error('选择银行原路退款时，请填写正确的账户名、BSB 和银行账号')
@@ -331,8 +332,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
 
-        if (depositMethod === 'card_hold' && paymentMethod !== 'stripe') throw new Error('信用卡预授权押金需要同时使用 Stripe 信用卡支付租金')
-        const selectedDepositMode = depositMethod === 'card_hold' && paymentMethod === 'stripe'
+        if (depositMethod === 'card_hold' && !stripePaymentSelected) throw new Error('信用卡预授权押金需要同时使用 Stripe 信用卡支付租金')
+        const selectedDepositMode = depositMethod === 'card_hold' && stripePaymentSelected
           ? await resolveDepositPaymentMode(c, order)
           : 'PAID'
         await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ?, deposit_status = CASE WHEN depositAmount > 0 THEN ? ELSE \'NOT_REQUIRED\' END WHERE id = ?')
@@ -500,7 +501,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         await updateOrderInDB(c, contract.rentalId, {
           userId: userId,
-          paymentMethod: (paymentMethod === 'stripe' ? 'card' : paymentMethod) as Order['paymentMethod'],
+          paymentMethod: (stripePaymentSelected ? 'card' : paymentMethod) as Order['paymentMethod'],
           status: orderStatus,
           // 合同已经通过 contracts.orderId 关联订单；不要在签署时写入可选的反向外键，
           // 兼容旧数据库中 contractId 外键定义不一致的订单表。
@@ -543,7 +544,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           }
         }
         let stripePayment: { clientSecret?: string; publishableKey?: string; setupIntent?: boolean } | null = null
-        if (!noPayment && paymentMethod === 'stripe') {
+        if (!noPayment && stripePaymentSelected) {
           const stripeUser = await getUserById(c, userId)
           if (!stripeUser) throw new Error('无法读取付款用户信息')
           const setupIntentId = String(body.stripeSetupIntentId || '').trim()
