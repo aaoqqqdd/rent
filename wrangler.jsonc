@@ -49,7 +49,10 @@
 		},
 	],
 	"triggers": {
-		"crons": ["0 0 * * *"]
+		// "0 0 * * *" runs the full daily maintenance batch; "0 * * * *" only
+		// cancels expired pending-payment orders so the 24h SLA isn't stretched
+		// to ~48h by the once-a-day sweep (see scheduled() in src/index.ts).
+		"crons": ["0 0 * * *", "0 * * * *"]
 	},
 	// "ai": {
 	//   "binding": "AI"
