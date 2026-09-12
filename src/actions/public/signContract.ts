@@ -554,6 +554,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           // Windows 账户密码需要由设备代理和订单详情重复读取，按需求保留为可读取值；
           // 该字段不参与网站登录认证，只对订单所有者展示。
           windows_password: String(userInfo.windowsPassword || '').trim(),
+          // 访客临时密码：sign_sessions 会在签约完成后立即删除，无法再从会话读取；
+          // 网站登录密码本身已哈希存储不可逆，这里保留明文副本供重新访问已完成合同页时展示。
+          guest_password: guestPassword || existingData.guest_password || '',
           signer_name: signerName,
           customer_initials: existingData.customer_initials || customerInitials,
           esign_signature: userInfo.esignSignature,

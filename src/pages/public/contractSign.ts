@@ -132,6 +132,9 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       : (contract.contract_data || {})
     const windowsPassword = String(signedContractData.windows_password || '')
     const canViewWindowsPassword = currentUser?.role === 'CUSTOMER' && String(order.userId || '') === String(currentUser.id)
+    const isGuestAccount = contractCustomer?.accountType === 'guest'
+    const canViewGuestPassword = isGuestAccount && (!currentUser || String(currentUser.id) === String(order.userId || ''))
+    const guestPassword = canViewGuestPassword ? String(signedContractData.guest_password || '') : ''
     const paymentStatusLabel = order.status === 'paid'
       ? '付款已完成，发票与收据已生成。'
       : '合同已签署，订单仍未完成付款。请前往订单查看付款状态或联系工作人员。';
@@ -140,10 +143,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
         <div class="entity-header"><div class="identity-strip mono"><span>E-SIGN / ${escapeAttribute(contract.contractNumber)}</span><span>合同已签署</span></div><div class="entity-heading"><div><p class="section-code">RENTAL AGREEMENT</p><h2>租赁协议已完成</h2><p>${escapeAttribute(device?.name || '租赁设备')} · ${escapeAttribute(order.startDate)} 至 ${escapeAttribute(order.endDate)}</p></div><span class="badge badge-success">已签署</span></div></div>
         <div class="panel" style="margin-top: 16px;">
           <p>${paymentStatusLabel}</p>
+          ${guestPassword ? `<section class="panel" style="margin-top:16px;text-align:left"><h3>临时账户</h3><p class="form-text">未注册正式账户，系统已为您创建临时账户，可用以下资料登录查看合同与订单。</p><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="mono">${escapeAttribute(contractCustomer?.email || '')}</strong></div><div><span class="section-note">临时密码</span><strong class="mono">${escapeAttribute(guestPassword)}</strong></div></div></section>` : ''}
           ${canViewWindowsPassword ? `<section class="panel" style="margin-top:16px;text-align:left"><h3>Windows 登录账户</h3><p class="form-text">系统已自动生成设备登录密码。该密码不是网站登录密码，不支持自定义修改；以后可在订单详情中重复查看。</p><code class="form-control mono" style="display:block;user-select:all;word-break:break-all;">${escapeAttribute(windowsPassword || '暂未生成')}</code></section>` : ''}
           <div class="grid grid-2" style="gap: 16px; margin-top: 24px;">
             <a class="button" href="${orderLink}">查看订单详情</a>
-            <a class="button button-secondary" href="${orderLink}">查看订单详情</a>
+            <a class="button button-secondary" href="/">返回首页</a>
           </div>
         </div>
       </div>
@@ -215,7 +219,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               <div class="page-notification page-notification--info" style="margin-bottom:16px;">不勾选“注册正式账户”即可继续作为访客签署。签署完成后系统会为您创建临时账户，并显示可登录的临时密码。</div>
               <div id="passwordFields" class="grid grid-2" hidden style="display:none"><div class="form-group"><label class="form-label" for="password">设置密码</label><input id="password" class="form-control" type="password" name="password" minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s])\\S{8,}" title="至少 8 位，并同时包含字母、数字和符号" autocomplete="new-password"><small class="form-text">至少 8 位，必须包含字母、数字和符号。</small><span class="field-error" data-error-for="password"></span></div><div class="form-group"><label class="form-label" for="passwordConfirm">确认密码</label><input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" minlength="8" autocomplete="new-password"><span class="field-error" data-error-for="passwordConfirm"></span></div></div>
             `}
-            <div class="page-notification page-notification--info"><strong>Windows 登录密码</strong><p>系统将在签署完成时自动生成安全密码并配置到租赁设备，不需要您手动输入。该密码与网站登录密码独立。</p></div>
             <section class="signature-section"><h3>电子签署</h3><p class="form-text">输入全名签名</p><div class="form-group"><label class="form-label" for="esignSignature">请输入与上方姓名一致的签名。</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name" required><span class="field-error" data-error-for="esignSignature"></span></div></section>
             <div id="form-error-summary" class="form-error-summary" role="alert" hidden>请先修正标记的资料。</div>
             <div class="record-actions"><a href="/contract/sign?token=${token}&step=1" class="button button-secondary">返回上一步</a><button class="button" id="sign-info-submit" type="submit">保存信息并进入下一步</button></div>
