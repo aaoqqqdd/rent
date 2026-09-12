@@ -5,7 +5,7 @@
 
 import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getDeviceRentalRules } from '../../site';
 import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../actions/stripePayments';
-import { depositPaymentModeForOrder, normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
+import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
 
@@ -272,7 +272,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       const stripeFeeRate = getStripeProcessingFeeRate();
       const stripeFeePercent = (stripeFeeRate * 100).toFixed(2).replace(/\.00$/, '');
       const depositPaymentMode = depositPaymentModeForOrder(order);
-      const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, depositPaymentMode === 'PAID' ? 'bank_transfer' : 'card_hold');
       const orderDepositAmount = Math.max(0, Number(order.depositAmount || 0));
       const orderServiceFee = Math.max(0, Number((order as any).serviceFee || (order as any).service_fee || 0));
       const stripeImmediatelyPaidAmount = Math.max(0, Number(order.totalAmount) - orderDepositAmount);
@@ -319,8 +318,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           <div class="alert" id="coupon-total-preview">
             <strong>租金及服务费: ${formatCurrency(stripePrincipal)}</strong>${depositPaymentMode === 'PREAUTH' ? `（押金 ${formatCurrency(orderDepositAmount)} 仅预授权，不立即扣款）` : depositPaymentMode === 'SETUP_INTENT' ? `（押金 ${formatCurrency(orderDepositAmount)} 使用 SetupIntent 保存卡片，不预扣）` : `（含押金 ${formatCurrency(orderDepositAmount)}）`}
           </div>
-
-          <div class="form-group" style="margin: 16px 0;"><label class="form-label" for="depositMethod">Security Deposit 押金方式</label><select class="form-control" id="depositMethod" name="depositMethod" required><option value="bank_transfer" ${depositMethod === 'bank_transfer' ? 'selected' : ''}>银行转账</option><option value="cash" ${depositMethod === 'cash' ? 'selected' : ''}>现金</option><option value="card_hold" ${depositMethod === 'card_hold' ? 'selected' : ''}>信用卡预授权 / SetupIntent</option></select><small class="form-text">Stripe PaymentIntent 只包含租金及已确定的时段服务费；押金独立按 ${securityDepositMethodLabel(depositMethod)} 处理。</small></div>
 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4">
           <input type="hidden" name="stripeSetupIntentId" value="">
@@ -408,6 +405,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const balanceRadio = document.getElementById('balance-payment-radio');
               const balanceShort = document.querySelector('[data-balance-insufficient]');
               const ORDER_DEPOSIT = ${orderDepositAmount};
+              const RENT_ONLY = ${Number((stripePrincipal - orderServiceFee).toFixed(2))};
+              const SERVICE_FEE_SLOTS = ['morning_service', 'evening_service'];
+              const pickupTimeSlotSelect = document.getElementById('pickupTimeSlot');
+              const returnTimeSlotSelect = document.getElementById('returnTimeSlot');
               const applyTotal = total => {
                 currentTotal = Number(total);
                 const stripePrincipalNow = Math.max(0, currentTotal - ORDER_DEPOSIT);
@@ -433,7 +434,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 if (!code) {
                   if (couponPreview) couponPreview.textContent = '';
                   if (totalPreview) totalPreview.innerHTML = originalTotalHtml;
-                  applyTotal(ORIGINAL_TOTAL);
+                  recomputeServiceFee();
                   return;
                 }
                 couponTimer = setTimeout(() => fetch('/api/contract-sign/coupon-preview?${tokenOrNumber === contract.contractNumber ? `number=${encodeURIComponent(tokenOrNumber)}` : `token=${encodeURIComponent(tokenOrNumber)}`}&code=' + encodeURIComponent(code)).then(response => response.json()).then(data => {
@@ -443,7 +444,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                     applyTotal(Number(data.total));
                   } else {
                     if (totalPreview) totalPreview.innerHTML = originalTotalHtml;
-                    applyTotal(ORIGINAL_TOTAL);
+                    recomputeServiceFee();
                   }
                 }).catch(() => {}), 250);
               };
@@ -462,9 +463,20 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 bankProofInputs.forEach(input => input.required = input.closest('aside')?.id === 'bank-transfer-notice' ? payment === 'bank_transfer' : ['alipay', 'wechat'].includes(payment));
                 if (['alipay', 'wechat'].includes(payment) && rmbSummary) {
                   rmbSummary.textContent = '正在获取实时汇率…';
+                  const stripePrincipalNow = Math.max(0, currentTotal - ORDER_DEPOSIT);
                   fetch('/api/payment/aud-cny?amount=' + encodeURIComponent(String(stripePrincipalNow))).then(response => response.ok ? response.json() : Promise.reject(new Error('rate'))).then(data => { rmbSummary.innerHTML = '请使用对应收款码支付 <strong>CNY ' + Number(data.cnyAmount).toFixed(2) + '</strong>；1 AUD = ' + Number(data.rate).toFixed(6) + ' CNY，金额按两位小数上舍入。'; }).catch(() => { rmbSummary.textContent = '暂时无法获取实时汇率，请稍后重试。'; });
                 }
               };
+              // 取货 / 归还时间段选了有服务费的时段（早间/晚间各加租金的 10%），
+              // 金额要立即刷新，不用等提交表单。
+              const recomputeServiceFee = () => {
+                const slots = [pickupTimeSlotSelect?.value, returnTimeSlotSelect?.value].filter(value => SERVICE_FEE_SLOTS.includes(value)).length;
+                const serviceFee = Math.round(RENT_ONLY * 0.1 * slots * 100) / 100;
+                applyTotal(RENT_ONLY + serviceFee + ORDER_DEPOSIT);
+              };
+              pickupTimeSlotSelect?.addEventListener('change', recomputeServiceFee);
+              returnTimeSlotSelect?.addEventListener('change', recomputeServiceFee);
+              recomputeServiceFee();
               form.addEventListener('change', update);
               form.addEventListener('submit', event => {
                 const payment = form.querySelector('input[name="paymentMethod"]:checked')?.value;

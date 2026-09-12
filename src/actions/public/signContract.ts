@@ -13,7 +13,7 @@ import {
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
 import { completeOrderSetupIntent, createOrderPaymentIntent, createOrderSetupIntent, resolveDepositPaymentMode } from '../stripePayments';
-import { normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
+import { normalizeSecurityDepositMethod } from '../../domain/paymentPlan';
 import { getStripeRuntimeConfig } from '../../stripe';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 import { calculateRentalFee } from '../../domain/rentalPricing';
@@ -272,7 +272,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         const paymentMethod = (order as any).stripe_payment_method_id ? 'stripe' : String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || '')
-        const depositMethod = normalizeSecurityDepositMethod(body.depositMethod, normalizeSecurityDepositMethod((order as any).deposit_method, paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer'))
+        // 押金处理方式不再由客户手选：跟着支付方式自动走——信用卡预授权 / SetupIntent，否则银行转账。
+        const depositMethod = normalizeSecurityDepositMethod(paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
