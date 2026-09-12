@@ -5,8 +5,9 @@
 
 // 「付款与退款对账」面板 —— 管理端 / 员工端订单详情共用。
 //
-// 分级呈现，避免把「台账待补录」误报成红色账目异常：
-//   绿色  账目一致       没有任何问题
+// 分级呈现，避免把「台账待补录」误报成红色账目异常，也避免把「钱还没到账」误报成绿色账目一致：
+//   蓝色  待确认付款      有付款仍是 pending，未计入实付，不参与下方一致性检查
+//   绿色  账目一致       已确认部分没有任何问题
 //   琥珀  账目平衡·待补录  钱能对上，只是缺来源分配行（无害，补录迁移会自愈）
 //   红色  账目不一致      拆分不符 / 超退 / 分配错挂，需人工处理
 //
@@ -24,6 +25,7 @@ const CODE_LABELS: Record<string, string> = {
   OVER_REFUND_ORDER: '订单超退',
   ORPHAN_REFUND_ALLOCATION: '分配错挂',
   UNALLOCATED_REFUND: '待补分配',
+  PENDING_PAYMENT: '待确认付款',
 }
 
 const chip = (code: string): string =>
@@ -43,8 +45,14 @@ const card = (bg: string, border: string, text: string, icon: string, title: str
   </div>`
 
 function statusCard(recon: ReconResult, readOnly: boolean): string {
-  if (recon.ok) {
-    return card('#ecfdf5', '#a7f3d0', '#065f46', '✓', '账目一致',
+  const pendingBlock = recon.infos.length
+    ? card('#eff6ff', '#bfdbfe', '#1e3a8a', '⏳', `${recon.infos.length} 笔付款待确认（合计 ${formatCurrency(recon.pendingTotal)}）`,
+        '<p style="margin:6px 0 0;font-size:0.82rem;color:#1d4ed8">尚未到账，不计入实付，也未参与下方对账检查。到账后状态会变为已付。</p>' +
+        issueList(recon.infos, '#1d4ed8'))
+    : ''
+
+  if (recon.errors.length === 0 && recon.warnings.length === 0) {
+    return pendingBlock + card('#ecfdf5', '#a7f3d0', '#065f46', '✓', recon.infos.length ? '已确认部分账目一致' : '账目一致',
       '<p style="margin:6px 0 0;font-size:0.85rem;color:#047857">分配合计与实付 / 退款完全相符，无超退。</p>')
   }
 
@@ -62,7 +70,7 @@ function statusCard(recon: ReconResult, readOnly: boolean): string {
         ? card('#fffbeb', '#fde68a', '#92400e', 'ℹ', `${recon.warnings.length} 条记录待补录`, issueList(recon.warnings, '#a16207'))
         : '')
 
-  return errorBlock + warnBlock
+  return pendingBlock + errorBlock + warnBlock
 }
 
 export interface ReconciliationPanelData {
@@ -92,7 +100,7 @@ export function renderReconciliationPanel(
     : ''
 
   return `<section class="panel" style="margin: ${margin};">
-      <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">${readOnly ? '只读 · ' : ''}实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}</span></div>
+      <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">${readOnly ? '只读 · ' : ''}实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}${reconciliation.pendingTotal > 0 ? ` · 待确认 ${formatCurrency(reconciliation.pendingTotal)}` : ''}</span></div>
       ${statusCard(reconciliation, readOnly)}
       ${paymentTable}
       ${refundTable}
