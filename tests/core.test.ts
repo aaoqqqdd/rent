@@ -20,6 +20,7 @@ import { renderAdminDeviceEdit } from '../src/pages/admin/deviceEdit'
 import { renderStaffCustomerNew } from '../src/pages/staff/customerNew'
 import { renderRegister } from '../src/pages/public/register'
 import { renderNewContractPage } from '../src/pages/staff/newContract'
+import { renderAdminOrderReview } from '../src/pages/admin/orderReview'
 import { renderStaffContracts } from '../src/pages/staff/contracts'
 import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
@@ -554,6 +555,27 @@ test('new contract delivery form emits valid autocomplete JavaScript', async () 
   assert.match(adminHtml, /id="booking-calendar"/)
   assert.match(adminHtml, /selectBookingDate/)
   assert.doesNotMatch(html, /GOOGLE_MAPS_API_KEY/)
+})
+
+test('website order review requires a delivery fee for delivery orders', async () => {
+  const context = {
+    env: {
+      RENT: {
+        prepare() {
+          return {
+            async all() {
+              return { results: [{ id: 'order-1', startDate: '2026-10-01', endDate: '2026-10-03', totalAmount: 800, depositAmount: 500, deliveryMethod: 'Delivery', deliveryFee: 0, createdAt: '2026-09-13T00:00:00.000Z', customerName: '客户', customerEmail: 'customer@example.com', accountType: 'formal', deviceName: 'MacBook', deviceCategory: '电脑' }] }
+            }
+          }
+        }
+      }
+    }
+  } as any
+  const html = await renderAdminOrderReview(context, { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' })
+  assertInlineScriptsParse(html)
+  assert.match(html, /name="deliveryMethod"/)
+  assert.match(html, /name="deliveryFee"[^>]*required/)
+  assert.match(html, /送货订单必须填写配送费/)
 })
 
 test('admin rental calendar filters all devices or a single device', async () => {
