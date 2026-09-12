@@ -8,6 +8,11 @@ export const LONG_TERM_RENTAL_DAYS = 30
 
 export type DepositPaymentMode = 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
 
+export function depositAuthorizationWindowDays(cardBrand: unknown): 7 | 30 {
+  const brand = String(cardBrand || '').trim().toLowerCase()
+  return brand === 'visa' || brand === 'mastercard' ? 30 : 7
+}
+
 export function depositPaymentModeForRental(rentalPeriod: number, cardPayment = true): DepositPaymentMode {
   if (!cardPayment) return 'PAID'
   return rentalPeriod >= LONG_TERM_RENTAL_DAYS ? 'SETUP_INTENT' : 'PREAUTH'

@@ -332,7 +332,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
-                <span><strong>信用卡支付（Stripe）</strong><small>租金及已确定的时段服务费即时扣款 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，其中支付手续费 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）。${depositPaymentMode === 'PREAUTH' ? `押金 ${formatCurrency(orderDepositAmount)} 另作预授权。` : depositPaymentMode === 'SETUP_INTENT' ? '长期租赁押金不预扣。' : ''}</small></span>
+                <span><strong>信用卡支付（Stripe）</strong><small>租金及已确定的时段服务费即时扣款 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，其中支付手续费 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）。${depositPaymentMode === 'PREAUTH' ? `押金 ${formatCurrency(orderDepositAmount)} 另作预授权（Visa/Mastercard 请求最多保留 30 天，其他卡 7 天）。` : depositPaymentMode === 'SETUP_INTENT' ? '长期租赁押金不预扣。' : ''}</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -363,7 +363,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 <div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div>
                 <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div>
               </dl>
-              <p class="payment-fee-notice__warning">押金不会计入手续费。短期押金归还无损坏时释放预授权；长期租赁无损坏时不会产生押金交易。</p>
+              <p class="payment-fee-notice__warning">押金不会计入手续费。短期押金：Visa/Mastercard 请求最多保留 30 天，其他卡 7 天；归还无损坏时释放预授权。长期租赁无损坏时不会产生押金交易。</p>
             </aside>
             ` : ''}
             <div class="card" style="margin-top:20px; padding:16px;${hasSavedCard ? 'display:none;' : ''}">

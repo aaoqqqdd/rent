@@ -30,7 +30,7 @@ import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
-import { depositPaymentModeForRental } from '../src/domain/paymentPlan'
+import { depositAuthorizationWindowDays, depositPaymentModeForRental } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
 
 function assertInlineScriptsParse(html: string) {
@@ -221,6 +221,13 @@ test('rental length selects preauthorization or SetupIntent deposit handling', (
   assert.equal(depositPaymentModeForRental(29, true), 'PREAUTH')
   assert.equal(depositPaymentModeForRental(30, true), 'SETUP_INTENT')
   assert.equal(depositPaymentModeForRental(90, false), 'PAID')
+})
+
+test('Visa and Mastercard request a 30-day deposit authorization window', () => {
+  assert.equal(depositAuthorizationWindowDays('visa'), 30)
+  assert.equal(depositAuthorizationWindowDays('mastercard'), 30)
+  assert.equal(depositAuthorizationWindowDays('amex'), 7)
+  assert.equal(depositAuthorizationWindowDays('unknown'), 7)
 })
 
 test('Stripe checkout separates rent, deposit, and processing fee', () => {

@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid'
 import { ensureOrderNumber, getOrderById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus } from '../site'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
-import { depositPaymentModeForOrder } from '../domain/paymentPlan'
+import { depositAuthorizationWindowDays, depositPaymentModeForOrder } from '../domain/paymentPlan'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
@@ -119,6 +119,9 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     const existing = await stripeRequest(c, `payment_intents/${existingId}`).catch(() => null)
     if (existing && ['requires_capture', 'succeeded'].includes(String(existing.status))) return
   }
+  const paymentMethod = await stripeRequest(c, `payment_methods/${paymentMethodId}`)
+  const cardBrand = String(paymentMethod.card?.brand || '').toLowerCase()
+  const authorizationWindowDays = depositAuthorizationWindowDays(cardBrand)
   const params = new URLSearchParams({
     amount: String(cents(depositAmount)),
     currency: 'aud',
@@ -129,7 +132,10 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     'metadata[order_id]': String(order.id),
     'metadata[type]': 'deposit_authorization',
     'metadata[deposit_amount]': String(cents(depositAmount)),
+    'metadata[card_brand]': cardBrand || 'unknown',
+    'metadata[authorization_window_days]': String(authorizationWindowDays),
   })
+  if (authorizationWindowDays === 30) params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
   const intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-${order.id}`)
   if (!['requires_capture', 'succeeded'].includes(String(intent.status))) throw new Error('押金预授权未完成，请重新验证信用卡。')
   const paymentId = `p-${nanoid(12)}`
