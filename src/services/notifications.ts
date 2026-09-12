@@ -144,10 +144,11 @@ export async function deliverPendingAgreementNotifications(c: Context): Promise<
     .replace(/\{customer_name\}/g, normalizeCustomerName(customer?.name))
     .replace(/\{customer_email\}/g, String(customer?.email || ''))
 
-  // Site notifications have one stable, actionable sentence. Email templates
-  // remain configurable, but an old default template must not tell an already
-  // signed-in customer to log in again.
-  const siteMessageStatic = `尊敬的 {customer_name}：我们已更新《${names}》，最新版本已在我们的网站相关页面公布。继续使用我们的服务，即表示您接受更新后的条款。`
+  // Site notification detail carries the full notice text (the list/drawer show a
+  // short computed summary instead, see notificationListMessage in src/index.ts).
+  // Kept independent of the configurable email template so an old saved template
+  // can't leave a signed-in customer with confusing wording in the site notification.
+  const siteMessageStatic = `<p>尊敬的 {customer_name}：</p><p>您好！</p><p>我们已更新《${names}》，最新版本已在我们的网站相关页面公布。</p><p>继续使用我们的服务，即表示您接受更新后的条款。如您不同意相关更新，请停止使用相关服务，并联系我们处理后续事宜。</p><p>感谢您的理解与支持！</p><p><strong>${companyName}</strong><br>${companyEmail}</p>`
 
   await ensureNotificationsTable(c)
   const recipients = ((await c.env.RENT.prepare("SELECT id, name, email FROM users WHERE role = 'CUSTOMER' AND status = 'active'").all()) as any).results || []
