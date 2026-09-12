@@ -516,7 +516,7 @@ app.use('*', async (c, next) => {
     }
     const path = c.req.path
     const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result', '/notifications', '/notifications/unread'])
-    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/checkout|bank-transfer-proof))?$/)
+    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/(?:checkout|intent)|bank-transfer-proof))?$/)
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
@@ -551,7 +551,7 @@ app.use('*', async (c, next) => {
   const rateRule = c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
     : c.req.path === '/forgot-password' && c.req.method === 'POST' ? ['forgot', 5, 3600] as const
       : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
-        : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
+        : /^\/customer\/orders\/[^/]+\/stripe\/(?:checkout|intent)$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
           : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
             : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
               : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
