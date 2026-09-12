@@ -18,9 +18,11 @@ import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChanne
  *    成百上千个 fetch（会撞上 Workers 子请求上限而整体抛错）。
  * 3. 整个函数吞掉所有异常——通知失败绝不能把「协议已保存」变成一次报错。
  */
-export async function notifyAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, companyDetails: any): Promise<void> {
+export async function notifyAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, companyDetails: any, changedContent = ''): Promise<void> {
   if (!changedAgreements.length) return
   const names = changedAgreements.map(([, label]) => label).join('、')
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${names}\n${changedContent}`))
+  const dedupeKey = `agreement_update:${Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, '0')).join('')}`
   const companyName = String(companyDetails?.name || '')
   const companyEmail = String(companyDetails?.email || '')
   try {
@@ -55,12 +57,12 @@ export async function notifyAgreementUpdate(c: Context, changedAgreements: Array
     // 站内信：一条语句写给所有活跃客户（含未填有效邮箱的正式客户和访客）。
     await ensureNotificationsTable(c)
     await c.env.RENT.prepare(`
-      INSERT INTO notifications (id, recipient_id, type, title, message)
+      INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, dedupe_key)
       SELECT 'nt-' || lower(hex(randomblob(16))), id, 'agreement_update',
              REPLACE(REPLACE(?, '{customer_name}', COALESCE(name, '')), '{customer_email}', COALESCE(email, '')),
-             REPLACE(REPLACE(?, '{customer_name}', COALESCE(name, '')), '{customer_email}', COALESCE(email, ''))
+             REPLACE(REPLACE(?, '{customer_name}', COALESCE(name, '')), '{customer_email}', COALESCE(email, '')), ?
       FROM users WHERE role = 'CUSTOMER' AND status = 'active'
-    `).bind(subjectStatic, bodyStatic).run()
+    `).bind(subjectStatic, bodyStatic, dedupeKey).run()
 
     // 邮件：写入 email_events 队列（PENDING），外呼交给定时任务分批处理。
     const recipients = ((await c.env.RENT.prepare("SELECT name, email FROM users WHERE role = 'CUSTOMER' AND status = 'active'").all()) as any).results || []

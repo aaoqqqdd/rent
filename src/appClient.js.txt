@@ -147,7 +147,6 @@
 
     document.addEventListener('DOMContentLoaded', function () {
       const pageTitle = document.title;
-      let lastNotificationIds = [];
       const notifiedStorageKey = 'rent-notified-notification-ids';
       const updateBrowserTitle = function (count) {
         document.title = count > 0 ? pageTitle + ' (' + count + ')' : pageTitle;
@@ -171,7 +170,9 @@
           updateBrowserTitle(notifications.length);
           if (!notifications.length) return;
           const currentIds = notifications.map(function (item) { return String(item.id); });
-          const storedIds = JSON.parse(localStorage.getItem(notifiedStorageKey) || '[]');
+          let storedIds = [];
+          try { storedIds = JSON.parse(localStorage.getItem(notifiedStorageKey) || '[]'); } catch (e) { storedIds = []; }
+          if (!Array.isArray(storedIds)) storedIds = [];
           const newNotifications = notifications.filter(function (item) { return storedIds.indexOf(String(item.id)) === -1; });
           if (newNotifications.length) {
             const notification = newNotifications[0];
@@ -180,8 +181,8 @@
             }
             showNotification(notification, notifications.length);
           }
-          localStorage.setItem(notifiedStorageKey, JSON.stringify(currentIds.slice(0, 50)));
-          lastNotificationIds = currentIds;
+          const knownIds = storedIds.concat(currentIds).filter(function (id, index, ids) { return ids.indexOf(id) === index; });
+          try { localStorage.setItem(notifiedStorageKey, JSON.stringify(knownIds.slice(-200))); } catch (e) {}
         }).catch(function () {});
       };
       // Notification permission is requested only after a user interaction.

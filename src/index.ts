@@ -4268,7 +4268,7 @@ app.post('/admin/templates/:kind', async (c) => {
       // 放到 waitUntil 里异步执行，notifyAgreementUpdate 自身也吞掉所有异常。
       const notifyPayload: Array<[string, string]> = [[settingKey, EDITABLE_AGREEMENTS[kind].label]]
       const companyDetails = getSystemSettings().companyDetails
-      const dispatch = () => notifyAgreementUpdate(c, notifyPayload, companyDetails).catch((error) => console.error('notifyAgreementUpdate dispatch failed:', error))
+      const dispatch = () => notifyAgreementUpdate(c, notifyPayload, companyDetails, content).catch((error) => console.error('notifyAgreementUpdate dispatch failed:', error))
       try { c.executionCtx.waitUntil(dispatch()) } catch (_) { await dispatch() }
     }
     return contentType.includes('application/json') ? c.json({ success: true }) : c.redirect(`/admin/templates/${kind}`)

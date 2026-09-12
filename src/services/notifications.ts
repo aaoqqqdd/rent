@@ -43,22 +43,25 @@ export async function ensureNotificationsTable(c: Context): Promise<void> {
     read_at TEXT,
     deleted_at TEXT,
     expires_at TEXT,
+    dedupe_key TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`).run()
     try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN sender_id TEXT REFERENCES users(id) ON DELETE SET NULL').run() } catch (_) { /* column already exists */ }
     try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN deleted_at TEXT').run() } catch (_) { /* column already exists */ }
     try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN expires_at TEXT').run() } catch (_) { /* column already exists */ }
+    try { await c.env.RENT.prepare('ALTER TABLE notifications ADD COLUMN dedupe_key TEXT').run() } catch (_) { /* column already exists */ }
     await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created ON notifications(recipient_id, read_at, created_at DESC)').run()
     await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_notifications_sender_created ON notifications(sender_id, deleted_at, created_at DESC)').run()
+    await c.env.RENT.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe ON notifications(recipient_id, dedupe_key) WHERE dedupe_key IS NOT NULL').run()
   })()
   try { await notificationsSchemaReady } catch (error) { notificationsSchemaReady = null; throw error }
 }
 
-export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string; expiresAt?: string | null }): Promise<void> {
+export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string; expiresAt?: string | null; dedupeKey?: string | null }): Promise<void> {
   await ensureNotificationsTable(c)
   const id = `nt-${crypto.randomUUID()}`
-  await c.env.RENT.prepare('INSERT INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null, notification.expiresAt || null).run()
+  await c.env.RENT.prepare('INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at, dedupe_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null, notification.expiresAt || null, notification.dedupeKey || null).run()
 
   // 员工/管理员收到的通知同步广播到已启用的推送渠道；尽力而为，绝不影响站内信。
   try {
@@ -96,8 +99,12 @@ export async function createDueDateNotifications(c: Context): Promise<number> {
         AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.recipient_id = o.userId AND n.order_id = o.id AND n.type = ?)
     `).bind(date, notice.type).all()
     for (const order of (rows.results || []) as any[]) {
-      await createNotification(c, { recipientId: order.userId, type: notice.type, title: notice.title, message: `${notice.text} 订单：${order.orderNo || order.id}。`, orderId: order.id })
-      created += 1
+      const id = `nt-${crypto.randomUUID()}`
+      const result = await c.env.RENT.prepare(`
+        INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(id, order.userId, notice.type, notice.title, `${notice.text} 订单：${order.orderNo || order.id}。`, order.id, null, null).run() as any
+      created += Number(result.meta?.changes ?? result.changes ?? 0)
     }
   }
   return created
