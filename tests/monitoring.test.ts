@@ -96,7 +96,6 @@ test('renderAdminMonitoring draws sparklines, count values and first-breach time
   assert.match(html, /<div class="value">12<\/div>/)   // count metric shows raw count, not a %
   assert.doesNotMatch(html.split('异常任务积压')[1].split('</div>')[0], /%/)
 })
-
 test('staleMonitoringAlertIds closes alerts whose metric is no longer CRITICAL', () => {
   const open = [
     { id: 'a', entity_id: 'open_exception_backlog:2026-09-08' },
