@@ -51,7 +51,11 @@ function statusCard(recon: ReconResult, readOnly: boolean): string {
         issueList(recon.infos, '#1d4ed8'))
     : ''
 
+  // 已确认金额为 0（只有 pending 付款，还没有任何实付/退款）时，"账目一致"是在夸一个
+  // 空集合，跟上面的"待确认"提示放在一起反而像自相矛盾——这种情况只留待确认卡，不画蛇添足。
+  const hasConfirmedActivity = recon.paidTotal > 0 || recon.refundedTotal > 0
   if (recon.errors.length === 0 && recon.warnings.length === 0) {
+    if (!hasConfirmedActivity && recon.infos.length) return pendingBlock
     return pendingBlock + card('#ecfdf5', '#a7f3d0', '#065f46', '✓', recon.infos.length ? '已确认部分账目一致' : '账目一致',
       '<p style="margin:6px 0 0;font-size:0.85rem;color:#047857">分配合计与实付 / 退款完全相符，无超退。</p>')
   }
