@@ -642,7 +642,7 @@ export async function markWebhookFailed(c: Context, recordId: string, reason: st
 export async function reconcileOrderPayments(c: Context, orderId: string): Promise<ReconResult> {
   const db = getDB(c)
   const [payments, refunds] = await Promise.all([
-    db.prepare('SELECT id, amount, status FROM payments WHERE rental_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
+    db.prepare('SELECT id, amount, processing_fee, status FROM payments WHERE rental_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
     db.prepare('SELECT id, payment_id, refund_amount, status FROM payment_refunds WHERE order_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
   ])
   const paymentRows = payments as any[]

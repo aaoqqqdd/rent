@@ -1990,7 +1990,8 @@ app.get('/staff/orders/:orderId/inspection', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
-  if (order) {
+  const inspectionStatuses = ['active', 'extended', 'overdue', 'suspended', 'pending_return']
+  if (order && inspectionStatuses.includes(String(order.status))) {
     await c.env.RENT.prepare('UPDATE devices SET inspection_requested_at = CURRENT_TIMESTAMP WHERE id = ?').bind(order.deviceId).run()
     await recordDeviceLifecycle(c, order.deviceId, 'INSPECTION', { orderId: order.id, reason: '已进入归还验机', changedBy: user.id })
   }
@@ -2001,7 +2002,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
-  if (!order || !['active', 'pending_return'].includes(order.status)) return c.text('当前订单不能验机', 409)
+  if (!order || !['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status))) return c.text('当前订单不能验机', 409)
   const form = await c.req.parseBody()
   const allowedCheck = new Set(['正常', '异常', '未测试'])
   const checks: Record<string, string> = {}

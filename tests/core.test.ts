@@ -25,7 +25,7 @@ import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
 import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
-import { allocateProportionalRefund, refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts } from '../src/actions/stripePayments'
+import { allocateProportionalRefund, refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
@@ -52,6 +52,14 @@ test('only customer accounts are treated as contract signers', () => {
   const customer = { id: 'customer-1', name: '真实客户', role: 'CUSTOMER' }
   assert.equal(getCustomerSigningUser(staff as any), null)
   assert.equal(getCustomerSigningUser(customer as any), customer)
+})
+
+test('Stripe customer profile uses the real customer identity', () => {
+  const profile = stripeCustomerProfile({ id: 'customer-1', name: '真实客户', email: 'customer@example.com', phone: '+61412345678' })
+  assert.equal(profile.get('name'), '真实客户')
+  assert.equal(profile.get('email'), 'customer@example.com')
+  assert.equal(profile.get('phone'), '+61412345678')
+  assert.equal(profile.get('metadata[user_id]'), 'customer-1')
 })
 
 test('new account passwords require letters, numbers, symbols, and eight characters', () => {

@@ -335,7 +335,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         // **核心签约逻辑**
         const userInfo = signSession.userInfo;
         const userIdToLink = signSession.userIdToLink;
-        let userId = userIdToLink && await getUserById(c, userIdToLink) ? userIdToLink : undefined;
+        const linkedUser = userIdToLink ? await getUserById(c, userIdToLink) : null
+        // 新建合同时订单会暂时指向创建合同的员工；员工 ID 不能成为签约客户或 Stripe 客户。
+        let userId = linkedUser?.role === 'CUSTOMER' ? userIdToLink : undefined;
         let guestPassword = String(signSession.guestPassword || '')
 
         // 1. 如果没有已存在的用户ID，则创建新用户

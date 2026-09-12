@@ -59,11 +59,14 @@ export function normalizeUserRow(row: any): User {
   const deletionRequestedAt = row.deletionRequestedAt ?? row.deletion_requested_at ?? null
   const deletionScheduledAt = row.deletionScheduledAt ?? row.deletion_scheduled_at ?? null
   const identityStatus = row.identityStatus ?? row.identity_status ?? null
+  const stripeCustomerId = row.stripeCustomerId ?? row.stripe_customer_id ?? null
 
   return {
     ...row,
     identityStatus,
     identity_status: identityStatus,
+    stripeCustomerId,
+    stripe_customer_id: stripeCustomerId,
     account_number,
     accountNumber,
     commissionBalance,

@@ -24,7 +24,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
   const escapeAttribute = (value: unknown) => sanitizePlainText(value, 200).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
   const contractStatuses = ['pending_sign', 'signed', 'cancelled', 'completed', 'expired']
-  const rentalStatuses = ['draft', 'pending_approval', 'approved', 'pending_payment', 'paid', 'active', 'pending_pickup', 'pending_return', 'completed', 'cancelled']
+  const rentalStatuses = ['draft', 'pending_approval', 'approved', 'pending_payment', 'paid', 'active', 'extended', 'overdue', 'suspended', 'pending_pickup', 'pending_return', 'completed', 'cancelled']
 
   if (status && contractStatuses.includes(status)) {
     allContracts = allContracts.filter((ct) => status === 'expired' ? isContractExpired(ct) : ct.status === status && !isContractExpired(ct))
@@ -74,7 +74,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
 
   const body = `
     <div class="panel contract-management-page">
-      <div class="section-title"><div><p class="section-code">CONTRACT WORKSPACE</p><h2>合同管理</h2><span class="section-note">${isAdmin ? '查看全部员工创建的合同、签署状态和合同资料。' : '管理自己负责的合同、签署状态和合同资料。'}</span></div><div class="record-actions"><a class="button" href="/staff/contracts/new">新建合同</a><a class="button button-secondary" href="${isAdmin ? '/admin/orders' : '/staff/orders'}">租赁管理</a>${isAdmin ? '<a class="button button-secondary" href="/admin/templates">协议与模板</a><a class="button button-secondary" href="/admin/calendar">租赁日历</a>' : ''}</div></div>
+      <div class="section-title"><div><p class="section-code">CONTRACT WORKSPACE</p><h2>合同管理</h2><span class="section-note">${isAdmin ? '查看全部员工创建的合同、签署状态和合同资料' : '管理自己负责的合同、签署状态和合同资料。'}</span></div><div class="record-actions"><a class="button" href="/staff/contracts/new">新建合同</a><a class="button button-secondary" href="${isAdmin ? '/admin/orders' : '/staff/orders'}">租赁管理</a>${isAdmin ? '<a class="button button-secondary" href="/admin/templates">协议与模板</a><a class="button button-secondary" href="/admin/calendar">租赁日历</a>' : ''}</div></div>
 
       ${successMessage ? `<div class="page-notification page-notification--success">${successMessage}</div>` : ''}
       ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
@@ -197,11 +197,11 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
         .map((order: any) => {
           const contract = allContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
           const hasSignedContract = contract?.status === 'signed'
-          const statusText: Record<string, string> = { draft: '草稿', pending_approval: '待审核', approved: '待付款', pending_payment: '待付款', paid: '已付款', active: '当前租赁中', pending_pickup: '待拿取', pending_return: '待归还', completed: '已完成', cancelled: '已取消' }
+          const statusText: Record<string, string> = { draft: '草稿', pending_approval: '待审核', approved: '待付款', pending_payment: '待付款', paid: '已付款', active: '当前租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_pickup: '待拿取', pending_return: '待归还', completed: '已完成', cancelled: '已取消' }
           const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
-          const actionButton = hasSignedContract
+          const actionButton = hasSignedContract && !['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(order.status)
             ? `<a class="button button-sm button-primary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">${order.status === 'pending_pickup' ? '待拿取' : order.status === 'pending_return' ? '待归还' : '查看租赁'}</a>`
-            : order.status === 'active' || order.status === 'pending_return'
+            : ['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(order.status)
               ? `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`
               : `<a class="button button-sm button-secondary" href="${isAdmin ? `/admin/orders/${order.id}` : `/staff/orders/${order.id}`}">待归还</a>`
           return `
