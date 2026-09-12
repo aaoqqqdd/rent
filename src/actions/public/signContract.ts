@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -276,7 +276,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
         const pickupTimeSlot = allowedTimeSlots.includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
         const returnTimeSlot = allowedTimeSlots.includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
-        const unavailableTimeSlots = getSystemSettings().rentalRules.unavailableTimeSlots || {}
+        const unavailableTimeSlots = (await getDeviceRentalRules(c, order.deviceId)).unavailableTimeSlots || {}
         if (!pickupTimeSlot || !returnTimeSlot || (unavailableTimeSlots[order.startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[order.endDate] || []).includes(returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
         const deliveryMethod = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup')
         const serviceSlots = deliveryMethod === 'Delivery' ? 0 : [pickupTimeSlot, returnTimeSlot].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getDeviceRentalRules } from '../../site';
 import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../actions/stripePayments';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
@@ -77,6 +77,9 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   if (!contract) {
     return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>合同链接无效或已过期</h2><p>请联系工作人员获取新的签约链接。</p></div>');
   }
+
+  const contractOrder = await getOrderById(c, contract.rentalId || contract.rental_id)
+  const rentalRules = contractOrder ? await getDeviceRentalRules(c, contractOrder.deviceId) : getSystemSettings().rentalRules
 
   const signSession = await getOrCreateSignSession(c, token, contract.signToken || token)
   const paymentUser = currentUser || (signSession.userIdToLink ? getCustomerSigningUser(await getUserById(c, signSession.userIdToLink)) : null)
@@ -313,7 +316,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4">
           ${hasSavedCard ? `<input type="hidden" name="paymentMethod" value="stripe"><input type="hidden" name="refundMethod" value="${escapeAttribute(String((order as any).refundMethod || 'original'))}">` : ''}
           <div class="grid grid-2" style="margin: 20px 0;">
-            ${(() => { const unavailable = getSystemSettings().rentalRules.unavailableTimeSlots || {}; const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'; const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00（早间服务费 10%）'], ['morning', '9:00–12:00（无服务费）'], ['afternoon', '13:00–20:00（无服务费）'], ['evening_service', '21:00–23:00（晚间服务费 10%）']]; const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value)); return `<div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>`; })()}
+            ${(() => { const unavailable = rentalRules.unavailableTimeSlots || {}; const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'; const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00（早间服务费 10%）'], ['morning', '9:00–12:00（无服务费）'], ['afternoon', '13:00–20:00（无服务费）'], ['evening_service', '21:00–23:00（晚间服务费 10%）']]; const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value)); return `<div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>`; })()}
           </div>
 
             <div class="form-group" style="margin: 20px 0;"><label class="form-label" for="couponCode">优惠码（选填）</label><input class="form-control" id="couponCode" name="couponCode" maxlength="40" placeholder="输入优惠码后继续付款"><small class="form-text" id="coupon-preview" aria-live="polite"></small></div>

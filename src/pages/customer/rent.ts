@@ -3,19 +3,16 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getDeviceById, formatCurrency, getSystemSettings, loadSystemSettingsFromDB } from '../../site';
+import { buildLayout, getDeviceById, formatCurrency, getDeviceRentalRules } from '../../site';
 import type { Context } from 'hono';
 
 export async function renderCustomerRent(c: Context, deviceId: string, user: any, errorMessage?: string) {
   const device = await getDeviceById(c, deviceId);
-  await loadSystemSettingsFromDB(c)
-  const globalRules = getSystemSettings().rentalRules
 
   if (!device) {
     return buildLayout('租赁设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求租赁的设备不存在。</p></div>', user);
   }
-  const deviceDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(deviceId).all().catch(() => ({ results: [] }))).results || []).map((row: any) => String(row.unavailable_date).slice(0, 10))
-  const rentalRules = { ...globalRules, unavailableDates: [...new Set([...(globalRules.unavailableDates || []), ...deviceDates])] }
+  const rentalRules = await getDeviceRentalRules(c, deviceId)
 
   // Do not use toISOString() here: UTC can already be tomorrow while the
   // customer is still on the previous local calendar date.
@@ -92,7 +89,7 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
 
         <button type="submit" class="button button-primary" style="margin-top: 20px;">确认租赁</button>
       </form>
-    </div><script>(()=>{const start=document.getElementById('startDate'),end=document.getElementById('endDate'),message=document.getElementById('rentalRuleMessage'),quote=document.getElementById('quotePreview'),delivery=document.getElementById('deliveryMethod'),addressGroup=document.getElementById('deliveryAddressGroup'),address=document.getElementById('deliveryAddress');const unavailable=${JSON.stringify(rentalRules.unavailableDates)},minDays=${rentalRules.minimumRentalDays},rate=${Number(device.pricePerDay||device.dailyRate||0)},weeklyDiscount=${Number(device.weeklyDiscountPercent||device.weekly_discount_percent||0)},monthlyDiscount=${Number(device.monthlyDiscountPercent||device.monthly_discount_percent||0)},deposit=${Number(device.depositAmount||0)};const rentalFee=(days)=>{const monthlyDays=Math.floor(days/30)*30,remaining=days-monthlyDays,weeklyDays=Math.floor(remaining/7)*7,dailyDays=remaining-weeklyDays;return monthlyDays*rate*(1-monthlyDiscount/100)+weeklyDays*rate*(1-weeklyDiscount/100)+dailyDays*rate};const localToday=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};const today=localToday();start.min=today;end.min=today;const update=()=>{const s=start.value,e=end.value;if(!s||!e)return;const days=Math.ceil((new Date(e+'T00:00:00Z')-new Date(s+'T00:00:00Z'))/86400000),blocked=unavailable.find(d=>d>=s&&d<e);const error=e<=s?'归还日期必须晚于租赁开始日期。':days<minDays?'最短租赁时间为 '+minDays+' 天。':blocked?'租期包含不可用日期：'+blocked:'';start.setCustomValidity(error);end.setCustomValidity(error);message.textContent=error||'日期可用。';message.className='alert '+(error?'page-notification--error':'');if(!error)quote.innerHTML='<strong>租赁报价</strong><p>'+days+' 天租金：AUD$ '+rentalFee(days).toFixed(2)+'；押金：AUD$ '+deposit.toFixed(2)+'；运费（如需配送）由管理员/员工审核后另行通知。</p>';};const updateDelivery=()=>{const deliveryNeeded=delivery.value==='Delivery';addressGroup.hidden=!deliveryNeeded;address.required=deliveryNeeded;};start.addEventListener('change',update);end.addEventListener('change',update);delivery.addEventListener('change',updateDelivery);updateDelivery();})();</script>
+    </div><script>(()=>{const start=document.getElementById('startDate'),end=document.getElementById('endDate'),message=document.getElementById('rentalRuleMessage'),quote=document.getElementById('quotePreview'),delivery=document.getElementById('deliveryMethod'),addressGroup=document.getElementById('deliveryAddressGroup'),address=document.getElementById('deliveryAddress');const unavailable=${JSON.stringify(rentalRules.unavailableDates)},minDays=${rentalRules.minimumRentalDays},rate=${Number(device.pricePerDay||device.dailyRate||0)},weeklyDiscount=${Number(device.weeklyDiscountPercent||device.weekly_discount_percent||0)},monthlyDiscount=${Number(device.monthlyDiscountPercent||device.monthly_discount_percent||0)},deposit=${Number(device.depositAmount||0)};const rentalFee=(days)=>{const monthlyDays=Math.floor(days/30)*30,remaining=days-monthlyDays,weeklyDays=Math.floor(remaining/7)*7,dailyDays=remaining-weeklyDays;return monthlyDays*rate*(1-monthlyDiscount/100)+weeklyDays*rate*(1-weeklyDiscount/100)+dailyDays*rate};const localToday=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};const today=localToday();start.min=today;end.min=today;const update=()=>{const s=start.value,e=end.value;if(!s||!e)return;const days=Math.ceil((new Date(e+'T00:00:00Z')-new Date(s+'T00:00:00Z'))/86400000),blocked=unavailable.find(d=>d>=s&&d<=e);const error=e<=s?'归还日期必须晚于租赁开始日期。':days<minDays?'最短租赁时间为 '+minDays+' 天。':blocked?'租期包含不可用日期：'+blocked:'';start.setCustomValidity(error);end.setCustomValidity(error);message.textContent=error||'日期可用。';message.className='alert '+(error?'page-notification--error':'');if(!error)quote.innerHTML='<strong>租赁报价</strong><p>'+days+' 天租金：AUD$ '+rentalFee(days).toFixed(2)+'；押金：AUD$ '+deposit.toFixed(2)+'；运费（如需配送）由管理员/员工审核后另行通知。</p>';};const updateDelivery=()=>{const deliveryNeeded=delivery.value==='Delivery';addressGroup.hidden=!deliveryNeeded;address.required=deliveryNeeded;};start.addEventListener('change',update);end.addEventListener('change',update);delivery.addEventListener('change',updateDelivery);updateDelivery();})();</script>
     </div>
   `;
 

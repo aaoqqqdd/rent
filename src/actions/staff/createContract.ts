@@ -4,7 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono';
-import { User, getDeviceById, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, generateContractNumber } from '../../site';
+import { User, getDeviceById, getDeviceRentalRules, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, generateContractNumber } from '../../site';
 import { findEligibleCoupon, calculateCouponDiscount } from '../coupons';
 import { nanoid } from 'nanoid';
 import { calculateRentalFee } from '../../domain/rentalPricing';
@@ -19,7 +19,6 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const returnMethod = deliveryMethod === 'Delivery' && body.returnMethod === 'CourierPickup' ? 'CourierPickup' : 'StoreReturn'
   await loadSystemSettingsFromDB(c)
   const allowedLocations = getSystemSettings().companyDetails.pickupLocations
-  const rentalRules = getSystemSettings().rentalRules
   let returnLocationValue = String(returnLocation || '').trim()
   let pickupLocationValue = String(body.pickupLocation || '').trim()
   let deliveryAddressData: Record<string, string> = {}
@@ -54,6 +53,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   const normalizedStatus = String(device?.status || '').toLowerCase();
   if (!device || ['maintenance', 'retired'].includes(normalizedStatus)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('维修或退役设备不能新建合同')}`)
+  const rentalRules = await getDeviceRentalRules(c, deviceId)
   const start = new Date(startDate);
   const end = new Date(endDate);
   const todayValue = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -72,11 +72,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const rentalPeriod = Math.ceil(halfDays / 2);
   if (rentalPeriod < rentalRules.minimumRentalDays) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent(`最短租赁时间为 ${rentalRules.minimumRentalDays} 天`)}`)
   const unavailable = new Set(rentalRules.unavailableDates)
-  for (let day = new Date(start); day < end; day.setDate(day.getDate() + 1)) {
-    if (unavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('所选租期包含不可取货或归还的日期')}`)
-  }
-  const deviceUnavailable = new Set(((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ?').bind(deviceId).all()).results || []).map((row: any) => row.unavailable_date))
-  for (let day = new Date(startDate); day < new Date(endDate); day.setDate(day.getDate() + 1)) if (deviceUnavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备包含管理员设置的不可用日期')}`)
+  for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) if (unavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备包含管理员设置的不可用日期')}`)
   if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备在所选日期或缓冲时间内已有订单')}`)
   const sameDayBookings = ((await c.env.RENT.prepare(`SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled') AND (startDate = ? OR endDate = ? OR startDate = ? OR endDate = ?)`)
     .bind(deviceId, startDate, startDate, endDate, endDate).all()).results || []) as any[]

@@ -807,6 +807,42 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   return systemSettings
 }
 
+/** 返回设备实际使用的租赁规则；设备未单独配置的项目继承全局设置。 */
+export async function getDeviceRentalRules(c: Context, deviceId: string): Promise<typeof systemSettings.rentalRules> {
+  await loadSystemSettingsFromDB(c)
+  const globalRules = getSystemSettings().rentalRules
+  const device = await getDeviceById(c, deviceId)
+  if (!device) return globalRules
+
+  const deviceDates = ((await c.env.RENT.prepare(
+    'SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date'
+  ).bind(deviceId).all().catch(() => ({ results: [] }))).results || [])
+    .map((row: any) => String(row.unavailable_date).slice(0, 10))
+
+  const deviceSlots = ((await c.env.RENT.prepare(
+    'SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? ORDER BY unavailable_date, time_slot'
+  ).bind(deviceId).all().catch(() => ({ results: [] }))).results || []) as any[]
+  const unavailableTimeSlots: Record<string, string[]> = Object.fromEntries(
+    Object.entries(globalRules.unavailableTimeSlots || {}).map(([date, slots]) => [date, [...slots]])
+  )
+  for (const row of deviceSlots) {
+    const date = String(row.unavailable_date).slice(0, 10)
+    const slots = unavailableTimeSlots[date] || []
+    if (!slots.includes(String(row.time_slot))) slots.push(String(row.time_slot))
+    unavailableTimeSlots[date] = slots
+  }
+
+  const deviceMinimum = Number(device.minimumRentalDays ?? device.minimum_rental_days)
+  const deviceBuffer = Number(device.bufferDays ?? device.buffer_days)
+  return {
+    ...globalRules,
+    unavailableDates: [...new Set([...(globalRules.unavailableDates || []), ...deviceDates])],
+    unavailableTimeSlots,
+    minimumRentalDays: Number.isInteger(deviceMinimum) && deviceMinimum >= 1 ? deviceMinimum : globalRules.minimumRentalDays,
+    bufferDays: Number.isInteger(deviceBuffer) && deviceBuffer >= 0 ? deviceBuffer : globalRules.bufferDays,
+  }
+}
+
 export async function updateSystemSettings(c: Context, updates: Partial<typeof systemSettings>): Promise<typeof systemSettings> {
   Object.assign(systemSettings, updates)
   invalidateSystemSettingsCache()

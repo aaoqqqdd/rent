@@ -19,6 +19,7 @@ import {
   verifyUserCredentials,
   findUserBySession,
   getDeviceById,
+  getDeviceRentalRules,
   updateUser,
   verifyPassword,
   insertUser,
@@ -1670,8 +1671,7 @@ app.post('/customer/rent/:id', async (c) => {
   const riskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, status, expires_at FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE'").bind(user.id).all()).results as any[]
   if (findBlockingRiskFlag(riskFlags)) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
   const device = await getDeviceById(c, c.req.param('id'))
-  await loadSystemSettingsFromDB(c)
-  const rentalRules = getSystemSettings().rentalRules
+  const rentalRules = await getDeviceRentalRules(c, c.req.param('id'))
   const deviceUnavailable = new Set(((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).all()).results || []).map((row: any) => row.unavailable_date))
   const form = await c.req.parseBody()
   const startDate = String(form.startDate || '')
@@ -1685,8 +1685,8 @@ app.post('/customer/rent/:id', async (c) => {
   const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
   const unavailable = new Set(rentalRules.unavailableDates)
   let blockedDate = ''
-  for (let day = new Date(start); day < end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
-  if (!blockedDate) for (let day = new Date(start); day < end; day.setUTCDate(day.getUTCDate() + 1)) { if (deviceUnavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
+  for (let day = new Date(start); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
+  if (!blockedDate) for (let day = new Date(start); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { if (deviceUnavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
   if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
@@ -1918,7 +1918,8 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const customer = order ? await getUserById(c, order.userId) : null
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   await loadSystemSettingsFromDB(c)
-  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, getSystemSettings().rentalRules.bufferDays)) return c.text('订单状态无效或设备档期冲突', 409)
+  const orderRentalRules = order ? await getDeviceRentalRules(c, order.deviceId) : null
+  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, orderRentalRules?.bufferDays ?? 0)) return c.text('订单状态无效或设备档期冲突', 409)
   await updateOrderStatus(c, order.id, 'approved')
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。`, orderId: order.id })
   return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
@@ -3191,7 +3192,8 @@ app.post('/admin/orders/:id/changes', async (c) => {
     const device = await getDeviceById(c, plan.deviceAvailabilityCheck)
     if (!device || ['maintenance', 'retired'].includes(String(device.status))) return c.text('替换设备不可用', 409)
   }
-  if (plan.bookingCheck && await hasDeviceBookingConflict(c, plan.bookingCheck.deviceId, plan.bookingCheck.startDate, plan.bookingCheck.endDate, order.id)) {
+  const bookingRules = plan.bookingCheck ? await getDeviceRentalRules(c, plan.bookingCheck.deviceId) : null
+  if (plan.bookingCheck && await hasDeviceBookingConflict(c, plan.bookingCheck.deviceId, plan.bookingCheck.startDate, plan.bookingCheck.endDate, order.id, bookingRules?.bufferDays ?? 0)) {
     return c.text('目标设备在该租期存在预约冲突', 409)
   }
 
@@ -3802,8 +3804,13 @@ app.get('/admin/devices/:id/edit', async (c) => {
     return c.redirect('/admin/devices')
   }
   const unavailableDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(device.id).all()).results || []).map((row: any) => row.unavailable_date)
+  const unavailableTimeSlots = ((await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? ORDER BY unavailable_date, time_slot').bind(device.id).all().catch(() => ({ results: [] }))).results || []).reduce((result: Record<string, string[]>, row: any) => {
+    const date = String(row.unavailable_date)
+    ;(result[date] ||= []).push(String(row.time_slot))
+    return result
+  }, {})
   const lifecycleEvents = (await c.env.RENT.prepare('SELECT previous_status, next_status, reason, changed_by, created_at FROM device_lifecycle_events WHERE device_id = ? ORDER BY created_at DESC LIMIT 8').bind(device.id).all()).results || []
-  return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates, lifecycleEvents }))
+  return c.html(pages.renderAdminDeviceEdit(user, { ...device, unavailableDates, unavailableTimeSlots, lifecycleEvents }))
 })
 
 app.get('/admin/devices/:id/control', async (c) => {
@@ -4022,6 +4029,9 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const weeklyDiscountPercent = parseDeviceDiscountPercent(form.weeklyDiscountPercent)
   const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
   if (weeklyDiscountPercent === null || monthlyDiscountPercent === null) return c.text('周租和月租折扣必须是 0%–100% 之间的数字', 400)
+  const minimumRentalDays = String(form.minimumRentalDays || '').trim() ? Number(form.minimumRentalDays) : null
+  const bufferDays = String(form.bufferDays || '').trim() ? Number(form.bufferDays) : null
+  if ((minimumRentalDays !== null && (!Number.isInteger(minimumRentalDays) || minimumRentalDays < 1)) || (bufferDays !== null && (!Number.isInteger(bufferDays) || bufferDays < 0))) return c.text('设备最短租赁天数必须为至少 1 天，缓冲天数必须为非负整数', 400)
   if (!['available', 'rented', 'maintenance', 'retired'].includes(form.status || 'available')) return c.text('设备状态无效', 400)
   if (form.lifecycleStatus && !['RESERVED', 'READY', 'RENTED', 'RETURNED', 'INSPECTION', 'MAINTENANCE', 'DAMAGED', 'RETIRED'].includes(form.lifecycleStatus)) return c.text('设备生命周期状态无效', 400)
   if (!['unregistered', 'online', 'offline', 'paused'].includes(form.agentStatus || 'unregistered')) return c.text('代理状态无效', 400)
@@ -4047,6 +4057,8 @@ app.post('/admin/devices/:id/edit', async (c) => {
     depositAmount: Number(form.depositAmount),
     weeklyDiscountPercent,
     monthlyDiscountPercent,
+    minimumRentalDays,
+    bufferDays,
     status: form.status as any,
     agentStatus: form.agentStatus as any,
     deviceMode: form.deviceMode as any,
@@ -4063,6 +4075,19 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]
   await c.env.RENT.prepare('DELETE FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).run()
   if (dates.length) await c.env.RENT.batch(dates.map(date => c.env.RENT.prepare('INSERT INTO device_unavailable_dates (device_id, unavailable_date) VALUES (?, ?)').bind(c.req.param('id'), date)))
+  const allowedDeviceTimeSlots = new Set(['morning_service', 'morning', 'afternoon', 'evening_service', 'delivery_morning', 'delivery_afternoon'])
+  const timeSlots = new Map<string, string[]>()
+  for (const line of String(form.unavailableTimeSlots || '').split(/\n+/)) {
+    const separator = line.indexOf(':')
+    if (separator < 0) continue
+    const date = line.slice(0, separator).trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue
+    const slots = [...new Set(line.slice(separator + 1).split(',').map(value => value.trim()).filter(value => allowedDeviceTimeSlots.has(value)))]
+    if (slots.length) timeSlots.set(date, slots)
+  }
+  await c.env.RENT.prepare('DELETE FROM device_unavailable_time_slots WHERE device_id = ?').bind(c.req.param('id')).run()
+  const timeSlotStatements = [...timeSlots.entries()].flatMap(([date, slots]) => slots.map(slot => c.env.RENT.prepare('INSERT INTO device_unavailable_time_slots (device_id, unavailable_date, time_slot) VALUES (?, ?, ?)').bind(c.req.param('id'), date, slot)))
+  if (timeSlotStatements.length) await c.env.RENT.batch(timeSlotStatements)
   return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/edit?success=设备资料已保存`)
 })
 

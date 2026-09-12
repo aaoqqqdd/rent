@@ -82,6 +82,10 @@ export interface Device {
   depositAmount: number
   weeklyDiscountPercent?: number
   monthlyDiscountPercent?: number
+  minimumRentalDays?: number | null
+  minimum_rental_days?: number | null
+  bufferDays?: number | null
+  buffer_days?: number | null
 
   // snake_case 兼容旧页面
   price_per_day?: number

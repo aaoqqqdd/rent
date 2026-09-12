@@ -14,6 +14,25 @@ export async function renderNewContractPage(c: Context, user: any) {
   const locationOptions = pickupLocations.map(location => `<option value="${escape(location)}">${escape(location)}</option>`).join('')
   const allDevices = await getDevices(c);
   const devices = allDevices.filter(device => !['maintenance', 'retired'].includes(String(device.status || '').toLowerCase()))
+  const deviceDateRows = ((await c.env.RENT.prepare('SELECT device_id, unavailable_date FROM device_unavailable_dates').all().catch(() => ({ results: [] }))).results || []) as any[]
+  const deviceSlotRows = ((await c.env.RENT.prepare('SELECT device_id, unavailable_date, time_slot FROM device_unavailable_time_slots').all().catch(() => ({ results: [] }))).results || []) as any[]
+  const deviceRentalRules = Object.fromEntries(devices.map(device => {
+    const unavailableTimeSlots: Record<string, string[]> = Object.fromEntries(Object.entries(rentalRules.unavailableTimeSlots || {}).map(([date, slots]) => [date, [...slots]]))
+    for (const row of deviceSlotRows.filter(item => item.device_id === device.id)) {
+      const slots = unavailableTimeSlots[row.unavailable_date] || []
+      if (!slots.includes(row.time_slot)) slots.push(row.time_slot)
+      unavailableTimeSlots[row.unavailable_date] = slots
+    }
+    const minimumRentalDays = Number(device.minimumRentalDays ?? device.minimum_rental_days)
+    const bufferDays = Number(device.bufferDays ?? device.buffer_days)
+    return [device.id, {
+      ...rentalRules,
+      unavailableDates: [...new Set([...(rentalRules.unavailableDates || []), ...deviceDateRows.filter(item => item.device_id === device.id).map(item => item.unavailable_date)])],
+      unavailableTimeSlots,
+      minimumRentalDays: Number.isInteger(minimumRentalDays) && minimumRentalDays >= 1 ? minimumRentalDays : rentalRules.minimumRentalDays,
+      bufferDays: Number.isInteger(bufferDays) && bufferDays >= 0 ? bufferDays : rentalRules.bufferDays,
+    }]
+  }))
   const deviceGroups = new Map<string, any[]>()
   for (const device of devices) {
     const groupName = `${String(device.name || '未命名设备')}\u0000${String(device.model || '未登记型号')}`
@@ -47,6 +66,7 @@ export async function renderNewContractPage(c: Context, user: any) {
   }).join('')
   const bookingData = JSON.stringify(bookingRanges).replace(/</g, '\\u003c')
   const rentalRulesData = JSON.stringify(rentalRules).replace(/</g, '\\u003c')
+  const deviceRentalRulesData = JSON.stringify(deviceRentalRules).replace(/</g, '\\u003c')
   const inspectionRecordsData = JSON.stringify(inspectionRecords).replace(/</g, '\\u003c')
   const agentStatusData = JSON.stringify(Object.fromEntries(devices.map(device => [device.id, {
     status: (device as any).agent_status || '', hostname: (device as any).agent_hostname || '',
@@ -157,6 +177,8 @@ export async function renderNewContractPage(c: Context, user: any) {
       const deviceEmptyState = document.getElementById('device-empty-state');
       const bookings = ${bookingData};
       const rentalRules = ${rentalRulesData};
+      const deviceRentalRules = ${deviceRentalRulesData};
+      const currentRentalRules = () => deviceRentalRules[deviceSelect.value] || rentalRules;
       const inspectionRecords = ${inspectionRecordsData};
       const inspectionSelect = document.getElementById('inspection-select');
       const inspectionSummary = document.getElementById('inspection-summary');
@@ -237,14 +259,15 @@ export async function renderNewContractPage(c: Context, user: any) {
           const date = new Date(gridStart); date.setUTCDate(gridStart.getUTCDate() + index);
           const value = isoDate(date);
           const isPast = value < todayValue;
-          const blocked = rentalRules.unavailableDates.includes(value) || ranges.some(item => item.startDate <= value && item.endDate > value);
+          const rules = currentRentalRules();
+          const blocked = rules.unavailableDates.includes(value) || ranges.some(item => item.startDate <= value && item.endDate > value);
           const inRange = startDateInput.value && endDateInput.value && startDateInput.value <= value && value < endDateInput.value;
           const cell = document.createElement('button');
           cell.type = 'button';
           cell.dataset.date = value;
           cell.className = 'booking-day' + (date.getUTCMonth() !== first.getUTCMonth() ? ' is-outside' : '') + (blocked ? ' is-booked' : '') + (isPast ? ' is-past' : '') + (inRange ? ' is-selected-range' : '') + (startDateInput.value === value ? ' is-range-start' : '') + (endDateInput.value === value ? ' is-range-end' : '');
           cell.textContent = String(date.getUTCDate());
-          cell.title = rentalRules.unavailableDates.includes(value) ? '管理员设置为不可取货/归还日期' : blocked ? '该设备此日已有租赁' : isPast ? '无法选择过去日期' : deviceSelect.value ? '选择 ' + value : '请先选择设备';
+          cell.title = currentRentalRules().unavailableDates.includes(value) ? '管理员设置为不可取货/归还日期' : blocked ? '该设备此日已有租赁' : isPast ? '无法选择过去日期' : deviceSelect.value ? '选择 ' + value : '请先选择设备';
           cell.disabled = blocked || !deviceSelect.value || isPast;
           cell.addEventListener('click', () => selectBookingDate(value));
           bookingCalendar.appendChild(cell);
@@ -263,9 +286,10 @@ export async function renderNewContractPage(c: Context, user: any) {
         const invalidRange = startDateInput.value && endDateInput.value && endDateInput.value <= startDateInput.value;
         const conflict = !invalidRange && deviceSelect.value && startDateInput.value && endDateInput.value && selectedBookings().find(item => startDateInput.value < item.endDate && endDateInput.value > item.startDate);
         const rentalDays = !invalidRange && startDateInput.value && endDateInput.value ? Math.ceil((new Date(endDateInput.value + 'T00:00:00Z').getTime() - new Date(startDateInput.value + 'T00:00:00Z').getTime()) / 86400000) : 0;
-        const unavailable = !invalidRange && startDateInput.value && endDateInput.value && rentalRules.unavailableDates.find(date => date >= startDateInput.value && date < endDateInput.value);
+        const rules = currentRentalRules();
+        const unavailable = !invalidRange && startDateInput.value && endDateInput.value && rules.unavailableDates.find(date => date >= startDateInput.value && date <= endDateInput.value);
         const past = (startDateInput.value && startDateInput.value < todayValue) || (endDateInput.value && endDateInput.value < todayValue);
-        const message = past ? '租赁日期不能早于今天。' : invalidRange ? '归还日期必须晚于租赁开始日期。' : rentalDays < rentalRules.minimumRentalDays ? '最短租赁时间为 ' + rentalRules.minimumRentalDays + ' 天。' : unavailable ? '租期包含不可取货或归还日期：' + unavailable : conflict ? '所选日期与已有租赁重叠：' + conflict.startDate + ' 至 ' + conflict.endDate : '';
+        const message = past ? '租赁日期不能早于今天。' : invalidRange ? '归还日期必须晚于租赁开始日期。' : rentalDays < rules.minimumRentalDays ? '最短租赁时间为 ' + rules.minimumRentalDays + ' 天。' : unavailable ? '租期包含不可取货或归还日期：' + unavailable : conflict ? '所选日期与已有租赁重叠：' + conflict.startDate + ' 至 ' + conflict.endDate : '';
         startDateInput.setCustomValidity(message); endDateInput.setCustomValidity(message); bookingConflict.textContent = message;
         bookingStatus.className = 'badge ' + (message ? 'badge-danger' : deviceSelect.value ? 'badge-success' : 'badge-neutral');
         updateRentalPeriods();

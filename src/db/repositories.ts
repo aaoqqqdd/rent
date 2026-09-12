@@ -747,7 +747,11 @@ export async function getDeviceById(cOrContext: Context | string, id?: string): 
     weeklyDiscountPercent,
     monthlyDiscountPercent,
     weekly_discount_percent: weeklyDiscountPercent,
-    monthly_discount_percent: monthlyDiscountPercent
+    monthly_discount_percent: monthlyDiscountPercent,
+    minimumRentalDays: deviceRow.minimumRentalDays ?? deviceRow.minimum_rental_days ?? null,
+    minimum_rental_days: deviceRow.minimum_rental_days ?? deviceRow.minimumRentalDays ?? null,
+    bufferDays: deviceRow.bufferDays ?? deviceRow.buffer_days ?? null,
+    buffer_days: deviceRow.buffer_days ?? deviceRow.bufferDays ?? null
   } as Device
 }
 
@@ -784,7 +788,11 @@ export async function getDevices(c?: Context): Promise<Device[]> {
       weeklyDiscountPercent,
       monthlyDiscountPercent,
       weekly_discount_percent: weeklyDiscountPercent,
-      monthly_discount_percent: monthlyDiscountPercent
+      monthly_discount_percent: monthlyDiscountPercent,
+      minimumRentalDays: deviceRow.minimumRentalDays ?? deviceRow.minimum_rental_days ?? null,
+      minimum_rental_days: deviceRow.minimum_rental_days ?? deviceRow.minimumRentalDays ?? null,
+      bufferDays: deviceRow.bufferDays ?? deviceRow.buffer_days ?? null,
+      buffer_days: deviceRow.buffer_days ?? deviceRow.bufferDays ?? null
     } as Device
   }) || []
 }
@@ -914,6 +922,8 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
     depositAmount: 'depositAmount', deposit_amount: 'deposit_amount',
     weeklyDiscountPercent: 'weekly_discount_percent', weekly_discount_percent: 'weekly_discount_percent',
     monthlyDiscountPercent: 'monthly_discount_percent', monthly_discount_percent: 'monthly_discount_percent',
+    minimumRentalDays: 'minimum_rental_days', minimum_rental_days: 'minimum_rental_days',
+    bufferDays: 'buffer_days', buffer_days: 'buffer_days',
     agentStatus: 'agent_status', agent_status: 'agent_status',
     deviceMode: 'device_mode', device_mode: 'device_mode',
     lifecycleStatus: 'lifecycle_status', lifecycle_status: 'lifecycle_status',
