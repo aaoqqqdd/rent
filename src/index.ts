@@ -1922,6 +1922,24 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, orderRentalRules?.bufferDays ?? 0)) return c.text('订单状态无效或设备档期冲突', 409)
   await updateOrderStatus(c, order.id, 'approved')
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。`, orderId: order.id })
+
+  // 官网信用卡申请：押金在提交时已预授权 / 已保存卡片，审核通过后无需客户再次操作，
+  // 直接用已保存的支付方式自动扣租金（不含押金）。扣款失败则回退到人工付款页面。
+  const savedPaymentMethodId = String((order as any).stripe_payment_method_id || '')
+  if (order.paymentMethod === 'card' && savedPaymentMethodId && customer) {
+    try {
+      await updateOrderStatus(c, order.id, 'pending_payment')
+      const result = await createOrderPaymentIntent(c, customer, order.id, true)
+      if (result.alreadyPaid) {
+        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_charged', title: '租金已自动扣款', message: '审核通过后已使用您预留的信用卡自动扣取租金，押金已按之前的方式预授权 / 保存卡片处理。', orderId: order.id })
+      } else {
+        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '请完成租金付款', message: '审核通过后自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
+      }
+    } catch (error: any) {
+      console.error('Auto-charge rent on approval failed:', error?.message || error)
+      await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '请完成租金付款', message: '审核通过后自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
+    }
+  }
   return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
 })
 

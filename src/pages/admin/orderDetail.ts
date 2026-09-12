@@ -105,8 +105,12 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             <span style="font-weight: 500;">${order.startDate} ~ ${order.endDate}</span>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
-            <span style="color: #6b7280;">总金额</span>
-            <span style="font-weight: 700; font-size: 1.1rem; color: #059669;">${formatCurrency(order.totalAmount)}</span>
+            <span style="color: #6b7280;">租金（含服务费）</span>
+            <span style="font-weight: 700; font-size: 1.1rem; color: #059669;">${formatCurrency(Number(order.totalAmount) - depositAmount)}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
+            <span style="color: #6b7280;">押金${isSetupIntentDeposit ? '（SetupIntent，不预扣）' : ' 预授权'}</span>
+            <span style="font-weight: 700; font-size: 1.1rem; color: #2563eb;">${formatCurrency(depositAmount)}</span>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
             <span style="color: #6b7280;">支付方式</span>
