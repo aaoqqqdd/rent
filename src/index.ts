@@ -528,55 +528,11 @@ app.use('*', async (c, next) => {
   const maxBody = c.req.path === '/webhooks/stripe' ? 512 * 1024 : 128 * 1024
   if (contentLength > maxBody) return c.text('Request body too large', 413)
   const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
-  const isPublicRentalRequest = c.req.path === '/public/rental-request'
-  const isPublicRentalPreview = c.req.path === '/api/coupons/rental-cart-preview'
-  const isPublicRentalSetupIntent = c.req.path === '/public/rental-setup-intent'
-  const isPublicAccountBalance = c.req.path === '/public/account-balance'
   const isPublicOrderLookup = c.req.path === '/public/order-lookup'
-  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicRentalRequest && !isPublicRentalSetupIntent && !isPublicOrderLookup) {
+  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
     if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
-  }
-  if (isPublicRentalRequest && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
-    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
-    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
-    c.header('Access-Control-Allow-Origin', publicWebOrigin)
-    c.header('Vary', 'Origin')
-    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
-    c.header('Access-Control-Allow-Headers', 'Content-Type')
-    c.header('Access-Control-Max-Age', '86400')
-    if (c.req.method === 'OPTIONS') return c.body(null, 204)
-  }
-  if (isPublicRentalPreview && (c.req.method === 'GET' || c.req.method === 'OPTIONS')) {
-    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
-    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
-    c.header('Access-Control-Allow-Origin', publicWebOrigin)
-    c.header('Vary', 'Origin')
-    c.header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
-    c.header('Access-Control-Max-Age', '86400')
-    if (c.req.method === 'OPTIONS') return c.body(null, 204)
-  }
-  if (isPublicRentalSetupIntent && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
-    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
-    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
-    c.header('Access-Control-Allow-Origin', publicWebOrigin)
-    c.header('Vary', 'Origin')
-    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
-    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
-    c.header('Access-Control-Max-Age', '86400')
-    if (c.req.method === 'OPTIONS') return c.body(null, 204)
-  }
-  if (isPublicAccountBalance && (c.req.method === 'GET' || c.req.method === 'OPTIONS')) {
-    const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
-    if (!publicWebOrigin || origin !== publicWebOrigin) return c.text('Invalid request origin', 403)
-    c.header('Access-Control-Allow-Origin', publicWebOrigin)
-    c.header('Vary', 'Origin')
-    c.header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-    c.header('Access-Control-Allow-Headers', 'Accept, Content-Type')
-    c.header('Access-Control-Max-Age', '86400')
-    if (c.req.method === 'OPTIONS') return c.body(null, 204)
   }
   if (isPublicOrderLookup && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
     const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
@@ -597,10 +553,7 @@ app.use('*', async (c, next) => {
             : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
               : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
                 : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
-                  : c.req.path === '/public/rental-request' && c.req.method === 'POST' ? ['public-rental-request', 6, 900] as const
-                    : c.req.path === '/public/rental-setup-intent' && c.req.method === 'POST' ? ['public-rental-setup', 6, 900] as const
-                      : c.req.path === '/public/account-balance' && c.req.method === 'GET' ? ['public-account-balance', 20, 900] as const
-                        : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
+                  : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
@@ -1755,23 +1708,6 @@ app.post('/customer/rent/:id', async (c) => {
   return c.redirect(`/customer/orders/${orderId}`)
 })
 
-app.post('/customer/orders/:id/windows-password', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
-  const order = await getOrderById(c, c.req.param('id'))
-  if (!order || order.userId !== user.id) return c.text('订单不存在', 404)
-  const password = String((await c.req.parseBody()).windowsPassword || '')
-  if (!isStrongPassword(password)) return c.redirect(`/customer/orders/${encodeURIComponent(order.id)}?error=Windows密码格式无效`)
-  const contract = await getContractByOrderId(c, order.id)
-  if (!contract) return c.text('合同不存在', 409)
-  await ensureDeviceCommandTables(c.env.RENT)
-  const data = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : { ...(contract.contract_data || {}) }
-  data.windows_password = password
-  await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), contract.id).run()
-  if (['paid', 'active'].includes(String(order.status))) await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'UPDATE_RENTAL_USER', ?, ?, datetime('now', '+24 hours'))").bind(`cmd-${nanoid(12)}`, order.deviceId, JSON.stringify({ username: data.windows_username || user.name, password }), user.id).run()
-  return c.redirect(`/customer/orders/${encodeURIComponent(order.id)}?success=Windows密码已更新`)
-})
-
 app.get('/staff/dashboard', async (c) => {
   const user = c.get('user')
   if (!user) {
@@ -2124,7 +2060,7 @@ app.post('/staff/devices/new', async (c) => {
   const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
   const status = String(form.status || 'available') as any
   if (!name || !model || !serialNumber || !Number.isFinite(pricePerDay) || pricePerDay < 0 || weeklyDiscountPercent === null || monthlyDiscountPercent === null || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(pages.renderStaffDeviceNew(user, '请填写完整有效的设备资料和 0%–100% 的折扣'), 400)
-  const device = await insertDevice(c, { name, model, serialNumber, pricePerDay, depositAmount: 0, weeklyDiscountPercent, monthlyDiscountPercent, status, description: '' })
+  const device = await insertDevice(c, { name, category: String(form.category || '其他'), model, serialNumber, pricePerDay, depositAmount: 0, weeklyDiscountPercent, monthlyDiscountPercent, status, description: '' })
   return c.redirect(`/staff/devices/${device.id}`)
 })
 
@@ -2143,7 +2079,7 @@ app.post('/staff/devices/:id/edit', async (c) => {
   const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
   const status = String(form.status || 'available')
   if (!String(form.name || '').trim() || !String(form.model || '').trim() || !String(form.serialNumber || '').trim() || !Number.isFinite(pricePerDay) || pricePerDay < 0 || weeklyDiscountPercent === null || monthlyDiscountPercent === null || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id'), '请填写完整有效的设备资料和 0%–100% 的折扣'), 400)
-  await updateDevice(c, c.req.param('id'), { name: String(form.name), model: String(form.model), serialNumber: String(form.serialNumber), pricePerDay, weeklyDiscountPercent, monthlyDiscountPercent, status: status as any })
+  await updateDevice(c, c.req.param('id'), { name: String(form.name), category: String(form.category || '其他'), model: String(form.model), serialNumber: String(form.serialNumber), pricePerDay, weeklyDiscountPercent, monthlyDiscountPercent, status: status as any })
   return c.redirect(`/staff/devices/${c.req.param('id')}`)
 })
 
@@ -2304,37 +2240,6 @@ app.get('/api/coupons/rental-preview', async (c) => {
   return c.json({ ok: true, rent, discount, deposit, total: Number((rent + deposit - discount).toFixed(2)), message: `已优惠 AUD$${discount.toFixed(2)}` })
 })
 
-app.get('/api/coupons/rental-cart-preview', async (c) => {
-  const rawIds = String(c.req.query('deviceIds') || '')
-  let deviceIds: string[] = []
-  try {
-    const parsed = JSON.parse(rawIds)
-    deviceIds = Array.isArray(parsed) ? parsed.map((id) => String(id).trim()).filter(Boolean) : []
-  } catch {
-    deviceIds = rawIds.split(',').map((id) => id.trim()).filter(Boolean)
-  }
-  const result = await actions.previewPublicRentalCoupon(
-    c,
-    [...new Set(deviceIds)],
-    Number(c.req.query('days') || 0),
-    String(c.req.query('code') || '').trim(),
-  )
-  return c.json(result, result.ok ? 200 : 400)
-})
-
-app.post('/public/rental-setup-intent', async (c) => {
-  try {
-    return c.json(await actions.createPublicRentalSetupIntent(c))
-  } catch (error: any) {
-    return c.json({ ok: false, message: error?.message || '信用卡验证暂不可用，请稍后重试。' }, 400)
-  }
-})
-
-app.get('/public/account-balance', async (c) => {
-  const email = String(c.req.query('email') || '')
-  return c.json(await actions.lookupPublicAccountBalance(c, email), 200, { 'Cache-Control': 'no-store' })
-})
-
 app.post('/public/order-lookup', async (c) => {
   let body: Record<string, unknown> = {}
   try { body = (await c.req.json()) as Record<string, unknown> } catch { return c.json({ ok: false, message: '请求格式无效。' }, 400) }
@@ -2396,19 +2301,6 @@ app.post('/contract/sign', async (c) => {
   const form = await c.req.parseBody();
   return actions.handleSignContractStep(c, token, step, form);
 });
-
-app.post('/public/rental-request', async (c) => {
-  let body: Record<string, unknown> = {}
-  try {
-    const contentType = c.req.header('content-type') || ''
-    body = contentType.includes('application/json')
-      ? ((await c.req.json()) as Record<string, unknown>)
-      : Object.fromEntries(Object.entries(await c.req.parseBody()).map(([key, value]) => [key, String(value)]))
-  } catch {
-    return c.json({ ok: false, message: '请求格式无效。' }, 400)
-  }
-  return actions.handlePublicRentalRequest(c, body)
-})
 
 app.post('/admin/contracts/template', async (c) => {
   const user = c.get('user')
@@ -3181,6 +3073,12 @@ app.get('/admin/orders', async (c) => {
   return c.html(await pages.renderAdminOrders(c, user))
 })
 
+app.get('/admin/order-review', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminOrderReview(c, user))
+})
+
 app.get('/admin/contracts', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -3838,6 +3736,7 @@ app.post('/admin/devices/new', async (c) => {
   try {
     await insertDevice(c, {
       name: form.name || '',
+      category: form.category || '其他',
       brand: form.brand || '',
       model: form.model || '',
       assetTag: String(form.assetTag || '').trim().slice(0, 80) || await generateAssetTag(c, form.brand || ''),
@@ -4104,6 +4003,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
   const deviceBefore = await getDeviceById(c, c.req.param('id')) as any
   await updateDevice(c, c.req.param('id'), {
     name: form.name,
+    category: form.category || '其他',
     brand: form.brand,
     model: form.model,
     serialNumber: form.serialNumber,

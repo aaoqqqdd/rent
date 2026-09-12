@@ -137,7 +137,7 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
       .bind(intent.id, chargedCents / 100, feeCents / 100, order.depositAmount, order.totalAmount - order.depositAmount, paymentStatus, paymentStatus, existing.id).run()
   } else {
     await c.env.RENT.prepare(`
-      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, processing_fee, currency, status, stripe_payment_intent_id)
+      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, processing_fee, currency, status, paid_at, stripe_payment_intent_id)
       VALUES (?, ?, ?, 'card', ?, ?, ?, ?, 'AUD', ?, ?, ?)
     `).bind(`p-${nanoid(12)}`, order.id, user.id, chargedCents / 100, order.depositAmount, order.totalAmount - order.depositAmount, feeCents / 100, paymentStatus, alreadyPaid ? new Date().toISOString() : null, intent.id).run()
   }

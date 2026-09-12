@@ -46,6 +46,35 @@ export function generateTemporaryPassword(): string {
   return password.join('')
 }
 
+// Windows 租赁账户密码需要在设备代理和客户订单详情中重复读取，
+// 因此不走网站登录密码的哈希流程；它只保存在受保护的合同数据中。
+// 使用 8 位随机密码，并避免固定字符位置和模运算偏差。
+export function generateWindowsPassword(): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const lower = 'abcdefghijkmnopqrstuvwxyz'
+  const digits = '23456789'
+  const symbols = '!@#$%^&*_-+=?'
+  const alphabet = upper + lower + digits + symbols
+  const randomIndex = (max: number): number => {
+    const limit = Math.floor(256 / max) * max
+    const bytes = new Uint8Array(1)
+    do { crypto.getRandomValues(bytes) } while (bytes[0] >= limit)
+    return bytes[0] % max
+  }
+  const password = [
+    upper[randomIndex(upper.length)],
+    lower[randomIndex(lower.length)],
+    digits[randomIndex(digits.length)],
+    symbols[randomIndex(symbols.length)],
+  ]
+  while (password.length < 8) password.push(alphabet[randomIndex(alphabet.length)])
+  for (let index = password.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomIndex(index + 1)
+    ;[password[index], password[swapIndex]] = [password[swapIndex], password[index]]
+  }
+  return password.join('')
+}
+
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
   if (storedHash.startsWith('pbkdf2$')) {
     const [, iterationText, salt, expected] = storedHash.split('$')

@@ -63,6 +63,7 @@ export interface User {
 export interface Device {
   id: string
   name: string
+  category?: string
   brand?: string
   model: string
   assetTag?: string

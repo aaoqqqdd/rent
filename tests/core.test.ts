@@ -7,6 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import styles from '../src/styles.css'
 import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance } from '../src/site'
+import { generateWindowsPassword } from '../src/lib/password'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
 import { renderAdminContracts } from '../src/pages/admin/contracts'
@@ -80,6 +81,14 @@ test('guest passwords are strong and generated independently', () => {
   const second = generateTemporaryPassword()
   assert.match(first, /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d]{8}$/)
   assert.match(second, /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d]{8}$/)
+  assert.notEqual(first, second)
+})
+
+test('Windows passwords are 8 characters, random, and contain all required character classes', () => {
+  const first = generateWindowsPassword()
+  const second = generateWindowsPassword()
+  assert.match(first, /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{8}$/)
+  assert.match(second, /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9\s])\S{8}$/)
   assert.notEqual(first, second)
 })
 

@@ -17,6 +17,7 @@ export async function renderCustomerDevices(c: Context, user: any) {
           ${devices.map(device => `
             <div class="device-card card">
               <h3>${device.name}</h3>
+              <p>分类: ${device.category || '其他'}</p>
               <p>型号: ${device.model}</p>
               <p>日租金: ${formatCurrency(device.pricePerDay ?? device.dailyRate ?? 0)}</p>
               <p>押金: ${formatCurrency(device.depositAmount)}</p>

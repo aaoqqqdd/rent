@@ -51,6 +51,7 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
           <tr>
             <th>ID</th>
             <th>设备名称</th>
+            <th>分类</th>
             <th>品牌</th>
             <th>型号</th>
             <th>资产编号</th>
@@ -79,6 +80,7 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
               <tr>
                 <td>${device.id}</td>
                 <td><strong>${device.name}</strong></td>
+                <td>${device.category || '其他'}</td>
                 <td>${device.brand || '-'}</td>
                 <td>${device.model || '-'}</td>
                 <td class="mono">${device.assetTag || device.asset_tag || '-'}</td>

@@ -21,6 +21,8 @@ export async function renderStaffDeviceEdit(c: Context, user: any, deviceId: str
         <input class="form-control" name="name" value="${device.name}" />
         <label class="form-label">型号</label>
         <input class="form-control" name="model" value="${device.model}" />
+        <label class="form-label">设备分类</label>
+        <select class="form-control" name="category">${['游戏笔记本','轻薄商务本','台式工作站','普通笔记本','其他'].map(category => `<option value="${category}" ${device.category === category ? 'selected' : ''}>${category}</option>`).join('')}</select>
         <label class="form-label">序列号</label>
         <input class="form-control" name="serialNumber" value="${device.serialNumber}" />
         <label class="form-label">日租金</label>

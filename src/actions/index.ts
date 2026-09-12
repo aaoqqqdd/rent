@@ -5,7 +5,6 @@
 
 export * from './staff/createContract';
 export * from './public/signContract';
-export * from './public/rentalRequest';
 export * from './admin/saveSettings';
 export * from './staff/cancelContract';
 export * from './coupons';

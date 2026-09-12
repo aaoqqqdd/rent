@@ -16,6 +16,7 @@ import { createOrderPaymentIntent } from '../stripePayments';
 import { getStripeRuntimeConfig } from '../../stripe';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 import { calculateRentalFee } from '../../domain/rentalPricing';
+import { generateWindowsPassword } from '../../lib/password';
 
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
   const token = identifier; // 明确定义 token
@@ -112,7 +113,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先同意租赁协议。');
         }
 
-        const { firstName, lastName, password, passwordConfirm, windowsPassword, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature } = body;
+        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature } = body;
         const createAccount = !currentUser && Boolean(createAccountInput)
         const selectedAccountMode = createAccount ? 'formal' : 'guest'
         const cleanFirstName = String(firstName || '').trim()
@@ -132,7 +133,6 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           });
           throw new Error('请完整填写姓名、邮箱和联系电话；电子签名必须与姓名一致。');
         }
-        if (!isStrongPassword(String(windowsPassword || ''))) throw new Error('Windows 登录密码至少需要 8 位，并同时包含字母、数字和符号。');
         const typedSignature = String(esignSignature || '').trim()
         const signature = typedSignature
         if (!signature || signature !== name) {
@@ -209,10 +209,14 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           await updateUser(c, currentUser.id, { name, email, phone: fullPhone })
           await updateSignSession(c, token, { userIdToLink: currentUser.id });
         } else if (existingUser) {
-          await logError(c, 'INFO', `Existing user found with email, will link account`, undefined, { token, email, existingUserId: existingUser.id });
-          // 如果邮箱已存在，我们不会立即报错，而是将现有用户的ID存入会话
-          // 在步骤3中，我们会用这个ID来关联合同，而不是创建新用户
-          await updateSignSession(c, token, { userIdToLink: existingUser.id });
+          // Stripe 或其他第 4 步失败后，用户可能已经在本签约会话中创建；
+          // 允许该会话继续使用自己的用户记录，避免重试资料时误报邮箱已注册。
+          if (signSession.createdUserId !== existingUser.id) {
+            await logError(c, 'INFO', `Existing user found with email`, undefined, { token, email, existingUserId: existingUser.id });
+          } else {
+            await updateUser(c, existingUser.id, { name, email, phone: `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}` });
+            await updateSignSession(c, token, { userIdToLink: existingUser.id });
+          }
         } else {
           // 仅当用户不存在时，才处理创建账户的逻辑
           if (createAccount && (!password || !passwordConfirm)) {
@@ -226,15 +230,16 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         // 检查邮箱是否存在，并抛出特定错误以便前端处理
-        if (!currentUser && existingUser) {
+        if (!currentUser && existingUser && signSession.createdUserId !== existingUser.id) {
           await logError(c, 'INFO', `Email exists and user not forced to continue, returning EMAIL_EXISTS`, undefined, { token, email });
           throw new Error('该邮箱已注册，请直接登录或使用其他邮箱。');
         }
 
         // 保存用户信息到会话
         const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
-        await updateSignSession(c, token, {
-          userInfo: { ...body, windowsPassword: String(windowsPassword), firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, esignSignature: signature }
+        const windowsPassword = String(signSession.windowsPassword || generateWindowsPassword())
+        await updateSignSession(c, token, { windowsPassword,
+          userInfo: { ...body, windowsPassword, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, esignSignature: signature }
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
 
@@ -381,7 +386,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             if (owner) newUser.staffId = contractOwner
           }
           await insertUser(c, newUser);
-          await updateSignSession(c, token, { userIdToLink: newUserId });
+          await updateSignSession(c, token, { userIdToLink: newUserId, createdUserId: newUserId });
           await logError(c, 'INFO', `New user created successfully`, undefined, { token, newUserId });
         } else {
           await logError(c, 'INFO', `Linking existing user to contract`, undefined, { token, userId });
@@ -546,6 +551,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const signedData = {
           ...existingData,
           windows_username: String(userInfo.name || '').trim(),
+          // Windows 账户密码需要由设备代理和订单详情重复读取，按需求保留为可读取值；
+          // 该字段不参与网站登录认证，只对订单所有者展示。
           windows_password: String(userInfo.windowsPassword || '').trim(),
           signer_name: signerName,
           customer_initials: existingData.customer_initials || customerInitials,

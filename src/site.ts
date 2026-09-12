@@ -1459,7 +1459,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group" open><summary>${label}${chevronSvg}</summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
   const mobileLinks = currentUser?.role === 'ADMIN'
-    ? [['/admin/dashboard', '控制台', '◉'], ['/notifications', '通知', 'N'], ['/admin/orders', '订单', '▦'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
+    ? [['/admin/dashboard', '控制台', '◉'], ['/notifications', '通知', 'N'], ['/admin/order-review', '订单审核', '⚑'], ['/admin/orders', '订单', '▦'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
     : currentUser?.role === 'STAFF'
       ? [['/staff/dashboard', '工作台', '◉'], ['/notifications', '通知', 'N'], ['/staff/orders', '订单', '▦'], ['/staff/contracts', '合同', '▤'], ['/staff/customers', '客户', '◎']]
       : currentUser?.accountType === 'guest'
@@ -1498,7 +1498,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/admin/dashboard', '控制台')}
             ${renderNavGroup('通知管理', [['/admin/notifications', '通知中心'], ['/notifications', '发布通知']])}
             ${renderNavGroup('用户管理', [['/admin/users', '用户管理']])}
-            ${renderNavGroup('租赁管理', [['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
+            ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}

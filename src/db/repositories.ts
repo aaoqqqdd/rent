@@ -728,6 +728,8 @@ export async function getDeviceById(cOrContext: Context | string, id?: string): 
   // 统一处理snake_case和camelCase字段
   const pricePerDay = deviceRow.pricePerDay ?? deviceRow.price_per_day
   const depositAmount = deviceRow.depositAmount ?? deviceRow.deposit_amount
+  const weeklyDiscountPercent = Number(deviceRow.weeklyDiscountPercent ?? deviceRow.weekly_discount_percent ?? 0)
+  const monthlyDiscountPercent = Number(deviceRow.monthlyDiscountPercent ?? deviceRow.monthly_discount_percent ?? 0)
 
   // Add type validation for required fields
   if (typeof pricePerDay !== 'number' || typeof depositAmount !== 'number') {
@@ -737,10 +739,15 @@ export async function getDeviceById(cOrContext: Context | string, id?: string): 
   // 确保返回的设备对象同时包含两种格式的字段，兼容所有调用方
   return {
     ...deviceRow,
+    category: deviceRow.category || '其他',
     pricePerDay,
     price_per_day: pricePerDay,
     depositAmount,
-    deposit_amount: depositAmount
+    deposit_amount: depositAmount,
+    weeklyDiscountPercent,
+    monthlyDiscountPercent,
+    weekly_discount_percent: weeklyDiscountPercent,
+    monthly_discount_percent: monthlyDiscountPercent
   } as Device
 }
 
@@ -762,15 +769,22 @@ export async function getDevices(c?: Context): Promise<Device[]> {
     const serial_number = deviceRow.serial_number ?? deviceRow.serialNumber
     const price_per_day = deviceRow.price_per_day ?? deviceRow.pricePerDay
     const deposit_amount = deviceRow.deposit_amount ?? deviceRow.depositAmount
+    const weeklyDiscountPercent = Number(deviceRow.weeklyDiscountPercent ?? deviceRow.weekly_discount_percent ?? 0)
+    const monthlyDiscountPercent = Number(deviceRow.monthlyDiscountPercent ?? deviceRow.monthly_discount_percent ?? 0)
 
     return {
       ...deviceRow,
+      category: deviceRow.category || '其他',
       pricePerDay,
       depositAmount,
       serialNumber,
       serial_number,
       price_per_day,
-      deposit_amount
+      deposit_amount,
+      weeklyDiscountPercent,
+      monthlyDiscountPercent,
+      weekly_discount_percent: weeklyDiscountPercent,
+      monthly_discount_percent: monthlyDiscountPercent
     } as Device
   }) || []
 }
@@ -821,7 +835,7 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     insertValues.push(initialLifecycle)
   }
 
-  for (const field of ['brand', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os']) {
+  for (const field of ['category', 'brand', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os']) {
     if (!deviceColumns.has(field)) continue
     const sourceKey = field === 'asset_tag' ? 'assetTag' : field
     insertFields.push(field)
@@ -893,7 +907,7 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   const columns = await getTableColumns(db, 'devices')
 
   const columnMapping: Record<string, string> = {
-    name: 'name', brand: 'brand', model: 'model', assetTag: 'asset_tag', asset_tag: 'asset_tag',
+    name: 'name', category: 'category', brand: 'brand', model: 'model', assetTag: 'asset_tag', asset_tag: 'asset_tag',
     cpu: 'cpu', ram: 'ram', storage: 'storage', gpu: 'gpu', os: 'os', status: 'status', description: 'description',
     serialNumber: 'serialNumber', serial_number: 'serial_number',
     pricePerDay: 'pricePerDay', price_per_day: 'price_per_day',
@@ -904,7 +918,7 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
     deviceMode: 'device_mode', device_mode: 'device_mode',
     lifecycleStatus: 'lifecycle_status', lifecycle_status: 'lifecycle_status',
   }
-  const plainTextFields = new Set(['name', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
+  const plainTextFields = new Set(['name', 'category', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
   const setEntries: [string, any][] = []
   for (const [key, value] of Object.entries(data)) {
     let column = columnMapping[key]

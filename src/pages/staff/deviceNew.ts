@@ -15,6 +15,8 @@ export function renderStaffDeviceNew(user: any, errorMessage?: string) {
         <input class="form-control" name="name" placeholder="例如：MacBook Pro 16寸" />
         <label class="form-label">型号</label>
         <input class="form-control" name="model" placeholder="例如：M1 Max" />
+        <label class="form-label">设备分类</label>
+        <select class="form-control" name="category"><option value="游戏笔记本">游戏笔记本</option><option value="轻薄商务本">轻薄商务本</option><option value="台式工作站">台式工作站</option><option value="普通笔记本">普通笔记本</option><option value="其他" selected>其他</option></select>
         <label class="form-label">序列号</label>
         <input class="form-control" name="serialNumber" placeholder="设备的唯一序列号" />
         <label class="form-label">日租金</label>
