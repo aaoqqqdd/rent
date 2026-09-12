@@ -37,6 +37,8 @@ import {
   createWithdrawalRequest,
   generateReferralCode,
   getOrderById,
+  getOrderByOrderNo,
+  staffOrderPath,
   insertOrder,
   updateOrderStatus,
   hasDeviceBookingConflict,
@@ -1301,7 +1303,7 @@ app.post('/staff/orders/:orderId/early-return/approve', async (c) => {
   ])
   await updateOrderStatus(c, order.id, 'pending_return')
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'early_return_approved', title: '提前归还申请已批准', message: `订单 ${order.orderNo || order.id} 的提前归还申请已批准，请按通知安排归还设备。`, orderId: order.id })
-  return c.redirect(`/staff/orders/${order.id}`)
+  return c.redirect(staffOrderPath(order))
 })
 
 app.post('/customer/orders/:id/returned', async (c) => {
@@ -1706,7 +1708,7 @@ app.post('/customer/rent/:id', async (c) => {
   }
   const orderId = `o-${nanoid(8)}`
   await insertOrder(c, {
-    id: orderId, orderNo: null, userId: user.id,
+    id: orderId, orderNo: generateReferenceNumber('OD'), userId: user.id,
     deviceId: device.id, startDate, endDate, rentalPeriod, status: 'pending_approval',
     paymentMethod: 'bank_transfer', totalAmount: rentAmount + device.depositAmount - discountAmount,
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
@@ -1816,9 +1818,12 @@ app.get('/staff/orders', async (c) => {
 
 app.use('/staff/orders/*', async (c, next) => {
   const user = c.get('user')
-  const orderId = c.req.path.split('/')[3]
-  if (user?.role === 'STAFF' && orderId && !['pending', 'ongoing'].includes(orderId)) {
-    const order = await getOrderById(c, orderId)
+  const segments = c.req.path.split('/')
+  const seg3 = segments[3]
+  if (user?.role === 'STAFF' && seg3 && !['pending', 'ongoing'].includes(seg3)) {
+    const seg4 = segments[4]
+    const isOrderNoPath = /^\d{8}$/.test(seg3) && !!seg4 && /^[0-9A-Za-z]{6}$/.test(seg4)
+    const order = isOrderNoPath ? await getOrderByOrderNo(c, `OD-${seg3}-${seg4}`) : await getOrderById(c, seg3)
     const customer = order ? await getUserById(c, order.userId) : null
     if (!order || customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   }
@@ -1835,6 +1840,17 @@ app.get('/staff/orders/ongoing', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderStaffOrdersOngoing(c, user))
+})
+
+app.get('/staff/orders/:date/:code', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+    return c.redirect('/login')
+  }
+  const order = await getOrderByOrderNo(c, `OD-${c.req.param('date')}-${c.req.param('code')}`)
+  if (!order) return c.html(renderNotFound(), 404)
+  await loadSystemSettingsFromDB(c)
+  return c.html(await pages.renderStaffOrderDetail(c, user, order.id))
 })
 
 app.get('/staff/orders/:id', async (c) => {
@@ -1856,7 +1872,7 @@ app.post('/staff/orders/:orderId/suspend', async (c) => {
   if (!['active', 'extended', 'overdue'].includes(String(order.status)) || !canTransitionOrder(order.status, 'suspended')) return c.text('当前订单状态不能暂停', 409)
   await updateOrderStatus(c, order.id, 'suspended')
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}暂停。`, orderId: order.id })
-  return c.redirect(`/staff/orders/${order.id}`)
+  return c.redirect(staffOrderPath(order))
 })
 
 // 员工操作 - 已付款订单完成取货后进入租赁中
@@ -1867,7 +1883,7 @@ app.get('/staff/orders/:orderId/handover', async (c) => {
   const customer = order ? await getUserById(c, order.userId) : null
   if (!order || !['paid', 'pending_pickup'].includes(String(order.status)) || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, order.deviceId)
-  const body = `<div class="page-header"><div><p class="section-code">HANDOVER RECORD</p><h2>交付设备</h2><p>确认设备、配件和客户确认后，订单才会进入租赁中。</p></div><a class="button button-secondary" href="/staff/orders/${encodeURIComponent(order.id)}">返回订单</a></div><form class="panel" method="post" action="/staff/orders/${encodeURIComponent(order.id)}/pickup" data-site-confirm="确认交付记录无误并开始租赁？"><div class="grid grid-2"><div><label class="form-label">设备</label><input class="form-control" value="${sanitizePlainText(device?.name || order.deviceId, 160)}" readonly></div><div><label class="form-label" for="deviceSerialNumber">设备序列号</label><input class="form-control" id="deviceSerialNumber" name="deviceSerialNumber" value="${sanitizePlainText(device?.serialNumber || '', 160)}" required></div></div><div class="form-group"><label class="form-label" for="accessories">交付配件</label><textarea class="form-control" id="accessories" name="accessories" maxlength="1000" required placeholder="例如：电源适配器、充电线、电脑包"></textarea></div><div class="form-group"><label class="form-label" for="conditionNotes">设备状态与备注</label><textarea class="form-control" id="conditionNotes" name="conditionNotes" maxlength="2000" required placeholder="例如：外观正常，屏幕无划痕，电池状态正常"></textarea></div><label class="form-check"><input type="checkbox" name="customerConfirmed" value="1" required> 客户已当场确认设备序列号、配件及状态</label><div class="form-group"><label class="form-label" for="customerConfirmationName">客户确认姓名</label><input class="form-control" id="customerConfirmationName" name="customerConfirmationName" maxlength="120" value="${sanitizePlainText(customer?.name || '', 120)}" required></div><button class="button button-primary" type="submit">保存交付记录并开始租赁</button></form>`
+  const body = `<div class="page-header"><div><p class="section-code">HANDOVER RECORD</p><h2>交付设备</h2><p>确认设备、配件和客户确认后，订单才会进入租赁中。</p></div><a class="button button-secondary" href="${staffOrderPath(order)}">返回订单</a></div><form class="panel" method="post" action="/staff/orders/${encodeURIComponent(order.id)}/pickup" data-site-confirm="确认交付记录无误并开始租赁？"><div class="grid grid-2"><div><label class="form-label">设备</label><input class="form-control" value="${sanitizePlainText(device?.name || order.deviceId, 160)}" readonly></div><div><label class="form-label" for="deviceSerialNumber">设备序列号</label><input class="form-control" id="deviceSerialNumber" name="deviceSerialNumber" value="${sanitizePlainText(device?.serialNumber || '', 160)}" required></div></div><div class="form-group"><label class="form-label" for="accessories">交付配件</label><textarea class="form-control" id="accessories" name="accessories" maxlength="1000" required placeholder="例如：电源适配器、充电线、电脑包"></textarea></div><div class="form-group"><label class="form-label" for="conditionNotes">设备状态与备注</label><textarea class="form-control" id="conditionNotes" name="conditionNotes" maxlength="2000" required placeholder="例如：外观正常，屏幕无划痕，电池状态正常"></textarea></div><label class="form-check"><input type="checkbox" name="customerConfirmed" value="1" required> 客户已当场确认设备序列号、配件及状态</label><div class="form-group"><label class="form-label" for="customerConfirmationName">客户确认姓名</label><input class="form-control" id="customerConfirmationName" name="customerConfirmationName" maxlength="120" value="${sanitizePlainText(customer?.name || '', 120)}" required></div><button class="button button-primary" type="submit">保存交付记录并开始租赁</button></form>`
   return c.html(buildLayout('交付设备 - 电脑租赁管理系统', body, user))
 })
 
@@ -1899,7 +1915,8 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
   ])
   await recordDeviceLifecycle(c, pickupOrder.deviceId, 'RENTED', { orderId, reason: '工作人员确认设备已交付', changedBy: user.id })
   await createAuditLog(c, { actor: user, action: 'HANDOVER_COMPLETED', targetType: 'ORDER', targetId: orderId, before: { status: pickupOrder.status, rentalStatus: pickupOrder.rental_status }, after: { status: 'active', rentalStatus: 'ACTIVE', deviceSerialNumber: serialNumber, customerConfirmed: true }, reason: conditionNotes })
-  return wantsJson ? c.json({ success: true, redirect: `/staff/orders/${orderId}` }) : c.redirect(`/staff/orders/${orderId}`)
+  const pickupOrderPath = staffOrderPath(pickupOrder)
+  return wantsJson ? c.json({ success: true, redirect: pickupOrderPath }) : c.redirect(pickupOrderPath)
 })
 
 // 新增：员工操作 - 标记订单为已归还
@@ -1940,7 +1957,7 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
       await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '请完成租金付款', message: '审核通过后自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
     }
   }
-  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+  return c.redirect(staffOrderPath(order))
 })
 
 app.post('/staff/orders/:orderId/reject', async (c) => {
@@ -1954,7 +1971,7 @@ app.post('/staff/orders/:orderId/reject', async (c) => {
     await updateDeviceStatus(c, order.deviceId, 'available')
     await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_rejected', title: '租赁申请未通过', message: `您的设备租赁申请已由${user.name || '工作人员'}拒绝，请联系工作人员了解详情。`, orderId: order.id })
   }
-  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+  return c.redirect(order ? staffOrderPath(order) : `/staff/orders/${c.req.param('orderId')}`)
 })
 
 app.post('/staff/orders/:orderId/mark-paid', async (c) => {
@@ -2025,7 +2042,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   ])
   await recordDeviceLifecycle(c, order.deviceId, damageDescription ? 'DAMAGED' : 'RETURNED', { orderId: order.id, reason: damageDescription || '归还验机完成', changedBy: user.id })
   await createAuditLog(c, { actor: user, action: damageDescription ? 'RETURN_INSPECTION_COMPLETED_WITH_DAMAGE' : 'RETURN_INSPECTION_COMPLETED', targetType: 'ORDER', targetId: order.id, before: { status: order.status, rentalStatus: order.rental_status }, after: { status: 'completed', rentalStatus: 'COMPLETED', inspectionId, damageReported: Boolean(damageDescription) }, reason: damageDescription || '归还验机完成' })
-  return c.redirect(`/staff/orders/${order.id}`)
+  return c.redirect(staffOrderPath(order))
 })
 
 app.post('/customer/orders/:orderId/inspection-dispute', async (c) => {
@@ -2050,7 +2067,7 @@ app.post('/staff/orders/:orderId/cancel', async (c) => {
     await updateOrderStatus(c, order.id, 'cancelled')
     await updateDeviceStatus(c, order.deviceId, 'available')
   }
-  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+  return c.redirect(order ? staffOrderPath(order) : `/staff/orders/${c.req.param('orderId')}`)
 })
 
 app.get('/staff/contracts', async (c) => {
@@ -2381,7 +2398,7 @@ app.get('/contract/view/:id', async (c) => {
     const contract = await getContractById(c, c.req.param('id'))
     const order = contract ? await getOrderById(c, contract.rentalId) : null
     if (order && (user.role === 'ADMIN' || user.role === 'STAFF' || order.userId === user.id)) {
-      const orderPath = user.role === 'ADMIN' ? `/admin/orders/${order.id}` : user.role === 'STAFF' ? `/staff/orders/${order.id}` : `/customer/orders/${order.id}`
+      const orderPath = user.role === 'ADMIN' ? `/admin/orders/${order.id}` : user.role === 'STAFF' ? staffOrderPath(order) : `/customer/orders/${order.id}`
       return c.redirect(orderPath)
     }
   }

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency, getDevices, getOrders, getUsers, sanitizePlainText } from '../../site'
+import { buildLayout, formatCurrency, getDevices, getOrders, getUsers, sanitizePlainText, staffOrderPath } from '../../site'
 import type { Context } from 'hono'
 
 const ongoingStatuses = new Set(['pending_payment', 'paid', 'pending_pickup', 'active', 'pending_return'])
@@ -26,7 +26,7 @@ export async function renderStaffOrdersOngoing(c: Context, user: any) {
           const customer = usersById.get(order.userId)
           const device = devicesById.get(order.deviceId)
           const inspectionAvailable = ['active', 'pending_return'].includes(order.status)
-          return `<tr><td class="mono">${esc(order.orderNo || '付款后生成')}</td><td>${esc(customer?.name || '未知客户')}</td><td>${esc(device?.name || '未知设备')}</td><td>${esc(order.startDate)} 至 ${esc(order.endDate)}</td><td>${formatCurrency(order.totalAmount)}</td><td><span class="badge ${inspectionAvailable ? 'badge-primary' : 'badge-warning'}">${statusLabels[order.status] || esc(order.status)}</span></td><td><div class="table-actions"><a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看状态</a>${inspectionAvailable ? `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>` : ''}</div></td></tr>`
+          return `<tr><td class="mono">${esc(order.orderNo || '付款后生成')}</td><td>${esc(customer?.name || '未知客户')}</td><td>${esc(device?.name || '未知设备')}</td><td>${esc(order.startDate)} 至 ${esc(order.endDate)}</td><td>${formatCurrency(order.totalAmount)}</td><td><span class="badge ${inspectionAvailable ? 'badge-primary' : 'badge-warning'}">${statusLabels[order.status] || esc(order.status)}</span></td><td><div class="table-actions"><a class="button button-sm button-secondary" href="${staffOrderPath(order)}">查看状态</a>${inspectionAvailable ? `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>` : ''}</div></td></tr>`
         }).join('')}
       </tbody></table></div>` : '<div class="empty-state"><span class="empty-state-code mono">NO ACTIVE ORDERS</span><h3>目前没有进行中的订单</h3><p>已付款或进入租赁流程的订单会显示在这里。</p></div>'}
     </div>`

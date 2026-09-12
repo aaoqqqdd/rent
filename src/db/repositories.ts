@@ -572,6 +572,12 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
   return null
 }
 
+export async function getOrderByOrderNo(c: Context, orderNo: string): Promise<Order | null> {
+  const db = getDB(c)
+  const orderRow = await db.prepare('SELECT * FROM orders WHERE UPPER(orderNo) = ?').bind(orderNo.toUpperCase()).first()
+  return orderRow ? normalizeOrderRow(orderRow) : null
+}
+
 export async function getOrders(c?: Context): Promise<Order[]> {
   const db = getDB(c)
   const result = await db.prepare('SELECT * FROM orders').all()

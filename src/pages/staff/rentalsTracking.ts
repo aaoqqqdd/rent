@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrders, getAllContracts, getUsers, getDevices } from '../../site'
+import { buildLayout, getOrders, getAllContracts, getUsers, getDevices, staffOrderPath } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffRentalsTracking(c: Context, user: any, status?: string, searchTerm?: string) {
@@ -111,12 +111,12 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
                       return `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`;
                     }
                     // 订单状态为已完成
-                    if (order.status === 'completed') return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
+                    if (order.status === 'completed') return `<a class="button button-sm button-secondary" href="${staffOrderPath(order)}">查看订单</a>`;
                     // 其他已签署状态，例如刚签署完成，但订单状态还未更新为pending_pickup
-                    return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
+                    return `<a class="button button-sm button-secondary" href="${staffOrderPath(order)}">查看订单</a>`;
                    }
                    // 合同未签署或已取消等情况
-                   return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
+                   return `<a class="button button-sm button-secondary" href="${staffOrderPath(order)}">查看订单</a>`;
                  })();
                 return `
                 <tr>

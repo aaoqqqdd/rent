@@ -4,7 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono';
-import { User, getDeviceById, getDeviceRentalRules, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, generateContractNumber } from '../../site';
+import { User, getDeviceById, getDeviceRentalRules, getContractTemplate, getSystemSettings, loadSystemSettingsFromDB, hasDeviceBookingConflict, Order, Contract, buildLayout, insertOrder, insertContract, generateContractNumber, generateReferenceNumber } from '../../site';
 import { findEligibleCoupon, calculateCouponDiscount } from '../coupons';
 import { nanoid } from 'nanoid';
 import { calculateRentalFee } from '../../domain/rentalPricing';
@@ -109,7 +109,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
 
   const newOrder: Order = {
     id: orderId,
-    orderNo: null,
+    orderNo: generateReferenceNumber('OD'),
     userId: user.id, // 临时用户ID，将在客户签署时更新
     deviceId: deviceId,
     startDate: startDate,
