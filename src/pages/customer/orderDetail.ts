@@ -112,7 +112,13 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
       ${order.status === 'pending_payment' ? `
         ${transferProof ? `<div class="payment-review-status payment-review-status--${transferProof.status === 'submitted' ? 'pending' : transferProof.status === 'rejected' ? 'failed' : 'success'}"><span class="payment-review-status__icon" aria-hidden="true"></span><div><strong>${transferProof.status === 'submitted' ? '转账凭证待审核' : transferProof.status === 'rejected' ? '转账审核未通过' : '转账审核已通过'}</strong><p>${transferProof.status === 'submitted' ? '管理员正在核对付款信息，请耐心等待。' : transferProof.status === 'rejected' ? `已驳回（${String(transferProof.rejection_reason || '').replace(/[&<>"']/g, '')}）` : '付款已确认，订单正在继续处理。'}</p></div></div>` : ''}
         <div class="section-title" style="margin-top: 24px;"><h3>支付信息</h3></div>
-        <div class="alert"><strong>收款明细：</strong>${depositMode === 'PREAUTH' ? `信用卡一次性预授权 ${formatCurrency(stripeTotal)}（租金及服务费 ${formatCurrency(immediatelyPaidAmount)} ＋ 押金 ${formatCurrency(deposit)} ＋ 手续费 ${formatCurrency(stripeFee)}）；归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。` : `租金 ${formatCurrency(rentalAmount)} ＋ 时段服务费 ${formatCurrency(serviceFee)} ＝ ${formatCurrency(immediatelyPaidAmount)}；${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 不预扣` : `押金 ${formatCurrency(deposit)} 按${securityDepositMethodLabel(depositMethod)}单独处理`}。Stripe 手续费按租金及服务费计算 ${formatCurrency(stripeFee)}，付款合计 ${formatCurrency(stripeTotal)}。`}</div>
+        <div class="alert"><div><strong>收款明细</strong>${depositMode === 'PREAUTH' ? `
+          <p style="margin:8px 0 0">信用卡一次性预授权 ${formatCurrency(stripeTotal)}（租金及服务费 ${formatCurrency(immediatelyPaidAmount)} ＋ 押金 ${formatCurrency(deposit)} ＋ 手续费 ${formatCurrency(stripeFee)}）。</p>
+          <p style="margin:6px 0 0">归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。</p>
+        ` : `
+          <p style="margin:8px 0 0">租金 ${formatCurrency(rentalAmount)} ＋ 时段服务费 ${formatCurrency(serviceFee)} ＝ ${formatCurrency(immediatelyPaidAmount)}；${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 不预扣` : `押金 ${formatCurrency(deposit)} 按${securityDepositMethodLabel(depositMethod)}单独处理`}。</p>
+          <p style="margin:6px 0 0">Stripe 手续费按租金及服务费计算 ${formatCurrency(stripeFee)}，付款合计 ${formatCurrency(stripeTotal)}。</p>
+        `}</div></div>
         <div class="payment-options" style="display: flex; gap: 20px; margin-top: 16px;">
           ${order.paymentMethod === 'bank_transfer' ? `<div class="payment-card">
             <h4>银行转账</h4>
@@ -135,7 +141,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           ${systemSettings.paymentMethods.stripe ? `<div class="payment-card">
             <h4>信用卡支付（Stripe）</h4>
             <p>在本页安全填写卡信息完成支付，卡号由 Stripe 处理，本站不保存卡号、有效期或安全码。</p>
-            ${depositMode === 'PREAUTH' ? `<dl class="data-list" style="margin:8px 0"><div><dt><strong>信用卡预授权总额</strong></dt><dd><strong>${formatCurrency(stripeTotal)}</strong></dd></div></dl><p class="form-text">包含租金及服务费、押金和手续费；归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。</p>` : `<dl class="data-list" style="margin:8px 0"><div><dt>租金及服务费</dt><dd>${formatCurrency(Number(order.totalAmount) - deposit)}</dd></div><div><dt>Stripe 租金及服务费支付手续费（2.5%）</dt><dd>${formatCurrency(stripeFee)}</dd></div><div><dt><strong>信用卡最终扣款</strong></dt><dd><strong>${formatCurrency(stripeTotal)}</strong></dd></div></dl><p class="form-text">${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 使用 SetupIntent 保存卡片，不预扣，仅在损坏或逾期时按实际费用扣款。` : '押金按订单约定处理。'} 手续费不计入押金。</p>`}
+            ${depositMode === 'PREAUTH' ? `<dl class="data-list" style="margin:8px 0"><div><dt><strong>信用卡预授权总额</strong></dt><dd><strong>${formatCurrency(stripeTotal)}</strong></dd></div></dl><p class="form-text">包含租金及服务费、押金和手续费。</p><p class="form-text" style="margin-top:4px">归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。</p>` : `<dl class="data-list" style="margin:8px 0"><div><dt>租金及服务费</dt><dd>${formatCurrency(Number(order.totalAmount) - deposit)}</dd></div><div><dt>Stripe 租金及服务费支付手续费（2.5%）</dt><dd>${formatCurrency(stripeFee)}</dd></div><div><dt><strong>信用卡最终扣款</strong></dt><dd><strong>${formatCurrency(stripeTotal)}</strong></dd></div></dl><p class="form-text">${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 使用 SetupIntent 保存卡片，不预扣，仅在损坏或逾期时按实际费用扣款。` : '押金按订单约定处理。'}</p><p class="form-text" style="margin-top:4px">手续费不计入押金。</p>`}
             ${renderStripePaymentBox({ intentUrl: `/customer/orders/${order.id}/stripe/intent`, returnUrl: `/payment/result?orderId=${encodeURIComponent(order.id)}`, buttonLabel: `${depositMode === 'PREAUTH' ? '预授权' : '支付'} ${formatCurrency(stripeTotal)}`, domId: 'order-stripe-pay' })}
           </div>` : ''}
         </div>
