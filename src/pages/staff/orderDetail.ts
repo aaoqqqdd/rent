@@ -29,7 +29,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   ])
   const contractExpired = contract ? isContractExpired(contract) : false
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
-  const statusLabels: Record<string, string> = { pending: '待处理', pending_approval: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', approved: '租赁已确认，等待开始', paid: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
+  const statusLabels: Record<string, string> = { pending: '待处理', pending_approval: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', approved: '已审核，等待签署/付款', paid: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
 
   const body = `
     <div class="panel order-detail-shell staff-order-detail">

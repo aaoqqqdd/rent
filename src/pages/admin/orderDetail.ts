@@ -89,13 +89,14 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
   const canSettleDeposit = order.status === 'completed' && (isSetupIntentDeposit || remainingRefundTotal > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED')
   const showRefundCard = order.status === 'completed' || (order.status === 'paid' && order.startDate > today && !completedRefund)
+  const canHandover = ['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && contract?.status === 'signed')
 
   const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
     'pending': { label: '待处理', color: '#d97706', bg: '#fef3c7', icon: '' },
     'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '' },
     'awaiting_signature': { label: '待签合同', color: '#7c3aed', bg: '#ede9fe', icon: '' },
     'paid': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '' },
-    'approved': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '' },
+    'approved': { label: '已审核，等待签署/付款', color: '#7c3aed', bg: '#ede9fe', icon: '' },
     'pending_pickup': { label: '待取货', color: '#0891b2', bg: '#cffafe', icon: '' },
     'active': { label: '租赁中', color: '#2563eb', bg: '#dbeafe', icon: '' },
     'extended': { label: '已延期 / 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '' },
@@ -124,11 +125,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
     <div class="order-detail-actions">
       ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
-      ${['paid', 'pending_pickup'].includes(String(order.status)) ? `<a class="button button-primary" href="/staff/orders/${order.id}/handover">记录交付并开始租赁</a>` : ''}
+      ${canHandover ? `<a class="button button-primary" href="/staff/orders/${order.id}/handover">记录交付并开始租赁</a>` : ''}
       ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order">查看合同</a>` : ''}
       ${contract && contract.status === 'pending_sign' ? `<a class="button button-primary" href="/staff/contracts/${encodeURIComponent(contract.id)}/progress">查看合同签署进度</a>` : ''}
     </div>
-    <section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>合同签署流程</h3><span class="section-note">${contract ? (contractFinalized ? '合同已签署' : '等待客户完成电子签名') : '合同尚未生成'}</span></div>${renderWorkflow()}${contract && contract.status === 'pending_sign' ? `<div class="record-actions" style="margin-top: 16px;"><a class="button button-secondary" href="/staff/contracts/${encodeURIComponent(contract.id)}/progress">打开签署链接管理</a></div>` : !contract ? '<p class="section-note" style="margin-top: 16px;">订单通过审核后，系统会自动生成客户签署合同。</p>' : ''}</section>
+    <section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>合同签署流程</h3><span class="section-note">${contract ? (contractFinalized ? '合同已签署' : '等待客户完成电子签名') : '合同尚未生成'}</span></div>${renderWorkflow()}${contract && contract.status === 'pending_sign' ? `<div class="record-actions" style="margin-top: 16px;"><a class="button button-secondary" href="/staff/contracts/${encodeURIComponent(contract.id)}/progress">打开签署链接管理</a></div>` : !contract ? '<p class="section-note" style="margin-top: 16px;">订单通过审核后，系统会自动生成客户签署合同。</p>' : ''}${order.status === 'approved' && contract?.status === 'pending_sign' ? '<p class="alert" style="margin-top: 16px;">当前订单还没有开始租赁：客户需先完成合同签署并完成付款，随后才能记录交付并开始租赁。</p>' : ''}</section>
     ${statusHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>租赁状态历史</h3><span class="section-note">最近 ${statusHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>状态变化</th><th>触发方式</th><th>原因</th></tr></thead><tbody>${statusHistory.results.map((item: any) => `<tr><td class="mono">${escapeHtml(formatMelbourneDateTime(item.created_at))}</td><td>${escapeHtml(item.old_status || '—')} → <strong>${escapeHtml(item.new_status)}</strong></td><td>${escapeHtml(item.trigger_type)}${item.triggered_by ? ` · ${escapeHtml(item.triggered_by)}` : ''}</td><td>${escapeHtml(item.reason || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
     ${changeHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>订单修改历史</h3><span class="section-note">最近 ${changeHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>类型</th><th>变更内容</th><th>原因</th><th>操作人</th></tr></thead><tbody>${changeHistory.results.map((item: any) => {
       let before: any = {}; let after: any = {};
