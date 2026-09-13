@@ -226,7 +226,7 @@ export async function createOrderSetupIntent(c: Context, user: any, orderId: str
     if (existing && existing.customer && ['requires_payment_method', 'requires_confirmation', 'requires_action'].includes(String(existing.status)) && existing.client_secret) {
       const existingCustomerId = stripeCustomerId(existing.customer)
       await syncStripeCustomerProfile(c, existingCustomerId, user)
-      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(existingCustomerId, user.id).run()
+      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(existingCustomerId, user.id).run()
       return { clientSecret: existing.client_secret, publishableKey: await getStripePublishableKey(c) }
     }
   }
@@ -271,7 +271,7 @@ async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, payme
     const existingCustomer = stripeCustomerId(paymentMethod.customer)
     if (existingCustomer) {
       await syncStripeCustomerProfile(c, existingCustomer, user)
-      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(existingCustomer, userId).run()
+      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(existingCustomer, userId).run()
       return existingCustomer
     }
   }
@@ -297,7 +297,7 @@ async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, payme
       const existingId = String(existing.id)
       await syncStripeCustomerProfile(c, existingId, user)
       if (paymentMethodId) await stripeRequest(c, `payment_methods/${paymentMethodId}/attach`, new URLSearchParams({ customer: existingId }), `rent-payment-method-attach-${paymentMethodId}`)
-      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(existingId, userId).run()
+      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(existingId, userId).run()
       return existingId
     }
   }
@@ -306,7 +306,7 @@ async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, payme
   const customerId = String(customer.id || '')
   if (!/^cus_[A-Za-z0-9_]+$/.test(customerId)) throw new Error('Stripe 客户资料创建失败，请重试')
   if (paymentMethodId) await stripeRequest(c, `payment_methods/${paymentMethodId}/attach`, new URLSearchParams({ customer: customerId }), `rent-payment-method-attach-${paymentMethodId}`)
-  await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(customerId, userId).run()
+  await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(customerId, userId).run()
   return customerId
 }
 
