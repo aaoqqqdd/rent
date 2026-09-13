@@ -41,44 +41,47 @@ export async function renderAdminTemplatePreview(user: any, c: any, previewKind:
   const contractPreview = renderContractVariables(template.content, sampleContract, sampleOrder, sampleDevice, sampleCustomer, variables, true)
   const softwarePreview = settings.softwareTerms
   const legalPreviews = [
-    ['用户协议', settings.userTerms],
-    ['服务条款', settings.serviceTerms],
-    ['隐私政策', settings.privacyPolicy],
-    ['Cookie 政策', settings.cookiePolicy],
-    ['退款政策', settings.copyrightNotice],
-    ['澳大利亚消费者法下的权利', settings.consumerRights],
-    ['投诉与争议解决政策', settings.complaintsPolicy],
-    ['可接受使用政策', settings.acceptableUsePolicy],
-  ].map(([title, content]) => `<section class="panel"><div class="section-title"><h3>${title}</h3><span class="badge badge-neutral">网站</span></div><div class="template-preview-paper">${sanitizeRichHtml(content)}</div></section>`).join('')
+    ['用户协议', settings.userTerms, settings.userTermsEn],
+    ['服务条款', settings.serviceTerms, settings.serviceTermsEn],
+    ['隐私政策', settings.privacyPolicy, settings.privacyPolicyEn],
+    ['Cookie 政策', settings.cookiePolicy, settings.cookiePolicyEn],
+    ['退款政策', settings.copyrightNotice, settings.copyrightNoticeEn],
+    ['澳大利亚消费者法下的权利', settings.consumerRights, settings.consumerRightsEn],
+    ['投诉与争议解决政策', settings.complaintsPolicy, settings.complaintsPolicyEn],
+    ['可接受使用政策', settings.acceptableUsePolicy, settings.acceptableUsePolicyEn],
+  ].map(([title, content, contentEn]) => `<section class="panel"><div class="section-title"><h3>${title}</h3><span class="badge badge-neutral">网站</span></div><div class="template-preview-paper">${sanitizeRichHtml(content)}</div></section><section class="panel"><div class="section-title"><h3>${title}（English, machine translation）</h3><span class="badge badge-warning">占位翻译</span></div><div class="template-preview-paper">${contentEn ? sanitizeRichHtml(contentEn) : '<p><em>An English version has not been provided yet.</em></p>'}</div></section>`).join('')
   const previewTitle = previewKind === 'contract' ? '合同预览' : '协议预览'
   const previewBody = previewKind === 'contract'
     ? `<section class="panel"><div class="section-title"><h3>正式合同</h3><span class="badge badge-success">签署后</span></div><div class="template-preview-paper">${sanitizeRichHtml(contractPreview)}</div></section>`
-    : `<section class="panel"><div class="section-title"><h3>租赁协议</h3><span class="badge badge-neutral">签署前</span></div><div class="template-preview-paper">${sanitizeRichHtml(rentalPreview)}</div></section><section class="panel"><div class="section-title"><h3>软件使用协议</h3><span class="badge badge-neutral">设备端</span></div><div class="template-preview-paper">${sanitizeRichHtml(softwarePreview)}</div></section>${legalPreviews}`
+    : `<section class="panel"><div class="section-title"><h3>租赁协议</h3><span class="badge badge-neutral">签署前</span></div><div class="template-preview-paper">${sanitizeRichHtml(rentalPreview)}</div></section><section class="panel"><div class="section-title"><h3>租赁协议（English, machine translation）</h3><span class="badge badge-warning">占位翻译</span></div><div class="template-preview-paper">${settings.rentalTermsEn ? sanitizeRichHtml(renderContractVariables(settings.rentalTermsEn, sampleContract, sampleOrder, sampleDevice, sampleCustomer, variables)) : '<p><em>An English version has not been provided yet.</em></p>'}</div></section><section class="panel"><div class="section-title"><h3>软件使用协议</h3><span class="badge badge-neutral">设备端</span></div><div class="template-preview-paper">${sanitizeRichHtml(softwarePreview)}</div></section><section class="panel"><div class="section-title"><h3>软件使用协议（English, machine translation）</h3><span class="badge badge-warning">占位翻译</span></div><div class="template-preview-paper">${settings.softwareTermsEn ? sanitizeRichHtml(settings.softwareTermsEn) : '<p><em>An English version has not been provided yet.</em></p>'}</div></section>${legalPreviews}`
   const body = `<div class="page-header"><div><p class="section-code">DOCUMENT PREVIEW</p><h2>${previewTitle}</h2><p>${previewKind === 'contract' ? '预览正式合同签署完成后生成的实际内容。' : '预览网站协议、租赁协议和软件协议的实际内容。'}</p></div><a class="button button-secondary" href="/admin/templates">返回模板管理</a></div><div class="template-preview-grid">${previewBody}</div>`
   return buildLayout(`${previewTitle} - 电脑租赁管理系统`, body, user)
 }
 
-export function renderAdminAgreementEditor(user: any, kind: AgreementKind, databaseContent?: string) {
+export function renderAdminAgreementEditor(user: any, kind: AgreementKind, databaseContent?: string, databaseContentEn?: string) {
   const settings = getSystemSettings()
   const isRental = kind === 'rental'
   const documentMetaMap = {
-    user: ['编辑用户协议', '用于注册和正式账户创建流程。', settings.userTerms],
-    rental: ['编辑租赁协议', '用于合同签署流程第一步。变量会在展示时替换为对应合同数据。', settings.rentalTerms],
-    service: ['编辑服务条款', '显示在全站右下角的服务条款页面。', settings.serviceTerms],
-    privacy: ['编辑隐私政策', '显示在全站右下角的隐私政策页面。', settings.privacyPolicy],
-    software: ['编辑软件使用协议', '显示在管理软件的软件协议页面。', settings.softwareTerms],
-    copyright: ['编辑退款政策', '显示在全站右下角的退款政策页面。', settings.copyrightNotice],
-    cookie: ['编辑 Cookie 政策', '显示在全站右下角的 /cookies 页面。', settings.cookiePolicy],
-    complaints: ['编辑投诉与争议解决政策', '显示在全站右下角的 /complaints 页面。', settings.complaintsPolicy],
-    aup: ['编辑可接受使用政策', '显示在全站右下角的 /acceptable-use 页面。', settings.acceptableUsePolicy],
-    consumer: ['编辑澳大利亚消费者法下的权利', '显示在全站右下角的 /consumer-rights 页面。', settings.consumerRights],
+    user: ['编辑用户协议', '用于注册和正式账户创建流程。', settings.userTerms, settings.userTermsEn],
+    rental: ['编辑租赁协议', '用于合同签署流程第一步。变量会在展示时替换为对应合同数据。', settings.rentalTerms, settings.rentalTermsEn],
+    service: ['编辑服务条款', '显示在全站右下角的服务条款页面。', settings.serviceTerms, settings.serviceTermsEn],
+    privacy: ['编辑隐私政策', '显示在全站右下角的隐私政策页面。', settings.privacyPolicy, settings.privacyPolicyEn],
+    software: ['编辑软件使用协议', '显示在管理软件的软件协议页面。', settings.softwareTerms, settings.softwareTermsEn],
+    copyright: ['编辑退款政策', '显示在全站右下角的退款政策页面。', settings.copyrightNotice, settings.copyrightNoticeEn],
+    cookie: ['编辑 Cookie 政策', '显示在全站右下角的 /cookies 页面。', settings.cookiePolicy, settings.cookiePolicyEn],
+    complaints: ['编辑投诉与争议解决政策', '显示在全站右下角的 /complaints 页面。', settings.complaintsPolicy, settings.complaintsPolicyEn],
+    aup: ['编辑可接受使用政策', '显示在全站右下角的 /acceptable-use 页面。', settings.acceptableUsePolicy, settings.acceptableUsePolicyEn],
+    consumer: ['编辑澳大利亚消费者法下的权利', '显示在全站右下角的 /consumer-rights 页面。', settings.consumerRights, settings.consumerRightsEn],
   }
   const documentMeta = documentMetaMap[kind]
   if (databaseContent !== undefined) documentMeta[2] = databaseContent
-  const [title, description, content] = documentMeta
+  if (databaseContentEn !== undefined) documentMeta[3] = databaseContentEn
+  const [title, description, content, contentEn] = documentMeta
   const metadata = getSystemSettings().legalMetadata?.[kind] || { version: '1.0', lastUpdatedDate: '' }
   const initialContent = JSON.stringify(content).replace(/</g, '\\u003c')
   const textareaContent = String(content ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const initialContentEn = JSON.stringify(contentEn).replace(/</g, '\\u003c')
+  const textareaContentEn = String(contentEn ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const agreementVariables: Record<AgreementKind, string[]> = {
     user: ['user_terms_version', 'user_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
     service: ['service_terms_version', 'service_terms_last_updated_date', 'company_name', 'company_address', 'company_email', 'company_phone'],
@@ -107,8 +110,11 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind, datab
         ${variableIndex}
         <div class="form-group">
           <div class="grid grid-2"><div><label class="form-label" for="agreementVersion">协议版本</label><input class="form-control" id="agreementVersion" name="version" value="${metadata.version || '1.0'}" required></div><div><label class="form-label" for="agreementLastUpdatedDate">最后更新日期</label><input class="form-control" id="agreementLastUpdatedDate" name="lastUpdatedDate" type="date" value="${metadata.lastUpdatedDate || ''}"><small class="form-text">留空时保存当天日期。</small></div></div>
-          <label for="agreementContentMarkdown">协议内容（支持 HTML 编辑）</label>
+          <label for="agreementContentMarkdown">协议内容（中文，支持 HTML 编辑）</label>
           <textarea id="agreementContentMarkdown" name="content" class="html-editor" placeholder="请输入 HTML 内容">${textareaContent}</textarea>
+          <label for="agreementContentMarkdownEn">协议内容（英文，机器翻译占位，可编辑 / English content — machine-translated placeholder, edit or replace）</label>
+          <textarea id="agreementContentMarkdownEn" name="contentEn" class="html-editor" placeholder="Enter the English HTML content (may be left empty)">${textareaContentEn}</textarea>
+          <p class="form-text">英文内容仅供参考，留空时公开页面会提示“尚未提供英文版本”，并以中文原文为准。</p>
         </div>
         <div id="templateSaveStatus" class="template-save-status is-success" role="status" aria-live="polite">已保存</div>
         <div class="form-actions form-actions-right">
@@ -123,14 +129,20 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind, datab
         const status = document.getElementById('templateSaveStatus');
         const submitButton = form.querySelector('button[type="submit"]');
         const agreementContentMarkdown = document.getElementById('agreementContentMarkdown');
+        const agreementContentMarkdownEn = document.getElementById('agreementContentMarkdownEn');
         let dirty = false;
 
         const initialContent = ${initialContent};
         if (initialContent) {
           agreementContentMarkdown.value = initialContent;
         }
+        const initialContentEn = ${initialContentEn};
+        if (initialContentEn) {
+          agreementContentMarkdownEn.value = initialContentEn;
+        }
 
         function getAgreementContent() { return agreementContentMarkdown.value; }
+        function getAgreementContentEn() { return agreementContentMarkdownEn.value; }
         const markDirty = () => { dirty = true; status.className = 'template-save-status is-draft'; status.textContent = '草稿'; };
         form.querySelectorAll('input, textarea, select').forEach((field) => field.addEventListener('input', markDirty));
         window.hasUnsavedChanges = () => dirty;
@@ -162,7 +174,7 @@ export function renderAdminAgreementEditor(user: any, kind: AgreementKind, datab
             const response = await fetch('/admin/templates/' + form.dataset.kind, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ content: getAgreementContent(), version: document.getElementById('agreementVersion').value, lastUpdatedDate: document.getElementById('agreementLastUpdatedDate').value })
+              body: JSON.stringify({ content: getAgreementContent(), contentEn: getAgreementContentEn(), version: document.getElementById('agreementVersion').value, lastUpdatedDate: document.getElementById('agreementLastUpdatedDate').value })
             });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || '保存失败');
