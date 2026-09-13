@@ -179,7 +179,11 @@ export async function resolveEmailCredentials(c: Context): Promise<{ provider: E
   let stored: StoredChannelConfig = {}
   try { stored = await readStored(c) } catch { /* fall through to env */ }
 
-  const candidates: EmailProvider[] = stored.emailProvider ? [stored.emailProvider] : EMAIL_PROVIDERS
+  // A provider selected in the admin UI is authoritative.  Do not silently
+  // send through an unrelated Resend environment variable when, for example,
+  // Brevo was selected but its key is missing or cannot be decrypted.
+  const selectedProvider = stored.emailProvider
+  const candidates: EmailProvider[] = selectedProvider ? [selectedProvider] : EMAIL_PROVIDERS
   for (const provider of candidates) {
     if (provider === 'resend') {
       const apiKey = await safeDecrypt(c, stored.resendApiKey)
@@ -194,6 +198,7 @@ export async function resolveEmailCredentials(c: Context): Promise<{ provider: E
   }
 
   // 未保存任何后台凭据：回落到 env（仅 Resend 支持这种部署方式）。
+  if (selectedProvider) return { provider: selectedProvider, apiKey: '', from: await resolveFrom(c, '') }
   const envApiKey = String((c.env as any).RESEND_API_KEY || '').trim()
   if (envApiKey) return { provider: 'resend', apiKey: envApiKey, from: await resolveFrom(c, String((c.env as any).EMAIL_FROM || '').trim()) }
 
