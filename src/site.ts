@@ -57,6 +57,7 @@ export function getCustomerSigningUser(user: User | null | undefined): User | nu
   return user?.role === 'CUSTOMER' ? user : null
 }
 
+// 风险分每次操作前从历史数据和当前有效标记重新计算，不落库，避免标记解除后仍保留旧分数。
 // ---------------------------------------------------------------------------
 // 纯业务逻辑 / 状态机已拆分到 src/domain/*（均有独立单元测试）。同样 import
 // 供本文件使用并统一 re-export。
@@ -83,9 +84,10 @@ import {
 import type { PaymentDisputeState } from './domain/paymentDispute'
 import {
   RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
-  isRiskFlagCurrentlyActive, findBlockingRiskFlag,
+  isRiskFlagCurrentlyActive, findBlockingRiskFlag, calculateCustomerRiskAssessment, calculateReferralRiskAssessment,
+  RISK_SCORE_BLOCK_THRESHOLD,
 } from './domain/riskFlags'
-import type { RiskFlagType, RiskFlagLike } from './domain/riskFlags'
+import type { RiskFlagType, RiskFlagLike, CustomerRiskFacts, CustomerRiskAssessment, ReferralRiskFacts, ReferralRiskAssessment } from './domain/riskFlags'
 import { deviceUtilisationRate, paymentMethodBreakdown } from './domain/operationsReport'
 import type { PaymentMethodRow, PaymentMethodShare } from './domain/operationsReport'
 import {
@@ -111,7 +113,8 @@ export {
   PAYMENT_DISPUTE_STATES, PAYMENT_DISPUTE_OPEN_STATES, PAYMENT_DISPUTE_TERMINAL_STATES,
   canTransitionPaymentDispute, isPaymentDisputeOpen, paymentsBlockedByDispute, mapStripeDisputeStatus,
   RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
-  isRiskFlagCurrentlyActive, findBlockingRiskFlag,
+  isRiskFlagCurrentlyActive, findBlockingRiskFlag, calculateCustomerRiskAssessment, calculateReferralRiskAssessment,
+  RISK_SCORE_BLOCK_THRESHOLD,
   deviceUtilisationRate, paymentMethodBreakdown,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
   rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory, staleMonitoringAlertIds,
@@ -120,7 +123,7 @@ export {
 }
 export type {
   OrderChangeType, OrderChangePlan, DeviceCommandState, PaymentDisputeState,
-  RiskFlagType, RiskFlagLike, PaymentMethodRow, PaymentMethodShare,
+  RiskFlagType, RiskFlagLike, CustomerRiskFacts, CustomerRiskAssessment, ReferralRiskFacts, ReferralRiskAssessment, PaymentMethodRow, PaymentMethodShare,
   RetentionAction, RetentionPolicyLike, HealthLevel, MonitorMetric, MonitorMetricKind, MetricHistoryPoint, MetricHistorySummary,
   RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
 }
@@ -198,6 +201,7 @@ import {
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
 } from './services/referral'
+import { getCustomerRiskAssessment, getReferralRiskAssessment } from './services/risk'
 import {
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
 } from './services/rentalProvisioning'
@@ -214,6 +218,7 @@ export {
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
+  getCustomerRiskAssessment, getReferralRiskAssessment,
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
   issueInvoice, issueCreditNote,
   planWithdrawalConsumption, createWithdrawalRequest,

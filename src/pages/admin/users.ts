@@ -3,12 +3,17 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAccessLevel, getAccountTypeDisplay, splitPersonName, formatMelbourneDate } from '../../site';
+import { buildLayout, getAccessLevel, getAccountTypeDisplay, splitPersonName, formatMelbourneDate, getCustomerRiskAssessment } from '../../site';
 
 export async function renderAdminUsers(user: any, c: any) {
   const { getUsersAsync } = await import('../../site')
   const allUsers = await getUsersAsync(c);
   const usersById = new Map(allUsers.map(account => [account.id, account]))
+  const customerRisks = new Map<string, any>(await Promise.all(
+    allUsers
+      .filter(account => account.role === 'CUSTOMER')
+      .map(async account => [account.id, await getCustomerRiskAssessment(c, account.id)] as [string, any]),
+  ))
 
   const roleMap: Record<string, { text: string; class: string }> = {
     'ADMIN': { text: '管理员', class: 'badge-danger' },
@@ -51,6 +56,7 @@ export async function renderAdminUsers(user: any, c: any) {
             <th>角色</th>
             <th>账户类型</th>
             <th>状态</th>
+            <th>风险</th>
             <th>余额</th>
             <th>注册时间</th>
             <th>操作</th>
@@ -64,6 +70,12 @@ export async function renderAdminUsers(user: any, c: any) {
             const status = statusMap[managementStatus] || { text: managementStatus, class: 'badge-info' };
             const accountType = getAccountTypeDisplay(u)
             const personName = splitPersonName(u.name)
+            const risk = u.role === 'CUSTOMER' ? customerRisks.get(u.id) : null
+            const riskBadge = risk?.level === 'MEDIUM'
+              ? `<span class="badge badge-warning">中风险 · ${risk.score}</span>`
+              : risk?.level === 'HIGH' || risk?.level === 'CRITICAL'
+                ? `<span class="badge badge-danger">高风险 · ${risk.score}</span>`
+                : '-'
             return `
               <tr>
                 <td class="mono user-id-cell">${u.id}</td>
@@ -75,6 +87,7 @@ export async function renderAdminUsers(user: any, c: any) {
                 <td><span class="badge ${role.class}">${role.text}</span></td>
                 <td><span class="badge ${accountType.class}">${accountType.text}</span></td>
                 <td><span class="badge ${status.class}">${status.text}</span></td>
+                <td>${riskBadge}</td>
                 <td>AUD$${parseFloat(String(u.balance || 0)).toFixed(2)}</td>
                 <td>${u.createdAt
                   ? formatMelbourneDate(u.createdAt as string)
