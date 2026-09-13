@@ -90,6 +90,7 @@ async function upsertPaymentIntent(c: Context, opts: {
   confirmNow?: boolean
   setupFutureUsage?: 'off_session'
   captureMethod?: 'manual'
+  description?: string
 }): Promise<any> {
   const reusableStatuses = ['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing']
   if (opts.existingIntentId) {
@@ -100,6 +101,7 @@ async function upsertPaymentIntent(c: Context, opts: {
       if (opts.customerId) params.set('customer', opts.customerId)
       if (opts.setupFutureUsage) params.set('setup_future_usage', opts.setupFutureUsage)
       if (opts.captureMethod) params.set('capture_method', opts.captureMethod)
+      if (opts.description) params.set('description', opts.description)
       if (opts.confirmNow) { params.set('confirm', 'true'); params.set('off_session', 'true') }
       Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
       if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
@@ -119,6 +121,7 @@ async function upsertPaymentIntent(c: Context, opts: {
   if (opts.customerId) params.set('customer', opts.customerId)
   if (opts.setupFutureUsage) params.set('setup_future_usage', opts.setupFutureUsage)
   if (opts.captureMethod) params.set('capture_method', opts.captureMethod)
+  if (opts.description) params.set('description', opts.description)
   if (opts.confirmNow) { params.set('confirm', 'true'); params.set('off_session', 'true') }
   if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
   Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
@@ -148,7 +151,7 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
   const authorizationWindowDays = depositAuthorizationWindowDays(cardBrand)
   const rentalPeriod = Number(order.rentalPeriod ?? order.rental_period ?? 0)
   const requiresExtendedWindow = rentalPeriod > authorizationWindowDays
-  const params = new URLSearchParams({
+  const createParams = new URLSearchParams({
     amount: String(cents(depositAmount)),
     currency: 'aud',
     ...(customerId ? { customer: customerId } : {}),
@@ -157,23 +160,33 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     // 不显式限定为 card 会导致 Stripe 报 "not eligible for the requested card features"。
     'payment_method_types[0]': 'card',
     capture_method: 'manual',
-    confirm: 'true',
-    off_session: 'true',
-    'expand[]': 'latest_charge',
+    description: `订单 ${order.id} 押金预授权`,
     'metadata[order_id]': String(order.id),
     'metadata[type]': 'deposit_authorization',
     'metadata[deposit_amount]': String(cents(depositAmount)),
     'metadata[card_brand]': cardBrand || 'unknown',
     'metadata[authorization_window_days]': String(authorizationWindowDays),
   })
-  if (authorizationWindowDays === 30 && requiresExtendedWindow) params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
+  // 先创建（不 confirm），再单独 confirm——这样"先尝试延长授权、失败后退回标准授权"这两次
+  // 尝试落在同一个 PaymentIntent 上，不会在 Stripe 后台留下一个作废的重复对象。
+  const created = await stripeRequest(c, 'payment_intents', createParams, `deposit-auth-${order.id}`)
+  const confirmParams = () => new URLSearchParams({ off_session: 'true', 'expand[]': 'latest_charge' })
   let intent: any
   try {
-    intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-${order.id}`)
+    const params = confirmParams()
+    if (authorizationWindowDays === 30 && requiresExtendedWindow) params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
+    intent = await stripeRequest(c, `payment_intents/${created.id}/confirm`, params, `deposit-auth-confirm-${order.id}`)
   } catch (error) {
-    if (!params.has('payment_method_options[card][request_extended_authorization]')) throw error
-    params.delete('payment_method_options[card][request_extended_authorization]')
-    intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-standard-${order.id}`)
+    if (!(authorizationWindowDays === 30 && requiresExtendedWindow)) {
+      await stripeRequest(c, `payment_intents/${created.id}/cancel`, new URLSearchParams()).catch(() => {})
+      throw error
+    }
+    try {
+      intent = await stripeRequest(c, `payment_intents/${created.id}/confirm`, confirmParams(), `deposit-auth-confirm-standard-${order.id}`)
+    } catch (retryError) {
+      await stripeRequest(c, `payment_intents/${created.id}/cancel`, new URLSearchParams()).catch(() => {})
+      throw retryError
+    }
   }
   if (!['requires_capture', 'succeeded'].includes(String(intent.status))) throw new Error('押金预授权未完成，请重新验证信用卡。')
   if (requiresExtendedWindow) {
@@ -369,6 +382,7 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     confirmNow,
     setupFutureUsage: depositMode === 'PREAUTH' ? 'off_session' : undefined,
     captureMethod: useFullAuthorization ? 'manual' : undefined,
+    description: useFullAuthorization ? `订单 ${order.id} 租金+押金预授权` : `订单 ${order.id} 租金及服务费`,
   })
   const alreadyPaid = intent.status === 'succeeded'
   if (!alreadyPaid && !intent.client_secret) throw new Error('Stripe 未返回有效支付凭据')
