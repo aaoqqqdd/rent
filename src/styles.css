@@ -1690,6 +1690,39 @@ button:disabled {
   line-height: 1.5;
 }
 
+/* 风险分是当前客户的持续状态，固定在导航下方，避免滚动风险记录时丢失上下文。 */
+.risk-score-notice {
+  position: fixed;
+  top: 68px;
+  left: clamp(12px, 3vw, 48px);
+  right: clamp(12px, 3vw, 48px);
+  width: auto;
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, .9fr) minmax(220px, 1fr) minmax(280px, 1.4fr);
+  gap: 12px 28px;
+}
+
+.risk-score-notice > * { margin: 0; }
+.risk-score-notice > small { text-align: right; }
+
+body:has(.risk-score-notice) .content { padding-top: 150px; }
+
+@media (max-width: 760px) {
+  .risk-score-notice {
+    top: 62px;
+    left: 12px;
+    right: 12px;
+    display: flex;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .risk-score-notice > small { text-align: left; }
+  body:has(.risk-score-notice) .content { padding-top: 190px; }
+}
+
 .page-notification--success {
   background: #ecfdf5;
   border-color: #a7f3d0;
