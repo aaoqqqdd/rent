@@ -71,9 +71,9 @@ WHERE type='table'
 * Clauses already pointing at live tables (`orders`, `payments`, `devices`)
   are kept unchanged.
 
-## What migration 0129 does, and the deeper bug found while applying it
+## What migration 0130 does, and the deeper bug found while applying it
 
-`0129_drop_dangling_foreign_keys.sql` (numbered `0103`, then `0121`, in
+`0130_drop_dangling_foreign_keys.sql` (numbered `0103`, then `0121`, in
 earlier drafts) rebuilds the 9 originally-planned tables — `commission_records`
 dropped out from under it, see above — plus, after two failed production
 apply attempts, several more tables that turned out to need the same
@@ -101,7 +101,7 @@ constraint neither migration accounted for:
   `sign_sessions.contract_token` (`CASCADE`). Both of these were live
   production data, not empty tables — the first production apply attempt
   failed on `orders` (referenced by `payments`, which had live rows), and a
-  second attempt would have failed identically on `payments` inside `0129`
+  second attempt would have failed identically on `payments` inside `0130`
   once `orders` was fixed, or silently dropped `sign_sessions` rows via
   `contracts`'s cascade.
 
@@ -116,7 +116,7 @@ sign_sessions                    (child of contracts)
   -> contracts                     (also drops its own orders reference)
 invoices, order_time_change_history, inspection_disputes,
 order_fulfillment_records, damage_cases   (orders' remaining plain/CASCADE children)
-  -> [0130 rebuilds orders itself, now safe]
+  -> [0131 rebuilds orders itself, now safe]
 ```
 
 D1 doesn't enforce these FKs in production anyway (see "Why it matters"
@@ -131,7 +131,7 @@ manually; that handler now deletes them (and `sign_sessions`, for
 `contracts`'s cascade) explicitly too, so no orphaned rows accumulate now
 that the DB won't do it automatically.
 
-`0129` rebuilds each affected table with the SQLite 12-step pattern, wrapped
+`0130` rebuilds each affected table with the SQLite 12-step pattern, wrapped
 in `PRAGMA foreign_keys=OFF/ON` (same family as `0044`/`0060`/`0074`):
 
 ```
@@ -158,15 +158,15 @@ schema/syntax only), and a seeded populated database mirroring production's
 exact FK shape (one row in each of `orders`/`payments`/`contracts`/
 `payment_proofs`/`payment_refunds`/`sign_sessions`/`invoices`/
 `order_time_change_history`/`inspection_disputes`/`order_fulfillment_records`/
-`damage_cases`) run through `0129`+`0130`, confirming every row survives and
+`damage_cases`) run through `0130`+`0131`, confirming every row survives and
 `PRAGMA foreign_key_check` comes back empty.
 
 Also fixed in passing: the original `0121` draft's `payments__fk_rebuild`
 was missing `idx_payments_stripe_payment_intent` (added later by
 `0116_stripe_payment_intents.sql`, after the draft was written) — it would
-have silently dropped that unique index. `0129` recreates it.
+have silently dropped that unique index. `0130` recreates it.
 
-## `orders`: rebuilt by `0130_expand_order_status_check.sql`, after `0129`
+## `orders`: rebuilt by `0131_expand_order_status_check.sql`, after `0130`
 
 `orders` is the hub of the schema:
 
@@ -181,24 +181,24 @@ have silently dropped that unique index. `0129` recreates it.
   `idx_orders_payment_status`, `idx_orders_rental_status`) and the
   `update_orders_updated_at` trigger.
 
-`0130` (originally `0120_expand_order_status_check.sql`, renumbered to run
-after `0129`) rebuilds it with the same 12-step pattern (its primary purpose
+`0131` (originally `0120_expand_order_status_check.sql`, renumbered to run
+after `0130`) rebuilds it with the same 12-step pattern (its primary purpose
 is expanding the `status` CHECK constraint; the FK cleanup rides along since
 it already has to touch every column). Unlike the blanket "drop the clause"
-policy above, `0130` **re-points** `userId` → `users(id)` and `deviceId` →
+policy above, `0131` **re-points** `userId` → `users(id)` and `deviceId` →
 `devices(id)` (keeping `referrerId` → `users(id) ON DELETE SET NULL`)
 instead of dropping them outright. That's a deliberate deviation: unlike
 `users_old`/`devices_before_retired_status`, the live `users`/`devices`
 tables are exactly what `orders.userId`/`orders.deviceId` have always
 logically pointed at in application code (every join already assumes this),
 so re-pointing there is strictly more correct than leaving no constraint at
-all, and D1 doesn't enforce FKs in production regardless. By the time `0130`
-runs, `0129` has already stripped every child table's `orders`-referencing
+all, and D1 doesn't enforce FKs in production regardless. By the time `0131`
+runs, `0130` has already stripped every child table's `orders`-referencing
 clause, so this `DROP TABLE orders` is safe.
 
-**`0130` must run after `0129`, not before or independently** — this is the
+**`0131` must run after `0130`, not before or independently** — this is the
 opposite of what the docs previously said, and was the actual root cause of
-the original production incident. Renumbering `0130` after `0129` (both
+the original production incident. Renumbering `0131` after `0130` (both
 still unapplied at the time) made this ordering explicit in the filenames
 rather than relying on it being a lucky lexicographic accident.
 
@@ -210,8 +210,8 @@ independent feature branches each claiming the next available number before
 merging into `main`. (The `0120` pair was the one directly involved in this
 incident: `0120_richen_email_templates.sql`, unrelated and already applied,
 and what was `0120_expand_order_status_check.sql` — now renumbered to
-`0130` since it's still unapplied and needed to move anyway. `0121` was
-similarly renumbered to `0129`.) This looks alarming but is **not** by
+`0131` since it's still unapplied and needed to move anyway. `0121` was
+similarly renumbered to `0130`.) This looks alarming but is **not** by
 itself a functional bug: `wrangler d1 migrations`
 tracks applied migrations by full filename in the `d1_migrations` table, not
 by numeric prefix, and applies files in lexicographic order of the full
@@ -221,3 +221,12 @@ renaming an already-applied file desyncs it from the tracking table and makes
 wrangler try to reapply it as new. They're left as historical debt,
 documented here rather than "fixed", because fixing them would be riskier
 than the problem they cause.
+
+This happened again while landing this exact fix: rebasing this branch onto
+`main` picked up an unrelated, already-merged
+`0129_update_agreement_template_wording.sql`, colliding with what this
+branch had numbered `0129_drop_dangling_foreign_keys.sql`. Since both of
+*this* branch's files were still unapplied, they were bumped to `0130`/`0131`
+rather than left colliding — the general rule above (only rename unapplied
+files) is what made that safe to do without any coordination with whoever
+merged the other branch.

@@ -54,7 +54,7 @@
 -- Concretely: `payments` is referenced by `payment_proofs.payment_id` and
 -- `payment_refunds.payment_id` (both plain); `contracts` is referenced by
 -- `sign_sessions.contract_token` (CASCADE); `orders` (rebuilt separately by
--- 0130_expand_order_status_check.sql, after this file) is referenced by
+-- 0131_expand_order_status_check.sql, after this file) is referenced by
 -- `contracts.orderId` (CASCADE), `payments.rental_id` (plain), and by
 -- `invoices`, `order_time_change_history` (CASCADE),
 -- `inspection_disputes` (CASCADE), `order_fulfillment_records` and
@@ -230,7 +230,7 @@ END;
 -- === payments : drop customer_id -> users_old AND rental_id -> orders ======
 -- (rental_id must go too: nothing may still reference `payments` above this
 -- point, but `payments` itself must stop referencing `orders` before
--- 0130_expand_order_status_check.sql drops and rebuilds `orders`.)
+-- 0131_expand_order_status_check.sql drops and rebuilds `orders`.)
 CREATE TABLE payments__fk_rebuild (
   id TEXT PRIMARY KEY NOT NULL,
   rental_id TEXT NOT NULL,
