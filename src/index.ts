@@ -118,7 +118,7 @@ import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
-import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials, dispatchChannelAlert } from './notifyChannels'
+import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
@@ -173,28 +173,22 @@ function rentalPeriodPassed(date: string, period: string, today: string): boolea
 async function sendLoggedEmail(c: any, input: { eventType: string, recipient: string, key: string, subject: string, text: string, html?: string, orderId?: string, templateId?: string }): Promise<{ ok: boolean }> {
   const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, order_id, template_id, idempotency_key, status, subject, text_body, html_body, last_attempt_at) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP)").bind(`email-${nanoid(12)}`, input.eventType, input.recipient, input.orderId || null, input.templateId || null, input.key, input.subject, input.text, input.html || null).run() as any
   if (!claimed.meta?.changes) return { ok: true }
-  const { apiKey, from } = await resolveResendCredentials(c)
-  if (!apiKey || !from) { await c.env.RENT.prepare("UPDATE email_events SET status = 'FAILED', retry_count = retry_count + 1, error_message = 'Email transport is not configured' WHERE idempotency_key = ?").bind(input.key).run(); return { ok: false } }
-  try {
-    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [input.recipient], subject: input.subject, text: input.text, html: input.html }) })
-    const result = await response.json().catch(() => ({})) as any
-    await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = CASE WHEN ? THEN retry_count ELSE retry_count + 1 END, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, response.ok ? 1 : 0, input.key).run()
-    return { ok: response.ok }
-  } catch (error: any) { await c.env.RENT.prepare("UPDATE email_events SET status = 'FAILED', retry_count = retry_count + 1, error_message = ? WHERE idempotency_key = ?").bind(String(error?.message || error).slice(0, 500), input.key).run(); return { ok: false } }
+  const result = await sendTransactionalEmail(c, { to: input.recipient, subject: input.subject, text: input.text, html: input.html })
+  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = CASE WHEN ? THEN retry_count ELSE retry_count + 1 END, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error, result.ok ? 1 : 0, result.ok ? 1 : 0, input.key).run()
+  return { ok: result.ok }
 }
 
 async function sendPaymentReviewEmail(c: any, customer: any, subject: string, message: string, orderId: string): Promise<void> {
   const email = String(customer?.email || '').trim()
-  const { apiKey, from } = await resolveResendCredentials(c)
+  const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return
   try {
     const key = `payment-review:${orderId}:${email}:${subject}`
     const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, order_id, idempotency_key, status) VALUES (?, 'PAYMENT_REVIEW', ?, ?, ?, 'PENDING')").bind(`email-${nanoid(12)}`, email, orderId, key).run() as any
     if (!claimed.meta?.changes) return
     const html = renderEmailNotificationHtml(subject, `<p>${sanitizePlainText(message, 1000)}</p><p><a href="${new URL(`/customer/orders/${encodeURIComponent(orderId)}`, c.req.url).toString()}">查看订单详情</a></p>`, getSystemSettings().companyDetails.name)
-    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [email], subject, text: message, html }) })
-    const result = await response.json().catch(() => ({})) as any
-    await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, key).run()
+    const result = await sendTransactionalEmail(c, { to: email, subject, text: message, html })
+    await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error, result.ok ? 1 : 0, key).run()
   } catch (error: any) { console.error('Payment review email failed:', error) }
 }
 
@@ -796,12 +790,11 @@ async function sendEmailVerification(c: any, user: any) {
   await c.env.RENT.prepare('INSERT INTO email_verifications (id, user_id, email, token_hash, sent_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)').bind(nanoid(), user.id, user.email, tokenHash, now.toISOString(), expiresAt).run()
   const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, idempotency_key, status) VALUES (?, 'EMAIL_VERIFICATION', ?, ?, 'PENDING')").bind(`email-${nanoid(12)}`, user.email, eventKey).run() as any
   if (!claimed.meta?.changes) return
-  const { apiKey, from } = await resolveResendCredentials(c)
+  const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) { await c.env.RENT.prepare("UPDATE email_events SET status = 'SKIPPED', error_message = 'Email transport is not configured' WHERE idempotency_key = ?").bind(eventKey).run(); return }
   const verifyUrl = `${new URL(c.req.url).origin}/verify-email?token=${encodeURIComponent(token)}`
-  const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [user.email], subject: '验证您的邮箱 - PC Rental', text: `您好 ${user.name}，请在 24 小时内打开以下链接验证邮箱：\n${verifyUrl}` }) })
-  const result = await response.json().catch(() => ({})) as any
-  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, eventKey).run()
+  const result = await sendTransactionalEmail(c, { to: user.email, subject: '验证您的邮箱 - PC Rental', text: `您好 ${user.name}，请在 24 小时内打开以下链接验证邮箱：\n${verifyUrl}` })
+  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error, result.ok ? 1 : 0, eventKey).run()
 }
 
 // 公开法务页面。metaKey 与 legalMetadata 的键一致；varPrefix 生成 `${prefix}_version`
@@ -1015,10 +1008,10 @@ app.post('/forgot-password', async (c) => {
     const tokenHash = Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
     await c.env.RENT.prepare('UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL').bind(user.id).run()
     await c.env.RENT.prepare('INSERT INTO password_resets (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, datetime(\'now\', \'+30 minutes\'))').bind(`reset-${nanoid(12)}`, user.id, tokenHash).run()
-    const { apiKey, from } = await resolveResendCredentials(c)
+    const { apiKey, from } = await resolveEmailCredentials(c)
     if (apiKey && from) {
       const resetUrl = `${new URL(c.req.url).origin}/reset-password?token=${encodeURIComponent(token)}`
-      await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [email], subject: '重置您的登录密码 - PC Rental', text: `您好 ${user.name || ''}，请在 30 分钟内打开以下链接重置密码：\n${resetUrl}` }) }).catch(error => console.error('Password reset email failed:', error))
+      await sendTransactionalEmail(c, { to: email, subject: '重置您的登录密码 - PC Rental', text: `您好 ${user.name || ''}，请在 30 分钟内打开以下链接重置密码：\n${resetUrl}` }).catch(error => console.error('Password reset email failed:', error))
     }
   }
   return c.html(pages.renderForgotPassword('如果该邮箱已注册，重置链接将发送到您的邮箱。'))
@@ -1590,8 +1583,8 @@ app.post('/admin/email-templates/send', async (c) => {
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
   if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: fill(template.body) })
   if (['email', 'both'].includes(channel)) {
-    const { apiKey, from } = await resolveResendCredentials(c)
-    if (!apiKey || !from) return c.text('尚未配置邮件服务：请在后台「通知渠道」填写 Resend API Key 与发件邮箱，或设置 RESEND_API_KEY / EMAIL_FROM', 503)
+    const { apiKey, from } = await resolveEmailCredentials(c)
+    if (!apiKey || !from) return c.text('尚未配置邮件服务：请在后台「通知渠道」配置 Resend / Brevo / MailerSend 之一，或设置 RESEND_API_KEY / EMAIL_FROM', 503)
     const filledBody = fill(template.body)
     const html = renderEmailNotificationHtml(fill(template.subject), filledBody, vars.company_name, template.theme_color || '#71818d')
     const sent = await sendLoggedEmail(c, { eventType: 'TEMPLATE', recipient: mailTo, key: `template:${String(form.templateId || 'custom')}:${mailTo}:${JSON.stringify(vars)}`, subject: fill(template.subject), text: filledBody, html, templateId: String(form.templateId || '') || undefined })
@@ -3066,12 +3059,11 @@ app.post('/manager/email-events/:id/retry', async (c) => {
   if (!user || !['MANAGER', 'ADMIN'].includes(getAccessLevel(user))) return c.html(renderForbidden(), 403)
   const event = await c.env.RENT.prepare("SELECT * FROM email_events WHERE id = ? AND status <> 'SENT' AND retry_count < max_attempts").bind(c.req.param('id')).first() as any
   if (!event) return c.text('邮件事件不存在、已发送或已超过最大重试次数', 409)
-  const { apiKey, from } = await resolveResendCredentials(c)
+  const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) return c.text('邮件服务尚未配置', 503)
-  const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [event.recipient], subject: event.subject, text: event.text_body, html: event.html_body || undefined }) })
-  const result = await response.json().catch(() => ({})) as any
-  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, event.id).run()
-  await createAuditLog(c, { actor: user, action: 'EMAIL_EVENT_RETRIED', targetType: 'EMAIL_EVENT', targetId: event.id, after: { status: response.ok ? 'SENT' : 'FAILED' } })
+  const result = await sendTransactionalEmail(c, { to: event.recipient, subject: event.subject, text: event.text_body, html: event.html_body || undefined })
+  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?").bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error, result.ok ? 1 : 0, event.id).run()
+  await createAuditLog(c, { actor: user, action: 'EMAIL_EVENT_RETRIED', targetType: 'EMAIL_EVENT', targetId: event.id, after: { status: result.ok ? 'SENT' : 'FAILED' } })
   return c.redirect('/manager/email-events', 303)
 })
 
@@ -4423,11 +4415,18 @@ app.post('/admin/notify-channels/test', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.json({ error: '需要管理员权限' }, 403)
   try {
-    const results = await dispatchChannelAlert(c, {
-      title: 'PC Rental 测试推送',
-      message: `这是一条来自管理后台的测试通知，发送人：${user.name || user.email || user.id}。`,
-      url: new URL('/admin/settings', c.req.url).toString(),
-    })
+    const title = 'PC Rental 测试推送'
+    const message = `这是一条来自管理后台的测试通知，发送人：${user.name || user.email || user.id}。`
+    const results = await dispatchChannelAlert(c, { title, message, url: new URL('/admin/settings', c.req.url).toString() }, { force: false })
+    const email = String(user.email || '').trim()
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      const { apiKey, from } = await resolveEmailCredentials(c)
+      if (!apiKey || !from) results.push({ channel: 'email', ok: false, detail: '尚未配置邮件服务商' })
+      else {
+        const sent = await sendTransactionalEmail(c, { to: email, subject: title, text: message })
+        results.push({ channel: 'email', ok: sent.ok, detail: sent.ok ? `已发送至 ${email}` : (sent.error || '发送失败') })
+      }
+    }
     return c.json({ success: true, results })
   } catch (error: any) {
     return c.json({ error: String(error?.message || error).slice(0, 300) }, 500)

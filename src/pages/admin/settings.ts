@@ -8,9 +8,10 @@ import { buildLayout, getSystemSettings } from '../../site';
 export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = []) {
   const settings = getSystemSettings(); // 获取当前系统设置
   const nc = {
+    emailProvider: notify.emailProvider || 'resend',
     resend: notify.resend || { from: '', apiKeyMasked: '', configured: false, usingEnvFallback: false },
-    telegram: notify.telegram || { enabled: false, chatId: '', botTokenMasked: '', configured: false },
-    serverChan: notify.serverChan || { enabled: false, sendKeyMasked: '', configured: false },
+    brevo: notify.brevo || { from: '', apiKeyMasked: '', configured: false },
+    mailersend: notify.mailersend || { from: '', apiKeyMasked: '', configured: false },
     webhook: notify.webhook || { enabled: false, urlMasked: '', configured: false },
   };
 
@@ -47,7 +48,17 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">PUSH</span><div><h3>通知渠道</h3><p>Resend 用于发送所有系统邮件（验证、收据、合同、退款、协议更新等）。Telegram / Server酱 / Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。</p></div></div>
+          <div class="form-section-title"><span class="mono">PUSH</span><div><h3>通知渠道</h3><p>邮件服务商用于发送所有系统邮件（验证、收据、合同、退款、协议更新等），Resend / Brevo / MailerSend 三选一，都提供免费额度。通用 Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。</p></div></div>
+
+          <div class="form-group">
+            <label class="form-label" for="emailProvider">当前生效的邮件服务商</label>
+            <select class="form-control" id="emailProvider">
+              <option value="resend" ${nc.emailProvider === 'resend' ? 'selected' : ''}>Resend（每月 3000 封 / 每天 100 封免费）</option>
+              <option value="brevo" ${nc.emailProvider === 'brevo' ? 'selected' : ''}>Brevo（每天 300 封免费）</option>
+              <option value="mailersend" ${nc.emailProvider === 'mailersend' ? 'selected' : ''}>MailerSend（每月 3000 封免费）</option>
+            </select>
+            <small class="form-text">下面三组凭据可以都填写，实际发信只会使用这里选中的服务商。</small>
+          </div>
 
           <h4 class="form-subheading">Resend 邮件 API</h4>
           <p class="form-text">当前状态：${nc.resend.configured ? (nc.resend.usingEnvFallback ? '已配置（使用环境变量 RESEND_API_KEY）' : '已配置') : '未配置'}</p>
@@ -57,20 +68,21 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           </div>
           <div class="checkbox-group"><input type="checkbox" id="resendClear"><label for="resendClear">清除已保存的 Resend API Key</label></div>
 
-          <h4 class="form-subheading">Telegram 推送</h4>
-          <div class="checkbox-group"><input type="checkbox" id="telegramEnabled" ${nc.telegram.enabled ? 'checked' : ''}><label for="telegramEnabled">启用 Telegram 推送</label></div>
-          <p class="form-text">当前状态：${nc.telegram.configured ? '已配置' : '未配置'}。用 @BotFather 创建 Bot，Chat ID 可向 @userinfobot 或群组获取。</p>
+          <h4 class="form-subheading">Brevo 邮件 API</h4>
+          <p class="form-text">当前状态：${nc.brevo.configured ? '已配置' : '未配置'}。在 Brevo 后台「SMTP & API」页面创建 API Key。</p>
           <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="telegramBotToken">Bot Token</label><input class="form-control" type="password" id="telegramBotToken" placeholder="${nc.telegram.botTokenMasked || '123456:ABC-DEF...'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="telegramChatId">Chat ID</label><input class="form-control" type="text" id="telegramChatId" value="${nc.telegram.chatId || ''}" placeholder="-1001234567890"></div>
+            <div class="form-group"><label class="form-label" for="brevoApiKey">Brevo API Key</label><input class="form-control" type="password" id="brevoApiKey" placeholder="${nc.brevo.apiKeyMasked || 'xkeysib-...'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="brevoFrom">发件邮箱</label><input class="form-control" type="text" id="brevoFrom" value="${nc.brevo.from || ''}" placeholder="PC Rental &lt;noreply@example.com&gt;"></div>
           </div>
-          <div class="checkbox-group"><input type="checkbox" id="telegramClear"><label for="telegramClear">清除 Telegram 配置</label></div>
+          <div class="checkbox-group"><input type="checkbox" id="brevoClear"><label for="brevoClear">清除已保存的 Brevo API Key</label></div>
 
-          <h4 class="form-subheading">Server酱 / PushPlus</h4>
-          <div class="checkbox-group"><input type="checkbox" id="serverChanEnabled" ${nc.serverChan.enabled ? 'checked' : ''}><label for="serverChanEnabled">启用 Server酱 / PushPlus</label></div>
-          <p class="form-text">当前状态：${nc.serverChan.configured ? '已配置' : '未配置'}。填 Server酱 SendKey（SCT 开头）或 PushPlus token（32 位）。</p>
-          <div class="form-group"><label class="form-label" for="serverChanSendKey">SendKey / token</label><input class="form-control" type="password" id="serverChanSendKey" placeholder="${nc.serverChan.sendKeyMasked || 'SCTxxxxx 或 pushplus token'}" autocomplete="new-password"></div>
-          <div class="checkbox-group"><input type="checkbox" id="serverChanClear"><label for="serverChanClear">清除 Server酱 / PushPlus 配置</label></div>
+          <h4 class="form-subheading">MailerSend 邮件 API</h4>
+          <p class="form-text">当前状态：${nc.mailersend.configured ? '已配置' : '未配置'}。发件邮箱需先在 MailerSend 完成域名验证。</p>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="mailersendApiKey">MailerSend API Key</label><input class="form-control" type="password" id="mailersendApiKey" placeholder="${nc.mailersend.apiKeyMasked || 'mlsn....'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="mailersendFrom">发件邮箱</label><input class="form-control" type="text" id="mailersendFrom" value="${nc.mailersend.from || ''}" placeholder="PC Rental &lt;noreply@example.com&gt;"></div>
+          </div>
+          <div class="checkbox-group"><input type="checkbox" id="mailersendClear"><label for="mailersendClear">清除已保存的 MailerSend API Key</label></div>
 
           <h4 class="form-subheading">通用 Webhook</h4>
           <div class="checkbox-group"><input type="checkbox" id="webhookEnabled" ${nc.webhook.enabled ? 'checked' : ''}><label for="webhookEnabled">启用通用 Webhook</label></div>
@@ -82,7 +94,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <button type="button" class="button button-secondary" id="notifyChannelsTest">发送测试推送</button>
             <span class="form-text" id="notifyChannelsTestResult"></span>
           </div>
-          <p class="form-text">测试推送只发到 Telegram / Server酱 / Webhook，不发邮件。请先保存配置再测试。</p>
+          <p class="form-text">请先保存配置再测试。</p>
         </section>
 
         <section class="form-section">
@@ -183,16 +195,16 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             clear: document.getElementById('clearEmailTransport')?.checked || false,
           },
           notifyChannels: {
+            emailProvider: document.getElementById('emailProvider').value,
             resendApiKey: document.getElementById('resendApiKey').value,
             resendFrom: document.getElementById('resendFrom').value,
             resendClear: document.getElementById('resendClear').checked,
-            telegramEnabled: document.getElementById('telegramEnabled').checked,
-            telegramBotToken: document.getElementById('telegramBotToken').value,
-            telegramChatId: document.getElementById('telegramChatId').value,
-            telegramClear: document.getElementById('telegramClear').checked,
-            serverChanEnabled: document.getElementById('serverChanEnabled').checked,
-            serverChanSendKey: document.getElementById('serverChanSendKey').value,
-            serverChanClear: document.getElementById('serverChanClear').checked,
+            brevoApiKey: document.getElementById('brevoApiKey').value,
+            brevoFrom: document.getElementById('brevoFrom').value,
+            brevoClear: document.getElementById('brevoClear').checked,
+            mailersendApiKey: document.getElementById('mailersendApiKey').value,
+            mailersendFrom: document.getElementById('mailersendFrom').value,
+            mailersendClear: document.getElementById('mailersendClear').checked,
             webhookEnabled: document.getElementById('webhookEnabled').checked,
             webhookUrl: document.getElementById('webhookUrl').value,
             webhookClear: document.getElementById('webhookClear').checked,

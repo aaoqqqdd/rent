@@ -121,10 +121,14 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     notifyChannelsInput &&
     (
       notifyChannelsInput.clear === true ||
+      notifyChannelsInput.emailProvider !== undefined ||
       notifyChannelsInput.resendApiKey || notifyChannelsInput.resendClear === true ||
       notifyChannelsInput.resendFrom !== undefined ||
-      'telegramEnabled' in notifyChannelsInput || 'serverChanEnabled' in notifyChannelsInput || 'webhookEnabled' in notifyChannelsInput ||
-      notifyChannelsInput.telegramBotToken || notifyChannelsInput.serverChanSendKey || notifyChannelsInput.webhookUrl
+      notifyChannelsInput.brevoApiKey || notifyChannelsInput.brevoClear === true ||
+      notifyChannelsInput.brevoFrom !== undefined ||
+      notifyChannelsInput.mailersendApiKey || notifyChannelsInput.mailersendClear === true ||
+      notifyChannelsInput.mailersendFrom !== undefined ||
+      'webhookEnabled' in notifyChannelsInput || notifyChannelsInput.webhookUrl
     )
   )
   if (shouldSaveNotifyChannels) await saveNotifyChannels(c, notifyChannelsInput)
