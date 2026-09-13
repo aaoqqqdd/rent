@@ -120,7 +120,7 @@ import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
@@ -1302,6 +1302,18 @@ app.post('/customer/orders/:id/time-slots', async (c) => {
   await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'PRICE_ADJUSTMENT', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ pickupTimeSlot: order.pickupTimeSlot, returnTimeSlot: order.returnTimeSlot, serviceFee: oldFee, totalAmount: order.totalAmount }), JSON.stringify({ pickupTimeSlot: pickup, returnTimeSlot: returned, serviceFee: newFee, totalAmount: Number(order.totalAmount) + additionalFee }), '客户修改取还时段', user.id).run()
   const message = additionalFee > 0 ? `预约时间已更新，新增服务费 ${additionalFee.toFixed(2)} AUD；已收取的服务费不退款。` : '预约时间已更新；已收取的服务费不退款。'
   return c.redirect(`/customer/orders/${order.id}?success=${encodeURIComponent(message)}`)
+})
+
+app.post('/customer/orders/:id/cancel', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const orderId = c.req.param('id')
+  try {
+    await cancelPendingPaymentOrderByCustomer(c, user, orderId)
+    return c.redirect(`/customer/orders/${orderId}?success=${encodeURIComponent('订单已取消')}`)
+  } catch (error: any) {
+    return c.redirect(`/customer/orders/${orderId}?error=${encodeURIComponent(error?.message || '取消失败，请稍后重试')}`)
+  }
 })
 
 app.post('/customer/orders/:id/early-return', async (c) => {
