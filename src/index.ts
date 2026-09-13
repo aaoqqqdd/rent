@@ -1961,17 +1961,6 @@ app.get('/staff/orders/ongoing', async (c) => {
   return c.html(await pages.renderStaffOrdersOngoing(c, user))
 })
 
-app.get('/staff/orders/:date/:code', async (c) => {
-  const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
-    return c.redirect('/login')
-  }
-  const order = await getOrderByOrderNo(c, `OD-${c.req.param('date')}-${c.req.param('code')}`)
-  if (!order) return c.html(renderNotFound(), 404)
-  await loadSystemSettingsFromDB(c)
-  return c.html(await pages.renderStaffOrderDetail(c, user, order.id))
-})
-
 app.get('/staff/orders/:id', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
@@ -2214,6 +2203,19 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   await recordDeviceLifecycle(c, order.deviceId, damageDescription ? 'DAMAGED' : 'RETURNED', { orderId: order.id, reason: damageDescription || '归还验机完成', changedBy: user.id })
   await createAuditLog(c, { actor: user, action: damageDescription ? 'RETURN_INSPECTION_COMPLETED_WITH_DAMAGE' : 'RETURN_INSPECTION_COMPLETED', targetType: 'ORDER', targetId: order.id, before: { status: order.status, rentalStatus: order.rental_status }, after: { status: 'completed', rentalStatus: 'COMPLETED', inspectionId, damageReported: Boolean(damageDescription) }, reason: damageDescription || '归还验机完成' })
   return c.redirect(staffOrderPath(order))
+})
+
+// 必须注册在 /staff/orders/:orderId/handover、/staff/orders/:orderId/inspection 等二段式字面量路由之后，
+// 否则 Hono 会先匹配到这个 :date/:code 通配路由，导致那些操作链接一律 404。
+app.get('/staff/orders/:date/:code', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+    return c.redirect('/login')
+  }
+  const order = await getOrderByOrderNo(c, `OD-${c.req.param('date')}-${c.req.param('code')}`)
+  if (!order) return c.html(renderNotFound(), 404)
+  await loadSystemSettingsFromDB(c)
+  return c.html(await pages.renderStaffOrderDetail(c, user, order.id))
 })
 
 app.post('/customer/orders/:orderId/inspection-dispute', async (c) => {
