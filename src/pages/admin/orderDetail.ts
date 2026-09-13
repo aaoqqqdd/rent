@@ -263,16 +263,6 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
               ${order.paymentMethod === 'bank_transfer' ? `<div id="orderRefundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
               <script>document.getElementById('orderRefundMethod')?.addEventListener('change',e=>{document.getElementById('orderRefundBankFields').hidden=e.target.value!=='original'})</script>` : ''}
             </div>
-            <div class="order-change-fields" data-for="REFUND_METHOD" hidden>
-              <p class="section-note" style="margin:0 0 10px">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。这里设置的退款方式会作为归还验机完成后处理押金退款时的默认方式。</p>
-              <label class="form-label" for="orderRefundMethod">退款方式</label>
-              <select class="form-control" id="orderRefundMethod" name="refundMethod">
-                <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额</option>
-                <option value="original" ${order.refundMethod === 'original' ? 'selected' : ''}>原路退回${order.paymentMethod === 'bank_transfer' ? '（银行转账）' : ''}</option>
-              </select>
-              ${order.paymentMethod === 'bank_transfer' ? `<div id="orderRefundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
-              <script>document.getElementById('orderRefundMethod')?.addEventListener('change',e=>{document.getElementById('orderRefundBankFields').hidden=e.target.value!=='original'})</script>` : ''}
-            </div>
             <div>
               <label class="form-label" for="orderChangeReason">修改原因（必填）</label>
               <textarea class="form-control" id="orderChangeReason" name="reason" maxlength="500" rows="2" required placeholder="例如：客户申请延长租期 3 天"></textarea>
