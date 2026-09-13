@@ -299,21 +299,26 @@ export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<num
   `).all() as any
   let cancelled = 0
   for (const order of (orders.results || []) as any[]) {
-    const result = await c.env.RENT.prepare(`
-      UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ? AND status = 'pending_payment'
-    `).bind(order.id).run() as any
-    const changes = Number(result.meta?.changes ?? result.changes ?? 0)
-    if (changes > 0) {
-      cancelled += changes
-      await c.env.RENT.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign')").bind(order.id).run()
-      await c.env.RENT.prepare(`UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND status = 'pending'`).bind(order.id).run()
-      await releaseDeviceIfUnbooked(c, order.deviceId)
-      const { releaseCouponForOrder } = await import('./actions/coupons')
-      await releaseCouponForOrder(c, order.id)
-    }
+    if (await applyPendingPaymentCancellation(c, order)) cancelled += 1
   }
   return cancelled
+}
+
+// 把一笔待支付订单标记为已取消：订单本身状态翻转成功时才继续收尾（取消合同草稿、
+// 失败挂起的付款、释放设备与优惠码），供 24 小时自动取消和客户手动取消共用。
+export async function applyPendingPaymentCancellation(c: Context, order: { id: string; deviceId: string }): Promise<boolean> {
+  const result = await c.env.RENT.prepare(`
+    UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending_payment'
+  `).bind(order.id).run() as any
+  const changes = Number(result.meta?.changes ?? result.changes ?? 0)
+  if (changes < 1) return false
+  await c.env.RENT.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign')").bind(order.id).run()
+  await c.env.RENT.prepare(`UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND status = 'pending'`).bind(order.id).run()
+  await releaseDeviceIfUnbooked(c, order.deviceId)
+  const { releaseCouponForOrder } = await import('./actions/coupons')
+  await releaseCouponForOrder(c, order.id)
+  return true
 }
 
 // Periodically scans for known invariant violations (e.g. a paid order with no

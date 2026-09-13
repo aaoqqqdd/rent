@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus } from '../site'
+import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation } from '../site'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
 import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
@@ -1103,6 +1103,26 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'early_return' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -amount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '提前归还未使用租金退款', createdBy: admin.id, metadata: { channel } })
   await issueCreditNote(c, order.id, amount, 0, `early-${nanoid(12)}`)
+}
+
+// 客户主动取消自己的待支付订单：尚未发生实际扣款（无论是常规 PaymentIntent 还是
+// 短租的一次性预授权），所以直接释放/取消 Stripe 侧未结算的意图即可，无需退款。
+export async function cancelPendingPaymentOrderByCustomer(c: Context, user: any, orderId: string): Promise<void> {
+  const order = await getOrderById(c, orderId)
+  if (!order || order.userId !== user.id) throw new Error('订单不存在或无权访问')
+  if (order.status !== 'pending_payment') throw new Error('该订单当前不是待支付状态，不能取消')
+  const pendingPayments = await c.env.RENT.prepare("SELECT id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = 'pending' AND stripe_payment_intent_id IS NOT NULL").bind(order.id).all() as any
+  for (const payment of (pendingPayments.results || []) as any[]) {
+    const intentId = String(payment.stripe_payment_intent_id || '')
+    if (!/^pi_[A-Za-z0-9_]+$/.test(intentId)) continue
+    const intent = await stripeRequest(c, `payment_intents/${intentId}`).catch(() => null)
+    if (intent && ['requires_payment_method', 'requires_confirmation', 'requires_action', 'requires_capture'].includes(String(intent.status))) {
+      await stripeRequest(c, `payment_intents/${intentId}/cancel`, new URLSearchParams(), `customer-cancel-${order.id}`).catch(() => null)
+    }
+  }
+  const cancelled = await applyPendingPaymentCancellation(c, order as any)
+  if (!cancelled) throw new Error('订单状态已变化，请刷新后重试')
+  await revokeReferralRewardForOrder(c, order.id, '客户取消待支付订单')
 }
 
 export async function cancelAndRefund(c: Context, admin: any, orderId: string): Promise<Response> {
