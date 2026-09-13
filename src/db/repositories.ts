@@ -153,7 +153,7 @@ function normalizeOrderRow(orderRow: any): Order {
   } as Order
 }
 
-function normalizeContractRow(contractRow: any): Contract {
+export function normalizeContractRow(contractRow: any): Contract {
   if (!contractRow) return null as any
 
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
