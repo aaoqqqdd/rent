@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { formatCurrency } from '../../site';
+import { buildLayout, formatCurrency } from '../../site';
 import { Context } from 'hono';
 
 function getStatusLabel(status: string) {
@@ -144,4 +144,12 @@ export async function renderWithdrawalsPanel(c: Context): Promise<string> {
       `}
     </section>
   `;
+}
+
+/**
+ * 佣金提现审核整页，供 /admin/withdrawals 独立路由使用。复用 {@link renderWithdrawalsPanel} 片段并套上后台布局。
+ */
+export async function renderAdminWithdrawals(c: Context, user: any): Promise<string> {
+  const panel = await renderWithdrawalsPanel(c);
+  return buildLayout('佣金提现审核 - 电脑租赁管理系统', panel, user);
 }
