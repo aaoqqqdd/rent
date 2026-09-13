@@ -138,6 +138,9 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     amount: String(cents(depositAmount)),
     currency: 'aud',
     payment_method: paymentMethodId,
+    // 手动扣款（预授权）不是所有账户默认启用的自动支付方式（Klarna / Afterpay / Link 等）都支持，
+    // 不显式限定为 card 会导致 Stripe 报 "not eligible for the requested card features"。
+    'payment_method_types[0]': 'card',
     capture_method: 'manual',
     confirm: 'true',
     off_session: 'true',
@@ -153,7 +156,7 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
   try {
     intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-${order.id}`)
   } catch (error) {
-    if (authorizationWindowDays !== 30) throw error
+    if (!params.has('payment_method_options[card][request_extended_authorization]')) throw error
     params.delete('payment_method_options[card][request_extended_authorization]')
     intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-standard-${order.id}`)
   }
@@ -281,7 +284,15 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
       VALUES (?, ?, ?, 'card', ?, ?, ?, ?, 'AUD', ?, ?, ?)
     `).bind(`p-${nanoid(12)}`, order.id, user.id, chargedCents / 100, 0, order.totalAmount - orderDeposit(order), feeCents / 100, paymentStatus, alreadyPaid ? new Date().toISOString() : null, intent.id).run()
   }
-  if (shouldAuthorizeDeposit && alreadyPaid) await createDepositAuthorization(c, order, savedPaymentMethodId)
+  if (shouldAuthorizeDeposit && alreadyPaid) {
+    // 租金已经扣款成功；押金预授权失败不该让整个付款请求报错，否则客户会看到"支付失败"
+    // 但实际租金已经扣款的矛盾状态。留给 webhook 的兜底逻辑或人工跟进即可。
+    try {
+      await createDepositAuthorization(c, order, savedPaymentMethodId)
+    } catch (error: any) {
+      console.error('Deposit authorization failed after rent payment succeeded:', error?.message || error)
+    }
+  }
   if (alreadyPaid) {
     await c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id).run()
     return { clientSecret: '', publishableKey: '', amountCents: chargedCents, alreadyPaid: true }
