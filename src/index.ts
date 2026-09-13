@@ -2055,13 +2055,18 @@ app.post('/staff/orders/:orderId/reject', async (c) => {
   const order = await getOrderById(c, c.req.param('orderId'))
   const customer = order ? await getUserById(c, order.userId) : null
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
-  if (order) {
+  if (!order || !canTransitionOrder(order.status, 'cancelled')) return c.text('订单状态无效，无法拒绝', 409)
+  const automaticCancellationPayment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND ((status = 'paid' AND payment_method IN ('balance', 'card')) OR (status = 'pending' AND payment_method = 'card' AND stripe_payment_intent_id = (SELECT stripe_deposit_payment_intent_id FROM orders WHERE id = ?))) LIMIT 1").bind(order.id, order.id).first()
+  if (automaticCancellationPayment) {
+    const response = await cancelAndRefund(c, user, order.id)
+    if (response.status >= 400) return response
+  } else {
     await updateOrderStatus(c, order.id, 'cancelled')
     await updateDeviceStatus(c, order.deviceId, 'available')
-    await deleteRentalApplicationNotifications(c, order.id)
-    await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_rejected', title: '租赁申请未通过', message: `您的设备租赁申请已由${user.name || '工作人员'}拒绝，请联系工作人员了解详情。`, orderId: order.id })
   }
-  return c.redirect(order ? staffOrderPath(order) : `/staff/orders/${c.req.param('orderId')}`)
+  await deleteRentalApplicationNotifications(c, order.id)
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_rejected', title: '租赁申请未通过', message: `您的设备租赁申请已由${user.name || '工作人员'}拒绝，请联系工作人员了解详情。`, orderId: order.id })
+  return c.redirect(staffOrderPath(order))
 })
 
 app.post('/staff/orders/:orderId/mark-paid', async (c) => {
