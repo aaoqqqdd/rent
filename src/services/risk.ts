@@ -41,7 +41,6 @@ export async function getCustomerRiskAssessment(c: Context, customerId: string):
     c.env.RENT.prepare(`SELECT flag_type, severity, status, expires_at
       FROM risk_flags
       WHERE customer_id = ? AND status = 'ACTIVE'
-        AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
       ORDER BY created_at DESC`).bind(customerId).all(),
   ])
 

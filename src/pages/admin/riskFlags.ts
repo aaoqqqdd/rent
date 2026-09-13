@@ -17,24 +17,21 @@ const FLAG_TYPE_LABELS: Record<string, string> = {
 }
 
 export function renderAdminRiskFlags(user: any, targetUser: any, activeFlags: any[] = [], history: any[] = [], riskAssessment: any = null) {
-  const now = Date.now()
-  const isExpired = (flag: any) => flag.expires_at && !Number.isNaN(new Date(String(flag.expires_at).replace(' ', 'T')).getTime()) && new Date(String(flag.expires_at).replace(' ', 'T')).getTime() <= now
   const BLOCKING_TYPES = new Set(['PAYMENT_RISK', 'DEVICE_NOT_RETURNED', 'CHARGEBACK', 'FRAUD_SUSPECTED'])
-  const blocks = (flag: any) => flag.status === 'ACTIVE' && !isExpired(flag) && (String(flag.severity).toUpperCase() === 'HIGH' || BLOCKING_TYPES.has(String(flag.flag_type)))
+  const blocks = (flag: any) => flag.status === 'ACTIVE' && (String(flag.severity).toUpperCase() === 'HIGH' || BLOCKING_TYPES.has(String(flag.flag_type)))
   const flagRow = (flag: any) => `<tr>
     <td>${FLAG_TYPE_LABELS[flag.flag_type] || flag.flag_type}${blocks(flag) ? ' <span class="badge badge-danger">拦截下单</span>' : ''}</td>
     <td>${sanitizePlainText(flag.severity, 20)}</td>
     <td>${sanitizePlainText(flag.reason, 500)}</td>
     <td>${sanitizePlainText(flag.created_by, 60)}</td>
-    <td>${flag.created_at || '-'}${flag.expires_at ? `<small>${isExpired(flag) ? '已于' : '有效至'} ${sanitizePlainText(flag.expires_at, 40)}</small>` : ''}</td>
-    <td>${flag.status === 'ACTIVE' && !isExpired(flag)
+    <td>${flag.created_at || '-'}</td>
+    <td>${flag.status === 'ACTIVE'
       ? `<form method="post" action="/admin/users/${encodeURIComponent(targetUser.id)}/risk/${encodeURIComponent(flag.id)}/resolve"><input class="form-control" name="resolutionReason" maxlength="500" required placeholder="解除原因（必填）"><button class="button button-sm button-secondary" type="submit" style="margin-top:6px">解除标记</button></form>`
-      : isExpired(flag) && flag.status === 'ACTIVE'
-        ? `已过期失效（${sanitizePlainText(flag.expires_at || '', 40)}）`
-        : `已解除 · ${sanitizePlainText(flag.resolution_reason || '', 500)}（${flag.resolved_at || '-'}）`}</td>
+      : `已解除 · ${sanitizePlainText(flag.resolution_reason || '', 500)}（${flag.resolved_at || '-'}）`}</td>
   </tr>`
   const riskNotice = riskAssessment ? `<div class="page-notification page-notification--${riskAssessment.blocked ? 'error' : 'info'}"><strong>当前风险分：${riskAssessment.score}/100（${riskAssessment.level}）</strong><p>${riskAssessment.blocked ? '已拦截客户自助下单和员工创建合同。' : '当前未触发下单拦截。'}</p>${riskAssessment.reasons?.length ? `<small>${riskAssessment.reasons.map((reason: string) => sanitizePlainText(reason, 120)).join(' · ')}</small>` : ''}</div>` : ''
-  const body = `<div class="page-header"><div><p class="section-code">RISK MANAGEMENT</p><h2>风险标记 · ${sanitizePlainText(targetUser.name, 100)}</h2><p>风险分由客户历史行为和当前有效标记自动计算。任意 HIGH 级标记、“拦截下单”类型，或风险分达到 60 分，都会禁止客户自助下单和员工创建合同。过期标记自动失效。</p></div><a class="button button-secondary" href="/admin/users/${encodeURIComponent(targetUser.id)}">返回客户</a></div>${riskNotice}
+  const riskNotice = riskAssessment ? `<div class="page-notification page-notification--${riskAssessment.blocked ? 'error' : 'info'}"><strong>当前风险分：${riskAssessment.score}/100（${riskAssessment.level}）</strong><p>${riskAssessment.blocked ? '已拦截客户自助下单和员工创建合同。' : '当前未触发下单拦截。'}</p>${riskAssessment.reasons?.length ? `<small>${riskAssessment.reasons.map((reason: string) => sanitizePlainText(reason, 120)).join(' · ')}</small>` : ''}</div>` : ''
+  const body = `<div class="page-header"><div><p class="section-code">RISK MANAGEMENT</p><h2>风险标记 · ${sanitizePlainText(targetUser.name, 100)}</h2><p>风险分由客户历史行为和当前有效标记自动计算。任意 HIGH 级标记、“拦截下单”类型，或风险分达到 60 分，都会禁止客户自助下单和员工创建合同。标记不会自动过期，只能由管理员手动解除。</p></div><a class="button button-secondary" href="/admin/users/${encodeURIComponent(targetUser.id)}">返回客户</a></div>${riskNotice}
   <div class="panel">
     <h3>新增风险标记</h3>
     <form method="post" action="/admin/users/${encodeURIComponent(targetUser.id)}/risk" class="grid grid-2">
@@ -42,7 +39,6 @@ export function renderAdminRiskFlags(user: any, targetUser: any, activeFlags: an
       <select class="form-control" name="severity"><option value="LOW">低</option><option value="MEDIUM" selected>中</option><option value="HIGH">高</option></select>
       <textarea class="form-control" name="reason" maxlength="500" required placeholder="标记原因（必填）" style="grid-column:1/-1"></textarea>
       <textarea class="form-control" name="evidence" maxlength="1000" placeholder="证据说明或链接（可选）" style="grid-column:1/-1"></textarea>
-      <input class="form-control" name="expiresAt" type="datetime-local" placeholder="到期时间（可留空，代表长期有效）">
       <button class="button button-primary" type="submit">创建标记</button>
     </form>
   </div>
