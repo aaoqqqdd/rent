@@ -1210,8 +1210,8 @@ app.get('/admin/users/:id/risk', async (c) => {
   const target = await getUserById(c, c.req.param('id'))
   if (!target || target.role !== 'CUSTOMER') return c.text('客户不存在', 404)
   const [activeFlags, history] = await Promise.all([
-    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY created_at DESC").bind(target.id).all().then(r => r.results || []),
-    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND (status = 'RESOLVED' OR (status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP)) ORDER BY created_at DESC LIMIT 50").bind(target.id).all().then(r => r.results || []),
+    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY created_at DESC").bind(target.id).all().then(r => r.results || []),
+    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'RESOLVED' ORDER BY created_at DESC LIMIT 50").bind(target.id).all().then(r => r.results || []),
   ])
   return c.html(pages.renderAdminRiskFlags(admin, target, activeFlags as any[], history as any[]))
 })
@@ -1226,11 +1226,10 @@ app.post('/admin/users/:id/risk', async (c) => {
   const severity = ['LOW', 'MEDIUM', 'HIGH'].includes(String(form.severity)) ? String(form.severity) : 'MEDIUM'
   const reason = String(form.reason || '').trim().slice(0, 500)
   const evidence = String(form.evidence || '').trim().slice(0, 1000) || null
-  const expiresAt = String(form.expiresAt || '').replace('T', ' ') || null
   if (!(RISK_FLAG_TYPES as readonly string[]).includes(flagType) || !reason) return c.text('请选择有效的风险类型并填写原因', 400)
   const flagId = `rf-${nanoid(12)}`
-  await c.env.RENT.prepare('INSERT INTO risk_flags (id, customer_id, flag_type, severity, reason, evidence, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(flagId, target.id, flagType, severity, reason, evidence, admin.id, expiresAt).run()
+  await c.env.RENT.prepare('INSERT INTO risk_flags (id, customer_id, flag_type, severity, reason, evidence, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(flagId, target.id, flagType, severity, reason, evidence, admin.id).run()
   await createAuditLog(c, { actor: admin, action: 'RISK_FLAG_CREATED', targetType: 'USER', targetId: target.id, after: { flagType, severity, reason }, reason })
   return c.redirect(`/admin/users/${encodeURIComponent(target.id)}/risk`, 303)
 })
@@ -1749,7 +1748,7 @@ app.get('/customer/rent/:id', async (c) => {
 app.post('/customer/rent/:id', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
-  const riskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, status, expires_at FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE'").bind(user.id).all()).results as any[]
+  const riskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, status FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE'").bind(user.id).all()).results as any[]
   if (findBlockingRiskFlag(riskFlags)) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
   const account = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first() as any
   if (Number(account?.balance || 0) < 0) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, `您的账户余额为负（${Number(account.balance).toFixed(2)} AUD），请先充值至非负后再下单。`), 403)
