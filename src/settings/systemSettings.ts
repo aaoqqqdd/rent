@@ -10,6 +10,8 @@
 export type SystemSettingsKey =
   | 'userTerms' | 'rentalTerms' | 'serviceTerms' | 'privacyPolicy' | 'softwareTerms'
   | 'copyrightNotice' | 'cookiePolicy' | 'complaintsPolicy' | 'acceptableUsePolicy' | 'consumerRights'
+  | 'userTermsEn' | 'rentalTermsEn' | 'serviceTermsEn' | 'privacyPolicyEn' | 'softwareTermsEn'
+  | 'copyrightNoticeEn' | 'cookiePolicyEn' | 'complaintsPolicyEn' | 'acceptableUsePolicyEn' | 'consumerRightsEn'
   | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings'
   | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata'
 
@@ -177,6 +179,16 @@ export const systemSettings = {
 <h2>四、违反后果</h2><p>违反本政策可能导致远程锁定设备、提前终止租赁、追偿相关费用与损失，并在法律要求时向执法机关报告。我们在采取措施前会尽合理努力通知承租方，但紧急或涉及安全与违法的情形除外。</p>
 <h2>五、举报</h2><p>如发现违反本政策的行为，请联系 {company_email}。</p>
 <h2>六、联系我们</h2><p>{company_name}<br>地址：{company_address}<br>电话：{company_phone}<br>邮箱：{company_email}</p>`,
+  userTermsEn: '',
+  rentalTermsEn: '',
+  serviceTermsEn: '',
+  privacyPolicyEn: '',
+  softwareTermsEn: '',
+  copyrightNoticeEn: '',
+  cookiePolicyEn: '',
+  complaintsPolicyEn: '',
+  acceptableUsePolicyEn: '',
+  consumerRightsEn: '',
   consumerRights: `<h1>澳大利亚消费者法下的权利</h1>
 <p>本页面概述您在向 {company_name}（ABN {company_abn}）租用设备时，依据《澳大利亚消费者法》（Australian Consumer Law，《2010 年竞争与消费者法》附表 2）享有的权利。本页面仅为说明，不构成法律建议，也不取代法律条文。</p>
 <p><strong>版本：</strong>{consumer_rights_version}　<strong>最后更新：</strong>{consumer_rights_last_updated_date}</p>
@@ -286,6 +298,16 @@ systemSettings.cookiePolicy = ''
 systemSettings.complaintsPolicy = ''
 systemSettings.acceptableUsePolicy = ''
 systemSettings.consumerRights = ''
+systemSettings.userTermsEn = ''
+systemSettings.rentalTermsEn = ''
+systemSettings.serviceTermsEn = ''
+systemSettings.privacyPolicyEn = ''
+systemSettings.softwareTermsEn = ''
+systemSettings.copyrightNoticeEn = ''
+systemSettings.cookiePolicyEn = ''
+systemSettings.complaintsPolicyEn = ''
+systemSettings.acceptableUsePolicyEn = ''
+systemSettings.consumerRightsEn = ''
 
 export function getSystemSettings(): typeof systemSettings {
   return systemSettings

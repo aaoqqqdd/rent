@@ -784,28 +784,40 @@ async function sendEmailVerification(c: any, user: any) {
 
 // 公开法务页面。metaKey 与 legalMetadata 的键一致；varPrefix 生成 `${prefix}_version`
 // 与 `${prefix}_last_updated_date` 两个模板变量，供文档正文引用。
-const PUBLIC_LEGAL_PAGES: Array<{ paths: string[]; title: string; key: SystemSettingsKey; code: string; metaKey: string; varPrefix: string }> = [
-  { paths: ['/terms', '/user-terms'], title: '用户协议', key: 'userTerms', code: 'LEGAL / USER TERMS', metaKey: 'user', varPrefix: 'user_terms' },
-  { paths: ['/service-terms'], title: '服务条款', key: 'serviceTerms', code: 'LEGAL / SERVICE TERMS', metaKey: 'service', varPrefix: 'service_terms' },
-  { paths: ['/privacy'], title: '隐私政策', key: 'privacyPolicy', code: 'LEGAL / PRIVACY', metaKey: 'privacy', varPrefix: 'privacy_policy' },
-  { paths: ['/software-terms'], title: '软件使用协议', key: 'softwareTerms', code: 'LEGAL / SOFTWARE', metaKey: 'software', varPrefix: 'software_terms' },
-  { paths: ['/refund-policy', '/copyright'], title: '退款政策', key: 'copyrightNotice', code: 'LEGAL / REFUND POLICY', metaKey: 'copyright', varPrefix: 'refund_policy' },
-  { paths: ['/cookies', '/cookie-policy'], title: 'Cookie 政策', key: 'cookiePolicy', code: 'LEGAL / COOKIE POLICY', metaKey: 'cookie', varPrefix: 'cookie_policy' },
-  { paths: ['/complaints', '/dispute-resolution'], title: '投诉与争议解决政策', key: 'complaintsPolicy', code: 'LEGAL / COMPLAINTS', metaKey: 'complaints', varPrefix: 'complaints_policy' },
-  { paths: ['/acceptable-use', '/aup'], title: '可接受使用政策', key: 'acceptableUsePolicy', code: 'LEGAL / ACCEPTABLE USE', metaKey: 'aup', varPrefix: 'acceptable_use_policy' },
-  { paths: ['/consumer-rights'], title: '澳大利亚消费者法下的权利', key: 'consumerRights', code: 'LEGAL / CONSUMER RIGHTS', metaKey: 'consumer', varPrefix: 'consumer_rights' },
+const PUBLIC_LEGAL_PAGES: Array<{ paths: string[]; title: string; key: SystemSettingsKey; keyEn: SystemSettingsKey; code: string; metaKey: string; varPrefix: string }> = [
+  { paths: ['/terms', '/user-terms'], title: '用户协议', key: 'userTerms', keyEn: 'userTermsEn', code: 'LEGAL / USER TERMS', metaKey: 'user', varPrefix: 'user_terms' },
+  { paths: ['/service-terms'], title: '服务条款', key: 'serviceTerms', keyEn: 'serviceTermsEn', code: 'LEGAL / SERVICE TERMS', metaKey: 'service', varPrefix: 'service_terms' },
+  { paths: ['/privacy'], title: '隐私政策', key: 'privacyPolicy', keyEn: 'privacyPolicyEn', code: 'LEGAL / PRIVACY', metaKey: 'privacy', varPrefix: 'privacy_policy' },
+  { paths: ['/software-terms'], title: '软件使用协议', key: 'softwareTerms', keyEn: 'softwareTermsEn', code: 'LEGAL / SOFTWARE', metaKey: 'software', varPrefix: 'software_terms' },
+  { paths: ['/refund-policy', '/copyright'], title: '退款政策', key: 'copyrightNotice', keyEn: 'copyrightNoticeEn', code: 'LEGAL / REFUND POLICY', metaKey: 'copyright', varPrefix: 'refund_policy' },
+  { paths: ['/cookies', '/cookie-policy'], title: 'Cookie 政策', key: 'cookiePolicy', keyEn: 'cookiePolicyEn', code: 'LEGAL / COOKIE POLICY', metaKey: 'cookie', varPrefix: 'cookie_policy' },
+  { paths: ['/complaints', '/dispute-resolution'], title: '投诉与争议解决政策', key: 'complaintsPolicy', keyEn: 'complaintsPolicyEn', code: 'LEGAL / COMPLAINTS', metaKey: 'complaints', varPrefix: 'complaints_policy' },
+  { paths: ['/acceptable-use', '/aup'], title: '可接受使用政策', key: 'acceptableUsePolicy', keyEn: 'acceptableUsePolicyEn', code: 'LEGAL / ACCEPTABLE USE', metaKey: 'aup', varPrefix: 'acceptable_use_policy' },
+  { paths: ['/consumer-rights'], title: '澳大利亚消费者法下的权利', key: 'consumerRights', keyEn: 'consumerRightsEn', code: 'LEGAL / CONSUMER RIGHTS', metaKey: 'consumer', varPrefix: 'consumer_rights' },
 ]
-for (const { paths, title, key, code, metaKey, varPrefix } of PUBLIC_LEGAL_PAGES) {
+// English blocks are unofficial machine-translation placeholders (see the
+// admin editor at /admin/templates/:kind): both language blocks are rendered
+// server-side and src/lib/i18n.ts toggles which one is visible client-side,
+// since there is no per-request language signal (language is a client-only
+// localStorage preference).
+for (const { paths, title, key, keyEn, code, metaKey, varPrefix } of PUBLIC_LEGAL_PAGES) {
   app.on('GET', paths, async (c) => {
     const settings = await loadSystemSettingsFromDB(c)
     const currentUser = c.get('user')
     const metadata = (settings.legalMetadata as Record<string, { version: string; lastUpdatedDate: string }>)[metaKey] || { version: '1.0', lastUpdatedDate: '' }
-    const content = renderSiteVariables(String((settings as any)[key] ?? ''), currentUser, {
+    const templateVars = {
       [`${varPrefix}_version`]: metadata.version,
       [`${varPrefix}_last_updated_date`]: metadata.lastUpdatedDate,
       ...(metaKey === 'copyright' ? { last_updated_date: metadata.lastUpdatedDate } : {}),
-    })
-    return c.html(buildLayout(title, `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">${code}</p><h2>${title}</h2></div></div><div class="legal-document__content">${content}</div></article>`, currentUser))
+    }
+    const content = renderSiteVariables(String((settings as any)[key] ?? ''), currentUser, templateVars)
+    const contentEn = renderSiteVariables(String((settings as any)[keyEn] ?? ''), currentUser, templateVars)
+    const body = `<div class="legal-document__content legal-lang" data-lang="zh">${content}</div>
+<div class="legal-document__content legal-lang" data-lang="en" data-i18n-ignore hidden>
+<p class="legal-disclaimer">⚠️ Unofficial machine-translated version for reference only — the Chinese original is the legally governing text.</p>
+${contentEn || '<p>An English version of this document has not been provided yet. Please refer to the Chinese original above.</p>'}
+</div>`
+    return c.html(buildLayout(title, `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">${code}</p><h2>${title}</h2></div></div>${body}</article>`, currentUser))
   })
 }
 
@@ -817,7 +829,7 @@ app.on('GET', ['/rental-terms', '/rental-agreement'], async (c) => {
   const settings = await loadSystemSettingsFromDB(c)
   const currentUser = c.get('user')
   const metadata = (settings.legalMetadata as Record<string, { version: string; lastUpdatedDate: string }>).rental || { version: '1.0', lastUpdatedDate: '' }
-  const rendered = renderSiteVariables(String(settings.rentalTerms ?? ''), currentUser, {
+  const templateVars = {
     rental_agreement_version: metadata.version,
     rental_agreement_last_updated_date: metadata.lastUpdatedDate,
     jurisdiction: 'VIC',
@@ -826,10 +838,16 @@ app.on('GET', ['/rental-terms', '/rental-agreement'], async (c) => {
     bank_bsb: settings.bankDetails.bsb,
     bank_account: settings.bankDetails.account,
     account_name: settings.bankDetails.accountName,
-  })
-  const content = neutralizeTemplateTokens(rendered)
+  }
+  const content = neutralizeTemplateTokens(renderSiteVariables(String(settings.rentalTerms ?? ''), currentUser, templateVars))
+  const contentEn = neutralizeTemplateTokens(renderSiteVariables(String(settings.rentalTermsEn ?? ''), currentUser, templateVars))
   const notice = '<p class="section-note">以下为标准《设备租赁协议》范本，供签署前查阅。带 —— 的位置将在您下单后按实际合同数据填写；最终以您签署的租赁合同为准。</p>'
-  return c.html(buildLayout('设备租赁协议', `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">LEGAL / RENTAL AGREEMENT</p><h2>设备租赁协议</h2></div></div>${notice}<div class="legal-document__content">${content}</div></article>`, currentUser))
+  const body = `<div class="legal-document__content legal-lang" data-lang="zh">${content}</div>
+<div class="legal-document__content legal-lang" data-lang="en" data-i18n-ignore hidden>
+<p class="legal-disclaimer">⚠️ Unofficial machine-translated version for reference only — the Chinese original is the legally governing text.</p>
+${contentEn || '<p>An English version of this document has not been provided yet. Please refer to the Chinese original above.</p>'}
+</div>`
+  return c.html(buildLayout('设备租赁协议', `<article class="panel legal-document"><div class="section-title"><div><p class="section-code">LEGAL / RENTAL AGREEMENT</p><h2>设备租赁协议</h2></div></div>${notice}${body}</article>`, currentUser))
 })
 
 app.post('/register', async (c) => {
@@ -4484,17 +4502,17 @@ app.get('/admin/templates/preview/:previewKind', async (c) => {
 })
 
 // 可在 /admin/templates 编辑的协议：kind → D1 设置键 + 站内信/邮件里显示的名称。
-const EDITABLE_AGREEMENTS: Record<string, { settingKey: SystemSettingsKey; label: string }> = {
-  user: { settingKey: 'userTerms', label: '用户协议' },
-  rental: { settingKey: 'rentalTerms', label: '租赁协议' },
-  service: { settingKey: 'serviceTerms', label: '服务条款' },
-  privacy: { settingKey: 'privacyPolicy', label: '隐私政策' },
-  software: { settingKey: 'softwareTerms', label: '软件使用协议' },
-  copyright: { settingKey: 'copyrightNotice', label: '退款政策' },
-  cookie: { settingKey: 'cookiePolicy', label: 'Cookie 政策' },
-  complaints: { settingKey: 'complaintsPolicy', label: '投诉与争议解决政策' },
-  aup: { settingKey: 'acceptableUsePolicy', label: '可接受使用政策' },
-  consumer: { settingKey: 'consumerRights', label: '澳大利亚消费者法下的权利' },
+const EDITABLE_AGREEMENTS: Record<string, { settingKey: SystemSettingsKey; settingKeyEn: SystemSettingsKey; label: string }> = {
+  user: { settingKey: 'userTerms', settingKeyEn: 'userTermsEn', label: '用户协议' },
+  rental: { settingKey: 'rentalTerms', settingKeyEn: 'rentalTermsEn', label: '租赁协议' },
+  service: { settingKey: 'serviceTerms', settingKeyEn: 'serviceTermsEn', label: '服务条款' },
+  privacy: { settingKey: 'privacyPolicy', settingKeyEn: 'privacyPolicyEn', label: '隐私政策' },
+  software: { settingKey: 'softwareTerms', settingKeyEn: 'softwareTermsEn', label: '软件使用协议' },
+  copyright: { settingKey: 'copyrightNotice', settingKeyEn: 'copyrightNoticeEn', label: '退款政策' },
+  cookie: { settingKey: 'cookiePolicy', settingKeyEn: 'cookiePolicyEn', label: 'Cookie 政策' },
+  complaints: { settingKey: 'complaintsPolicy', settingKeyEn: 'complaintsPolicyEn', label: '投诉与争议解决政策' },
+  aup: { settingKey: 'acceptableUsePolicy', settingKeyEn: 'acceptableUsePolicyEn', label: '可接受使用政策' },
+  consumer: { settingKey: 'consumerRights', settingKeyEn: 'consumerRightsEn', label: '澳大利亚消费者法下的权利' },
 }
 
 app.get('/admin/templates/:kind', async (c) => {
@@ -4505,8 +4523,15 @@ app.get('/admin/templates/:kind', async (c) => {
   if (!(kind in EDITABLE_AGREEMENTS)) return c.html(renderNotFound(), 404)
   await loadSystemSettingsFromDB(c)
   const settingKey = EDITABLE_AGREEMENTS[kind].settingKey
+  const settingKeyEn = EDITABLE_AGREEMENTS[kind].settingKeyEn
   const databaseSetting = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
-  return c.html(pages.renderAdminAgreementEditor(user, kind as any, databaseSetting?.value !== undefined ? String(databaseSetting.value) : undefined))
+  const databaseSettingEn = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKeyEn).first() as any
+  return c.html(pages.renderAdminAgreementEditor(
+    user,
+    kind as any,
+    databaseSetting?.value !== undefined ? String(databaseSetting.value) : undefined,
+    databaseSettingEn?.value !== undefined ? String(databaseSettingEn.value) : undefined,
+  ))
 })
 
 app.post('/admin/templates/:kind', async (c) => {
@@ -4521,13 +4546,23 @@ app.post('/admin/templates/:kind', async (c) => {
       : await c.req.parseBody()
     const content = sanitizeRichHtml(payload?.content || '')
     if (!String(content).trim()) return c.json({ success: false, error: '协议内容不能为空，请填写后再保存' }, 400)
+    // English content is an optional, admin-reviewable placeholder translation:
+    // unlike the Chinese original, it is allowed to be empty (the public page
+    // falls back to a "not provided yet" notice when it is).
+    const contentEn = sanitizeRichHtml(payload?.contentEn || '')
     await loadSystemSettingsFromDB(c)
     const settingKey = EDITABLE_AGREEMENTS[kind].settingKey
+    const settingKeyEn = EDITABLE_AGREEMENTS[kind].settingKeyEn
     const metadata = getSystemSettings().legalMetadata || {}
     // 直接读取数据库中的正文，避免 isolate 级设置缓存让“未变化”被误判为变化。
     const previous = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
     const before = sanitizeRichHtml(previous?.value || '')
-    const contentChanged = before !== content
+    const previousEn = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKeyEn).first() as any
+    const beforeEn = sanitizeRichHtml(previousEn?.value || '')
+    // Either language changing counts as an update worth notifying about —
+    // an English-only revision (e.g. fixing the machine-translation placeholder)
+    // is still a real change to the published document.
+    const contentChanged = before !== content || beforeEn !== contentEn
     const suppliedDate = String(payload?.lastUpdatedDate || '').trim()
     const existingDate = String(metadata?.[kind]?.lastUpdatedDate || '').trim()
     const melbourneToday = new Intl.DateTimeFormat('en-CA', {
@@ -4542,6 +4577,7 @@ app.post('/admin/templates/:kind', async (c) => {
     const legalMetadata = { ...metadata, [kind]: { version: String(payload?.version || '1.0').trim().slice(0, 30) || '1.0', lastUpdatedDate } }
     await c.env.RENT.batch([
       c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP').bind(settingKey, content),
+      c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP').bind(settingKeyEn, contentEn),
       c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP').bind('legalMetadata', JSON.stringify(legalMetadata)),
     ])
     const saved = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
