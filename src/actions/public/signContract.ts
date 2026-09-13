@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot, getCustomerRiskAssessment
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -249,6 +249,10 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         // 从数据库检查邮箱是否已存在
         const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() as any
+        if (existingUser?.role === 'CUSTOMER') {
+          const risk = await getCustomerRiskAssessment(c, existingUser.id)
+          if (risk.blocked) throw new Error('该客户存在有效风控限制，暂时无法签署或创建租赁合同，请联系客服处理。')
+        }
         if (currentUser) {
           if (existingUser && existingUser.id !== currentUser.id) throw new Error('该邮箱已被其他账户使用，请更换电子邮箱。')
           await updateUser(c, currentUser.id, { name, email, phone: fullPhone })
@@ -460,6 +464,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             }
           }
         }
+
+        const customerRisk = await getCustomerRiskAssessment(c, userId)
+        if (customerRisk.blocked) throw new Error('该客户存在有效风控限制，暂时无法签署或创建租赁合同，请联系客服处理。')
 
         // 优惠码：此时客户真实身份（userId）才第一次确定，是核销优惠码（原子扣减 used_count
         // + 写入 coupon_redemptions RESERVED 记录）的正确时机。分两种情况：

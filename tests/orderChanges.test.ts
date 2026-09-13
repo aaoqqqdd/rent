@@ -100,6 +100,16 @@ test('LOCATION_CHANGE validates delivery method and detects no-op edits', () => 
   assert.equal(plan.patch.returnLocation, 'Melbourne CBD')
 })
 
+test('REFUND_METHOD validates method, detects no-op, and carries bank fields', () => {
+  const before = orderChangeSnapshot(baseOrder)
+  assert.deepEqual(buildOrderChangePlan('REFUND_METHOD', before, { refundMethod: 'bank_transfer' }), { error: '退款方式无效' })
+  assert.deepEqual(buildOrderChangePlan('REFUND_METHOD', before, { refundMethod: 'balance' }), { error: '退款方式没有变化' })
+  const plan = buildOrderChangePlan('REFUND_METHOD', before, { refundMethod: 'original', refundBsb: ' 123-456 ', refundAccountNumber: '00011122', refundAccountName: ' Jane Doe ' })
+  assert.ok(!('error' in plan))
+  if ('error' in plan) return
+  assert.deepEqual(plan.patch, { refundMethod: 'original', refundBsb: '123-456', refundAccountNumber: '00011122', refundAccountName: 'Jane Doe' })
+})
+
 test('unknown change type is rejected', () => {
   assert.deepEqual(buildOrderChangePlan('WHATEVER', orderChangeSnapshot(baseOrder), {}), { error: '不支持的订单修改类型' })
 })
