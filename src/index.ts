@@ -75,6 +75,9 @@ import {
   CONTRACT_OPERATIONAL_FIELDS,
   CONTRACT_SIGNED_FIELDS,
   issueInvoice,
+  updateContractStatusInDB,
+  getContractVariableData,
+  generateContractNumber,
   ensureOrderNumber,
   generateReferenceNumber,
   createAuthSession,
@@ -1984,6 +1987,51 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   await updateOrderStatus(c, order.id, 'approved')
   await deleteRentalApplicationNotifications(c, order.id)
   const contract = await ensureContractForOrder(c, order, user.id)
+
+  const savedPaymentMethodId = String((order as any).stripe_payment_method_id || '')
+  if (order.paymentMethod === 'card' && savedPaymentMethodId && customer && contract.status !== 'signed' && contract.status !== 'completed') {
+    // 官网信用卡申请：客户在提交申请时已经勾选同意服务条款/隐私政策（IP 与时间已记录）。
+    // 审核通过后不再要求客户额外打开链接签一次名，系统直接生成一份已确认的合同并自动扣租金。
+    const now = new Date()
+    const signedAt = now.toISOString()
+    const device = await getDeviceById(c, order.deviceId)
+    const existingData = typeof contract.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch { return {} } })() : (contract.contract_data || {})
+    const signedData = {
+      ...existingData,
+      signer_name: customer.name || '',
+      esign_signature: customer.name || '',
+      auto_confirmed: true,
+      auto_confirmed_by: user.id,
+      auto_confirmed_reason: '官网申请提交时客户已勾选同意服务条款与隐私政策；审核通过后系统自动确认合同并使用已保存的信用卡扣款，无需二次签署。',
+      agreement_version: existingData.agreement_version || '1.0',
+      privacy_policy_accepted: true,
+      privacy_policy_version: existingData.privacy_policy_version || '1.0',
+      privacy_policy_accepted_at: existingData.privacy_policy_accepted_at || signedAt,
+    }
+    const signedContract = { ...contract, contract_data: signedData, signedAt, privacy_policy_accepted: true, privacy_policy_version: signedData.privacy_policy_version, privacy_policy_accepted_at: signedData.privacy_policy_accepted_at }
+    const signedContent = renderContractVariables(contract.content, signedContract, order, device, customer, await getContractVariableData(c, signedContract, order))
+    const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signedContent))), byte => byte.toString(16).padStart(2, '0')).join('')
+    const verificationToken = `${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`
+    await c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, signed_content = ?, content_hash = ?, verification_token = ? WHERE id = ?')
+      .bind(JSON.stringify(signedData), signedContent, contentHash, verificationToken, contract.id).run()
+    await updateContractStatusInDB(c, contract.id, 'signed', signedAt)
+    await c.env.RENT.prepare("UPDATE contracts SET contractNumber = ? WHERE id = ? AND status = 'signed'").bind(generateContractNumber(now), contract.id).run()
+
+    await updateOrderStatus(c, order.id, 'pending_payment')
+    try {
+      const result = await createOrderPaymentIntent(c, customer, order.id, true)
+      if (result.alreadyPaid) {
+        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_charged', title: '合同已生效，租金已自动扣款', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过，合同已自动确认生效，并已使用您预留的信用卡自动扣取租金${Number((order as any).deliveryFee || 0) > 0 ? `（含配送费用 ${Number((order as any).deliveryFee).toFixed(2)} AUD）` : ''}。押金已按之前约定的方式预授权/保存卡片处理。`, orderId: order.id })
+      } else {
+        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
+      }
+    } catch (error: any) {
+      console.error('Auto-charge rent on approval failed:', error?.message || error)
+      await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
+    }
+    return c.redirect(staffOrderPath(order))
+  }
+
   const signUrl = new URL(`/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1`, c.req.url).toString()
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核，合同待签署', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。请打开以下链接签署租赁合同：${signUrl}`, orderId: order.id })
   return c.redirect(staffOrderPath(order))
