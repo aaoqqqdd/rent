@@ -10,6 +10,20 @@ function statusBadge(c: any): string {
   return labels[status] || status
 }
 
+function selectedCouponComponents(coupon: any): Set<string> {
+  const values = String(coupon?.applicable_components || '').split(',').map((value) => value.trim().toUpperCase()).filter(Boolean)
+  return new Set(values.length ? values : ['RENTAL_FEE'])
+}
+
+function couponComponentOptions(coupon?: any): string {
+  const selected = selectedCouponComponents(coupon)
+  return `<select class="form-control" name="applicableComponents" multiple size="3" aria-label="优惠适用费用">
+    <option value="RENTAL_FEE" ${selected.has('RENTAL_FEE') ? 'selected' : ''}>租赁费用</option>
+    <option value="DELIVERY_FEE" ${selected.has('DELIVERY_FEE') ? 'selected' : ''}>配送费</option>
+    <option value="DEPOSIT_FEE" ${selected.has('DEPOSIT_FEE') ? 'selected' : ''}>押金</option>
+  </select><small class="form-text">可多选；不选择时默认只按租赁费用计算优惠。逾期费和损坏费不参与优惠。</small>`
+}
+
 export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[] = []) {
   const rows = coupons.map(c => `<tr>
     <td class="mono">${sanitizePlainText(c.code, 40)}</td>
@@ -44,10 +58,9 @@ export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[
       <select class="form-control" name="deviceId"><option value="">适用全部设备</option>${deviceOptions}</select>
       <input class="form-control" name="brand" maxlength="120" placeholder="限定品牌（例如 Apple，可留空）">
       <input class="form-control" name="configKeyword" maxlength="120" placeholder="限定配置关键词（例如 M3、32GB，可留空）">
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" checked disabled> 租赁费用（始终参与优惠计算）</label>
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="applyDeliveryFee"> 配送费用也参与优惠（押金 / 逾期费 / 损坏费永久排除）</label>
+      ${couponComponentOptions()}
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="newCustomerOnly"> 仅限新客户使用</label>
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="stackable"> 允许与其他优惠叠加（系统当前每单仅支持一个优惠码）</label>
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="stackable"> 允许与其他优惠叠加</label>
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="restoreOnCancellation" checked> 订单取消后恢复使用次数</label>
       <small class="form-text">设备、品牌、配置均填写时，必须同时满足；全部留空表示全场可用。</small>
       <button class="button button-primary" type="submit">创建优惠码</button>
@@ -81,10 +94,9 @@ export function renderAdminCouponEdit(user: any, coupon: any, devices: any[] = [
       <select class="form-control" name="deviceId"><option value="">适用全部设备</option>${deviceOptions}</select>
       <input class="form-control" name="brand" maxlength="120" value="${sanitizePlainText(coupon.brand || '', 120)}" placeholder="限定品牌（可留空）">
       <input class="form-control" name="configKeyword" maxlength="120" value="${sanitizePlainText(coupon.config_keyword || '', 120)}" placeholder="限定配置关键词（可留空）">
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" checked disabled> 租赁费用（始终参与优惠计算）</label>
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="applyDeliveryFee" ${String(coupon.applicable_components || '').toUpperCase().includes('DELIVERY_FEE') ? 'checked' : ''}> 配送费用也参与优惠（押金 / 逾期费 / 损坏费永久排除）</label>
+      ${couponComponentOptions(coupon)}
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="newCustomerOnly" ${coupon.new_customer_only ? 'checked' : ''}> 仅限新客户使用</label>
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="stackable" ${coupon.stackable ? 'checked' : ''}> 允许与其他优惠叠加（当前系统每单仅支持一个优惠码）</label>
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="stackable" ${coupon.stackable ? 'checked' : ''}> 允许与其他优惠叠加</label>
       <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="restoreOnCancellation" ${coupon.restore_on_cancellation ? 'checked' : ''}> 订单取消后恢复使用次数</label>
       <button class="button button-primary" type="submit">保存修改</button>
     </form>

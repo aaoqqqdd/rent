@@ -466,9 +466,14 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             const orderDevice = await getDeviceById(c, order.deviceId || (order as any).device_id)
             if (!orderDevice) throw new Error('订单关联的设备不存在')
             const rentAmountForCoupon = calculateRentalFee(orderDevice, Number(order.rentalPeriod || 0))
-            const coupon = await findEligibleCoupon(c, previewCouponCode, orderDevice, rentAmountForCoupon)
+            const feeParts = {
+              rentalFee: rentAmountForCoupon,
+              deliveryFee: Number(order.deliveryFee || order.delivery_fee || 0),
+              depositFee: Number(order.depositAmount || order.deposit_amount || 0),
+            }
+            const coupon = await findEligibleCoupon(c, previewCouponCode, orderDevice, feeParts)
             await checkCustomerCouponEligibility(c, coupon, userId)
-            const discountAmount = calculateCouponDiscount(coupon, rentAmountForCoupon)
+            const discountAmount = calculateCouponDiscount(coupon, feeParts)
             await reserveCouponForOrder(c, { coupon, customerId: userId, orderId: contract.rentalId, discountAmount })
             const adjustment = discountAmount - previousDiscount
             if (adjustment !== 0) await c.env.RENT.prepare('UPDATE orders SET totalAmount = totalAmount - ? WHERE id = ?').bind(adjustment, contract.rentalId).run()
@@ -482,9 +487,14 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           const orderDevice = await getDeviceById(c, order.deviceId || (order as any).device_id)
           if (!orderDevice) throw new Error('订单关联的设备不存在')
           const rentAmountForCoupon = calculateRentalFee(orderDevice, Number(order.rentalPeriod || 0))
-          const coupon = await findEligibleCoupon(c, enteredCouponCode, orderDevice, rentAmountForCoupon)
+          const feeParts = {
+            rentalFee: rentAmountForCoupon,
+            deliveryFee: Number(order.deliveryFee || order.delivery_fee || 0),
+            depositFee: Number(order.depositAmount || order.deposit_amount || 0),
+          }
+          const coupon = await findEligibleCoupon(c, enteredCouponCode, orderDevice, feeParts)
           await checkCustomerCouponEligibility(c, coupon, userId)
-          const discountAmount = calculateCouponDiscount(coupon, rentAmountForCoupon)
+          const discountAmount = calculateCouponDiscount(coupon, feeParts)
           await reserveCouponForOrder(c, { coupon, customerId: userId, orderId: contract.rentalId, discountAmount })
           await c.env.RENT.prepare('UPDATE orders SET totalAmount = totalAmount - ? WHERE id = ?').bind(discountAmount, contract.rentalId).run()
             ; (order as any).totalAmount = Number(order.totalAmount) - discountAmount

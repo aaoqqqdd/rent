@@ -84,6 +84,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   const depositAmount = device.depositAmount;
   const couponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
   const rentAmount = calculateRentalFee(device, rentalPeriod)
+  const couponFeeParts = { rentalFee: rentAmount, deliveryFee, depositFee: depositAmount }
   let discountAmount = 0
   let appliedCouponCode: string | null = null
   if (couponCode) {
@@ -94,11 +95,11 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     // customer is known — see signContract.ts step 4.
     let coupon: any
     try {
-      coupon = await findEligibleCoupon(c, couponCode, device, rentAmount)
+      coupon = await findEligibleCoupon(c, couponCode, device, couponFeeParts)
     } catch (error: any) {
       return c.redirect(`/staff/contracts/new?error=${encodeURIComponent(error?.message || '优惠码无效')}`)
     }
-    discountAmount = calculateCouponDiscount(coupon, rentAmount)
+    discountAmount = calculateCouponDiscount(coupon, couponFeeParts)
     appliedCouponCode = String(coupon.code).toUpperCase()
   }
   const totalAmount = rentAmount + depositAmount + deliveryFee - discountAmount;

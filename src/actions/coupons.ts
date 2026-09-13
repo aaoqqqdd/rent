@@ -26,29 +26,32 @@ function buildDeviceText(device: CouponDeviceLike): string {
 }
 
 export interface CouponFeeParts {
-  // The rental-fee subtotal (rentalPeriod × dailyRate). Always discountable.
+  // The rental-fee subtotal (rentalPeriod × dailyRate).
   rentalFee: number
-  // Confirmed delivery fee, if any. Only discountable when the coupon opts in
-  // via applicable_components. 0 during self-serve checkout (fee set later).
+  // Confirmed delivery fee, if any. 0 during self-serve checkout (fee set later).
   deliveryFee?: number
+  // Security deposit shown on the order. Discountable only when selected.
+  depositFee?: number
 }
 
-// Which order components a coupon may reduce. RENTAL_FEE is always included;
-// DELIVERY_FEE is opt-in. Deposit / late fee / damage fee are never discountable.
+// Which order components a coupon may reduce. If the stored list is empty or
+// invalid, preserve the legacy default of RENTAL_FEE. Late fees and damage
+// fees are intentionally not supported as discountable components.
 export function couponApplicableComponents(coupon: any): Set<string> {
-  const raw = String(coupon?.applicable_components || 'RENTAL_FEE')
-    .split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean)
-  const set = new Set<string>(raw.length ? raw : ['RENTAL_FEE'])
-  set.add('RENTAL_FEE')
-  return set
+  const allowed = new Set(['RENTAL_FEE', 'DELIVERY_FEE', 'DEPOSIT_FEE'])
+  const raw = String(coupon?.applicable_components || '')
+    .split(',').map((s: string) => s.trim().toUpperCase()).filter((value) => allowed.has(value))
+  return new Set(raw.length ? raw : ['RENTAL_FEE'])
 }
 
 // The subtotal a coupon's percentage / minimum / cap all apply to, given the
 // coupon's scope. Falls back to rentalFee alone for the default coupon.
 export function couponDiscountableBase(coupon: any, parts: CouponFeeParts): number {
   const components = couponApplicableComponents(coupon)
-  let base = Math.max(0, Number(parts.rentalFee || 0))
+  let base = 0
+  if (components.has('RENTAL_FEE')) base += Math.max(0, Number(parts.rentalFee || 0))
   if (components.has('DELIVERY_FEE')) base += Math.max(0, Number(parts.deliveryFee || 0))
+  if (components.has('DEPOSIT_FEE')) base += Math.max(0, Number(parts.depositFee || 0))
   return Number(base.toFixed(2))
 }
 

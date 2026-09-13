@@ -1758,17 +1758,18 @@ app.post('/customer/rent/:id', async (c) => {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
   const rentAmount = calculateRentalFee(device, rentalPeriod)
+  const couponFeeParts = { rentalFee: rentAmount, deliveryFee: 0, depositFee: Number(device.depositAmount || 0) }
   let discountAmount = 0
   let appliedCouponCode: string | null = null
   let eligibleCoupon: any = null
   if (couponCode) {
     try {
-      eligibleCoupon = await findEligibleCoupon(c, couponCode, device, rentAmount)
+      eligibleCoupon = await findEligibleCoupon(c, couponCode, device, couponFeeParts)
       await checkCustomerCouponEligibility(c, eligibleCoupon, user.id)
     } catch (error: any) {
       return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, error?.message || '优惠码无效'), 400)
     }
-    discountAmount = calculateCouponDiscount(eligibleCoupon, rentAmount)
+    discountAmount = calculateCouponDiscount(eligibleCoupon, couponFeeParts)
     appliedCouponCode = String(eligibleCoupon.code).toUpperCase()
   }
   const orderId = `o-${nanoid(8)}`
@@ -2401,14 +2402,15 @@ app.get('/api/coupons/rental-preview', async (c) => {
   const device = await getDeviceById(c, deviceId) as any
   if (!device) return c.json({ ok: false, message: '设备不存在' }, 404)
   const rent = calculateRentalFee(device, days)
+  const deposit = Number(device.depositAmount || 0)
+  const feeParts = { rentalFee: rent, deliveryFee: 0, depositFee: deposit }
   let coupon: any
   try {
-    coupon = await findEligibleCoupon(c, code, device, rent)
+    coupon = await findEligibleCoupon(c, code, device, feeParts)
   } catch (error: any) {
     return c.json({ ok: false, message: error?.message || '优惠码无效' })
   }
-  const discount = calculateCouponDiscount(coupon, rent)
-  const deposit = Number(device.depositAmount || 0)
+  const discount = calculateCouponDiscount(coupon, feeParts)
   return c.json({ ok: true, rent, discount, deposit, total: Number((rent + deposit - discount).toFixed(2)), message: `已优惠 AUD$${discount.toFixed(2)}` })
 })
 
@@ -2440,7 +2442,7 @@ app.get('/api/contract-sign/coupon-preview', async (c) => {
   const base = Number(order.totalAmount || order.total_amount || 0)
   const rentAmount = Math.max(0, base - deposit - delivery)
   let coupon: any
-  const feeParts = { rentalFee: rentAmount, deliveryFee: delivery }
+  const feeParts = { rentalFee: rentAmount, deliveryFee: delivery, depositFee: deposit }
   try {
     coupon = await findEligibleCoupon(c, code, device || { id: order.deviceId || order.device_id }, feeParts)
   } catch (error: any) {
@@ -3417,7 +3419,11 @@ app.post('/admin/orders/:id/changes', async (c) => {
         ? Number((await getDeviceById(c, after.deviceId) as any)?.pricePerDay || (order as any).dailyRate || 0)
         : Number((order as any).dailyRate || 0)
       const newRentalFee = Number((Number(after.rentalPeriod || order.rentalPeriod || 0) * dailyRate).toFixed(2))
-      const base = couponDiscountableBase(coupon, { rentalFee: newRentalFee, deliveryFee: Number((order as any).deliveryFee || 0) })
+      const base = couponDiscountableBase(coupon, {
+        rentalFee: newRentalFee,
+        deliveryFee: Number((order as any).deliveryFee || 0),
+        depositFee: Number(after.depositAmount || (order as any).depositAmount || 0),
+      })
       if (base < Number(coupon.minimum_order_amount)) {
         const droppedDiscount = Number(after.discountAmount || 0)
         await releaseCouponForOrder(c, order.id)
@@ -4386,6 +4392,13 @@ function parseCouponFormFields(form: Record<string, any>) {
   const brand = String(form.brand || '').trim().slice(0, 120) || null
   const configKeyword = String(form.configKeyword || '').trim().slice(0, 120) || null
   const status = ['DRAFT', 'ACTIVE', 'DISABLED'].includes(String(form.status)) ? String(form.status) : 'ACTIVE'
+  const allowedComponents = new Set(['RENTAL_FEE', 'DELIVERY_FEE', 'DEPOSIT_FEE'])
+  const rawComponents = form.applicableComponents != null
+    ? (Array.isArray(form.applicableComponents) ? form.applicableComponents : [form.applicableComponents])
+    : (form.applyDeliveryFee ? ['RENTAL_FEE', 'DELIVERY_FEE'] : [])
+  const applicableComponents = [...new Set(rawComponents
+    .map((value: unknown) => String(value).trim().toUpperCase())
+    .filter((value: string) => allowedComponents.has(value)))].join(',') || 'RENTAL_FEE'
   const valid = ['percent', 'fixed'].includes(discountType) && Number.isFinite(discountValue) && discountValue > 0 && !(discountType === 'percent' && discountValue > 100) &&
     (maxUses === null || (Number.isInteger(maxUses) && maxUses >= 1)) &&
     (maxUsesPerCustomer === null || (Number.isInteger(maxUsesPerCustomer) && maxUsesPerCustomer >= 1)) &&
@@ -4393,7 +4406,7 @@ function parseCouponFormFields(form: Record<string, any>) {
     (minimumOrderAmount === null || (Number.isFinite(minimumOrderAmount) && minimumOrderAmount >= 0))
   return {
     valid, discountType, discountValue, maxUses, maxUsesPerCustomer, maxDiscountAmount, minimumOrderAmount, deviceId, brand, configKeyword, status,
-    applicableComponents: form.applyDeliveryFee ? 'RENTAL_FEE,DELIVERY_FEE' : 'RENTAL_FEE',
+    applicableComponents,
     newCustomerOnly: form.newCustomerOnly ? 1 : 0,
     stackable: form.stackable ? 1 : 0,
     restoreOnCancellation: form.restoreOnCancellation ? 1 : 0,

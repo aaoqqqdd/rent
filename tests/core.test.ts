@@ -35,12 +35,25 @@ import { renderStaffInspection } from '../src/pages/staff/inspection'
 import { renderGuestAccount } from '../src/pages/customer/guestAccount'
 import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
+import { couponApplicableComponents, couponDiscountableBase } from '../src/actions/coupons'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = extractInlineScripts(html).map(script => script.trim()).filter(Boolean)
   assert.ok(scripts.length > 0)
   for (const script of scripts) assert.doesNotThrow(() => new Function(script))
 }
+
+test('coupon fee components default to rental and support delivery/deposit selections', () => {
+  assert.deepEqual([...couponApplicableComponents({ applicable_components: '' })], ['RENTAL_FEE'])
+  assert.equal(couponDiscountableBase(
+    { applicable_components: 'DELIVERY_FEE,DEPOSIT_FEE' },
+    { rentalFee: 100, deliveryFee: 20, depositFee: 50 },
+  ), 70)
+  assert.equal(couponDiscountableBase(
+    { applicable_components: 'DELIVERY_FEE,UNKNOWN' },
+    { rentalFee: 100, deliveryFee: 20, depositFee: 50 },
+  ), 20)
+})
 
 test('PBKDF2 passwords verify without storing plaintext', async () => {
   const hash = await hashPassword('A-secure-password-123')
