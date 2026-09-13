@@ -10,7 +10,7 @@
 // 下面是纯函数部分（无 DB），供路由与单元测试共用；设备是否存在、租期是否
 // 冲突等依赖 DB 的检查由调用方在拿到 patch 后执行。
 
-export const ORDER_CHANGE_TYPES = ['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT', 'LOCATION_CHANGE'] as const
+export const ORDER_CHANGE_TYPES = ['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT', 'LOCATION_CHANGE', 'REFUND_METHOD'] as const
 export type OrderChangeType = typeof ORDER_CHANGE_TYPES[number]
 
 export const ORDER_CHANGE_TYPE_LABELS: Record<string, string> = {
@@ -18,9 +18,12 @@ export const ORDER_CHANGE_TYPE_LABELS: Record<string, string> = {
   DEVICE_SWAP: '更换设备',
   PRICE_ADJUSTMENT: '调整价格 / 押金',
   LOCATION_CHANGE: '修改取还地点',
+  REFUND_METHOD: '修改押金退款方式',
   CANCELLATION: '取消订单',
   INVENTORY_RELEASE: '释放库存',
 }
+
+const ORDER_REFUND_METHODS = ['balance', 'original']
 
 export function formatOrderChangeActor(name: unknown, id: unknown): string {
   const actorName = String(name ?? '').trim()
@@ -41,6 +44,10 @@ const ORDER_CHANGE_FIELD_LABELS: Record<string, string> = {
   returnLocation: '归还地点',
   deliveryMethod: '配送方式',
   status: '订单状态',
+  refundMethod: '退款方式',
+  refundBsb: '退款 BSB',
+  refundAccountNumber: '退款账号',
+  refundAccountName: '退款账户名',
 }
 
 const ORDER_CHANGE_DELIVERY_METHODS = ['Pickup', 'Delivery']
@@ -58,6 +65,10 @@ export function orderChangeSnapshot(order: any): Record<string, any> {
     pickupLocation: order.pickupLocation ?? order.pickup_location ?? '',
     returnLocation: order.returnLocation ?? order.return_location ?? '',
     deliveryMethod: order.deliveryMethod ?? order.delivery_method ?? 'Pickup',
+    refundMethod: order.refundMethod ?? order.refund_method ?? 'balance',
+    refundBsb: order.refundBsb ?? order.refund_bsb ?? '',
+    refundAccountNumber: order.refundAccountNumber ?? order.refund_account_number ?? '',
+    refundAccountName: order.refundAccountName ?? order.refund_account_name ?? '',
   }
 }
 
@@ -136,6 +147,20 @@ export function buildOrderChangePlan(
         && patch.depositAmount === Number(before.depositAmount)
         && patch.discountAmount === Number(before.discountAmount || 0)
       if (unchanged) return { error: '价格没有变化' }
+      return { patch }
+    }
+    case 'REFUND_METHOD': {
+      const refundMethod = (input.refundMethod ?? '').trim()
+      if (!ORDER_REFUND_METHODS.includes(refundMethod)) return { error: '退款方式无效' }
+      const refundBsb = (input.refundBsb ?? '').trim().slice(0, 30)
+      const refundAccountNumber = (input.refundAccountNumber ?? '').trim().slice(0, 60)
+      const refundAccountName = (input.refundAccountName ?? '').trim().slice(0, 120)
+      const patch = { refundMethod, refundBsb, refundAccountNumber, refundAccountName }
+      const unchanged = patch.refundMethod === (before.refundMethod || 'balance')
+        && patch.refundBsb === (before.refundBsb || '')
+        && patch.refundAccountNumber === (before.refundAccountNumber || '')
+        && patch.refundAccountName === (before.refundAccountName || '')
+      if (unchanged) return { error: '退款方式没有变化' }
       return { patch }
     }
     case 'LOCATION_CHANGE': {
