@@ -41,8 +41,8 @@ export function renderAdminOperationsReport(user: any, d: OperationsReportData) 
   const days = d.windowDays
   const body = `<div class="page-header"><div><p class="section-code">OPERATIONS / ANALYTICS</p><h2>运营分析报表</h2><p>统计窗口：最近 ${days} 天。金额均来自 Ledger / Payment / Refund 明细，不从订单 UI 状态推算。</p></div><div style="display:flex;gap:8px">${[7, 30, 90, 365].map(n => `<a class="button button-sm ${n === days ? 'button-primary' : 'button-secondary'}" href="/admin/reports?days=${n}">${n} 天</a>`).join('')}</div></div>
   <div class="stats-grid">
-    ${stat('租金收入', formatCurrency(d.rentalRevenue), `Ledger PAYMENT 类目，最近 ${days} 天`, 'primary')}
-    ${stat('退款总额', formatCurrency(d.refundTotal), 'Ledger REFUND 类目', d.refundTotal ? 'warning' : '')}
+    ${stat('租金收入', formatCurrency(d.rentalRevenue), `Payment RENTAL 明细，最近 ${days} 天`, 'primary')}
+    ${stat('退款总额', formatCurrency(d.refundTotal), 'Payment Refund 租金部分（不含押金）', d.refundTotal ? 'warning' : '')}
     ${stat('净收入', formatCurrency(netRevenue), '租金收入 − 退款总额')}
     ${stat('应收未收', formatCurrency(d.outstandingBalance), '已确认 / 租赁中但付款未结清的订单', d.outstandingBalance ? 'warning' : '')}
   </div>
