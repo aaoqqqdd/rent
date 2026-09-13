@@ -37,6 +37,29 @@ function orderDeposit(order: any): number {
   return Math.max(0, Number(order.depositAmount ?? order.deposit_amount ?? 0))
 }
 
+// Stripe 后台展示用的收款说明。付款成功前订单号还没生成，先用内部 id 兜底，
+// 付款/预授权成功分配到正式订单号后由 refreshStripePaymentDescriptions 补写。
+function orderPaymentLabel(order: any): string {
+  return `设备租赁订单 ${order.orderNo || order.id}`
+}
+
+async function refreshStripePaymentDescriptions(c: Context, orderId: string): Promise<void> {
+  const order = await getOrderById(c, orderId)
+  if (!order?.orderNo) return
+  const label = orderPaymentLabel(order)
+  const rows = await c.env.RENT.prepare(
+    "SELECT stripe_payment_intent_id, deposit_amount, rental_amount FROM payments WHERE rental_id = ? AND payment_method = 'card' AND stripe_payment_intent_id IS NOT NULL"
+  ).bind(orderId).all() as any
+  for (const row of (rows.results || []) as any[]) {
+    const intentId = String(row.stripe_payment_intent_id || '')
+    if (!/^pi_[A-Za-z0-9_]+$/.test(intentId)) continue
+    const hasDeposit = Number(row.deposit_amount || 0) > 0
+    const hasRent = Number(row.rental_amount || 0) > 0
+    const item = hasDeposit && hasRent ? '租金+押金预授权' : hasDeposit ? '押金预授权' : '租金及服务费'
+    await stripeRequest(c, `payment_intents/${intentId}`, new URLSearchParams({ description: `${label}｜${item}` })).catch(() => {})
+  }
+}
+
 export async function resolveDepositPaymentMode(c: Context, order: any, paymentMethodId = ''): Promise<DepositPaymentMode> {
   const rentalPeriod = Number(order.rentalPeriod ?? order.rental_period ?? 0)
   const savedPaymentMethodId = paymentMethodId || String(order.stripe_payment_method_id || '')
@@ -70,6 +93,7 @@ export async function createBalanceTopUpIntent(c: Context, user: any, topUpId: s
       processing_fee: String(feeCents),
     },
     idempotencyKey: `topup-pi-${topUpId}`,
+    description: `账户余额充值｜${topUpId}`,
   })
   await c.env.RENT.prepare("UPDATE balance_topups SET stripe_payment_intent_id = ?, processing_fee = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .bind(intent.id, feeCents / 100, topUpId).run()
@@ -160,7 +184,7 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
     // 不显式限定为 card 会导致 Stripe 报 "not eligible for the requested card features"。
     'payment_method_types[0]': 'card',
     capture_method: 'manual',
-    description: `订单 ${order.id} 押金预授权`,
+    description: `${orderPaymentLabel(order)}｜押金预授权`,
     'metadata[order_id]': String(order.id),
     'metadata[type]': 'deposit_authorization',
     'metadata[deposit_amount]': String(cents(depositAmount)),
@@ -382,7 +406,7 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     confirmNow,
     setupFutureUsage: depositMode === 'PREAUTH' ? 'off_session' : undefined,
     captureMethod: useFullAuthorization ? 'manual' : undefined,
-    description: useFullAuthorization ? `订单 ${order.id} 租金+押金预授权` : `订单 ${order.id} 租金及服务费`,
+    description: `${orderPaymentLabel(order)}｜${useFullAuthorization ? '租金+押金预授权' : '租金及服务费'}`,
   })
   const alreadyPaid = intent.status === 'succeeded'
   if (!alreadyPaid && !intent.client_secret) throw new Error('Stripe 未返回有效支付凭据')
@@ -401,6 +425,11 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     await c.env.RENT.prepare("UPDATE orders SET stripe_deposit_payment_intent_id = ?, deposit_payment_mode = 'PREAUTH', deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = ? WHERE id = ?")
       .bind(intent.id, depositAmount, order.id).run()
   }
+  if (alreadyPaid) {
+    // 先分配正式订单号，这样接下来（若有）单独建立的押金预授权 PaymentIntent
+    // 创建时就能直接带上正式单号，不用等后面再补刷描述。
+    order.orderNo = await ensureOrderNumber(c, order.id).catch(() => order.orderNo)
+  }
   if (fullAuthorization && !useFullAuthorization && alreadyPaid) {
     // 租金已经扣款成功；押金预授权失败不该让整个付款请求报错，否则客户会看到"支付失败"
     // 但实际租金已经扣款的矛盾状态。留给 webhook 的兜底逻辑或人工跟进即可。
@@ -415,6 +444,9 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     // confirmNow 可能直接返回 succeeded，不一定会再触发可依赖的 webhook；
     // 付款在签约后完成时也必须在这里补开发票。
     await issueInvoice(c, order.id)
+    // useFullAuthorization 的合并授权在拿到正式订单号之前就已创建，这里把 Stripe
+    // 侧描述统一刷新成正式的 OD 单号。
+    await refreshStripePaymentDescriptions(c, order.id)
     return { clientSecret: '', publishableKey: '', amountCents: authorizationCents, alreadyPaid: true }
   }
   return { clientSecret: intent.client_secret as string, publishableKey: await getStripePublishableKey(c), amountCents: authorizationCents }
@@ -541,6 +573,7 @@ export async function createOrderPriceAdjustmentIntent(c: Context, user: any, or
     customerId: await ensureStripeCustomerForPaymentMethod(c, user, ''),
     metadata: { order_id: order.id, customer_id: String(user.id), type: 'price_adjustment', adjustment_id: adjustmentId, amount: String(cents(summary.amountDue)), processing_fee: String(feeCents) },
     idempotencyKey: `price-adjustment-pi-${adjustmentId}`,
+    description: `${orderPaymentLabel(order)}｜订单差价补款`,
   })
   const alreadyPaid = intent.status === 'succeeded'
   const paymentId = String(existingPayment?.id || `p-${nanoid(12)}`)
@@ -838,7 +871,9 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
   if (paidOrderId) {
     try {
       const paidOrder = await getOrderById(c, paidOrderId)
+      await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
       if (paidOrder) {
+        paidOrder.orderNo = (await c.env.RENT.prepare('SELECT orderNo FROM orders WHERE id = ?').bind(paidOrderId).first() as any)?.orderNo || paidOrder.orderNo
         await recordExternalRentalFlow(c, paidOrder.userId, Number(paidOrder.totalAmount) - orderDeposit(paidOrder), '信用卡', null, paidOrder.id)
         await recordDeviceLifecycle(c, paidOrder.deviceId, 'RESERVED', { orderId: paidOrder.id, reason: '信用卡付款成功' })
         if (depositPaymentModeForOrder(paidOrder) === 'PREAUTH' && !String((paidOrder as any).stripe_deposit_payment_intent_id || '') && String((paidOrder as any).stripe_payment_method_id || '')) {
@@ -846,8 +881,8 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
         }
         await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(paidOrder.id).run()
       }
-      await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
       await issueInvoice(c, paidOrderId)
+      await refreshStripePaymentDescriptions(c, paidOrderId)
       await enqueueRentalUserCreation(c, await getOrderById(c, paidOrderId))
     } catch (error: any) {
       console.error('Stripe webhook post-processing failed:', error?.message || error)
@@ -859,6 +894,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       if (authorizedOrder) {
         await recordDeviceLifecycle(c, authorizedOrder.deviceId, 'RESERVED', { orderId: authorizedOrder.id, reason: '信用卡预授权成功' })
         await ensureOrderNumber(c, authorizedOrder.id, String(session.id || ''))
+        await refreshStripePaymentDescriptions(c, authorizedOrderId)
         await enqueueRentalUserCreation(c, authorizedOrder)
       }
     } catch (error: any) {
