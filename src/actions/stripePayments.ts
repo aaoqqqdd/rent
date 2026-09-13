@@ -1106,20 +1106,12 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
 }
 
 // 客户主动取消自己的待支付订单：尚未发生实际扣款（无论是常规 PaymentIntent 还是
-// 短租的一次性预授权），所以直接释放/取消 Stripe 侧未结算的意图即可，无需退款。
+// 短租的一次性预授权），取消时会一并告诉 Stripe 放弃未结算的 PaymentIntent（见
+// applyPendingPaymentCancellation），无需退款。
 export async function cancelPendingPaymentOrderByCustomer(c: Context, user: any, orderId: string): Promise<void> {
   const order = await getOrderById(c, orderId)
   if (!order || order.userId !== user.id) throw new Error('订单不存在或无权访问')
   if (order.status !== 'pending_payment') throw new Error('该订单当前不是待支付状态，不能取消')
-  const pendingPayments = await c.env.RENT.prepare("SELECT id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = 'pending' AND stripe_payment_intent_id IS NOT NULL").bind(order.id).all() as any
-  for (const payment of (pendingPayments.results || []) as any[]) {
-    const intentId = String(payment.stripe_payment_intent_id || '')
-    if (!/^pi_[A-Za-z0-9_]+$/.test(intentId)) continue
-    const intent = await stripeRequest(c, `payment_intents/${intentId}`).catch(() => null)
-    if (intent && ['requires_payment_method', 'requires_confirmation', 'requires_action', 'requires_capture'].includes(String(intent.status))) {
-      await stripeRequest(c, `payment_intents/${intentId}/cancel`, new URLSearchParams(), `customer-cancel-${order.id}`).catch(() => null)
-    }
-  }
   const cancelled = await applyPendingPaymentCancellation(c, order as any)
   if (!cancelled) throw new Error('订单状态已变化，请刷新后重试')
   await revokeReferralRewardForOrder(c, order.id, '客户取消待支付订单')

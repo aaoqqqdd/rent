@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { Context } from 'hono'
+import { stripeRequest } from './stripe'
 import rawLayoutTemplate from './layout.html'
 import { styleSheetHref, appScriptHref, languageScriptHref } from './lib/assetVersion'
 import { nanoid } from 'nanoid'
@@ -313,12 +314,30 @@ export async function applyPendingPaymentCancellation(c: Context, order: { id: s
   `).bind(order.id).run() as any
   const changes = Number(result.meta?.changes ?? result.changes ?? 0)
   if (changes < 1) return false
+  await releaseStripePendingPaymentIntents(c, order.id)
   await c.env.RENT.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign')").bind(order.id).run()
   await c.env.RENT.prepare(`UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND status = 'pending'`).bind(order.id).run()
   await releaseDeviceIfUnbooked(c, order.deviceId)
   const { releaseCouponForOrder } = await import('./actions/coupons')
   await releaseCouponForOrder(c, order.id)
   return true
+}
+
+// 订单取消时同步告诉 Stripe 放弃这笔订单尚未结算的 PaymentIntent（常规收款或短租
+// 一次性预授权），避免站内订单已取消，Stripe 那边的授权额度却继续占用客户信用卡。
+// 尽力而为：单个 PaymentIntent 请求失败不阻断订单取消本身。
+async function releaseStripePendingPaymentIntents(c: Context, orderId: string): Promise<void> {
+  const pendingPayments = await c.env.RENT.prepare(
+    "SELECT stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = 'pending' AND stripe_payment_intent_id IS NOT NULL"
+  ).bind(orderId).all() as any
+  for (const payment of (pendingPayments.results || []) as any[]) {
+    const intentId = String(payment.stripe_payment_intent_id || '')
+    if (!/^pi_[A-Za-z0-9_]+$/.test(intentId)) continue
+    const intent = await stripeRequest(c, `payment_intents/${intentId}`).catch(() => null)
+    if (intent && ['requires_payment_method', 'requires_confirmation', 'requires_action', 'requires_capture'].includes(String(intent.status))) {
+      await stripeRequest(c, `payment_intents/${intentId}/cancel`, new URLSearchParams(), `pending-payment-cancel-${orderId}`).catch(() => null)
+    }
+  }
 }
 
 // Periodically scans for known invariant violations (e.g. a paid order with no
