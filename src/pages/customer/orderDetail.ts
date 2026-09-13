@@ -139,6 +139,14 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
             ${renderStripePaymentBox({ intentUrl: `/customer/orders/${order.id}/stripe/intent`, returnUrl: `/payment/result?orderId=${encodeURIComponent(order.id)}`, buttonLabel: `${depositMode === 'PREAUTH' ? '预授权' : '支付'} ${formatCurrency(stripeTotal)}`, domId: 'order-stripe-pay' })}
           </div>` : ''}
         </div>
+        ${['card', 'stripe'].includes(String(order.paymentMethod)) ? (() => {
+          const alternatives: Array<{ value: string; label: string }> = []
+          if (systemSettings.paymentMethods.bankTransfer) alternatives.push({ value: 'bank_transfer', label: '银行转账' })
+          if (systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl) alternatives.push({ value: 'alipay', label: '支付宝' })
+          if (systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl) alternatives.push({ value: 'wechat', label: '微信' })
+          if (!alternatives.length) return ''
+          return `<p class="form-text" style="margin-top:16px">信用卡支付遇到问题？可以改用：${alternatives.map(item => `<form method="post" action="/customer/orders/${order.id}/switch-payment-method" style="display:inline-block;margin-left:8px"><input type="hidden" name="paymentMethod" value="${item.value}"><button class="button button-sm button-secondary" type="submit">${item.label}</button></form>`).join('')}</p>`
+        })() : ''}
         <form method="post" action="/customer/orders/${order.id}/cancel" style="margin-top:16px" data-site-confirm="确定取消该订单吗？取消后设备将释放给其他客户预订。"><button class="button button-secondary" type="submit">取消订单</button></form>
       ` : ''}
       ${(priceAdjustmentSummary.amountDue > 0 || priceAdjustmentSummary.pendingDepositRefund > 0) && !['pending_payment', 'completed', 'cancelled'].includes(String(order.status)) ? `<section class="panel" style="margin-top:20px"><h3>订单差价</h3>${priceAdjustmentSummary.pendingDepositRefund > 0 ? `<div class="alert"><strong>订单已下调，待退差价 ${formatCurrency(priceAdjustmentSummary.pendingDepositRefund)}。</strong>由于您使用${order.paymentMethod === 'bank_transfer' ? '银行转账' : order.paymentMethod === 'alipay' ? '支付宝' : '微信'}付款，差价将在管理员退押金时一并退还。</div>` : ''}${priceAdjustmentSummary.amountDue > 0 ? `<div class="alert"><strong>订单价格已增加，需要补交 ${formatCurrency(priceAdjustmentSummary.amountDue)}。</strong>${transferPayment ? '转账类付款请提交差价凭证，管理员审核后生效。' : `信用卡支付含手续费 ${formatCurrency(priceAdjustmentSummary.processingFee)}，本次实际扣款 ${formatCurrency(priceAdjustmentSummary.chargedAmount)}。`}</div>` : ''}
