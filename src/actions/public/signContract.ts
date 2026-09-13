@@ -19,6 +19,15 @@ import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibi
 import { calculateRentalFee } from '../../domain/rentalPricing';
 import { generateWindowsPassword } from '../../lib/password';
 
+function isTimeSlotPassed(date: string, slot: string): boolean {
+  const melbourneDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0)
+  const minutes = (hour === 24 ? 0 : hour) * 60 + Number(parts.find((part) => part.type === 'minute')?.value || 0)
+  const endMinutes: Record<string, number> = { morning_service: 8 * 60, morning: 12 * 60, afternoon: 20 * 60, evening_service: 23 * 60, delivery_morning: 12 * 60, delivery_afternoon: 19 * 60 }
+  return date === melbourneDate && minutes >= (endMinutes[slot] || 24 * 60)
+}
+
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
   const token = identifier; // 明确定义 token
   const viewerUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null)
@@ -317,7 +326,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const pickupTimeSlot = allowedTimeSlots.includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
         const returnTimeSlot = allowedTimeSlots.includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
         const unavailableTimeSlots = (await getDeviceRentalRules(c, order.deviceId)).unavailableTimeSlots || {}
-        if (!pickupTimeSlot || !returnTimeSlot || (unavailableTimeSlots[order.startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[order.endDate] || []).includes(returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
+        if (!pickupTimeSlot || !returnTimeSlot || isTimeSlotPassed(order.startDate, pickupTimeSlot) || isTimeSlotPassed(order.endDate, returnTimeSlot) || (unavailableTimeSlots[order.startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[order.endDate] || []).includes(returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
         const deliveryMethod = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup')
         const serviceSlots = deliveryMethod === 'Delivery' ? 0 : [pickupTimeSlot, returnTimeSlot].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length
         const serviceFee = Number((Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0)) * 0.1 * serviceSlots).toFixed(2))

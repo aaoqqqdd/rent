@@ -61,20 +61,30 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   if (startDate < todayValue || endDate < todayValue) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('开始日期和结束日期必须是今天或之后的日期')}`);
   }
-  if (start >= end) {
+  if (start > end) {
     return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
   }
   const melbourneNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Australia/Melbourne' }))
-  if (startDate === todayValue && startPeriod === 'AM' && melbourneNow.getHours() >= 13) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('取货时间段已过，请选择尚未开始的时段')}`)
-  }
+  const melbourneMinutes = melbourneNow.getHours() * 60 + melbourneNow.getMinutes()
+  const periodPassed = (date: string, period: string) => date === todayValue && melbourneMinutes >= (period === 'AM' ? 12 * 60 : 23 * 60)
   const halfDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
   if (halfDays <= 0) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('归还时段必须晚于取货时段')}`)
   const rentalPeriod = Math.ceil(halfDays / 2);
   if (rentalPeriod < rentalRules.minimumRentalDays) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent(`最短租赁时间为 ${rentalRules.minimumRentalDays} 天`)}`)
   const unavailable = new Set(rentalRules.unavailableDates)
   for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) if (unavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备包含管理员设置的不可用日期')}`)
-  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备在所选日期或缓冲时间内已有订单')}`)
+  const periodSlots = (period: string) => period === 'AM' ? ['morning_service', 'morning'] : ['afternoon', 'evening_service']
+  const periodBlocked = (date: string, period: string) => periodSlots(period).every(slot => (rentalRules.unavailableTimeSlots?.[date] || []).includes(slot))
+  for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) {
+    const date = day.toISOString().slice(0, 10)
+    for (const period of ['AM', 'PM']) {
+      const index = Math.round(Date.parse(`${date}T00:00:00Z`) / 86400000) * 2 + (period === 'PM' ? 1 : 0)
+      const requestStart = Math.round(Date.parse(`${startDate}T00:00:00Z`) / 86400000) * 2 + (startPeriod === 'PM' ? 1 : 0)
+      const requestEnd = Math.round(Date.parse(`${endDate}T00:00:00Z`) / 86400000) * 2 + (endPeriod === 'PM' ? 1 : 0)
+      if (requestStart <= index && index < requestEnd && (periodBlocked(date, period) || periodPassed(date, period))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('所选上午/下午时段已过或不可用')}`)
+    }
+  }
+  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays, startPeriod, endPeriod)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备在所选日期或缓冲时间内已有订单')}`)
   const sameDayBookings = ((await c.env.RENT.prepare(`SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled') AND (startDate = ? OR endDate = ? OR startDate = ? OR endDate = ?)`)
     .bind(deviceId, startDate, startDate, endDate, endDate).all()).results || []) as any[]
   if (sameDayBookings.some(item => (item.startDate === startDate && item.startPeriod === startPeriod) || (item.endDate === startDate && item.endPeriod === startPeriod))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备的取货时段已被出租')}`)
