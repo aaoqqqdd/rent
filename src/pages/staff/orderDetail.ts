@@ -65,14 +65,16 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           ` : ''}
           ${(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && contract?.status === 'signed')) ? `<button class="button button-primary" type="button" id="open-handover-dialog">记录交付并开始租赁</button>` : ''}
           ${order.status === 'active' && order.early_return_requested_at ? `<div class="alert">客户已申请提前归还，等待审批。<form method="post" action="/staff/orders/${order.id}/early-return/approve" style="display:inline;margin-left:12px" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-sm button-warning" type="submit">批准提前归还</button></form></div>` : ''}
-          ${['active', 'extended', 'overdue'].includes(String(order.status)) ? `<form method="POST" action="/staff/orders/${order.id}/suspend" data-site-confirm="确认暂停这笔租赁吗？"><button class="button button-warning" type="submit">暂停租赁</button><small class="form-text">仅绑定该客户的员工或管理员可以操作。</small></form>` : ''}
+          ${['active', 'extended', 'overdue'].includes(String(order.status)) ? `<form method="POST" action="/staff/orders/${order.id}/suspend" data-site-confirm="确认暂停这笔租赁吗？"><label class="form-label" for="suspend-reason">暂停原因（必填，将随通知发送给客户）</label><input class="form-control" id="suspend-reason" name="reason" maxlength="300" required placeholder="例如：设备无货 / 客户申请"><button class="button button-warning" type="submit" style="margin-top:8px">暂停租赁</button><small class="form-text">仅绑定该客户的员工或管理员可以操作。</small></form>` : ''}
           ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `
             <a class="button button-success" href="/staff/orders/${order.id}/inspection" data-full-navigation="true">设备归还 / 归还验机</a>
           ` : ''}
           ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
           ${user.role === 'ADMIN' && (order.status === 'active' || order.status === 'paid') ? `
-            <form method="POST" action="/staff/orders/${order.id}/cancel">
-              <button class="button button-danger" type="submit">取消订单</button>
+            <form method="POST" action="/staff/orders/${order.id}/cancel" data-site-confirm="确认取消这笔订单吗？">
+              <label class="form-label" for="cancel-reason">取消原因（必填，将随通知发送给客户）</label>
+              <input class="form-control" id="cancel-reason" name="reason" maxlength="300" required placeholder="例如：设备无货 / 订单金额错误">
+              <button class="button button-danger" type="submit" style="margin-top:8px">取消订单</button>
             </form>
           ` : ''}
         </div>

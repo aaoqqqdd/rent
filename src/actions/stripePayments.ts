@@ -6,6 +6,7 @@
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
 import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation } from '../site'
+import { createNotification } from '../services/notifications'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
 import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
@@ -1233,7 +1234,7 @@ export async function cancelPendingPaymentOrderByCustomer(c: Context, user: any,
   await revokeReferralRewardForOrder(c, order.id, '客户取消待支付订单')
 }
 
-export async function cancelAndRefund(c: Context, admin: any, orderId: string): Promise<Response> {
+export async function cancelAndRefund(c: Context, admin: any, orderId: string, reason?: string): Promise<Response> {
   const order = await getOrderById(c, orderId)
   if (!order) return c.text('订单不存在', 404)
   const today = melbourneDate()
@@ -1260,6 +1261,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
     ])
     await releaseCouponForOrder(c, order.id)
     await revokeReferralRewardForOrder(c, order.id, '订单取消并释放预授权')
+    await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已取消${reason ? `，原因：${reason}` : ''}。`, orderId: order.id })
     return c.redirect(`/admin/orders/${order.id}`, 303)
   }
   if (channel === 'bank_transfer' && (!order.refundBsb || !order.refundAccountNumber || !order.refundAccountName)) return c.text('订单缺少银行退款账户信息', 409)
@@ -1278,6 +1280,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
     ])
     await releaseCouponForOrder(c, order.id)
     await revokeReferralRewardForOrder(c, order.id, '订单取消并退款')
+    await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已取消，退款将通过银行转账处理${reason ? `，原因：${reason}` : ''}。`, orderId: order.id })
     return c.redirect(`/admin/orders/${order.id}`, 303)
   }
 
@@ -1302,9 +1305,10 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string): 
   await revokeReferralRewardForOrder(c, order.id, '订单取消并退款')
   if (channel === 'balance') await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '取消订单全额退款', admin.id)
   await issueCreditNote(c, order.id, Math.max(0, refundAmount - refundedProcessingFee), refundedProcessingFee, `cancellation-${nanoid(12)}`)
-  await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status, deviceId: order.deviceId }), JSON.stringify({ status: 'cancelled', deviceReleased: true }), '取消订单并退款', admin.id).run()
+  await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status, deviceId: order.deviceId }), JSON.stringify({ status: 'cancelled', deviceReleased: true }), reason || '取消订单并退款', admin.id).run()
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -refundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '取消订单全额退款', createdBy: admin.id, metadata: { channel, refundedProcessingFee } })
+  await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已取消并退款 ${refundAmount.toFixed(2)} AUD${reason ? `，原因：${reason}` : ''}。`, orderId: order.id })
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 

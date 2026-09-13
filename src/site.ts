@@ -585,7 +585,7 @@ export async function runMonitoringSweep(c: Context): Promise<{ metrics: number;
   return { metrics: metrics.length, alerts, resolved }
 }
 
-export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
+export async function updateOrderStatus(c: Context, orderId: string, status: string, options?: { reason?: string; triggeredBy?: string }): Promise<void> {
   const db = getDB(c);
   const mapping: Record<string, { order: string, payment: string, rental: string }> = {
     pending_approval: { order: 'PENDING', payment: 'UNPAID', rental: 'PENDING' },
@@ -610,7 +610,12 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
     await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
   }
   if (previous && previous.rental_status !== next.rental) {
-    await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'SYSTEM', '订单状态同步').run()
+    const reason = options?.reason?.trim()
+    if (reason && options?.triggeredBy) {
+      await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'MANUAL', options.triggeredBy, reason).run()
+    } else {
+      await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'SYSTEM', reason || '订单状态同步').run()
+    }
   }
   const lifecycleByOrderStatus: Partial<Record<string, DeviceLifecycleStatus>> = { paid: 'RESERVED', pending_pickup: 'RESERVED', active: 'RENTED', extended: 'RENTED', overdue: 'RENTED', suspended: 'RENTED', pending_return: 'INSPECTION' }
   const lifecycleStatus = lifecycleByOrderStatus[status]

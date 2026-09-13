@@ -1973,8 +1973,11 @@ app.post('/staff/orders/:orderId/suspend', async (c) => {
   const customer = order ? await getUserById(c, order.userId) : null
   if (!order || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
   if (!['active', 'extended', 'overdue'].includes(String(order.status)) || !canTransitionOrder(order.status, 'suspended')) return c.text('当前订单状态不能暂停', 409)
-  await updateOrderStatus(c, order.id, 'suspended')
-  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}暂停。`, orderId: order.id })
+  const suspendForm = await c.req.parseBody()
+  const suspendReason = String(suspendForm.reason || '').trim().slice(0, 300)
+  if (!suspendReason) return c.text('请填写暂停原因', 400)
+  await updateOrderStatus(c, order.id, 'suspended', { reason: suspendReason, triggeredBy: user.id })
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}暂停，原因：${suspendReason}。`, orderId: order.id })
   return c.redirect(staffOrderPath(order))
 })
 
@@ -2233,9 +2236,13 @@ app.post('/staff/orders/:orderId/cancel', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
+  const cancelForm = await c.req.parseBody()
+  const cancelReason = String(cancelForm.reason || '').trim().slice(0, 300)
   if (order) {
-    await updateOrderStatus(c, order.id, 'cancelled')
+    if (!cancelReason) return c.text('请填写取消原因', 400)
+    await updateOrderStatus(c, order.id, 'cancelled', { reason: cancelReason, triggeredBy: user.id })
     await updateDeviceStatus(c, order.deviceId, 'available')
+    await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}取消，原因：${cancelReason}。`, orderId: order.id })
   }
   return c.redirect(order ? staffOrderPath(order) : `/staff/orders/${c.req.param('orderId')}`)
 })
@@ -3528,15 +3535,17 @@ app.post('/admin/orders/:id/update', async (c) => {
   const form = await c.req.parseBody()
   const status = String(form.status || '')
   const force = String(form.force || '') === '1'
+  const reason = String(form.reason || '').trim().slice(0, 300)
   const order = await getOrderById(c, c.req.param('id'))
   const editableStatuses = ['suspended', 'active', 'cancelled']
   const isResume = status === 'active' && order?.status === 'suspended'
   if (!order || !editableStatuses.includes(status) || (status === 'active' && !isResume) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
+  if ((status === 'suspended' || status === 'cancelled') && !reason) return wantsJson ? c.json({ ok: false, error: '请填写暂停/取消原因' }, 400) : c.text('请填写暂停/取消原因', 400)
   const automaticCancellationPayment = status === 'cancelled'
     ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND ((status = 'paid' AND payment_method IN ('balance', 'card')) OR (status = 'pending' AND payment_method = 'card' AND stripe_payment_intent_id = (SELECT stripe_deposit_payment_intent_id FROM orders WHERE id = ?))) LIMIT 1").bind(order.id, order.id).first()
     : null
   if (automaticCancellationPayment) {
-    const response = await cancelAndRefund(c, user, order.id)
+    const response = await cancelAndRefund(c, user, order.id, reason)
     if (response.status >= 400) return wantsJson ? c.json({ ok: false, error: await response.text() }, response.status as any) : response
     return wantsJson ? c.json({ ok: true, refunded: true }) : response
   }
@@ -3544,7 +3553,9 @@ app.post('/admin/orders/:id/update', async (c) => {
     const contract = await c.env.RENT.prepare('SELECT contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
     if (!JSON.parse(contract?.contract_data || '{}').inspection_date && !force) return wantsJson ? c.json({ ok: false, error: '完成订单前必须提交归还验机' }, 409) : c.text('完成订单前必须提交归还验机', 409)
   }
-  await updateOrderStatus(c, order.id, status)
+  await updateOrderStatus(c, order.id, status, { reason, triggeredBy: user.id })
+  if (status === 'suspended') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}暂停，原因：${reason}。`, orderId: order.id })
+  if (status === 'cancelled') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}取消，原因：${reason}。`, orderId: order.id })
   if (status === 'completed') await enqueueRentalUserDeletion(c, order)
   if (status === 'cancelled' || status === 'completed') await releaseDeviceIfUnbooked(c, order.deviceId)
   if (status === 'paid') await ensureOrderNumber(c, order.id)
@@ -3635,11 +3646,13 @@ app.post('/admin/orders/bulk-update', async (c) => {
 
   const form = await c.req.parseBody()
   const targetStatus = String(form.status || '')
+  const reason = String(form.reason || '').trim().slice(0, 300)
   const selectedIds = Array.isArray(form.orderIds) ? form.orderIds.map(String) : form.orderIds ? [String(form.orderIds)] : []
 
   if (!['suspended', 'cancelled'].includes(targetStatus) || selectedIds.length === 0) {
     return c.redirect('/admin/orders')
   }
+  if ((targetStatus === 'suspended' || targetStatus === 'cancelled') && !reason) return c.text('请填写暂停/取消原因', 400)
 
   const selectedOrders = await Promise.all(selectedIds.map(orderId => getOrderById(c, orderId)))
   const validOrders = selectedOrders.filter((order): order is NonNullable<typeof order> => Boolean(order && canTransitionOrder(order.status, targetStatus)))
@@ -3650,11 +3663,13 @@ app.post('/admin/orders/bulk-update', async (c) => {
       ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND status = 'paid' AND payment_method IN ('balance', 'card') LIMIT 1").bind(order.id).first()
       : null
     if (automaticCancellationPayment) {
-      const response = await cancelAndRefund(c, user, order.id)
+      const response = await cancelAndRefund(c, user, order.id, reason)
       if (response.status >= 400) return c.text(await response.text(), response.status as any)
     } else {
-      await updateOrderStatus(c, order.id, targetStatus)
+      await updateOrderStatus(c, order.id, targetStatus, { reason, triggeredBy: user.id })
       if (targetStatus === 'cancelled') await releaseDeviceIfUnbooked(c, order.deviceId)
+      if (targetStatus === 'suspended') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}暂停，原因：${reason}。`, orderId: order.id })
+      if (targetStatus === 'cancelled') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}取消，原因：${reason}。`, orderId: order.id })
     }
   }
 
