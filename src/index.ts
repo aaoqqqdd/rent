@@ -107,6 +107,7 @@ import {
 import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
+import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteKey } from './turnstile'
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
@@ -659,7 +660,7 @@ app.get('/register', async (c) => {
     return c.redirect('/')
   }
   const referralCode = String(c.req.query('ref') || '').trim().toUpperCase().slice(0, 10)
-  return c.html(pages.renderRegister(undefined, String((c.env as any).TURNSTILE_SITE_KEY || ''), referralCode))
+  return c.html(pages.renderRegister(undefined, await getTurnstileSiteKey(c), referralCode))
 })
 
 app.get('/ref/:code', async (c) => {
@@ -748,9 +749,9 @@ app.post('/register', async (c) => {
   const { firstName, lastName, email, password, passwordConfirm, referrer, countryCode, phone } = form
   const cookieReferral = (c.req.header('cookie') || '').match(/(?:^|;\s*)referral_code=([^;]+)/)?.[1] || ''
   const suppliedReferral = decodeURIComponent(String(referrer || cookieReferral || '')).trim().toUpperCase().slice(0, 10)
-  const renderRegistrationError = (message: string) => pages.renderRegister(message, String((c.env as any).TURNSTILE_SITE_KEY || ''), suppliedReferral)
+  const { siteKey: turnstileSiteKey, secretKey: turnstileSecret } = await getTurnstileRuntimeConfig(c)
+  const renderRegistrationError = (message: string) => pages.renderRegister(message, turnstileSiteKey, suppliedReferral)
   const turnstileToken = String(form['cf-turnstile-response'] || '')
-  const turnstileSecret = String((c.env as any).TURNSTILE_SECRET_KEY || '')
   if (!turnstileSecret || !turnstileToken) return c.html(renderRegistrationError('请先完成人机验证。'), 400)
   const turnstileResult = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: turnstileSecret, response: turnstileToken, remoteip: c.req.header('CF-Connecting-IP') }) }).then(r => r.json()).catch(() => ({ success: false })) as any
   if (!turnstileResult.success) return c.html(renderRegistrationError('人机验证失败，请重试。'), 400)
@@ -3956,7 +3957,7 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c)))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c)))
 })
 
 app.post('/admin/notify-channels/test', async (c) => {

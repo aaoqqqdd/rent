@@ -6,6 +6,7 @@
 import { Context } from 'hono'
 import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings, ensureNotificationsTable, renderEmailNotificationHtml, sanitizePlainText } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
+import { getTurnstileConfigSummary, saveTurnstileConfig } from '../../turnstile'
 import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChannels'
 
@@ -163,6 +164,19 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   }
 
   if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)
+
+  const turnstileConfigInput = payload.turnstileConfig
+  // Mirror the Stripe rule: only persist when a secret is actually supplied
+  // (or on an explicit clear). The Site Key alone is always echoed back by the
+  // form, so triggering on it would break every save on env-var deployments.
+  const shouldSaveTurnstileConfig = Boolean(
+    turnstileConfigInput &&
+    (
+      turnstileConfigInput.secretKey ||
+      turnstileConfigInput.clear === true
+    )
+  )
+  if (shouldSaveTurnstileConfig) await saveTurnstileConfig(c, turnstileConfigInput)
   const emailTransportInput = payload.emailTransport
   const shouldSaveEmailTransport = Boolean(
     emailTransportInput &&
@@ -192,5 +206,5 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   await updateSystemSettings(c, next as any)
   await loadSystemSettingsFromDB(c)
 
-  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c) })
+  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c), turnstile: await getTurnstileConfigSummary(c) })
 }

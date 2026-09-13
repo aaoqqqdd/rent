@@ -5,8 +5,14 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = []) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
+  const ts = {
+    configured: Boolean(turnstile.configured),
+    usingEnvFallback: Boolean(turnstile.usingEnvFallback),
+    siteKey: turnstile.siteKey || '',
+    secretKeyMasked: turnstile.secretKeyMasked || '',
+  };
   const nc = {
     resend: notify.resend || { from: '', apiKeyMasked: '', configured: false, usingEnvFallback: false },
     telegram: notify.telegram || { enabled: false, chatId: '', botTokenMasked: '', configured: false },
@@ -35,6 +41,15 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         <section class="form-section">
           <div class="form-section-title"><span class="mono">AUTH</span><div><h3>注册安全设置</h3><p>关闭时仍可发送验证邮件，但注册后不会阻止用户直接进入系统。</p></div></div>
           <div class="checkbox-group"><input type="checkbox" id="requireEmailVerification" ${settings.registrationSettings?.requireEmailVerification ? 'checked' : ''}><label for="requireEmailVerification">强制新注册用户验证邮箱</label></div>
+        </section>
+
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">BOT</span><div><h3>Cloudflare Turnstile 人机验证</h3><p>当前状态：${ts.configured ? (ts.usingEnvFallback ? '已配置（使用环境变量 TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY）' : '已配置') : '未配置'}。用于注册页拦截机器人。在 Cloudflare 控制台「Turnstile」中创建站点获取密钥。Secret Key 加密保存，留空表示保留原值。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="turnstileSiteKey">Site Key</label><input class="form-control" id="turnstileSiteKey" name="turnstileSiteKey" value="${ts.siteKey}" placeholder="0x4AAAAAAA..."></div>
+            <div class="form-group"><label class="form-label" for="turnstileSecretKey">Secret Key</label><input class="form-control" type="password" id="turnstileSecretKey" name="turnstileSecretKey" placeholder="${ts.secretKeyMasked || '0x4AAAAAAA...'}" autocomplete="new-password"></div>
+          </div>
+          <div class="checkbox-group"><input type="checkbox" id="clearTurnstileConfig" name="clearTurnstileConfig"><label for="clearTurnstileConfig">清除已保存的 Turnstile 配置（改回使用环境变量）</label></div>
         </section>
 
         <section class="form-section">
@@ -188,6 +203,11 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             secretKey: formData.get('stripeSecretKey'),
             webhookSecret: formData.get('stripeWebhookSecret'),
             clear: formData.has('clearStripeConfig'),
+          },
+          turnstileConfig: {
+            siteKey: formData.get('turnstileSiteKey'),
+            secretKey: formData.get('turnstileSecretKey'),
+            clear: formData.has('clearTurnstileConfig'),
           },
           emailTransport: {
             host: document.getElementById('smtpHost').value,
