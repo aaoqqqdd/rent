@@ -51,7 +51,7 @@ import {
   canTransitionPaymentDispute,
   PAYMENT_DISPUTE_STATES,
   RISK_FLAG_TYPES,
-  findBlockingRiskFlag,
+  getCustomerRiskAssessment,
   timingSafeEqualStr,
   collectMonitoringMetrics,
   getMonitoringHistory,
@@ -1213,7 +1213,8 @@ app.get('/admin/users/:id/risk', async (c) => {
     c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY created_at DESC").bind(target.id).all().then(r => r.results || []),
     c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND (status = 'RESOLVED' OR (status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP)) ORDER BY created_at DESC LIMIT 50").bind(target.id).all().then(r => r.results || []),
   ])
-  return c.html(pages.renderAdminRiskFlags(admin, target, activeFlags as any[], history as any[]))
+  const riskAssessment = await getCustomerRiskAssessment(c, target.id)
+  return c.html(pages.renderAdminRiskFlags(admin, target, activeFlags as any[], history as any[], riskAssessment))
 })
 
 app.post('/admin/users/:id/risk', async (c) => {
@@ -1460,7 +1461,7 @@ app.get('/admin/notifications', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
   const notifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
-  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => { const typeLabel = item.type === 'rental_application' ? '租赁申请' : item.type || '系统通知'; return `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(typeLabel, 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>` }).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
+  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核、推荐风险审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => { const typeLabel = item.type === 'rental_application' ? '租赁申请' : item.type === 'referral_risk_review' ? '推荐风险审核' : item.type || '系统通知'; return `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(typeLabel, 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>` }).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
   return c.html(buildLayout('管理员通知中心', body, user))
 })
 
@@ -1743,14 +1744,15 @@ app.get('/customer/devices', async (c) => {
 app.get('/customer/rent/:id', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
-  return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user))
+  const risk = await getCustomerRiskAssessment(c, user.id)
+  return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, risk.blocked ? '您的账户当前存在风控限制，暂时无法自助下单，请联系客服协助处理' : undefined))
 })
 
 app.post('/customer/rent/:id', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
-  const riskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, status, expires_at FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE'").bind(user.id).all()).results as any[]
-  if (findBlockingRiskFlag(riskFlags)) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
+  const risk = await getCustomerRiskAssessment(c, user.id)
+  if (risk.blocked) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前存在风控限制，暂时无法自助下单，请联系客服协助处理'), 403)
   const account = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first() as any
   if (Number(account?.balance || 0) < 0) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, `您的账户余额为负（${Number(account.balance).toFixed(2)} AUD），请先充值至非负后再下单。`), 403)
   const device = await getDeviceById(c, c.req.param('id'))
@@ -2038,6 +2040,8 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const order = await getOrderById(c, c.req.param('orderId'))
   const customer = order ? await getUserById(c, order.userId) : null
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
+  const customerRisk = customer?.role === 'CUSTOMER' ? await getCustomerRiskAssessment(c, customer.id) : null
+  if (customerRisk?.blocked) return c.text(`该客户存在风控限制，不能创建合同或审核订单（风险分 ${customerRisk.score}/100）`, 403)
   const form = await c.req.parseBody()
   await loadSystemSettingsFromDB(c)
   const orderRentalRules = order ? await getDeviceRentalRules(c, order.deviceId) : null
@@ -2966,7 +2970,7 @@ app.get('/admin/devices/reports', async (c) => {
 app.get('/admin/exceptions', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases, disputes, anomalousOrders, consistencyIssues, failingJobs] = await Promise.all([
+  const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases, disputes, anomalousOrders, consistencyIssues, failingJobs, referralRewards] = await Promise.all([
     c.env.RENT.prepare("SELECT bt.id, bt.user_id, bt.amount, bt.payment_method, bt.reference, bt.note, u.name AS user_name FROM balance_topups bt LEFT JOIN users u ON u.id = bt.user_id WHERE bt.status = 'submitted' ORDER BY bt.updated_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT pp.id, pp.payment_id, p.rental_id, pp.reference_number, pp.uploaded_at, o.orderNo FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN orders o ON o.id = p.rental_id WHERE pp.status = 'submitted' ORDER BY pp.uploaded_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, endDate FROM orders WHERE status IN ('active', 'extended', 'overdue', 'pending_return') AND endDate < ? ORDER BY endDate ASC LIMIT 50").bind(new Date().toISOString().slice(0, 10)).all(),
@@ -2986,6 +2990,16 @@ app.get('/admin/exceptions', async (c) => {
       FROM ranked WHERE rn <= 3 AND status = 'FAILED'
       GROUP BY job_name HAVING COUNT(*) = 3
     `).all(),
+    c.env.RENT.prepare(`
+      SELECT rw.id, rw.reward_number, rw.customer_id, rw.reward_amount, rw.reason,
+             r.referee_customer_id, referrer.name AS referrer_name, referee.name AS referee_name
+      FROM referral_rewards rw
+      JOIN referrals r ON r.id = rw.referral_id
+      LEFT JOIN users referrer ON referrer.id = rw.customer_id
+      LEFT JOIN users referee ON referee.id = r.referee_customer_id
+      WHERE rw.status = 'PENDING_REVIEW'
+      ORDER BY rw.updated_at ASC LIMIT 50
+    `).all(),
   ]) as any[]
   const sections = [
     ['待审核充值', topups.results, '/admin/exceptions', (item: any) => `<strong>${sanitizePlainText(item.user_name || item.user_id, 100)}</strong> · ${sanitizePlainText(item.payment_method, 30)} · AUD$${Number(item.amount).toFixed(2)}<div class="record-actions"><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/approve" data-site-confirm="确认通过这笔充值并立即入账吗？"><button class="button button-sm button-primary">通过并入账</button></form><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/reject" data-site-confirm="确认驳回这笔充值吗？"><button class="button button-sm button-danger">驳回</button></form></div>`],
@@ -2996,10 +3010,12 @@ app.get('/admin/exceptions', async (c) => {
     ['待审核损坏记录', damageCases.results, '/admin/inspections', (item: any) => `订单 ${item.order_id} · ${item.description || '待补充损坏说明'}`],
     ['待处理支付争议', disputes.results, '/admin/finance/payment-disputes', (item: any) => `订单 ${sanitizePlainText(item.order_id || '-', 50)} · ${sanitizePlainText(item.currency, 10)}$${Number(item.amount).toFixed(2)} · ${sanitizePlainText(item.reason || '未说明原因', 100)}`],
     ['待审核异常订单', anomalousOrders.results, '/admin/finance/anomalous-orders', (item: any) => `订单 ${sanitizePlainText(item.orderNo || item.order_id, 50)} · ${sanitizePlainText(item.anomaly_type, 100)} · 已自动暂停`],
+    ['待审核推荐奖励', referralRewards.results, '/admin/referrals', (item: any) => `<strong>${sanitizePlainText(item.referrer_name || item.customer_id, 100)}</strong> 推荐 <strong>${sanitizePlainText(item.referee_name || item.referee_customer_id, 100)}</strong> · AUD$${Number(item.reward_amount || 0).toFixed(2)} · ${sanitizePlainText(item.reason || '风险分达到审核阈值', 200)}<div class="record-actions"><a class="button button-sm button-primary" href="/admin/referrals">查看并审核</a></div>`],
+    ['待审核推荐奖励', referralRewards.results, '/admin/referrals', (item: any) => `<strong>${sanitizePlainText(item.referrer_name || item.customer_id, 100)}</strong> 推荐 <strong>${sanitizePlainText(item.referee_name || item.referee_customer_id, 100)}</strong> · AUD$${Number(item.reward_amount || 0).toFixed(2)} · ${sanitizePlainText(item.reason || '风险分达到审核阈值', 200)}<div class="record-actions"><a class="button button-sm button-primary" href="/admin/referrals/${encodeURIComponent(item.id)}">查看并审核</a></div>`],
     ['数据不一致', consistencyIssues.results, '/admin/exceptions', (item: any) => `${sanitizePlainText(item.issue_type, 60)} · ${sanitizePlainText(item.entity_type, 30)} ${sanitizePlainText(item.entity_id, 60)} · 发现于 ${formatMelbourneDateTime(item.detected_at)}`],
     ['连续失败的定时任务', failingJobs.results, '/admin/monitoring', (item: any) => `${sanitizePlainText(item.job_name, 80)} · 最近失败于 ${formatMelbourneDateTime(item.last_failed_at)} · ${sanitizePlainText(item.last_error || '无错误信息', 200)}`],
   ] as const
-  const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和押金异常；所有充值与转账审核均在此完成。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
+  const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和推荐奖励风控异常；所有待审核事项集中显示在这里。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
   return c.html(buildLayout('异常任务中心', body, admin))
 })
 
@@ -3034,7 +3050,7 @@ app.post('/admin/referrals/:id/revoke', async (c) => {
   const form = await c.req.parseBody()
   const reason = String(form.reason || '').trim().slice(0, 300)
   if (!reason) return c.text('撤销推荐奖励必须填写原因', 400)
-  const reward = await c.env.RENT.prepare("SELECT order_id FROM referral_rewards WHERE id = ? AND status IN ('PENDING', 'AVAILABLE')").bind(c.req.param('id')).first() as any
+  const reward = await c.env.RENT.prepare("SELECT order_id FROM referral_rewards WHERE id = ? AND status IN ('PENDING', 'PENDING_REVIEW', 'AVAILABLE')").bind(c.req.param('id')).first() as any
   if (!reward?.order_id) return c.text('该推荐奖励不存在或已处理', 409)
   await revokeReferralRewardForOrder(c, reward.order_id, reason)
   await createAuditLog(c, { actor: admin, action: 'REFERRAL_REWARD_REVOKED', targetType: 'REFERRAL_REWARD', targetId: c.req.param('id'), reason })
@@ -3553,6 +3569,9 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
     await createAuditLog(c, { actor: user, action: 'PRICE_ADJUSTMENT_PAYMENT_APPROVED', targetType: 'ORDER_PRICE_ADJUSTMENT', targetId: proof.adjustment_id, after: { orderId: order.id, reference: proof.reference_number } })
     return c.redirect('/admin/exceptions')
   }
+  const riskCustomer = await getUserById(c, order.userId)
+  const customerRisk = riskCustomer?.role === 'CUSTOMER' ? await getCustomerRiskAssessment(c, riskCustomer.id) : null
+  if (customerRisk?.blocked) return c.text(`该客户存在风控限制，不能创建合同或审核订单（风险分 ${customerRisk.score}/100）`, 403)
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
