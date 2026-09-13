@@ -3420,9 +3420,9 @@ app.post('/admin/orders/:id/changes', async (c) => {
   const admin = c.get('user')
   if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id')) as any
-  if (!order || ['completed', 'cancelled'].includes(order.status)) return c.text('订单不存在或已结束，不能修改', 409)
   const form = await c.req.parseBody()
   const type = String(form.changeType || '')
+  if (!order || order.status === 'cancelled' || (order.status === 'completed' && type !== 'REFUND_METHOD')) return c.text('订单不存在或已结束，不能修改', 409)
   const reason = String(form.reason || '').trim().slice(0, 500)
   if (!reason) return c.text('订单修改必须填写原因', 400)
 

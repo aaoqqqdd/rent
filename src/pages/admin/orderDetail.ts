@@ -38,6 +38,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ]);
   const canModifyOrder = !['completed', 'cancelled'].includes(String(order.status));
+  const canModifyRefundMethod = String(order.status) === 'completed' && !isSetupIntentDeposit && !completedRefund;
   const paymentMethodLabels: Record<string, string> = {
     card: '信用卡（Stripe）', stripe: '信用卡（Stripe）', bank_transfer: '银行转账',
     alipay: '支付宝', wechat: '微信', balance: '账户余额',
@@ -258,17 +259,22 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           </form>
           <script>(function(){var sel=document.getElementById('changeType');if(!sel)return;var form=sel.closest('form');function sync(){var groups=form.querySelectorAll('.order-change-fields');for(var i=0;i<groups.length;i++){groups[i].hidden=groups[i].getAttribute('data-for')!==sel.value;}}sel.addEventListener('change',sync);sync();})();</script>
         </div>` : ''}
-        ${canSettleDeposit && !isSetupIntentDeposit ? `<div style="padding:24px;background:linear-gradient(135deg,#eef2ff 0%,#e0e7ff 100%);border-radius:16px">
+        ${canModifyRefundMethod ? `<div style="padding:24px;background:linear-gradient(135deg,#eef2ff 0%,#e0e7ff 100%);border-radius:16px">
           <h4 style="margin:0 0 12px 0;color:#4338ca;display:flex;align-items:center;gap:8px">订单修改</h4>
-          <p class="section-note">该订单已完成归还验机，可在此调整本次押金退款方式，提交后按所选方式处理。</p>
-          <label class="form-label" for="refundMethod">退款方式</label>
-          <select class="form-control" id="refundMethod" name="refundMethod" form="depositSettlementForm" required>
-            <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额</option>
-            <option value="original" ${order.refundMethod === 'original' && order.paymentMethod !== 'bank_transfer' ? 'selected' : ''}>原路退回</option>
-            <option value="bank_transfer" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? 'selected' : ''}>银行转账</option>
-          </select>
-          <div id="refundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" form="depositSettlementForm" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" form="depositSettlementForm" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" form="depositSettlementForm" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
-          <script>document.getElementById('refundMethod')?.addEventListener('change',e=>{document.getElementById('refundBankFields').hidden=e.target.value!=='bank_transfer'})</script>
+          <p class="section-note">订单已完成，其他订单字段不可修改；这里仍可修改押金退款方式，并记录修改原因。</p>
+          <form method="POST" action="/admin/orders/${order.id}/changes" style="display:flex;flex-direction:column;gap:12px">
+            <input type="hidden" name="changeType" value="REFUND_METHOD">
+            <label class="form-label" for="completedOrderRefundMethod">退款方式</label>
+            <select class="form-control" id="completedOrderRefundMethod" name="refundMethod" required>
+              <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额${customerRefundMethod === 'balance' ? '（当前选择）' : ''}</option>
+              <option value="original" ${order.refundMethod === 'original' ? 'selected' : ''}>原路退回${order.paymentMethod === 'bank_transfer' ? '（银行转账）' : ''}${customerRefundMethod === 'original' ? '（当前选择）' : ''}</option>
+            </select>
+            ${order.paymentMethod === 'bank_transfer' ? `<div id="completedOrderRefundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
+            <script>document.getElementById('completedOrderRefundMethod')?.addEventListener('change',e=>{document.getElementById('completedOrderRefundBankFields').hidden=e.target.value!=='original'})</script>` : ''}
+            <label class="form-label" for="completedOrderChangeReason">修改原因（必填）</label>
+            <textarea class="form-control" id="completedOrderChangeReason" name="reason" maxlength="500" rows="2" required placeholder="例如：客户申请改为银行转账退款"></textarea>
+            <button type="submit" class="button button-primary">保存退款方式</button>
+          </form>
         </div>` : ''}
         ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>设备归还</h4><p>${String(order.status) === 'pending_return' ? '客户已获批提前归还，请完成归还验机。' : order.early_return_requested_at ? '客户已申请提前归还，等待审批。' : '订单租赁中，可申请提前归还并安排验机。'}</p>${String(order.status) === 'active' && order.early_return_requested_at ? `<form method="post" action="/staff/orders/${order.id}/early-return/approve" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-warning" type="submit">批准提前归还</button></form>` : ''}<a class="button button-info" href="/staff/orders/${order.id}/inspection" data-full-navigation="true">归还验机</a></div>` : ''}
         ${((order.paymentMethod === 'bank_transfer' || (isAdjustmentTransferProof && transferProofPaymentMethod === 'bank_transfer')) && (String(order.status) !== 'active' || transferProof?.status === 'submitted')) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>银行转账审核${isAdjustmentTransferProof ? '（差价）' : ''}</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>备注：${escapeHtml(transferProof.note || '-')}</p>${proofImage ? `<a href="${escapeHtml(proofImage)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(proofImage)}" alt="转账凭证" loading="lazy" referrerpolicy="no-referrer" style="max-width:100%;max-height:320px;border-radius:8px"></a>` : '<p class="alert">凭证图片链接缺失或无效</p>'}<p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交转账 Reference。</p>'}</div>` : ''}
