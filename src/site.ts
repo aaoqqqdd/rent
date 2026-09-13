@@ -863,7 +863,8 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
 
   if (parsedPaymentMethods) {
     systemSettings.paymentMethods = {
-      stripe: Boolean((parsedPaymentMethods as any).stripe ?? (parsedPaymentMethods as any).square),
+      stripe: Boolean((parsedPaymentMethods as any).stripe),
+      square: Boolean((parsedPaymentMethods as any).square),
       bankTransfer: Boolean((parsedPaymentMethods as any).bankTransfer),
       balancePayment: (parsedPaymentMethods as any).balancePayment === undefined
         ? systemSettings.paymentMethods.balancePayment

@@ -997,12 +997,17 @@ async function paidPayment(c: Context, order: any): Promise<any> {
 
 function refundChannel(order: any, payment: any): 'balance' | 'stripe' | 'bank_transfer' | 'unavailable' {
   if ((order.refundMethod ?? 'balance') !== 'original') return 'balance'
+  // Square Gift Card payments do not have a Stripe payment intent. Keep their
+  // refund path on the internal customer balance until a Square refund flow is
+  // added, instead of accidentally treating them as Stripe card payments.
+  if (String(payment?.payment_provider || '') === 'square') return 'balance'
   if (payment.payment_method === 'card') return payment.stripe_payment_intent_id ? 'stripe' : 'unavailable'
   if (payment.payment_method === 'bank_transfer') return 'bank_transfer'
   return 'balance'
 }
 
 function cancellationRefundChannel(payment: any): 'balance' | 'stripe' | 'bank_transfer' | 'unavailable' {
+  if (String(payment?.payment_provider || '') === 'square') return 'balance'
   if (payment?.payment_method === 'balance') return 'balance'
   if (payment?.payment_method === 'card') return payment.stripe_payment_intent_id ? 'stripe' : 'unavailable'
   if (payment?.payment_method === 'bank_transfer') return 'bank_transfer'

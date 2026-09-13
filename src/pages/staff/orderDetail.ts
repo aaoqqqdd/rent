@@ -24,7 +24,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
-    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_method, payment_provider, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ])
   const contractExpired = contract ? isContractExpired(contract) : false
@@ -113,7 +113,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
             <p>客户需转账 ${formatCurrency(order.totalAmount)} 到以上账户。</p>
           </div>` : ''}
           ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p>客户需扫码支付并提交付款凭证等待审核。</p></div>` : ''}
-          ${order.paymentMethod === 'card' || !order.paymentMethod ? (systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : '') : ''}
+          ${String(order.paymentProvider || (order as any).payment_provider || '') === 'square' ? (systemSettings.paymentMethods.square ? `<div class="payment-card"><h4>Square 礼品卡支付</h4><p>客户将通过 Square Gift Card 安全组件付款。</p></div>` : '') : order.paymentMethod === 'card' || !order.paymentMethod ? (systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : '') : ''}
         </div>
       ` : ''}
     </div>

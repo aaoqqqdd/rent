@@ -5,8 +5,9 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
+  const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   const ts = {
     configured: Boolean(turnstile.configured),
     usingEnvFallback: Boolean(turnstile.usingEnvFallback),
@@ -124,6 +125,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <small class="form-text">Stripe 手续费按租金及立即支付的时段服务费（不含押金）计算；押金预授权、释放和长期押金扣款不加手续费。</small>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}><label for="enableStripe">启用 Stripe 信用卡支付</label></div>
+          <div class="checkbox-group"><input type="checkbox" id="enableSquare" name="enableSquare" ${settings.paymentMethods.square ? 'checked' : ''}><label for="enableSquare">启用 Square 礼品卡支付</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableBankTransfer" name="enableBankTransfer" ${settings.paymentMethods.bankTransfer ? 'checked' : ''}><label for="enableBankTransfer">启用银行转账</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableBalancePayment" name="enableBalancePayment" ${settings.paymentMethods.balancePayment ? 'checked' : ''}><label for="enableBalancePayment">启用余额支付</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableAlipay" name="enableAlipay" ${settings.paymentMethods.alipay ? 'checked' : ''}><label for="enableAlipay">启用支付宝人民币付款</label></div>
@@ -138,6 +140,20 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <div class="form-group"><label class="form-label" for="stripeWebhookSecret">Webhook Signing Secret</label><input class="form-control" type="password" id="stripeWebhookSecret" name="stripeWebhookSecret" placeholder="${stripe.webhookSecretMasked || 'whsec_...'}" autocomplete="new-password"></div>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="clearStripeConfig" name="clearStripeConfig"><label for="clearStripeConfig">清除已保存的 Stripe 配置</label></div>
+        </section>
+
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">SQUARE</span><div><h3>Square API 配置</h3><p>当前状态：${square.configured ? `已配置（${square.environment === 'production' ? '正式环境' : '沙盒环境'}）` : '未配置'}。用于 Square 礼品卡付款、客户资料和设备商品同步。Webhook 地址：<code>/webhooks/square</code>。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="squareApplicationId">Application ID</label><input class="form-control" id="squareApplicationId" value="${escAttr(square.applicationId)}" placeholder="sq0idp-..."></div>
+            <div class="form-group"><label class="form-label" for="squareLocationId">Location ID</label><input class="form-control" id="squareLocationId" value="${escAttr(square.locationId)}" placeholder="L..."></div>
+            <div class="form-group"><label class="form-label" for="squareAccessToken">Access Token</label><input class="form-control" type="password" id="squareAccessToken" placeholder="${square.accessTokenMasked || '留空保留现有值'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="squareEnvironment">环境</label><select class="form-control" id="squareEnvironment"><option value="sandbox" ${square.environment !== 'production' ? 'selected' : ''}>Sandbox 沙盒</option><option value="production" ${square.environment === 'production' ? 'selected' : ''}>Production 正式</option></select></div>
+            <div class="form-group"><label class="form-label" for="squareWebhookUrl">Webhook URL（可选）</label><input class="form-control" type="url" id="squareWebhookUrl" value="${escAttr(square.webhookUrl)}" placeholder="https://你的域名/webhooks/square"></div>
+            <div class="form-group"><label class="form-label" for="squareWebhookSignatureKey">Webhook Signature Key（可选）</label><input class="form-control" type="password" id="squareWebhookSignatureKey" placeholder="${square.webhookSignatureKeyMasked || '留空保留现有值'}" autocomplete="new-password"></div>
+          </div>
+          <p class="form-text">Square Web Payments SDK 只会把礼品卡令牌发送到本站；Access Token 和 Webhook Signature Key 会加密保存。</p>
+          <div class="checkbox-group"><input type="checkbox" id="clearSquareConfig"><label for="clearSquareConfig">清除已保存的 Square 配置</label></div>
         </section>
 
         <section class="form-section">
@@ -187,6 +203,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           priceStrategy: formData.get('priceStrategy'),
           paymentMethods: {
             stripe: formData.has('enableStripe'),
+            square: formData.has('enableSquare'),
             bankTransfer: formData.has('enableBankTransfer'),
             balancePayment: formData.has('enableBalancePayment'),
             alipay: formData.has('enableAlipay'),
@@ -198,6 +215,15 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             secretKey: formData.get('stripeSecretKey'),
             webhookSecret: formData.get('stripeWebhookSecret'),
             clear: formData.has('clearStripeConfig'),
+          },
+          squareConfig: {
+            applicationId: inputValue('squareApplicationId'),
+            locationId: inputValue('squareLocationId'),
+            accessToken: inputValue('squareAccessToken'),
+            environment: inputValue('squareEnvironment') || 'sandbox',
+            webhookUrl: inputValue('squareWebhookUrl'),
+            webhookSignatureKey: inputValue('squareWebhookSignatureKey'),
+            clear: document.getElementById('clearSquareConfig')?.checked || false,
           },
           turnstileConfig: {
             siteKey: formData.get('turnstileSiteKey'),

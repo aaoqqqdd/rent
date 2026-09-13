@@ -22,6 +22,8 @@ export interface User {
   phone?: string
   stripe_customer_id?: string | null
   stripeCustomerId?: string | null
+  square_customer_id?: string | null
+  squareCustomerId?: string | null
   bsb?: string
   account?: string
   account_number?: string
@@ -109,6 +111,8 @@ export interface Device {
   agent_storage_free_bytes?: number
   agent_version?: string
   agent_detected_serial?: string
+  square_catalog_object_id?: string | null
+  squareCatalogObjectId?: string | null
 }
 
 export type DeviceLifecycleStatus = 'RESERVED' | 'READY' | 'RENTED' | 'RETURNED' | 'INSPECTION' | 'MAINTENANCE' | 'DAMAGED' | 'RETIRED'
@@ -149,6 +153,8 @@ export interface Order {
   early_return_approved_at?: string | null
   early_return_approved_by?: string | null
   paymentMethod: 'card' | 'bank_transfer' | 'alipay' | 'wechat' | 'balance'
+  paymentProvider?: 'stripe' | 'square' | 'internal' | string | null
+  payment_provider?: 'stripe' | 'square' | 'internal' | string | null
   totalAmount: number
   depositAmount: number
   deposit_method?: 'bank_transfer' | 'cash' | 'card_hold'
