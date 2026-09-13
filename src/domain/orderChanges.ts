@@ -21,6 +21,7 @@ export const ORDER_CHANGE_TYPE_LABELS: Record<string, string> = {
   REFUND_METHOD: '修改押金退款方式',
   CANCELLATION: '取消订单',
   INVENTORY_RELEASE: '释放库存',
+  COUPON_REVALIDATED: '重新校验优惠码',
 }
 
 const ORDER_REFUND_METHODS = ['balance', 'original']
