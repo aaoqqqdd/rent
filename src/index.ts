@@ -2558,6 +2558,35 @@ app.post('/customer/orders/:id/price-adjustment/stripe/intent', async (c) => {
   }
 })
 
+// 客户放弃 Stripe 付款、想改用银行转账 / 支付宝 / 微信时用这个接口切换。
+// 押金已经通过信用卡预授权 / SetupIntent 处理的部分不受影响，这里只切换租金部分的收款渠道。
+app.post('/customer/orders/:id/switch-payment-method', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || order.userId !== user.id || order.status !== 'pending_payment') return c.text('订单当前不能切换支付方式', 409)
+  const form = await c.req.parseBody()
+  const targetMethod = String(form.paymentMethod || '')
+  if (!['bank_transfer', 'alipay', 'wechat'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
+  await loadSystemSettingsFromDB(c)
+  const settings = getSystemSettings()
+  const enabled = targetMethod === 'bank_transfer' ? settings.paymentMethods.bankTransfer
+    : targetMethod === 'alipay' ? (settings.paymentMethods.alipay && settings.rmbPayment.alipayQrUrl)
+    : (settings.paymentMethods.wechat && settings.rmbPayment.wechatQrUrl)
+  if (!enabled) return c.text('该支付方式当前未启用', 409)
+  if (String(order.paymentMethod) === targetMethod) return c.redirect(`/customer/orders/${order.id}`)
+  const paymentTotal = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
+  const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, targetMethod).first() as any
+  if (!existing) {
+    await c.env.RENT.prepare(`
+      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status)
+      VALUES (?, ?, ?, ?, ?, 0, ?, 'AUD', 'pending')
+    `).bind(`p-${nanoid(12)}`, order.id, user.id, targetMethod, paymentTotal, paymentTotal).run()
+  }
+  await c.env.RENT.prepare("UPDATE orders SET paymentMethod = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(targetMethod, order.id).run()
+  return c.redirect(`/customer/orders/${order.id}`)
+})
+
 app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
