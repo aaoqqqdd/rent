@@ -3437,6 +3437,10 @@ app.post('/admin/orders/:id/changes', async (c) => {
     pickupLocation: form.pickupLocation != null ? String(form.pickupLocation) : undefined,
     returnLocation: form.returnLocation != null ? String(form.returnLocation) : undefined,
     deliveryMethod: form.deliveryMethod != null ? String(form.deliveryMethod) : undefined,
+    refundMethod: form.refundMethod != null ? String(form.refundMethod) : undefined,
+    refundBsb: form.refundBsb != null ? String(form.refundBsb) : undefined,
+    refundAccountNumber: form.refundAccountNumber != null ? String(form.refundAccountNumber) : undefined,
+    refundAccountName: form.refundAccountName != null ? String(form.refundAccountName) : undefined,
   })
   if ('error' in plan) return c.text(plan.error, 400)
 
@@ -3452,8 +3456,8 @@ app.post('/admin/orders/:id/changes', async (c) => {
   const after = { ...before, ...plan.patch }
   const changeId = `och-${nanoid(12)}`
   await c.env.RENT.batch([
-    c.env.RENT.prepare('UPDATE orders SET deviceId = ?, startDate = ?, endDate = ?, rentalPeriod = ?, totalAmount = ?, depositAmount = ?, discount_amount = ?, pickupLocation = ?, returnLocation = ?, deliveryMethod = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(after.deviceId, after.startDate, after.endDate, after.rentalPeriod, after.totalAmount, after.depositAmount, after.discountAmount, after.pickupLocation || null, after.returnLocation || null, after.deliveryMethod, order.id),
+    c.env.RENT.prepare('UPDATE orders SET deviceId = ?, startDate = ?, endDate = ?, rentalPeriod = ?, totalAmount = ?, depositAmount = ?, discount_amount = ?, pickupLocation = ?, returnLocation = ?, deliveryMethod = ?, refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(after.deviceId, after.startDate, after.endDate, after.rentalPeriod, after.totalAmount, after.depositAmount, after.discountAmount, after.pickupLocation || null, after.returnLocation || null, after.deliveryMethod, after.refundMethod, after.refundBsb || null, after.refundAccountNumber || null, after.refundAccountName || null, order.id),
     c.env.RENT.prepare('INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(changeId, order.id, type, JSON.stringify(before), JSON.stringify(after), reason, admin.id),
   ])
   if (type === 'DEVICE_SWAP') { await releaseDeviceIfUnbooked(c, before.deviceId); await recordDeviceLifecycle(c, after.deviceId, 'RESERVED', { orderId: order.id, reason: '订单换机', changedBy: admin.id }) }
