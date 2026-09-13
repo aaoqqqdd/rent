@@ -341,7 +341,67 @@ export const languageScript = String.raw`
     '（服务费10%）': ' (10% service fee)', '网站订单审核': 'Website order review', '无法读取地址详情，请手工填写': 'Unable to look up address details; please fill it in manually',
     '支付宝/微信交易单号': 'Alipay/WeChat transaction ID', '无效的步骤': 'Invalid step', '请从第一步开始签署合同': 'Please start signing the contract from step 1',
     '点击这里返回第一步': 'Click here to return to step 1', '租赁协议签署': 'Rental agreement signing', '发送通知': 'Send notification',
-    '例如 CT-2026-000123': 'e.g. CT-2026-000123', '合同页脚 / 二维码中的校验码': 'The verification code on the contract footer / QR code'
+    '例如 CT-2026-000123': 'e.g. CT-2026-000123', '合同页脚 / 二维码中的校验码': 'The verification code on the contract footer / QR code',
+    '返回财务总览': 'Back to finance overview', '返回用户列表': 'Back to user list', '返回优惠码列表': 'Back to coupon list', '返回财务管理': 'Back to finance',
+    '返回设备列表': 'Back to devices', '返回合同列表': 'Back to contracts', '返回合同管理': 'Back to contract management', '返回模板管理': 'Back to templates',
+    '返回列表': 'Back to list', '返回客户': 'Back to customer', '返回控制台': 'Back to dashboard', '返回用户详情': 'Back to user details',
+    '返回系统设置': 'Back to system settings', '返回首页': 'Back to home', '返回上一页': 'Back to previous page', '返回客户详情': 'Back to customer details',
+    '返回客户列表': 'Back to customer list', '返回设备记录': 'Back to device records', '返回余额': 'Back to balance',
+    '网站通讯检测接口': 'Site connectivity check endpoints', '软件快捷操作': 'Software quick actions', '本月没有租赁记录': 'No rentals this month',
+    '账户资料': 'Account details', '权限与状态': 'Permissions & status', '注册安全设置': 'Registration security settings',
+    '价格策略配置': 'Pricing strategy configuration', '支付方式配置': 'Payment method configuration', '银行转账账户信息': 'Bank transfer account details',
+    '人民币收款码': 'RMB payment QR code', '推荐分成规则': 'Referral commission rules', '暂无异常订单': 'No anomalous orders yet',
+    '暂无待审核订单': 'No orders awaiting review', '设备身份': 'Device identity', '生命周期记录': 'Lifecycle history', '硬件配置': 'Hardware configuration',
+    '租赁价格与规则': 'Rental pricing & rules', 'Windows 设备代理': 'Windows device agent', '投诉与争议解决': 'Complaints & dispute resolution',
+    '租赁协议': 'Rental agreement', '暂无支付争议': 'No payment disputes yet', '暂无用户': 'No users yet', '基本资料': 'Basic information',
+    '账户与退款': 'Account & refund', '权限与安全': 'Permissions & security', '租赁价格': 'Rental pricing', '退款账户': 'Refund account',
+    '没有符合条件的合同': 'No contracts match the filters', '没有符合条件的租赁记录': 'No rental records match the filters',
+    '目前没有进行中的订单': 'No ongoing orders right now', '客户资料': 'Customer details', '出租前验机': 'Pre-rental inspection',
+    'Monitorflare 通过以下接口检测网站服务是否可访问，不检测设备在线状态。两个接口使用同一个 Bearer Token。': 'Monitorflare uses the following endpoints to check whether the website is reachable; it does not check device online status. Both endpoints share the same Bearer Token.',
+    '先下载客户端，再为对应设备生成访问码；客户端首次运行时输入访问码即可绑定。': 'Download the client first, then generate an access code for the device; enter the access code on first run of the client to bind it.',
+    '切换月份或选择其他设备查看档期。': 'Switch months or select another device to view its schedule.',
+    '用于登录和识别用户。': 'Used to sign in and identify the user.',
+    '决定用户可以访问的工作区。': 'Determines which workspace the user can access.',
+    '关闭时仍可发送验证邮件，但注册后不会阻止用户直接进入系统。': 'When turned off, verification emails are still sent, but users are not blocked from entering the system right after registering.',
+    'Resend 用于发送所有系统邮件（验证、收据、合同、退款、协议更新等）。Telegram / Server酱 / Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。': 'Resend sends all system emails (verification, receipts, contracts, refunds, agreement updates, etc.). Telegram / Server酱 / Webhook mirror notifications sent to staff and admins. All keys are stored encrypted; leave a field blank to keep its current value.',
+    '用于计算租金与押金的策略文本。': 'Text used to calculate rental fees and deposits.',
+    '启用或停用面向客户的支付渠道，并设置信用卡手续费。': 'Enable or disable customer-facing payment channels, and set the credit card processing fee.',
+    '客户选择银行转账时会看到这些账户信息，供其转账使用。': 'Customers see these account details when they choose bank transfer, so they can send payment.',
+    '请输入公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。': 'Enter a publicly accessible HTTPS image URL. After paying, the customer submits a reference and a payment screenshot; the order is marked as paid once an admin reviews it.',
+    '控制推荐返佣比例、层级深度和结算周期。': 'Controls the referral commission rate, tier depth, and settlement period.',
+    '系统定时检测到异常时会自动加入此队列。': 'The system automatically adds orders to this queue when scheduled checks detect an anomaly.',
+    '网站新提交的租赁申请会自动出现在这里。': 'New rental requests submitted on the website automatically appear here.',
+    '更新后，员工端设备目录和搜索结果会使用这里的资料。': 'After updating, the staff device catalogue and search results will use this information.',
+    '名称用于员工端分类，资产编号和序列号用于准确搜索单台设备。': 'The name is used for staff-side categorisation; the asset tag and serial number are used to search for a specific device precisely.',
+    '系统自动记录付款、交付、归还验机及管理员的状态调整。': 'The system automatically logs payments, handover, return inspection, and status changes made by admins.',
+    '有设备代理数据时优先显示代理实时信息，否则显示手工录入信息。': 'When device-agent data is available it takes priority for display; otherwise manually entered information is shown.',
+    '配置字段会直接进入员工端设备搜索。': 'These configuration fields feed directly into staff-side device search.',
+    '设备级规则留空时继承系统设置；修改价格或折扣不会改写已经建立的历史合同。': 'When device-level rules are left blank they inherit the system settings; changing the price or discount does not rewrite contracts that already exist.',
+    '查看代理注册和心跳信息；最后在线时间及设备信息由代理自动更新。': 'View agent registration and heartbeat information; the last-online time and device details are updated automatically by the agent.',
+    '账户注册与正式账户升级时确认。': 'Confirmed when registering an account or upgrading to a full account.',
+    '说明网站功能、合理使用和服务规则。': 'Explains site functionality, acceptable use, and service rules.',
+    '说明个人资料、付款信息和保存方式。': 'Explains personal data, payment information, and how it is retained.',
+    '说明 Windows 客户端的授权、更新和设备数据使用规则。': 'Explains licensing, updates, and device-data rules for the Windows client.',
+    '说明订单取消、押金退还和退款方式。': 'Explains order cancellation, deposit refunds, and refund methods.',
+    '说明 Cookie 与类似技术的使用与管理方式。': 'Explains how cookies and similar technologies are used and managed.',
+    '概述《澳大利亚消费者法》下不可排除的保障。': 'Summarises the guarantees that cannot be excluded under the Australian Consumer Law.',
+    '说明投诉流程、时限与外部争议渠道。': 'Explains the complaints process, timeframes, and external dispute channels.',
+    '规定租赁设备与管理软件的禁止用途。': 'Sets out prohibited uses of rented devices and the management software.',
+    '客户签署流程第一步阅读并同意。': 'Read and agreed to as step one of the customer signing flow.',
+    '收到 Stripe 拒付事件后会自动出现在这里。': 'Chargeback events reported by Stripe will automatically appear here.',
+    '创建首个用户后，身份资料会显示在这里。': 'Once you create the first user, their profile will appear here.',
+    '姓名、邮箱和联系电话。': 'Name, email, and contact phone.',
+    '客户身份及联系方式。': 'Customer identity and contact details.',
+    '余额及银行退款资料。': 'Balance and bank refund details.',
+    '角色调整会立即影响访问范围。': 'Role changes take effect immediately and affect access scope.',
+    '价格将在建立合同时用于计算租金和押金；折扣按每台设备单独生效。': 'The price is used to calculate rent and deposit when a contract is created; discounts apply per device.',
+    '维护客户提供的银行退款信息；账户余额由管理员管理。': 'Maintains the bank refund details provided by the customer; account balance is managed by admins.',
+    '调整筛选条件或创建新的租赁合同。': 'Adjust the filters or create a new rental contract.',
+    '更换状态筛选后再试。': 'Try a different status filter.',
+    '已付款或进入租赁流程的订单会显示在这里。': 'Orders that have been paid or entered the rental process will appear here.',
+    '名和姓需要分别填写。': 'Enter given name and family name separately.',
+    '创建合同并生成签署链接时，系统会自动保存当前设备验机记录。': 'When a contract is created and a signing link generated, the system automatically saves the device’s current inspection record.',
+    '输入至少 3 个字符选择地址，街道、城区、州和邮编会自动填写。': 'Type at least 3 characters to pick an address; street, suburb, state, and postcode fill in automatically.'
   };
 
   var keys = Object.keys(translations).sort(function (a, b) { return b.length - a.length; });
@@ -405,6 +465,9 @@ export const languageScript = String.raw`
         element.setAttribute('data-i18n-' + attribute, source);
         element.setAttribute(attribute, cleanChinesePunctuation(language === 'en' ? translateText(source) : source));
       });
+    });
+    scope.querySelectorAll('.legal-lang[data-lang]').forEach(function (block) {
+      block.hidden = block.getAttribute('data-lang') !== language;
     });
     document.querySelectorAll('[data-language-label]').forEach(function (button) {
       var nextLabel = language === 'en' ? '中文' : 'English';
