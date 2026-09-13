@@ -237,7 +237,6 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
                   ${hasStripeRefundSource ? `<option value="original" ${defaultPriceRefundMethod === 'original' ? 'selected' : ''}>原路退回（Stripe 信用卡）</option>` : ''}
                   ${isTransferPayment ? `<option value="pending_deposit" ${defaultPriceRefundMethod === 'pending_deposit' ? 'selected' : ''}>并入后续押金退款</option>` : ''}
                 </select>
-                <small class="form-text">仅当新订单总额低于当前总额时处理退款；涨价时该选择不生效。</small>
               </div>
             </div>
             <div class="order-change-fields" data-for="LOCATION_CHANGE" hidden>
