@@ -5,7 +5,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deviceUtilisationRate, paymentMethodBreakdown } from '../src/site'
+import { deviceUtilisationRate, paymentMethodBreakdown, rentalRefundAmount } from '../src/site'
 
 test('deviceUtilisationRate is used device-days over capacity, clamped to 0..1', () => {
   assert.equal(deviceUtilisationRate(150, 10, 30), 0.5)
@@ -42,4 +42,10 @@ test('paymentMethodBreakdown absorbs rounding drift into the largest method', ()
     { method: 'c', amount: 1, count: 1 },
   ])
   assert.equal(rows.reduce((s, r) => s + r.share, 0), 100)
+})
+
+test('rentalRefundAmount excludes the deposit portion of a full cancellation refund', () => {
+  assert.equal(rentalRefundAmount({ type: 'cancellation', refundAmount: 492 }, { rentalAmount: 92 }), 92)
+  assert.equal(rentalRefundAmount({ type: 'deposit', refundAmount: 200 }, { rentalAmount: 92 }), 0)
+  assert.equal(rentalRefundAmount({ type: 'early_return', refundAmount: 20 }, { rentalAmount: 92 }), 20)
 })

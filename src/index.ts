@@ -3901,7 +3901,9 @@ app.get('/admin/reports', async (c) => {
   const since = `datetime('now', '-${windowDays} days')`
   const [rentalRevenue, refundTotal, deposits, outstanding, overdue, fleet, rentedDays, damage, maintenance, coupon, referral, methods] = await Promise.all([
     c.env.RENT.prepare(`SELECT COALESCE(SUM(COALESCE(rental_amount, amount)), 0) AS v FROM payments WHERE status = 'paid' AND paid_at >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT COALESCE(SUM(refund_amount), 0) AS v FROM payment_refunds WHERE status = 'succeeded' AND type <> 'deposit' AND created_at >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(CASE WHEN r.type = 'cancellation' THEN MAX(0, MIN(r.refund_amount, COALESCE(p.rental_amount, 0))) ELSE MAX(0, r.refund_amount) END), 0) AS v
+      FROM payment_refunds r LEFT JOIN payments p ON p.id = r.payment_id
+      WHERE r.status = 'succeeded' AND r.type <> 'deposit' AND r.created_at >= ${since}`).first<{ v: number }>(),
     c.env.RENT.prepare(`SELECT
         COALESCE(SUM(CASE WHEN deposit_status IN ('HELD','PAID','PARTIALLY_DEDUCTED','REFUND_PENDING') THEN deposit_held_amount ELSE 0 END), 0) AS held,
         COALESCE(SUM(CASE WHEN deposit_status IN ('REFUNDED','PARTIALLY_REFUNDED') AND deposit_refund_at >= ${since} THEN deposit_refund_amount ELSE 0 END), 0) AS refunded,

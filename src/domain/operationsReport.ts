@@ -19,6 +19,14 @@ export function deviceUtilisationRate(rentedDeviceDays: number, fleetSize: numbe
 export interface PaymentMethodRow { method: string; amount: number; count?: number }
 export interface PaymentMethodShare { method: string; amount: number; count: number; share: number }
 
+// 租前取消可能退回整笔付款（租金 + 押金），收入报表只应冲减其中的租金部分。
+export function rentalRefundAmount(refund: { type?: string; refundAmount?: number }, payment?: { rentalAmount?: number }): number {
+  const amount = Math.max(0, Number(refund?.refundAmount) || 0)
+  if (String(refund?.type || '').toLowerCase() === 'deposit') return 0
+  if (String(refund?.type || '').toLowerCase() === 'cancellation') return Math.min(amount, Math.max(0, Number(payment?.rentalAmount) || 0))
+  return amount
+}
+
 // 各支付方式金额占比（百分比，保留两位，误差补到最大的一档，合计恰为 100）。
 export function paymentMethodBreakdown(rows: Array<PaymentMethodRow | null | undefined>): PaymentMethodShare[] {
   const clean = (rows || []).filter((r): r is PaymentMethodRow => Boolean(r) && Number(r!.amount) > 0)

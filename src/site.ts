@@ -88,7 +88,7 @@ import {
   RISK_SCORE_BLOCK_THRESHOLD,
 } from './domain/riskFlags'
 import type { RiskFlagType, RiskFlagLike, CustomerRiskFacts, CustomerRiskAssessment, ReferralRiskFacts, ReferralRiskAssessment } from './domain/riskFlags'
-import { deviceUtilisationRate, paymentMethodBreakdown } from './domain/operationsReport'
+import { deviceUtilisationRate, paymentMethodBreakdown, rentalRefundAmount } from './domain/operationsReport'
 import type { PaymentMethodRow, PaymentMethodShare } from './domain/operationsReport'
 import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
@@ -115,7 +115,7 @@ export {
   RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
   isRiskFlagCurrentlyActive, findBlockingRiskFlag, calculateCustomerRiskAssessment, calculateReferralRiskAssessment,
   RISK_SCORE_BLOCK_THRESHOLD,
-  deviceUtilisationRate, paymentMethodBreakdown,
+  deviceUtilisationRate, paymentMethodBreakdown, rentalRefundAmount,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
   rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory, staleMonitoringAlertIds,
   agentCommission,
