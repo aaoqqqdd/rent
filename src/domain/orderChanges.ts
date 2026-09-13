@@ -20,6 +20,7 @@ export const ORDER_CHANGE_TYPE_LABELS: Record<string, string> = {
   LOCATION_CHANGE: '修改取还地点',
   CANCELLATION: '取消订单',
   INVENTORY_RELEASE: '释放库存',
+  COUPON_REVALIDATED: '重新校验优惠码',
 }
 
 export function formatOrderChangeActor(name: unknown, id: unknown): string {
