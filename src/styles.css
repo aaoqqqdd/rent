@@ -5235,6 +5235,40 @@ tr:hover td {
   opacity: .62;
 }
 
+.balance-payment-option {
+  grid-template-columns: 22px minmax(0, 1fr);
+}
+
+.balance-payment-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 10px;
+  min-width: 0;
+}
+
+.balance-payment-copy strong {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.balance-payment-copy small {
+  flex-basis: 100%;
+  margin-top: 5px;
+}
+
+.balance-payment-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #526071;
+  font-size: .75rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
 .bank-transfer-notice {
   margin-top: 16px;
   padding: 20px;
