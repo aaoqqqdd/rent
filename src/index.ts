@@ -4427,13 +4427,13 @@ app.post('/admin/notify-channels/test', async (c) => {
     const results = await dispatchChannelAlert(c, { title, message, url: new URL('/admin/settings', c.req.url).toString() }, { force: false })
     const email = String(user.email || '').trim()
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      const { apiKey, from } = await resolveEmailCredentials(c)
-      if (!apiKey || !from) results.push({ channel: 'email', ok: false, detail: '尚未配置邮件服务商' })
+      const { provider, apiKey, from } = await resolveEmailCredentials(c)
+      if (!apiKey || !from) results.push({ channel: `email (${provider})`, ok: false, detail: !apiKey ? '尚未配置当前邮件服务商 API Key' : '尚未配置发件邮箱' })
       else {
         const sent = await sendTransactionalEmail(c, { to: email, subject: title, text: message })
-        results.push({ channel: 'email', ok: sent.ok, detail: sent.ok ? `已发送至 ${email}` : (sent.error || '发送失败') })
+        results.push({ channel: `email (${provider})`, ok: sent.ok, detail: sent.ok ? `已发送至 ${email}` : (sent.error || '发送失败') })
       }
-    }
+    } else results.push({ channel: 'email', ok: false, detail: '管理员账户没有有效邮箱，无法发送测试邮件' })
     return c.json({ success: true, results })
   } catch (error: any) {
     return c.json({ error: String(error?.message || error).slice(0, 300) }, 500)

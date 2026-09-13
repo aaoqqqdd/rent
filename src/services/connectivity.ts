@@ -70,16 +70,16 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
       if (!apiKey) { status = 'unconfigured'; detail = '尚未配置邮件服务商密钥（后台「通知渠道」或 RESEND_API_KEY）' }
       else if (provider === 'brevo') {
         const response = await timedFetch('https://api.brevo.com/v3/account', { headers: { 'api-key': apiKey, Accept: 'application/json' } })
-        if (response.status === 401 || response.status === 403 || response.status >= 500) throw new Error(`Brevo 返回 HTTP ${response.status}`)
+        if (!response.ok) throw new Error(`Brevo 返回 HTTP ${response.status}`)
         detail = 'Brevo 密钥有效，账户接口可访问'
       } else if (provider === 'mailersend') {
         const response = await timedFetch('https://api.mailersend.com/v1/domains', { headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' } })
-        if (response.status === 401 || response.status === 403 || response.status >= 500) throw new Error(`MailerSend 返回 HTTP ${response.status}`)
+        if (!response.ok) throw new Error(`MailerSend 返回 HTTP ${response.status}`)
         detail = 'MailerSend 密钥有效，域名接口可访问'
       } else {
-        const response = await timedFetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' }, body: '{}' })
-        if (response.status === 401 || response.status === 403 || response.status >= 500) throw new Error(`Resend 返回 HTTP ${response.status}`)
-        detail = 'Resend 密钥与发送权限有效，未投递测试邮件'
+        const response = await timedFetch('https://api.resend.com/domains', { headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' } })
+        if (!response.ok) throw new Error(`Resend 返回 HTTP ${response.status}`)
+        detail = 'Resend 密钥有效，域名接口可访问，未投递测试邮件'
       }
     } else if (definition.id === 'notifyWebhook') {
       const summary = await getNotifyChannelsSummary(c)
