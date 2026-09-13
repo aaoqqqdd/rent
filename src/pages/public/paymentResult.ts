@@ -6,10 +6,11 @@
 import { buildLayout, getOrderById, getContractByOrderId, formatCurrency } from '../../site';
 import type { Context } from 'hono';
 
-export function paymentResultState(order: any, payment: any, cancelled = false): 'cancelled' | 'success' | 'fail' | 'bank_pending' | 'stripe_pending' {
+export function paymentResultState(order: any, payment: any, cancelled = false): 'cancelled' | 'success' | 'fail' | 'bank_pending' | 'stripe_pending' | 'square_pending' {
   if (cancelled) return 'cancelled'
   if (payment?.status === 'paid' || order?.status === 'paid') return 'success'
   if (payment?.status === 'failed') return 'fail'
+  if (order?.paymentProvider === 'square' || order?.payment_provider === 'square') return 'square_pending'
   return order?.paymentMethod === 'bank_transfer' || order?.payment_method === 'bank_transfer' ? 'bank_pending' : 'stripe_pending'
 }
 
@@ -17,7 +18,8 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
   const order = await getOrderById(c, orderId);
   const contract = order ? await getContractByOrderId(c, order.id) : null;
   const paymentMethod = String(order?.paymentMethod ?? 'card')
-  const payment = order ? await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, deposit_amount FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod).first() as any : null
+  const provider = String(order?.paymentProvider || (paymentMethod === 'card' ? 'stripe' : 'internal'))
+  const payment = order ? await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, payment_provider, deposit_amount FROM payments WHERE rental_id = ? AND payment_method = ? AND COALESCE(payment_provider, ?) = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod, provider, provider).first() as any : null
   const status = paymentResultState(order, payment, cancelled)
   let title = '';
   let message = '';
@@ -45,7 +47,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     buttonText = '返回客户中心';
     buttonLink = user?.role === 'CUSTOMER' ? (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard') : `/login?redirect=${encodeURIComponent('/customer/dashboard')}`;
   } else if (status === 'cancelled') {
-    title = '已取消 Stripe 支付';
+    title = provider === 'square' ? '已取消 Square 礼品卡支付' : '已取消 Stripe 支付';
     message = '本次没有扣款，订单仍等待付款。您可以手动返回选择其他支付方式；页面将在 <strong id="cancelled-payment-countdown">5</strong> 秒后自动返回。';
     icon = `
       <div class="icon-wrapper danger">
@@ -73,8 +75,8 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     buttonText = '查看待付款订单';
     buttonLink = canOpenCustomerOrder ? `/customer/orders/${orderId}` : `/login?redirect=${encodeURIComponent(`/customer/orders/${orderId}`)}`;
   } else {
-    title = '正在确认 Stripe 支付';
-    message = `Stripe 正在确认合同付款结果；确认后会生成订单编号，本页面会自动刷新。`;
+    title = provider === 'square' ? '正在确认 Square 礼品卡支付' : '正在确认 Stripe 支付';
+    message = provider === 'square' ? 'Square 正在确认礼品卡付款结果；确认后会生成订单编号，本页面会自动刷新。' : `Stripe 正在确认合同付款结果；确认后会生成订单编号，本页面会自动刷新。`;
     icon = `<div class="icon-wrapper is-loading" style="background:#e0f2fe;color:#0369a1;">${loadingSpinner}</div>`;
     cardClass = '';
     buttonText = '刷新支付状态';
@@ -231,7 +233,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
         <p>${message}</p>
         ${contract ? `<p style="font-size: 0.85rem; color: var(--text-tertiary);">合同编号: <span class="mono">${contract.contractNumber}</span></p>` : ''}
         <div class="button-group">
-          <a class="button"${status === 'stripe_pending' || status === 'bank_pending' ? ' data-full-navigation="true"' : ''} href="${buttonLink}">${buttonText}</a>
+          <a class="button"${['stripe_pending', 'square_pending', 'bank_pending'].includes(status) ? ' data-full-navigation="true"' : ''} href="${buttonLink}">${buttonText}</a>
           ${contract && order ? `<a class="button button-secondary" href="/customer/orders/${order.id}">查看订单详情</a>` : ''}
         </div>
       </div>
@@ -249,7 +251,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
           }
         }, 1000);
       })();
-    </script>` : (order && status === 'stripe_pending') ? `<script>
+    </script>` : (order && ['stripe_pending', 'square_pending'].includes(status)) ? `<script>
       (function () {
         var url = ${JSON.stringify(buttonLink)};
         var card = document.querySelector('.payment-result-card');

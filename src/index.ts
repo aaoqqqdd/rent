@@ -117,11 +117,13 @@ import {
 import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
+import { getSquareConfigSummary } from './square'
 import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteKey } from './turnstile'
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
+import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
@@ -562,7 +564,7 @@ app.use('*', async (c, next) => {
     }
     const path = c.req.path
     const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result', '/notifications', '/notifications/unread'])
-    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/(?:checkout|intent)|bank-transfer-proof))?$/)
+    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/(?:checkout|intent)|square\/(?:config|payment)|bank-transfer-proof))?$/)
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
@@ -574,11 +576,11 @@ app.use('*', async (c, next) => {
 
 app.use('*', async (c, next) => {
   const contentLength = Number(c.req.header('Content-Length') || 0)
-  const maxBody = c.req.path === '/webhooks/stripe' ? 512 * 1024 : 128 * 1024
+  const maxBody = ['/webhooks/stripe', '/webhooks/square'].includes(c.req.path) ? 512 * 1024 : 128 * 1024
   if (contentLength > maxBody) return c.text('Request body too large', 413)
   const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
   const isPublicOrderLookup = c.req.path === '/public/order-lookup'
-  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicOrderLookup) {
+  if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square'].includes(c.req.path) && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
     if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
@@ -2523,7 +2525,8 @@ app.get('/api/payment/status', async (c) => {
     (user.accountType === 'guest' && String(user.guestOrderId || '') === orderId)
   if (!ownsOrder) return c.json({ error: 'forbidden' }, 403)
   const paymentMethod = String(order.paymentMethod ?? 'card')
-  const payment = await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod).first() as any
+  const provider = String(order.paymentProvider || (paymentMethod === 'card' ? 'stripe' : 'internal'))
+  const payment = await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, payment_provider FROM payments WHERE rental_id = ? AND payment_method = ? AND COALESCE(payment_provider, ?) = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod, provider, provider).first() as any
   const state = pages.paymentResultState(order, payment, false)
   return c.json({ state, orderNo: order.orderNo || null, redirectTarget: `/customer/orders/${order.id}` }, 200, { 'Cache-Control': 'no-store' })
 })
@@ -2645,6 +2648,28 @@ app.post('/customer/orders/:id/stripe/intent', async (c) => {
   }
 })
 
+app.get('/customer/orders/:id/square/config', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    return c.json(await getSquareGiftCardConfigForOrder(c, user, c.req.param('id')), 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法读取 Square 配置' }, 400)
+  }
+})
+
+app.post('/customer/orders/:id/square/payment', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    const body = await c.req.json() as any
+    const result = await createSquareGiftCardPayment(c, user, c.req.param('id'), body?.sourceId)
+    return c.json(result)
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法创建 Square 礼品卡付款' }, 400)
+  }
+})
+
 app.post('/customer/orders/:id/price-adjustment/stripe/intent', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
@@ -2666,23 +2691,27 @@ app.post('/customer/orders/:id/switch-payment-method', async (c) => {
   if (!order || order.userId !== user.id || order.status !== 'pending_payment') return c.text('订单当前不能切换支付方式', 409)
   const form = await c.req.parseBody()
   const targetMethod = String(form.paymentMethod || '')
-  if (!['bank_transfer', 'alipay', 'wechat'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
+  if (!['square', 'bank_transfer', 'alipay', 'wechat'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
   await loadSystemSettingsFromDB(c)
   const settings = getSystemSettings()
-  const enabled = targetMethod === 'bank_transfer' ? settings.paymentMethods.bankTransfer
+  const enabled = targetMethod === 'square' ? settings.paymentMethods.square
+    : targetMethod === 'bank_transfer' ? settings.paymentMethods.bankTransfer
     : targetMethod === 'alipay' ? (settings.paymentMethods.alipay && settings.rmbPayment.alipayQrUrl)
     : (settings.paymentMethods.wechat && settings.rmbPayment.wechatQrUrl)
   if (!enabled) return c.text('该支付方式当前未启用', 409)
   if (String(order.paymentMethod) === targetMethod) return c.redirect(`/customer/orders/${order.id}`)
   const paymentTotal = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
-  const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, targetMethod).first() as any
+  const storedPaymentMethod = targetMethod === 'square' ? 'card' : targetMethod
+  const provider = targetMethod === 'square' ? 'square' : 'internal'
+  if (targetMethod === 'square') await getSquareConfigSummary(c).then(summary => { if (!summary.configured) throw new Error('Square 尚未配置') })
+  const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND payment_provider = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, storedPaymentMethod, provider).first() as any
   if (!existing) {
     await c.env.RENT.prepare(`
-      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status)
-      VALUES (?, ?, ?, ?, ?, 0, ?, 'AUD', 'pending')
-    `).bind(`p-${nanoid(12)}`, order.id, user.id, targetMethod, paymentTotal, paymentTotal).run()
+      INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, currency, status)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'AUD', 'pending')
+    `).bind(`p-${nanoid(12)}`, order.id, user.id, storedPaymentMethod, provider, paymentTotal, paymentTotal).run()
   }
-  await c.env.RENT.prepare("UPDATE orders SET paymentMethod = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(targetMethod, order.id).run()
+  await c.env.RENT.prepare("UPDATE orders SET paymentMethod = ?, payment_provider = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(storedPaymentMethod, provider, order.id).run()
   return c.redirect(`/customer/orders/${order.id}`)
 })
 
@@ -2723,6 +2752,15 @@ app.post('/webhooks/stripe', async (c) => {
     // redelivers it; the handler is idempotent, so a later retry completes it
     // instead of the failure being silently swallowed.
     console.error('Stripe webhook processing failed:', error?.message || error)
+    return c.json({ received: false, error: 'processing_failed' }, 500)
+  }
+})
+
+app.post('/webhooks/square', async (c) => {
+  try {
+    return await handleSquareWebhook(c)
+  } catch (error: any) {
+    console.error('Square webhook processing failed:', error?.message || error)
     return c.json({ received: false, error: 'processing_failed' }, 500)
   }
 })
@@ -3917,7 +3955,7 @@ app.get('/admin/reports', async (c) => {
     c.env.RENT.prepare(`SELECT COALESCE(SUM(cost), 0) AS v FROM maintenance_records WHERE COALESCE(completed_at, started_at) >= ${since}`).first<{ v: number }>(),
     c.env.RENT.prepare(`SELECT COALESCE(SUM(discount_amount), 0) AS v FROM coupon_redemptions WHERE status = 'REDEEMED' AND COALESCE(redeemed_at, created_at) >= ${since}`).first<{ v: number }>(),
     c.env.RENT.prepare(`SELECT COALESCE(SUM(reward_amount), 0) AS v FROM referral_rewards WHERE status IN ('APPROVED','AVAILABLE') AND created_at >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT payment_method AS method, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS count FROM payments WHERE status = 'paid' AND paid_at >= ${since} GROUP BY payment_method`).all(),
+    c.env.RENT.prepare(`SELECT CASE WHEN payment_method = 'card' AND payment_provider = 'square' THEN 'square' ELSE payment_method END AS method, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS count FROM payments WHERE status = 'paid' AND paid_at >= ${since} GROUP BY CASE WHEN payment_method = 'card' AND payment_provider = 'square' THEN 'square' ELSE payment_method END`).all(),
   ])
   return c.html(pages.renderAdminOperationsReport(user, {
     windowDays,
@@ -4449,7 +4487,7 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c)))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c)))
 })
 
 app.post('/admin/notify-channels/test', async (c) => {

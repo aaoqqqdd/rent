@@ -36,17 +36,18 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
-    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee, stripe_payment_intent_id FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_method, payment_provider, amount, status, processing_fee, stripe_payment_intent_id FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ]);
   const canModifyOrder = !['completed', 'cancelled'].includes(String(order.status));
   const paymentMethodLabels: Record<string, string> = {
-    card: '信用卡（Stripe）', stripe: '信用卡（Stripe）', bank_transfer: '银行转账',
+    card: '信用卡（Stripe）', stripe: '信用卡（Stripe）', square: 'Square 礼品卡', bank_transfer: '银行转账',
     alipay: '支付宝', wechat: '微信', balance: '账户余额',
   };
   const paymentMethod = String(order.paymentMethod || (order as any).payment_method || 'card');
-  const paymentMethodLabel = paymentMethodLabels[paymentMethod] || paymentMethod;
-  const isCardPayment = ['card', 'stripe'].includes(paymentMethod)
+  const isSquarePayment = String(order.paymentProvider || (order as any).payment_provider || '') === 'square'
+  const paymentMethodLabel = isSquarePayment ? 'Square 礼品卡' : paymentMethodLabels[paymentMethod] || paymentMethod;
+  const isCardPayment = !isSquarePayment && ['card', 'stripe'].includes(paymentMethod)
   const isTransferPayment = ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)
   const transferProofPaymentMethod = String(transferProof?.proof_payment_method || '')
   const isAdjustmentTransferProof = Boolean(transferProof?.adjustment_id && ['bank_transfer', 'alipay', 'wechat'].includes(transferProofPaymentMethod))
@@ -62,7 +63,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     ['阅读并同意协议', '客户打开签署链接阅读完整合同'],
     ['填写客户资料', '客户确认身份与联系方式'],
     ['电子签名', '客户输入姓名完成电子签署'],
-    ['Stripe 支付', '客户通过 Stripe 支付租金及服务费'],
+    [isSquarePayment ? 'Square 礼品卡支付' : 'Stripe 支付', isSquarePayment ? '客户通过 Square 礼品卡支付租金及服务费' : '客户通过 Stripe 支付租金及服务费'],
   ];
   const renderWorkflow = () => `<ol class="signing-steps admin-order-signing-steps" style="grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0;">${contractWorkflow.map(([title, description], index) => {
     const itemStep = index + 1;
@@ -276,7 +277,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>设备归还</h4><p>${String(order.status) === 'pending_return' ? '客户已获批提前归还，请完成归还验机。' : order.early_return_requested_at ? '客户已申请提前归还，等待审批。' : '订单租赁中，可申请提前归还并安排验机。'}</p>${String(order.status) === 'active' && order.early_return_requested_at ? `<form method="post" action="/staff/orders/${order.id}/early-return/approve" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-warning" type="submit">批准提前归还</button></form>` : ''}<a class="button button-info" href="/staff/orders/${order.id}/inspection" data-full-navigation="true">归还验机</a></div>` : ''}
         ${((order.paymentMethod === 'bank_transfer' || (isAdjustmentTransferProof && transferProofPaymentMethod === 'bank_transfer')) && (String(order.status) !== 'active' || transferProof?.status === 'submitted')) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>银行转账审核${isAdjustmentTransferProof ? '（差价）' : ''}</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>备注：${escapeHtml(transferProof.note || '-')}</p>${proofImage ? `<a href="${escapeHtml(proofImage)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(proofImage)}" alt="转账凭证" loading="lazy" referrerpolicy="no-referrer" style="max-width:100%;max-height:320px;border-radius:8px"></a>` : '<p class="alert">凭证图片链接缺失或无效</p>'}<p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交转账 Reference。</p>'}</div>` : ''}
         ${(isAdjustmentTransferProof && ['alipay', 'wechat'].includes(transferProofPaymentMethod) || ['alipay', 'wechat'].includes(String(order.paymentMethod))) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>${(isAdjustmentTransferProof ? transferProofPaymentMethod : order.paymentMethod) === 'alipay' ? '支付宝' : '微信'}付款审核${isAdjustmentTransferProof ? '（差价）' : ''}</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交付款凭证。</p>'}</div>` : ''}
-        ${['card', 'stripe'].includes(paymentMethod) && String(order.status) === 'pending_payment' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>Stripe 信用卡支付</h4><p>客户完成合同签署后，通过订单详情页的 Stripe 安全支付组件支付租金及服务费。银行卡信息不会保存到本站。</p></div>` : ''}
+        ${isSquarePayment && String(order.status) === 'pending_payment' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>Square 礼品卡支付</h4><p>客户完成合同签署后，通过订单详情页的 Square Gift Card 安全组件支付租金及服务费。</p></div>` : ''}
+        ${isCardPayment && String(order.status) === 'pending_payment' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>Stripe 信用卡支付</h4><p>客户完成合同签署后，通过订单详情页的 Stripe 安全支付组件支付租金及服务费。银行卡信息不会保存到本站。</p></div>` : ''}
         <div style="padding: 24px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #1e40af; display: flex; align-items: center; gap: 8px;">更新订单状态</h4>
           <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" id="orderStatusForm" style="display: flex; flex-direction: column; gap: 16px;">

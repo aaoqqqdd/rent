@@ -8,3 +8,4 @@ export * from './public/signContract';
 export * from './admin/saveSettings';
 export * from './staff/cancelContract';
 export * from './coupons';
+export * from './squarePayments';

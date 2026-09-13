@@ -401,6 +401,12 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 <span><strong>信用卡支付（Stripe）</strong><small>${depositPaymentMode === 'PREAUTH' ? `一次性预授权总额 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>（包含租金及服务费、押金和手续费）；归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。` : `租金及已确定的时段服务费即时扣款 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，其中支付手续费 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）。${depositPaymentMode === 'SETUP_INTENT' ? '本订单使用 SetupIntent 保存卡片，押金不预扣。' : ''}`}</small></span>
               </label>
               ` : ''}
+              ${systemSettings.paymentMethods.square ? `
+              <label class="payment-option">
+                <input type="radio" name="paymentMethod" value="square" required />
+                <span><strong>Square 礼品卡</strong><small>在订单页面使用 Square Gift Card 支付租金及服务费；押金不通过礼品卡扣收。</small></span>
+              </label>
+              ` : ''}
               ${systemSettings.paymentMethods.balancePayment && canUseBalance ? `
               <label class="payment-option balance-payment-option">
                 <input type="radio" name="paymentMethod" value="balance" id="balance-payment-radio" data-account-balance="${Number(paymentUser?.balance || 0)}" required ${Number(paymentUser?.balance || 0) >= order.totalAmount ? '' : 'disabled'} />

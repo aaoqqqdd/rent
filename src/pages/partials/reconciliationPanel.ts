@@ -93,7 +93,7 @@ export function renderReconciliationPanel(
   const margin = opts.margin ?? '0 0 24px'
 
   const paymentTable = `<div class="table-wrapper"><table><thead><tr><th>付款来源</th><th>方式</th><th>金额</th><th>手续费</th><th>状态</th></tr></thead><tbody>${
-    paymentSources.map((p: any) => `<tr><td class="mono">${esc(p.id)}</td><td>${esc(p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${esc(p.status)}</td></tr>`).join('')
+    paymentSources.map((p: any) => `<tr><td class="mono">${esc(p.id)}</td><td>${esc(p.payment_provider === 'square' ? 'Square 礼品卡' : p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${esc(p.status)}</td></tr>`).join('')
       || '<tr><td colspan="5" class="empty-state">无付款记录</td></tr>'
   }</tbody></table></div>`
 

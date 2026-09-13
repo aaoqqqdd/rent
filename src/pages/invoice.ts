@@ -24,7 +24,7 @@ export async function renderInvoice(c: Context, user: any, orderId: string, prin
   if (!invoices.length) return buildLayout('发票尚未开具', '<div class="panel"><h2>付款完成后系统将自动开具发票</h2></div>', user)
   const customer = await getUserById(c, order.userId)
   const company = getSystemSettings().companyDetails
-  const payment = await c.env.RENT.prepare('SELECT payment_method, paid_at, transaction_id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = \'paid\' ORDER BY paid_at DESC LIMIT 1').bind(order.id).first() as any
+  const payment = await c.env.RENT.prepare('SELECT payment_method, payment_provider, paid_at, transaction_id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = \'paid\' ORDER BY paid_at DESC LIMIT 1').bind(order.id).first() as any
   const refunds = (await c.env.RENT.prepare("SELECT type, refund_number, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at").bind(order.id).all()).results as any[]
   const refundTotal = refunds.reduce((sum, refund) => sum + Number(refund.refund_amount || 0), 0)
   // 退款凭证（credit note）只在确有成功退款时展示。历史遗留、或退款后来被撤销 /
@@ -46,7 +46,7 @@ export async function renderInvoice(c: Context, user: any, orderId: string, prin
     const formalTaxInvoice = Boolean(company.abn)
     const documentNumberLabel = isCreditNote ? '退款凭证号' : '收据号'
     const documentNumber = isCreditNote ? invoice.invoice_number : invoice.receipt_number || invoice.invoice_number
-    const paymentLabel = payment?.payment_method === 'card' ? '信用卡（Stripe）' : payment?.payment_method === 'balance' ? '账户余额' : payment?.payment_method === 'bank_transfer' ? '银行转账' : '—'
+    const paymentLabel = payment?.payment_provider === 'square' ? 'Square 礼品卡' : payment?.payment_method === 'card' ? '信用卡（Stripe）' : payment?.payment_method === 'balance' ? '账户余额' : payment?.payment_method === 'bank_transfer' ? '银行转账' : '—'
     return `<article class="official-document">
       <header class="official-document__header official-document__archive"><div><p class="official-document__eyebrow">${isCreditNote ? 'CREDIT NOTE / ARCHIVE' : formalTaxInvoice ? 'TAX INVOICE / ARCHIVE' : ''}</p><h1>${isCreditNote ? '退款凭证' : formalTaxInvoice ? '税务发票' : '付款收据'}</h1><p class="official-document__company">${escape(company.name || 'PC Rental')}</p><p class="official-document__number">${documentNumberLabel} ${escape(documentNumber || '—')}</p></div><div class="official-document__title"><span class="official-document__status">${invoice.status === 'issued' ? '已开具' : escape(invoice.status)}</span><p>开具日期：${escape(invoice.issued_at)}</p></div></header>
       <div class="official-document__rule"></div>

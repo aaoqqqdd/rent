@@ -92,7 +92,7 @@ async function ensureReceiptAndTransactions(c: Context, order: any, invoiceId: s
     await c.env.RENT.prepare(`INSERT OR IGNORE INTO transactions
       (id, transaction_number, order_id, customer_id, invoice_id, transaction_type, payment_method, amount, currency, status, provider, provider_transaction_id, description, completed_at)
       VALUES (?, ?, ?, ?, ?, 'RENTAL_PAYMENT', ?, ?, ?, 'SUCCESS', ?, ?, ?, '租赁订单付款', CURRENT_TIMESTAMP)`)
-      .bind(transactionId, transactionNumber, order.id, order.userId, invoiceId, financePaymentMethod(payment.payment_method), Number(payment.amount || 0), String(payment.currency || 'AUD').toUpperCase(), payment.payment_method === 'card' ? 'STRIPE' : null, payment.stripe_payment_intent_id || null).run()
+      .bind(transactionId, transactionNumber, order.id, order.userId, invoiceId, financePaymentMethod(payment.payment_method), Number(payment.amount || 0), String(payment.currency || 'AUD').toUpperCase(), payment.payment_provider === 'square' ? 'SQUARE' : payment.payment_method === 'card' ? 'STRIPE' : null, payment.payment_provider === 'square' ? payment.square_payment_id || null : payment.stripe_payment_intent_id || null).run()
     await c.env.RENT.prepare('INSERT OR IGNORE INTO receipt_transactions (receipt_id, transaction_id) VALUES (?, ?)').bind(receiptId, transactionId).run()
   }
 }

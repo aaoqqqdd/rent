@@ -15,6 +15,7 @@ import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
 import { completeOrderSetupIntent, createOrderPaymentIntent, createOrderSetupIntent, resolveDepositPaymentMode } from '../stripePayments';
 import { normalizeSecurityDepositMethod } from '../../domain/paymentPlan';
 import { getStripeRuntimeConfig } from '../../stripe';
+import { getSquareRuntimeConfig } from '../../square';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 import { calculateRentalFee } from '../../domain/rentalPricing';
 import { generateWindowsPassword } from '../../lib/password';
@@ -322,6 +323,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const noPayment = isWebsiteOrderContract
         const paymentMethod = String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || 'card')
         const stripePaymentSelected = paymentMethod === 'stripe' || paymentMethod === 'card'
+        const squarePaymentSelected = paymentMethod === 'square'
         // 押金处理方式不再由客户手选：跟着支付方式自动走——信用卡预授权 / SetupIntent，否则银行转账。
         const depositMethod = normalizeSecurityDepositMethod(stripePaymentSelected ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
@@ -342,7 +344,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             ; (order as any).serviceFee = serviceFee
         }
         const canUseBalance = canUseAccountBalance(currentUser)
-        const refundMethod = (order as any).refundMethod === 'balance' ? 'balance' : (canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original')
+        const refundMethod = squarePaymentSelected ? 'balance' : (order as any).refundMethod === 'balance' ? 'balance' : (canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original')
         const refundBsb = String(body.refundBsb || '').trim()
         const refundAccountNumber = String(body.refundAccountNumber || '').replace(/\s/g, '')
         const refundAccountName = String(body.refundAccountName || '').trim()
@@ -355,6 +357,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
         const enabledMethods = [
           ...(getSystemSettings().paymentMethods.stripe ? ['stripe', 'card'] : []),
+          ...(getSystemSettings().paymentMethods.square ? ['square'] : []),
           ...(getSystemSettings().paymentMethods.bankTransfer ? ['bank_transfer'] : []),
           ...(getSystemSettings().paymentMethods.alipay && getSystemSettings().rmbPayment.alipayQrUrl ? ['alipay'] : []),
           ...(getSystemSettings().paymentMethods.wechat && getSystemSettings().rmbPayment.wechatQrUrl ? ['wechat'] : []),
@@ -363,6 +366,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (paymentMethod === 'balance' && !canUseBalance) throw new Error('只有已登录的正式客户账户可以使用余额支付')
         if (!enabledMethods.includes(paymentMethod)) throw new Error('所选支付方式当前不可用')
         if (stripePaymentSelected) await getStripeRuntimeConfig(c)
+        if (squarePaymentSelected) await getSquareRuntimeConfig(c)
         if (paymentMethod === 'bank_transfer' && refundMethod === 'original') {
           if (!/^\d{3}-?\d{3}$/.test(refundBsb) || !/^\d{4,10}$/.test(refundAccountNumber) || !refundAccountName) {
             throw new Error('选择银行原路退款时，请填写正确的账户名、BSB 和银行账号')
@@ -555,7 +559,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         await updateOrderInDB(c, contract.rentalId, {
           userId: userId,
-          paymentMethod: (stripePaymentSelected ? 'card' : paymentMethod) as Order['paymentMethod'],
+          paymentMethod: (stripePaymentSelected || squarePaymentSelected ? 'card' : paymentMethod) as Order['paymentMethod'],
+          paymentProvider: stripePaymentSelected ? 'stripe' : squarePaymentSelected ? 'square' : 'internal',
           status: orderStatus,
           // 合同已经通过 contracts.orderId 关联订单；不要在签署时写入可选的反向外键，
           // 兼容旧数据库中 contractId 外键定义不一致的订单表。
@@ -566,17 +571,19 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await c.env.RENT.prepare(`UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?`)
           .bind(refundMethod, refundMethod === 'original' ? refundBsb || null : null, refundMethod === 'original' ? refundAccountNumber || null : null, refundMethod === 'original' ? refundAccountName || null : null, contract.rentalId).run()
 
-        if (!noPayment && (paymentMethod === 'balance' || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod))) {
+        if (!noPayment && (paymentMethod === 'balance' || squarePaymentSelected || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod))) {
           const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
           const paymentTotal = Math.max(0, Number(paymentOrder?.totalAmount || 0) - Number(paymentOrder?.depositAmount || 0))
-          const existingPayment = await c.env.RENT.prepare('SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(contract.rentalId, paymentMethod).first() as any
+          const storedPaymentMethod = squarePaymentSelected ? 'card' : paymentMethod
+          const provider = squarePaymentSelected ? 'square' : 'internal'
+          const existingPayment = await c.env.RENT.prepare('SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = ? AND payment_provider = ? ORDER BY created_at DESC LIMIT 1').bind(contract.rentalId, storedPaymentMethod, provider).first() as any
           const paymentId = existingPayment?.id || `p-${nanoid(12)}`
           if (!existingPayment) {
             await c.env.RENT.prepare(`
-              INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status, transaction_id, paid_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?, ?)
+              INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, currency, status, transaction_id, paid_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'AUD', ?, ?, ?)
             `).bind(
-              paymentId, contract.rentalId, userId, paymentMethod,
+              paymentId, contract.rentalId, userId, storedPaymentMethod, provider,
               paymentTotal, 0, paymentTotal,
               paymentMethod === 'balance' ? 'paid' : 'pending', paymentMethod === 'balance' ? generateReferenceNumber('TXN') : null, paymentMethod === 'balance' ? new Date().toISOString() : null
             ).run()
