@@ -5233,7 +5233,42 @@ export default {
           for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
             try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) { }
           }
-          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET name = '删除账户', email = 'deleted-account-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, balance = 0, commission_balance = 0, password_hash = 'disabled', password_salt = 'disabled', referral_code = NULL, referrer_id = NULL, staff_id = NULL, user_agreement_accepted_ip = NULL, status = 'inactive', account_status = 'inactive', deleted_at = CURRENT_TIMESTAMP, deletion_requested_at = NULL, deletion_scheduled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
+          // Legacy databases differ in which of these columns they carry (snake_case
+          // vs camelCase, and some never had a bank `account` column at all — the app
+          // treats it as an alias of account_number). Building the SET clause from the
+          // columns that actually exist keeps this from failing with "no such column".
+          const userColumns = new Set<string>(
+            ((await env.RENT.prepare('PRAGMA table_info(users)').all()).results || []).map((row: any) => String(row.name))
+          )
+          const scrubExpr: Record<string, string> = {
+            name: `'删除账户'`,
+            email: `'deleted-account-' || id || '@invalid.local'`,
+            phone: 'NULL',
+            bsb: 'NULL',
+            account: 'NULL',
+            account_number: 'NULL',
+            accountNumber: 'NULL',
+            balance: '0',
+            commission_balance: '0',
+            commissionBalance: '0',
+            password_hash: `'disabled'`,
+            password_salt: `'disabled'`,
+            referral_code: 'NULL',
+            referrer_id: 'NULL',
+            staff_id: 'NULL',
+            user_agreement_accepted_ip: 'NULL',
+            status: `'inactive'`,
+            account_status: `'inactive'`,
+            deleted_at: 'CURRENT_TIMESTAMP',
+            deletion_requested_at: 'NULL',
+            deletion_scheduled_at: 'NULL',
+            updated_at: 'CURRENT_TIMESTAMP',
+          }
+          const setClause = Object.entries(scrubExpr)
+            .filter(([col]) => userColumns.has(col))
+            .map(([col, expr]) => `${col} = ${expr}`)
+            .join(', ')
+          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET ${setClause} WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
           return Number(deletedAccountResult.meta?.changes || 0)
         })
 

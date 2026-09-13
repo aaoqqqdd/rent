@@ -416,6 +416,14 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
   let found = 0
   for (const check of checks) {
     const rows = (await c.env.RENT.prepare(check.sql).all()).results || []
+    // Auto-close previously recorded issues of this type whose entity no longer
+    // trips the invariant (data since fixed by staff or a later code change).
+    // Without this, resolved problems sit in the queue forever and keep
+    // open_exception_backlog pinned to CRITICAL.
+    const stillOffending = (rows as any[]).map(r => String(r.id))
+    const notInClause = stillOffending.length ? ` AND entity_id NOT IN (${stillOffending.map(() => '?').join(',')})` : ''
+    await c.env.RENT.prepare(`UPDATE data_consistency_issues SET resolved_at = CURRENT_TIMESTAMP WHERE issue_type = ? AND resolved_at IS NULL${notInClause}`)
+      .bind(check.issueType, ...stillOffending).run()
     for (const row of rows as any[]) {
       const result = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
         .bind(`dci-${nanoid(12)}`, check.issueType, check.entityType, row.id, JSON.stringify(row)).run() as any
@@ -542,7 +550,6 @@ export async function getMonitoringHistory(c: Context, windowHours = 168): Promi
 // 指标恢复后自动关闭历史 MONITORING_ALERT 行，让告警可以自愈而不是永久堆积。
 export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number; resolved: number }> {
   const metrics = await collectMonitoringMetrics(c)
-
   try {
     for (const m of metrics) {
       // count 型没有比率，用条数作为可绘制的量级存进 rate 列（level 列仍是权威分级）。
@@ -607,6 +614,13 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount, deposit_payment_mode FROM orders WHERE id = ?').bind(orderId).first() as any
   await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
   if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && String(previous?.deposit_payment_mode || 'PAID') === 'PAID' && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
+  // Any path that lands the order on RETURNED/COMPLETED must stamp return_received_at,
+  // otherwise the RETURNED_ORDER_WITHOUT_RETURN_RECORD consistency check flags it. The
+  // staff verification flow already does this; do it here too for admin force-complete
+  // and auto-transitions that come through updateOrderStatus.
+  if (status === 'returned' || status === 'completed') {
+    await db.prepare("UPDATE orders SET return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP) WHERE id = ?").bind(orderId).run()
+  }
     await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
   }
   if (previous && previous.rental_status !== next.rental) {
