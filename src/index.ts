@@ -3335,7 +3335,7 @@ app.post('/admin/orders/:id/update', async (c) => {
   const isResume = status === 'active' && order?.status === 'suspended'
   if (!order || !editableStatuses.includes(status) || (status === 'active' && !isResume) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
   const automaticCancellationPayment = status === 'cancelled'
-    ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND status = 'paid' AND payment_method IN ('balance', 'card') LIMIT 1").bind(order.id).first()
+    ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND ((status = 'paid' AND payment_method IN ('balance', 'card')) OR (status = 'pending' AND payment_method = 'card' AND stripe_payment_intent_id = (SELECT stripe_deposit_payment_intent_id FROM orders WHERE id = ?))) LIMIT 1").bind(order.id, order.id).first()
     : null
   if (automaticCancellationPayment) {
     const response = await cancelAndRefund(c, user, order.id)

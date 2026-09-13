@@ -75,6 +75,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const hasStripeRefundSource = isCardPayment && paymentSources.some((payment: any) => payment.payment_method === 'card' && payment.stripe_payment_intent_id)
   const defaultPriceRefundMethod = hasStripeRefundSource ? 'original' : isTransferPayment ? 'pending_deposit' : 'balance'
   const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
+  const isPreauthDeposit = isCardPayment && String((order as any).deposit_payment_mode || '') === 'PREAUTH'
+  const preauthFee = Math.round(Math.max(0, Number(order.totalAmount) - depositAmount) * 0.025 * 100) / 100
   const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, isSetupIntentDeposit ? 'card_hold' : 'bank_transfer')
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
@@ -143,14 +145,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             <span style="color: #6b7280;">租期</span>
             <span style="font-weight: 500;">${order.startDate} ~ ${order.endDate}</span>
           </div>
-          <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
-            <span style="color: #6b7280;">租金（含服务费）</span>
-            <span style="font-weight: 700; font-size: 1.1rem; color: #059669;">${formatCurrency(Number(order.totalAmount) - depositAmount)}</span>
-          </div>
-          <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
-            <span style="color: #6b7280;">押金${isSetupIntentDeposit ? '（SetupIntent，不预扣）' : ' 预授权'}</span>
-            <span style="font-weight: 700; font-size: 1.1rem; color: #2563eb;">${formatCurrency(depositAmount)}</span>
-          </div>
+          ${isPreauthDeposit ? `<div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;"><span style="color: #6b7280;">信用卡预授权总额</span><span style="font-weight: 700; font-size: 1.1rem; color: #2563eb;">${formatCurrency(Number(order.totalAmount) + preauthFee)}</span></div>` : `<div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;"><span style="color: #6b7280;">租金（含服务费）</span><span style="font-weight: 700; font-size: 1.1rem; color: #059669;">${formatCurrency(Number(order.totalAmount) - depositAmount)}</span></div><div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;"><span style="color: #6b7280;">押金${isSetupIntentDeposit ? '（SetupIntent，不预扣）' : ' 预授权'}</span><span style="font-weight: 700; font-size: 1.1rem; color: #2563eb;">${formatCurrency(depositAmount)}</span></div>`}
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 8px;">
             <span style="color: #6b7280;">支付方式</span>
             <span style="font-weight: 500;">${escapeHtml(paymentMethodLabel)}</span>
