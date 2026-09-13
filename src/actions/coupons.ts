@@ -66,7 +66,8 @@ export async function findEligibleCoupon(c: Context, code: string, device: Coupo
   const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(normalized).first() as any
   if (!coupon) throw new Error('优惠码无效、已过期或已达到使用次数上限')
   const deviceText = buildDeviceText(device)
-  const deviceMatches = !coupon.device_id || String(coupon.device_id) === String(device.id)
+  const couponDeviceIds = String(coupon.device_id || '').split(',').map((value: string) => value.trim()).filter(Boolean)
+  const deviceMatches = !couponDeviceIds.length || couponDeviceIds.includes(String(device.id))
   const brandMatches = !coupon.brand || String(device.brand || '').trim().toLowerCase() === String(coupon.brand).trim().toLowerCase()
   const configMatches = !coupon.config_keyword || deviceText.includes(String(coupon.config_keyword).trim().toLowerCase())
   if (!deviceMatches || !brandMatches || !configMatches) throw new Error('该优惠码不适用于当前设备')

@@ -1,7 +1,15 @@
 import { buildLayout, sanitizePlainText } from '../../site'
 
-function scopeLabel(c: any): string {
-  return c.device_id ? `设备：${c.device_id}` : c.brand ? `品牌：${c.brand}` : c.config_keyword ? `配置含：${c.config_keyword}` : '全场'
+function scopeLabel(c: any, devices: any[] = []): string {
+  const deviceIds = String(c.device_id || '').split(',').map((value) => value.trim()).filter(Boolean)
+  if (deviceIds.length) {
+    const names = deviceIds.map((id) => {
+      const device = devices.find((item) => String(item.id) === id)
+      return device ? `${device.name} · ${device.brand || ''} · ${device.model || ''}` : id
+    })
+    return `设备：${names.join('、')}`
+  }
+  return c.brand ? `品牌：${c.brand}` : c.config_keyword ? `配置含：${c.config_keyword}` : '全场'
 }
 
 function statusBadge(c: any): string {
@@ -13,6 +21,19 @@ function statusBadge(c: any): string {
 function selectedCouponComponents(coupon: any): Set<string> {
   const values = String(coupon?.applicable_components || '').split(',').map((value) => value.trim().toUpperCase()).filter(Boolean)
   return new Set(values.length ? values : ['RENTAL_FEE'])
+}
+
+function selectedCouponDevices(coupon?: any): Set<string> {
+  return new Set(String(coupon?.device_id || '').split(',').map((value) => value.trim()).filter(Boolean))
+}
+
+function couponDeviceOptions(devices: any[], coupon?: any): string {
+  const selected = selectedCouponDevices(coupon)
+  const options = devices.map((device) => `<option value="${sanitizePlainText(device.id, 120)}" ${selected.has(String(device.id)) ? 'selected' : ''}>${sanitizePlainText(`${device.name} · ${device.brand || ''} · ${device.model || ''}`, 240)}</option>`).join('')
+  return `<select class="form-control" name="deviceId" multiple size="4" aria-label="优惠适用设备">
+    ${selected.size ? '' : '<option value="" selected>适用全部设备（不选择设备）</option>'}
+    ${options}
+  </select><small class="form-text">可多选；不选择设备表示适用全部设备。</small>`
 }
 
 function couponComponentOptions(coupon?: any): string {
@@ -28,7 +49,7 @@ export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[
   const rows = coupons.map(c => `<tr>
     <td class="mono">${sanitizePlainText(c.code, 40)}</td>
     <td>${c.discount_type === 'percent' ? `${c.discount_value}%` : `AUD$${Number(c.discount_value).toFixed(2)}`}${c.max_discount_amount ? `（封顶 AUD$${Number(c.max_discount_amount).toFixed(2)}）` : ''}</td>
-    <td>${scopeLabel(c)}</td>
+    <td>${scopeLabel(c, devices)}</td>
     <td>${c.minimum_order_amount ? `AUD$${Number(c.minimum_order_amount).toFixed(2)}` : '无'}</td>
     <td>${c.used_count}${c.max_uses ? ` / ${c.max_uses}` : ''}${c.max_uses_per_customer ? `（每人限 ${c.max_uses_per_customer} 次）` : ''}</td>
     <td>${c.new_customer_only ? '是' : '否'}</td>
@@ -40,7 +61,6 @@ export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[
       <form method="post" action="/admin/coupons/${encodeURIComponent(c.id)}/delete" style="display:inline" data-site-confirm="确认删除该优惠码吗？"><button class="button button-sm button-danger" type="submit">删除</button></form>
     </td>
   </tr>`).join('')
-  const deviceOptions = devices.map(d => `<option value="${d.id}">${d.name} · ${d.brand || ''} · ${d.model || ''}</option>`).join('')
   const body = `<div class="page-header"><div><p class="section-code">FINANCE / PROMOTIONS</p><h2>优惠码管理</h2><p>创建和管理客户付款时可使用的优惠码。</p></div><a class="button button-secondary" href="/admin/finance">返回财务总览</a></div>
   <div class="panel">
     <h3>创建优惠码</h3>
@@ -55,7 +75,7 @@ export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[
       <input class="form-control" name="maxUsesPerCustomer" type="number" min="1" step="1" placeholder="每位客户最多使用次数（可留空）">
       <input class="form-control" name="startsAt" type="datetime-local">
       <input class="form-control" name="expiresAt" type="datetime-local">
-      <select class="form-control" name="deviceId"><option value="">适用全部设备</option>${deviceOptions}</select>
+      ${couponDeviceOptions(devices)}
       <input class="form-control" name="brand" maxlength="120" placeholder="限定品牌（例如 Apple，可留空）">
       <input class="form-control" name="configKeyword" maxlength="120" placeholder="限定配置关键词（例如 M3、32GB，可留空）">
       ${couponComponentOptions()}
@@ -75,7 +95,6 @@ export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[
 
 export function renderAdminCouponEdit(user: any, coupon: any, devices: any[] = []) {
   const locked = Number(coupon.used_count) > 0
-  const deviceOptions = devices.map(d => `<option value="${d.id}" ${String(coupon.device_id) === String(d.id) ? 'selected' : ''}>${d.name} · ${d.brand || ''} · ${d.model || ''}</option>`).join('')
   const toLocal = (value: string) => value ? String(value).replace(' ', 'T').slice(0, 16) : ''
   const body = `<div class="page-header"><div><p class="section-code">FINANCE / PROMOTIONS</p><h2>编辑优惠码 ${sanitizePlainText(coupon.code, 40)}</h2></div><a class="button button-secondary" href="/admin/coupons">返回优惠码列表</a></div>
   <div class="panel">
@@ -91,7 +110,7 @@ export function renderAdminCouponEdit(user: any, coupon: any, devices: any[] = [
       <input class="form-control" name="maxUsesPerCustomer" type="number" min="1" step="1" value="${coupon.max_uses_per_customer ?? ''}" placeholder="每位客户最多使用次数（可留空）">
       <input class="form-control" name="startsAt" type="datetime-local" value="${toLocal(coupon.starts_at)}">
       <input class="form-control" name="expiresAt" type="datetime-local" value="${toLocal(coupon.expires_at)}">
-      <select class="form-control" name="deviceId"><option value="">适用全部设备</option>${deviceOptions}</select>
+      ${couponDeviceOptions(devices, coupon)}
       <input class="form-control" name="brand" maxlength="120" value="${sanitizePlainText(coupon.brand || '', 120)}" placeholder="限定品牌（可留空）">
       <input class="form-control" name="configKeyword" maxlength="120" value="${sanitizePlainText(coupon.config_keyword || '', 120)}" placeholder="限定配置关键词（可留空）">
       ${couponComponentOptions(coupon)}

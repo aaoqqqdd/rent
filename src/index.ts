@@ -4388,7 +4388,12 @@ function parseCouponFormFields(form: Record<string, any>) {
   const maxUsesPerCustomer = String(form.maxUsesPerCustomer || '').trim() ? Number(form.maxUsesPerCustomer) : null
   const maxDiscountAmount = String(form.maxDiscountAmount || '').trim() ? Number(form.maxDiscountAmount) : null
   const minimumOrderAmount = String(form.minimumOrderAmount || '').trim() ? Number(form.minimumOrderAmount) : null
-  const deviceId = String(form.deviceId || '').trim() || null
+  const rawDeviceIds = form.deviceId != null
+    ? (Array.isArray(form.deviceId) ? form.deviceId : [form.deviceId])
+    : []
+  const deviceId = [...new Set(rawDeviceIds
+    .map((value: unknown) => String(value).trim())
+    .filter(Boolean))].join(',') || null
   const brand = String(form.brand || '').trim().slice(0, 120) || null
   const configKeyword = String(form.configKeyword || '').trim().slice(0, 120) || null
   const status = ['DRAFT', 'ACTIVE', 'DISABLED'].includes(String(form.status)) ? String(form.status) : 'ACTIVE'
