@@ -756,6 +756,16 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const complaintsPolicyValue = values.get('complaintsPolicy')
   const acceptableUsePolicyValue = values.get('acceptableUsePolicy')
   const consumerRightsValue = values.get('consumerRights')
+  const userTermsEnValue = values.get('userTermsEn')
+  const rentalTermsEnValue = values.get('rentalTermsEn')
+  const serviceTermsEnValue = values.get('serviceTermsEn')
+  const privacyPolicyEnValue = values.get('privacyPolicyEn')
+  const softwareTermsEnValue = values.get('softwareTermsEn')
+  const copyrightNoticeEnValue = values.get('copyrightNoticeEn')
+  const cookiePolicyEnValue = values.get('cookiePolicyEn')
+  const complaintsPolicyEnValue = values.get('complaintsPolicyEn')
+  const acceptableUsePolicyEnValue = values.get('acceptableUsePolicyEn')
+  const consumerRightsEnValue = values.get('consumerRightsEn')
   const priceStrategyValue = values.get('priceStrategy')
   const paymentMethodsValue = values.get('paymentMethods')
   const bankDetailsValue = values.get('bankDetails')
@@ -778,6 +788,19 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (String(complaintsPolicyValue || '').trim()) systemSettings.complaintsPolicy = sanitizeRichHtml(complaintsPolicyValue)
   if (String(acceptableUsePolicyValue || '').trim()) systemSettings.acceptableUsePolicy = sanitizeRichHtml(acceptableUsePolicyValue)
   if (String(consumerRightsValue || '').trim()) systemSettings.consumerRights = sanitizeRichHtml(consumerRightsValue)
+  // English versions are optional placeholder translations: an admin may clear
+  // them intentionally, so only overwrite the in-memory value when the DB row
+  // is actually non-empty (same "don't overwrite with empty" rule as above).
+  if (String(userTermsEnValue || '').trim()) systemSettings.userTermsEn = sanitizeRichHtml(userTermsEnValue)
+  if (String(rentalTermsEnValue || '').trim()) systemSettings.rentalTermsEn = sanitizeRichHtml(rentalTermsEnValue)
+  if (String(serviceTermsEnValue || '').trim()) systemSettings.serviceTermsEn = sanitizeRichHtml(serviceTermsEnValue)
+  if (String(privacyPolicyEnValue || '').trim()) systemSettings.privacyPolicyEn = sanitizeRichHtml(privacyPolicyEnValue)
+  if (String(softwareTermsEnValue || '').trim()) systemSettings.softwareTermsEn = sanitizeRichHtml(softwareTermsEnValue)
+  if (String(copyrightNoticeEnValue || '').trim()) systemSettings.copyrightNoticeEn = sanitizeRichHtml(copyrightNoticeEnValue)
+  if (String(cookiePolicyEnValue || '').trim()) systemSettings.cookiePolicyEn = sanitizeRichHtml(cookiePolicyEnValue)
+  if (String(complaintsPolicyEnValue || '').trim()) systemSettings.complaintsPolicyEn = sanitizeRichHtml(complaintsPolicyEnValue)
+  if (String(acceptableUsePolicyEnValue || '').trim()) systemSettings.acceptableUsePolicyEn = sanitizeRichHtml(acceptableUsePolicyEnValue)
+  if (String(consumerRightsEnValue || '').trim()) systemSettings.consumerRightsEn = sanitizeRichHtml(consumerRightsEnValue)
   const parsedLegalMetadata = safeJsonParse<any>(legalMetadataValue)
   if (parsedLegalMetadata) systemSettings.legalMetadata = { ...systemSettings.legalMetadata, ...parsedLegalMetadata }
   if (String(priceStrategyValue || '').trim()) systemSettings.priceStrategy = String(priceStrategyValue)
@@ -881,6 +904,16 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     ['complaintsPolicy', systemSettings.complaintsPolicy],
     ['acceptableUsePolicy', systemSettings.acceptableUsePolicy],
     ['consumerRights', systemSettings.consumerRights],
+    ['userTermsEn', systemSettings.userTermsEn],
+    ['rentalTermsEn', systemSettings.rentalTermsEn],
+    ['serviceTermsEn', systemSettings.serviceTermsEn],
+    ['privacyPolicyEn', systemSettings.privacyPolicyEn],
+    ['softwareTermsEn', systemSettings.softwareTermsEn],
+    ['copyrightNoticeEn', systemSettings.copyrightNoticeEn],
+    ['cookiePolicyEn', systemSettings.cookiePolicyEn],
+    ['complaintsPolicyEn', systemSettings.complaintsPolicyEn],
+    ['acceptableUsePolicyEn', systemSettings.acceptableUsePolicyEn],
+    ['consumerRightsEn', systemSettings.consumerRightsEn],
     ['priceStrategy', systemSettings.priceStrategy],
     ['paymentMethods', systemSettings.paymentMethods],
     ['bankDetails', systemSettings.bankDetails],
