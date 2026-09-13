@@ -276,7 +276,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         ${['card', 'stripe'].includes(paymentMethod) && String(order.status) === 'pending_payment' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>Stripe 信用卡支付</h4><p>客户完成合同签署后，通过订单详情页的 Stripe 安全支付组件支付租金及服务费。银行卡信息不会保存到本站。</p></div>` : ''}
         <div style="padding: 24px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #1e40af; display: flex; align-items: center; gap: 8px;">更新订单状态</h4>
-          <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; flex-direction: column; gap: 16px;">
+          <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" id="orderStatusForm" style="display: flex; flex-direction: column; gap: 16px;">
             <div>
               <label for="status" style="display: block; margin-bottom: 8px; font-weight: 500; color: #374151;">选择新状态</label>
               <select id="status" name="status" style="width: 100%; padding: 14px 16px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 1rem; transition: all 0.2s; outline: none; background: white;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'">
@@ -284,8 +284,40 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
                 <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
               </select>
             </div>
+            <div id="statusReasonGroup" hidden>
+              <label class="form-label" for="statusReasonPreset">常见原因</label>
+              <select class="form-control" id="statusReasonPreset">
+                <option value="">-- 选择常见原因（可选） --</option>
+                <option value="设备无货">设备无货</option>
+                <option value="订单金额错误">订单金额错误</option>
+                <option value="客户申请">客户申请</option>
+                <option value="__custom__">其他（请在下方填写）</option>
+              </select>
+              <label class="form-label" for="statusReason" style="margin-top: 10px;">暂停/取消原因（必填，将随通知发送给客户）</label>
+              <textarea class="form-control" id="statusReason" name="reason" maxlength="300" rows="2" placeholder="请输入暂停/取消原因"></textarea>
+            </div>
             <button type="submit" class="button button-primary" style="padding: 14px; border-radius: 12px; font-weight: 600; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 4px 14px 0 rgba(59,130,246,0.4);">更新状态</button>
           </form>
+          <script>(function(){
+            var form = document.getElementById('orderStatusForm');
+            if (!form) return;
+            var statusSelect = form.querySelector('#status');
+            var reasonGroup = form.querySelector('#statusReasonGroup');
+            var reasonPreset = form.querySelector('#statusReasonPreset');
+            var reasonText = form.querySelector('#statusReason');
+            function sync() {
+              var needsReason = statusSelect.value === 'suspended' || statusSelect.value === 'cancelled';
+              reasonGroup.hidden = !needsReason;
+              reasonText.required = needsReason;
+            }
+            statusSelect.addEventListener('change', sync);
+            reasonPreset.addEventListener('change', function () {
+              if (!reasonPreset.value) return;
+              if (reasonPreset.value === '__custom__') { reasonText.value = ''; reasonText.focus(); return; }
+              reasonText.value = reasonPreset.value;
+            });
+            sync();
+          })();</script>
           ${['active', 'pending_return'].includes(String(order.status)) ? `<form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form force-complete-form" data-force-confirm="true" style="margin-top: 12px;">
             <input type="hidden" name="status" value="completed">
             <input type="hidden" name="force" value="1">

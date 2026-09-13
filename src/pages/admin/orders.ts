@@ -285,17 +285,30 @@ export async function renderAdminOrders(c: Context, user: any) {
             <input type="checkbox" id="select-all-orders" />
             <span>全选</span>
           </label>
-          <select name="status" class="form-control" style="min-width: 150px; padding: 8px 12px;">
+          <select name="status" id="bulk-status-select" class="form-control" style="min-width: 150px; padding: 8px 12px;">
             <option value="">批量更新状态</option>
             <option value="pending_payment">待支付</option>
             <option value="paid">已支付</option>
             <option value="active">租赁中</option>
             <option value="cancelled">已取消</option>
           </select>
+          <input type="text" name="reason" id="bulk-status-reason" class="form-control" maxlength="300" placeholder="取消原因（选择“已取消”后必填，将随通知发送给客户）" style="min-width: 280px; padding: 8px 12px;" hidden />
           <button type="submit" class="button button-primary" style="padding: 8px 16px;">批量更新</button>
         </div>
         <div style="color: var(--text-secondary); font-size: 0.85rem; margin-top: -8px; margin-bottom: 12px;">已完成状态必须逐笔执行归还验机，批量操作暂不支持。</div>
       </form>
+      <script>(function(){
+        var select = document.getElementById('bulk-status-select');
+        var reason = document.getElementById('bulk-status-reason');
+        if (!select || !reason) return;
+        function sync() {
+          var needsReason = select.value === 'cancelled';
+          reason.hidden = !needsReason;
+          reason.required = needsReason;
+        }
+        select.addEventListener('change', sync);
+        sync();
+      })();</script>
         <table>
           <thead>
             <tr>
