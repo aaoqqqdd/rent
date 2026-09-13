@@ -25,7 +25,7 @@ import {
   renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
 } from './lib/html'
 import { splitPersonName, combinePersonName, getAvatarInitials } from './lib/personName'
-import { getAccessLevel, canManageUser, canUseAccountBalance } from './lib/access'
+import { getAccessLevel, canManageUser, canUseAccountBalance, getAccountTypeDisplay } from './lib/access'
 import type { Role, AccessLevel } from './lib/access'
 import { formatCurrency, formatMelbourneDateTime, formatMelbourneDate, formatDate } from './lib/format'
 import { hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword } from './lib/password'
@@ -41,7 +41,7 @@ export {
   sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
   renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
   splitPersonName, combinePersonName, getAvatarInitials,
-  getAccessLevel, canManageUser, canUseAccountBalance,
+  getAccessLevel, canManageUser, canUseAccountBalance, getAccountTypeDisplay,
   formatCurrency, formatMelbourneDateTime, formatMelbourneDate, formatDate,
   hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword,
   timingSafeEqualStr,

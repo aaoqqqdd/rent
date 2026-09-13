@@ -8,6 +8,7 @@ import { buildLayout, formatCurrency, formatDate, sanitizePlainText } from '../.
 export function renderCustomerDashboard(user: any, allOrders: any[], devices: any[], announcementData: { items: any[], page: number, pageCount: number } = { items: [], page: 1, pageCount: 1 }) {
   const announcements = announcementData.items || []
   const orders = allOrders.filter(o => o.userId === user.id)
+  const negativeBalance = Number(user.balance || 0) < 0
   const currentRentals = orders.filter((order) => order.status === 'active' || order.status === 'paid')
   const pendingPayment = orders.filter((order) => order.status === 'pending_payment').length
   const completedOrders = orders.filter((order) => order.status === 'completed').length
@@ -34,6 +35,7 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
       <h2>欢迎回来，${sanitizePlainText(user.name, 80)}</h2>
       <p>管理您的设备租赁、查看订单状态、完成支付。</p>
     </div>
+    ${negativeBalance ? `<div class="page-notification page-notification--error"><strong>账户余额为负：${formatCurrency(user.balance)}</strong><p>请立即充值至非负余额。余额为负时不能提交新的租赁订单；已有订单的差价请在订单详情中使用其他支付方式补交。</p><a class="button button-sm button-primary" href="/customer/balance/top-up">立即充值</a></div>` : ''}
     <div class="stats-grid">
       <a class="stat-card primary dashboard-stat-link" href="/customer/rentals">
         <h3>当前租赁</h3>

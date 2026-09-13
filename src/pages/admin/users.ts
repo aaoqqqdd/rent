@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAccessLevel, splitPersonName, formatMelbourneDate } from '../../site';
+import { buildLayout, getAccessLevel, getAccountTypeDisplay, splitPersonName, formatMelbourneDate } from '../../site';
 
 export async function renderAdminUsers(user: any, c: any) {
   const { getUsersAsync } = await import('../../site')
@@ -62,6 +62,7 @@ export async function renderAdminUsers(user: any, c: any) {
             const role = roleMap[accessLevel] || { text: accessLevel, class: 'badge-info' };
             const managementStatus = u.accountStatus ?? u.account_status ?? (u.status === 'active' ? 'active' : 'inactive')
             const status = statusMap[managementStatus] || { text: managementStatus, class: 'badge-info' };
+            const accountType = getAccountTypeDisplay(u)
             const personName = splitPersonName(u.name)
             return `
               <tr>
@@ -72,7 +73,7 @@ export async function renderAdminUsers(user: any, c: any) {
                 <td>${u.role === 'CUSTOMER' ? usersById.get(u.staffId || '')?.name || '未分配' : '-'}</td>
                 <td>${u.role === 'CUSTOMER' ? usersById.get(u.referrerId || '')?.name || '无' : '-'}</td>
                 <td><span class="badge ${role.class}">${role.text}</span></td>
-                <td><span class="badge ${u.accountType === 'guest' ? 'badge-warning' : u.accountType === 'deleted_guest' ? 'badge-danger' : 'badge-success'}">${u.accountType === 'guest' ? '访客/临时账户' : u.accountType === 'deleted_guest' ? '已删除访客' : '正式账户'}</span></td>
+                <td><span class="badge ${accountType.class}">${accountType.text}</span></td>
                 <td><span class="badge ${status.class}">${status.text}</span></td>
                 <td>AUD$${parseFloat(String(u.balance || 0)).toFixed(2)}</td>
                 <td>${u.createdAt

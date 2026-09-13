@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import styles from '../src/styles.css'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getContractCustomerSnapshot } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getAccountTypeDisplay, getCustomerSigningUser, getContractCustomerSnapshot } from '../src/site'
 import { generateWindowsPassword } from '../src/lib/password'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
@@ -26,12 +26,13 @@ import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
 import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
-import { allocateProportionalRefund, refundableDepositFee, stripeAuthorizationAmount, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile, summarizeOrderPriceAdjustment, resolveOrderPriceAdjustmentRefundMethod } from '../src/actions/stripePayments'
+import { allocateProportionalRefund, balanceAfterPriceAdjustment, refundableDepositFee, stripeAuthorizationAmount, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile, summarizeOrderPriceAdjustment, resolveOrderPriceAdjustmentRefundMethod } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
 import { renderStaffInspection } from '../src/pages/staff/inspection'
+import { renderGuestAccount } from '../src/pages/customer/guestAccount'
 import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
 
@@ -83,6 +84,12 @@ test('only logged-in formal customers can use account balance', () => {
   assert.equal(canUseAccountBalance({ role: 'customer', account_type: 'FORMAL' }), true)
 })
 
+test('account type shows deletion requests before the stored account type', () => {
+  assert.deepEqual(getAccountTypeDisplay({ accountType: 'formal' }), { text: '正式账户', class: 'badge-success' })
+  assert.deepEqual(getAccountTypeDisplay({ accountType: 'guest' }), { text: '访客/临时账户', class: 'badge-warning' })
+  assert.deepEqual(getAccountTypeDisplay({ accountType: 'formal', deletion_scheduled_at: '2026-09-20T00:00:00.000Z' }), { text: '申请删除', class: 'badge-danger' })
+})
+
 test('session lookup loads the complete user without schema probes', async () => {
   const statements: string[] = []
   const db = { prepare(sql: string) { statements.push(sql); return { bind() { return this }, async run() { return { success: true } }, async first() { return sql.includes('auth_sessions') ? { user_id: 'guest-1' } : { id: 'guest-1', name: 'Guest', email: 'guest@example.com', role: 'CUSTOMER', status: 'active', account_type: 'guest', guest_order_id: 'order-1', bsb: '062-001', account: '12345678' } } } } }
@@ -119,6 +126,33 @@ test('guest sessions show their deletion date and only the guest workspace navig
   assert.match(html, /访客合同中心/)
   assert.doesNotMatch(html, /推荐计划/)
   assert.doesNotMatch(html, /个人资料/)
+})
+
+test('guest order links preserve the bound order identifier', async () => {
+  const order = { id: 'o-order-1', userId: 'guest-1', orderNo: 'OD-20260913-ABC123', startDate: '2026-09-13', endDate: '2026-09-14' }
+  const db = {
+    prepare(sql: string) {
+      const statement: any = {
+        args: [] as unknown[],
+        bind(...args: unknown[]) { this.args = args; return this },
+        async run() { return { success: true } },
+        async first() {
+          if (sql.includes('orders')) return this.args[0] === 'order-1' ? null : order
+          if (sql.includes('contracts')) return { id: 'contract-1', orderId: order.id, status: 'signed' }
+          if (sql.includes('COUNT')) return { count: 0 }
+          return null
+        },
+        async all() { return { results: [] } },
+      }
+      return statement
+    },
+  }
+  const html = await renderGuestAccount({ env: { RENT: db }, req: { query: () => undefined } } as any, {
+    id: 'guest-1', name: 'Guest User', role: 'CUSTOMER', accountType: 'guest', guestOrderId: 'order-1',
+  })
+  assert.equal((html.match(/href="\/customer\/orders\/order-1"/g) || []).length, 2)
+  assert.match(html, /href="\/orders\/order-1\/invoice"/)
+  assert.doesNotMatch(html, /href="\/customer\/orders\/o-order-1"/)
 })
 
 test('terminal order states cannot be reopened', () => {
@@ -282,6 +316,12 @@ test('Stripe checkout contains rent and processing fee but no deposit', () => {
     { name: '设备租金（5 天，2026-08-10 至 2026-08-15）', amountCents: 10000 },
     { name: 'Stripe 租金及服务费支付手续费（2.5%）', amountCents: 250 },
   ])
+})
+
+test('balance price adjustments can expose a negative projected balance', () => {
+  assert.equal(balanceAfterPriceAdjustment(20, 50), -30)
+  assert.equal(balanceAfterPriceAdjustment(-10, 5), -15)
+  assert.equal(balanceAfterPriceAdjustment(20, -5), 20)
 })
 
 test('price adjustment summary exposes only the unpaid increase and tracks transfer refunds for deposit settlement', () => {

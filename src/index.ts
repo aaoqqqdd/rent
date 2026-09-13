@@ -117,7 +117,7 @@ import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
@@ -1025,14 +1025,15 @@ app.get('/customer/dashboard', async (c) => {
     return c.html(renderForbidden(), 403)
   }
   // 客户端控制台只需要当前用户自己的订单；过去 getOrdersAsync 会把整张 orders 表拉回来再在内存里 filter。
-  const [orders, devices] = await Promise.all([getOrdersForUser(c, user.id), getDevicesAsync(c)])
+  const [orders, devices, account] = await Promise.all([getOrdersForUser(c, user.id), getDevicesAsync(c), c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first()])
+  const dashboardUser = { ...user, balance: Number((account as any)?.balance ?? user.balance ?? 0) }
   await ensureNotificationsTable(c)
   const announcementPageSize = 10
   const announcementPageCount = Math.max(1, Math.ceil(Number(((await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type = 'announcement' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)").bind(user.id).first()) as any)?.count || 0) / announcementPageSize))
   const requestedAnnouncementPage = Math.max(1, Number(c.req.query('announcementPage') || 1) || 1)
   const announcementPage = Math.min(requestedAnnouncementPage, announcementPageCount)
   const announcements = (await c.env.RENT.prepare("SELECT id, title, message, created_at FROM notifications WHERE recipient_id = ? AND type = 'announcement' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY created_at DESC LIMIT ? OFFSET ?").bind(user.id, announcementPageSize, (announcementPage - 1) * announcementPageSize).all()).results || []
-  return c.html(pages.renderCustomerDashboard(user, orders, devices, { items: announcements, page: announcementPage, pageCount: announcementPageCount }))
+  return c.html(pages.renderCustomerDashboard(dashboardUser, orders, devices, { items: announcements, page: announcementPage, pageCount: announcementPageCount }))
 })
 
 app.get('/customer/balance', async (c) => {
@@ -1701,6 +1702,8 @@ app.post('/customer/rent/:id', async (c) => {
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
   const riskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, status, expires_at FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE'").bind(user.id).all()).results as any[]
   if (findBlockingRiskFlag(riskFlags)) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
+  const account = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first() as any
+  if (Number(account?.balance || 0) < 0) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, `您的账户余额为负（${Number(account.balance).toFixed(2)} AUD），请先充值至非负后再下单。`), 403)
   const device = await getDeviceById(c, c.req.param('id'))
   const rentalRules = await getDeviceRentalRules(c, c.req.param('id'))
   const deviceUnavailable = new Set(((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).all()).results || []).map((row: any) => row.unavailable_date))
@@ -2514,7 +2517,7 @@ app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || order.userId !== user.id || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
+  if (!order || order.userId !== user.id) return c.text('订单不能提交付款凭证', 409)
   const form = await c.req.parseBody()
   const reference = String(form.referenceNumber || '').trim().slice(0, 100)
   const note = String(form.note || '').trim().slice(0, 500)
@@ -2522,9 +2525,12 @@ app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   try { proofImageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) }
   if (!reference) return c.text('请填写付款 Reference', 400)
   const isAdjustment = String(form.priceAdjustment || '') === '1'
+  const requestedPaymentMethod = String(form.paymentMethod || order.paymentMethod || '').trim()
+  if (!isAdjustment && !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
+  if (isAdjustment && !['bank_transfer', 'alipay', 'wechat'].includes(requestedPaymentMethod)) return c.text('差价付款方式无效', 400)
   if (isAdjustment && order.status === 'pending_payment') return c.text('当前订单尚未完成首次付款', 409)
   if (!isAdjustment && order.status !== 'pending_payment') return c.text('订单不能提交首次付款凭证', 409)
-  const adjustmentPayment = isAdjustment ? await createOrderPriceAdjustmentTransferPayment(c, user, order.id) : null
+  const adjustmentPayment = isAdjustment ? await createOrderPriceAdjustmentTransferPayment(c, user, order.id, requestedPaymentMethod) : null
   const payment = adjustmentPayment
     ? { id: adjustmentPayment.paymentId }
     : await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, order.paymentMethod).first() as any
@@ -3318,6 +3324,13 @@ app.post('/admin/orders/:id/changes', async (c) => {
     } catch (error: any) {
       return c.text(error?.message || '订单降价退款失败，请联系管理员处理', 502)
     }
+  } else if (finalOrder && Number(finalOrder.totalAmount) > Number(before.totalAmount) && String(order.paymentMethod) === 'balance') {
+    try {
+      const adjustment = await applyBalanceOrderPriceIncrease(c, { orderId: order.id, beforeTotal: Number(before.totalAmount), afterTotal: Number(finalOrder.totalAmount), adjustmentId: `opa-${changeId}`, actorId: admin.id })
+      if (!adjustment.paid) await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'order_price_adjustment', title: '账户余额不足，请充值', message: `您的订单 ${order.orderNo || order.id} 涨价 ${adjustment.amount.toFixed(2)} AUD，当前余额为 ${adjustment.balanceAfter.toFixed(2)} AUD。请在订单详情使用其他支付方式补交差价，或充值至非负余额。`, orderId: order.id })
+    } catch (error: any) {
+      return c.text(error?.message || '余额差价处理失败，请联系管理员处理', 502)
+    }
   }
   await createAuditLog(c, { actor: admin, action: 'ORDER_CHANGED', targetType: 'ORDER', targetId: order.id, before, after, reason })
   return c.redirect(`/admin/orders/${order.id}`, 303)
@@ -3358,16 +3371,18 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单状态不允许审核', 409)
-  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!order) return c.text('订单状态不允许审核', 409)
+  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, p.payment_method AS proof_payment_method, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
   if (!proof) return c.text('没有待审核的转账信息', 409)
+  if (!proof.adjustment_id && !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单状态不允许审核', 409)
   if (!proof.adjustment_id && order.status !== 'pending_payment') return c.text('订单状态不允许审核首次付款', 409)
   if (proof.adjustment_id) {
     await c.env.RENT.batch([
       c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
       c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
-      c.env.RENT.prepare("UPDATE order_price_adjustments SET status = 'succeeded', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.adjustment_id),
+      ...(String(order.paymentMethod) === 'balance' ? [] : [c.env.RENT.prepare("UPDATE order_price_adjustments SET status = 'succeeded', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.adjustment_id)]),
     ])
+    await settleBalancePriceAdjustment(c, order.id, proof.adjustment_id)
     await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title: '差价付款审核已通过', message: `您的订单 ${order.orderNo || order.id} 差价付款凭证已审核通过，补交 ${Number(proof.adjustment_amount || 0).toFixed(2)} AUD。`, orderId: order.id })
     await createAuditLog(c, { actor: user, action: 'PRICE_ADJUSTMENT_PAYMENT_APPROVED', targetType: 'ORDER_PRICE_ADJUSTMENT', targetId: proof.adjustment_id, after: { orderId: order.id, reference: proof.reference_number } })
     return c.redirect('/admin/exceptions')

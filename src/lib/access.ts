@@ -22,3 +22,13 @@ export function canUseAccountBalance(user: any): boolean {
   const accountType = String(user?.accountType ?? user?.account_type ?? 'formal').trim().toLowerCase()
   return Boolean(user && role === 'CUSTOMER' && accountType === 'formal')
 }
+
+export function getAccountTypeDisplay(user: any): { text: string; class: string } {
+  if (user?.deletionRequestedAt || user?.deletion_requested_at || user?.deletionScheduledAt || user?.deletion_scheduled_at) {
+    return { text: '申请删除', class: 'badge-danger' }
+  }
+  const accountType = String(user?.accountType ?? user?.account_type ?? 'formal').trim().toLowerCase()
+  if (accountType === 'guest') return { text: '访客/临时账户', class: 'badge-warning' }
+  if (accountType === 'deleted_guest') return { text: '已删除访客', class: 'badge-danger' }
+  return { text: '正式账户', class: 'badge-success' }
+}
