@@ -283,9 +283,12 @@ export async function renderNewContractPage(c: Context, user: any) {
       }
       function moveBookingMonth(offset) { bookingMonth.setUTCMonth(bookingMonth.getUTCMonth() + offset); renderBookingCalendar(); }
       function validateBookingDates() {
-        const invalidRange = startDateInput.value && endDateInput.value && endDateInput.value <= startDateInput.value;
+        const invalidRange = startDateInput.value && endDateInput.value && endDateInput.value < startDateInput.value;
         const conflict = !invalidRange && deviceSelect.value && startDateInput.value && endDateInput.value && selectedBookings().find(item => startDateInput.value < item.endDate && endDateInput.value > item.startDate);
-        const rentalDays = !invalidRange && startDateInput.value && endDateInput.value ? Math.ceil((new Date(endDateInput.value + 'T00:00:00Z').getTime() - new Date(startDateInput.value + 'T00:00:00Z').getTime()) / 86400000) : 0;
+        const startPeriodValue = document.getElementById('start-period').value;
+        const endPeriodValue = document.getElementById('end-period').value;
+        const halfDays = !invalidRange && startDateInput.value && endDateInput.value ? Math.round((new Date(endDateInput.value + 'T00:00:00Z').getTime() - new Date(startDateInput.value + 'T00:00:00Z').getTime()) / 86400000) * 2 + (endPeriodValue === 'PM' ? 1 : 0) - (startPeriodValue === 'PM' ? 1 : 0) : 0;
+        const rentalDays = halfDays > 0 ? Math.ceil(halfDays / 2) : 0;
         const rules = currentRentalRules();
         const unavailable = !invalidRange && startDateInput.value && endDateInput.value && rules.unavailableDates.find(date => date >= startDateInput.value && date <= endDateInput.value);
         const past = (startDateInput.value && startDateInput.value < todayValue) || (endDateInput.value && endDateInput.value < todayValue);
@@ -300,17 +303,22 @@ export async function renderNewContractPage(c: Context, user: any) {
       function updateRentalPeriods() {
         const startPeriod = document.getElementById('start-period');
         const endPeriod = document.getElementById('end-period');
-        const nowHour = Number(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', hour12: false }).format(new Date()));
-        const update = (select, date, isStart) => {
+        const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
+        const nowHour = Number(parts.find(part => part.type === 'hour')?.value || 0);
+        const nowMinute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+        const nowMinutes = (nowHour === 24 ? 0 : nowHour) * 60 + nowMinute;
+        const update = (select, date) => {
           Array.from(select.options).forEach(option => {
             const occupied = selectedBookings().some(item => (item.startDate === date && item.startPeriod === option.value) || (item.endDate === date && item.endPeriod === option.value));
-            const past = isStart && date === todayValue && option.value === 'AM' && nowHour >= 13;
-            option.disabled = occupied || past;
+            const past = date === todayValue && nowMinutes >= (option.value === 'AM' ? 12 * 60 : 23 * 60);
+            const slots = option.value === 'AM' ? ['morning_service', 'morning'] : ['afternoon', 'evening_service'];
+            const unavailable = slots.every(slot => (currentRentalRules().unavailableTimeSlots?.[date] || []).includes(slot));
+            option.disabled = occupied || past || unavailable;
           });
           if (select.selectedOptions[0]?.disabled) select.value = Array.from(select.options).find(option => !option.disabled)?.value || '';
         };
-        update(startPeriod, startDateInput.value, true);
-        update(endPeriod, endDateInput.value, false);
+        update(startPeriod, startDateInput.value);
+        update(endPeriod, endDateInput.value);
       }
       
       function updateValidityDates() {

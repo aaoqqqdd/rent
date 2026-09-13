@@ -712,21 +712,33 @@ export async function updateOrderInDB(c: Context, orderId: string, data: Partial
     .run()
 }
 
-export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string, bufferDays = 0): Promise<boolean> {
+export async function hasDeviceBookingConflict(c: Context, deviceId: string, startDate: string, endDate: string, excludeOrderId?: string, bufferDays = 0, startPeriod?: string, endPeriod?: string): Promise<boolean> {
   const requestedStart = new Date(`${startDate}T00:00:00Z`)
   const requestedEnd = new Date(`${endDate}T00:00:00Z`)
   requestedStart.setUTCDate(requestedStart.getUTCDate() - Math.max(0, bufferDays))
   requestedEnd.setUTCDate(requestedEnd.getUTCDate() + Math.max(0, bufferDays))
   const conflictStart = requestedStart.toISOString().slice(0, 10)
   const conflictEnd = requestedEnd.toISOString().slice(0, 10)
-  const row = await c.env.RENT.prepare(`
-    SELECT id FROM orders
+  if (!startPeriod || !endPeriod) {
+    const row = await c.env.RENT.prepare(`
+      SELECT id FROM orders
+      WHERE deviceId = ? AND id != ?
+        AND status NOT IN ('completed', 'cancelled')
+        AND startDate < ? AND endDate > ?
+      LIMIT 1
+    `).bind(deviceId, excludeOrderId || '', conflictEnd, conflictStart).first()
+    return Boolean(row)
+  }
+  const periodIndex = (date: string, period: string) => Math.round(Date.parse(`${date}T00:00:00Z`) / 86400000) * 2 + (period === 'PM' ? 1 : 0)
+  const requestStart = periodIndex(conflictStart, bufferDays ? 'AM' : startPeriod)
+  const requestEnd = periodIndex(conflictEnd, bufferDays ? 'PM' : endPeriod)
+  const rows = await c.env.RENT.prepare(`
+    SELECT startDate, endDate, startPeriod, endPeriod FROM orders
     WHERE deviceId = ? AND id != ?
       AND status NOT IN ('completed', 'cancelled')
-      AND startDate < ? AND endDate > ?
-    LIMIT 1
-  `).bind(deviceId, excludeOrderId || '', conflictEnd, conflictStart).first()
-  return Boolean(row)
+      AND startDate IS NOT NULL AND endDate IS NOT NULL
+  `).bind(deviceId, excludeOrderId || '').all() as any
+  return (rows.results || []).some((item: any) => requestStart < periodIndex(String(item.endDate || '').slice(0, 10), String(item.endPeriod || 'AM')) && periodIndex(String(item.startDate || '').slice(0, 10), String(item.startPeriod || 'AM')) < requestEnd)
 }
 
 // ---------------------------------------------------------------------------

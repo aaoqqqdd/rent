@@ -148,6 +148,28 @@ function parseFormBody(body: string | null | undefined): Record<string, string> 
   return form
 }
 
+function rentalPeriodIndex(date: string, period: string): number {
+  return Math.round(Date.parse(`${date}T00:00:00Z`) / 86400000) * 2 + (period === 'PM' ? 1 : 0)
+}
+
+function rentalPeriodsOverlap(startDate: string, startPeriod: string, endDate: string, endPeriod: string, otherStartDate: string, otherStartPeriod: string, otherEndDate: string, otherEndPeriod: string): boolean {
+  const start = rentalPeriodIndex(startDate, startPeriod)
+  const end = rentalPeriodIndex(endDate, endPeriod)
+  const otherStart = rentalPeriodIndex(otherStartDate, otherStartPeriod)
+  const otherEnd = rentalPeriodIndex(otherEndDate, otherEndPeriod)
+  return start < otherEnd && otherStart < end
+}
+
+function melbourneMinutesNow(): number {
+  const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0)
+  return (hour === 24 ? 0 : hour) * 60 + Number(parts.find((part) => part.type === 'minute')?.value || 0)
+}
+
+function rentalPeriodPassed(date: string, period: string, today: string): boolean {
+  return date === today && melbourneMinutesNow() >= (period === 'AM' ? 12 * 60 : 23 * 60)
+}
+
 async function sendLoggedEmail(c: any, input: { eventType: string, recipient: string, key: string, subject: string, text: string, html?: string, orderId?: string, templateId?: string }): Promise<{ ok: boolean }> {
   const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, order_id, template_id, idempotency_key, status, subject, text_body, html_body, last_attempt_at) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP)").bind(`email-${nanoid(12)}`, input.eventType, input.recipient, input.orderId || null, input.templateId || null, input.key, input.subject, input.text, input.html || null).run() as any
   if (!claimed.meta?.changes) return { ok: true }
@@ -1743,21 +1765,52 @@ app.post('/customer/rent/:id', async (c) => {
   const form = await c.req.parseBody()
   const startDate = String(form.startDate || '')
   const endDate = String(form.endDate || '')
+  const todayValue = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const deliveryMethod = String(form.deliveryMethod || 'Pickup') === 'Delivery' ? 'Delivery' : 'Pickup'
   const deliveryAddress = String(form.deliveryAddress || '').trim().slice(0, 1000)
   const rentalNote = String(form.rentalNote || '').trim().slice(0, 500)
   const couponCode = String(form.couponCode || '').trim().toUpperCase().slice(0, 40)
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
-  const rentalPeriod = Math.ceil((end.getTime() - start.getTime()) / 86400000)
+  const startPeriod = form.startPeriod === 'PM' ? 'PM' : 'AM'
+  const endPeriod = form.endPeriod === 'PM' ? 'PM' : 'AM'
+  const halfDays = Math.round((end.getTime() - start.getTime()) / 86400000) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
+  const deviceUnavailableSlots = new Set<string>()
+  try {
+    const rows = (await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ?').bind(c.req.param('id')).all()).results || []
+    for (const row of rows as any[]) deviceUnavailableSlots.add(`${String(row.unavailable_date || '').slice(0, 10)}:${String(row.time_slot || '')}`)
+  } catch (_) {}
   const unavailable = new Set(rentalRules.unavailableDates)
   let blockedDate = ''
   for (let day = new Date(start); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
   if (!blockedDate) for (let day = new Date(start); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { if (deviceUnavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
-  if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start >= end || rentalPeriod < rentalRules.minimumRentalDays || blockedDate || await hasDeviceBookingConflict(c, device?.id || '', startDate, endDate, undefined, rentalRules.bufferDays)) {
+  const periodBlocked = (date: string, period: string) => {
+    const slots = rentalRules.unavailableTimeSlots?.[date] || []
+    const periodSlots = period === 'AM' ? ['morning_service', 'morning'] : ['afternoon', 'evening_service']
+    return periodSlots.every((slot) => slots.includes(slot) || deviceUnavailableSlots.has(`${date}:${slot}`))
+  }
+  let invalidPeriod = !['AM', 'PM'].includes(startPeriod) || !['AM', 'PM'].includes(endPeriod) || halfDays <= 0 || rentalPeriodPassed(startDate, startPeriod, todayValue) || rentalPeriodPassed(endDate, endPeriod, todayValue)
+  for (let day = new Date(start); Number.isFinite(day.getTime()) && day <= end; day.setUTCDate(day.getUTCDate() + 1)) {
+    const date = day.toISOString().slice(0, 10)
+    const index = rentalPeriodIndex(date, 'AM')
+    if (rentalPeriodIndex(startDate, startPeriod) <= index && index < rentalPeriodIndex(endDate, endPeriod) && (periodBlocked(date, 'AM') || rentalPeriodPassed(date, 'AM', todayValue))) invalidPeriod = true
+    const afternoon = index + 1
+    if (rentalPeriodIndex(startDate, startPeriod) <= afternoon && afternoon < rentalPeriodIndex(endDate, endPeriod) && (periodBlocked(date, 'PM') || rentalPeriodPassed(date, 'PM', todayValue))) invalidPeriod = true
+  }
+  let periodConflict = false
+  if (startDate && endDate && Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
+    const conflictStart = new Date(start); conflictStart.setUTCDate(conflictStart.getUTCDate() - Math.max(0, rentalRules.bufferDays || 0))
+    const conflictEnd = new Date(end); conflictEnd.setUTCDate(conflictEnd.getUTCDate() + Math.max(0, rentalRules.bufferDays || 0))
+    const rows = ((await c.env.RENT.prepare("SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled')").bind(device?.id || '').all()).results || []) as any[]
+    periodConflict = rows.some((row) => rentalPeriodsOverlap(
+      conflictStart.toISOString().slice(0, 10), rentalRules.bufferDays ? 'AM' : startPeriod, conflictEnd.toISOString().slice(0, 10), rentalRules.bufferDays ? 'PM' : endPeriod,
+      String(row.startDate || '').slice(0, 10), String(row.startPeriod || 'AM'), String(row.endDate || '').slice(0, 10), String(row.endPeriod || 'AM'),
+    ))
+  }
+  if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start > end || halfDays <= 0 || Math.ceil(halfDays / 2) < rentalRules.minimumRentalDays || blockedDate || invalidPeriod || periodConflict) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
-  const rentAmount = calculateRentalFee(device, rentalPeriod)
+  const rentAmount = calculateRentalFee(device, Math.ceil(halfDays / 2))
   const couponFeeParts = { rentalFee: rentAmount, deliveryFee: 0, depositFee: Number(device.depositAmount || 0) }
   let discountAmount = 0
   let appliedCouponCode: string | null = null
@@ -1775,7 +1828,7 @@ app.post('/customer/rent/:id', async (c) => {
   const orderId = `o-${nanoid(8)}`
   await insertOrder(c, {
     id: orderId, orderNo: generateReferenceNumber('OD'), userId: user.id,
-    deviceId: device.id, startDate, endDate, rentalPeriod, status: 'pending_approval',
+    deviceId: device.id, startDate, endDate, startPeriod, endPeriod, rentalPeriod: Math.ceil(halfDays / 2), status: 'pending_approval',
     paymentMethod: 'card', totalAmount: rentAmount + device.depositAmount - discountAmount,
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
     deliveryMethod, deliveryFee: 0, rentalNote, couponCode: appliedCouponCode, discountAmount,
@@ -2005,7 +2058,7 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const form = await c.req.parseBody()
   await loadSystemSettingsFromDB(c)
   const orderRentalRules = order ? await getDeviceRentalRules(c, order.deviceId) : null
-  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, orderRentalRules?.bufferDays ?? 0)) return c.text('订单状态无效或设备档期冲突', 409)
+  if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, orderRentalRules?.bufferDays ?? 0, order.startPeriod, order.endPeriod)) return c.text('订单状态无效或设备档期冲突', 409)
   const requestedDeliveryMethod = form.deliveryMethod == null ? String(order.deliveryMethod || order.delivery_method || 'Pickup') : String(form.deliveryMethod)
   if (!['Pickup', 'Delivery'].includes(requestedDeliveryMethod)) return c.text('配送方式无效', 400)
   const deliveryFeeText = String(form.deliveryFee ?? '').trim()
