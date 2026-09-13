@@ -372,6 +372,14 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
   let found = 0
   for (const check of checks) {
     const rows = (await c.env.RENT.prepare(check.sql).all()).results || []
+    // Auto-close previously recorded issues of this type whose entity no longer
+    // trips the invariant (data since fixed by staff or a later code change).
+    // Without this, resolved problems sit in the queue forever and keep
+    // open_exception_backlog pinned to CRITICAL.
+    const stillOffending = (rows as any[]).map(r => String(r.id))
+    const notInClause = stillOffending.length ? ` AND entity_id NOT IN (${stillOffending.map(() => '?').join(',')})` : ''
+    await c.env.RENT.prepare(`UPDATE data_consistency_issues SET resolved_at = CURRENT_TIMESTAMP WHERE issue_type = ? AND resolved_at IS NULL${notInClause}`)
+      .bind(check.issueType, ...stillOffending).run()
     for (const row of rows as any[]) {
       const result = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
         .bind(`dci-${nanoid(12)}`, check.issueType, check.entityType, row.id, JSON.stringify(row)).run() as any
@@ -419,7 +427,10 @@ export async function collectMonitoringMetrics(c: Context): Promise<MonitorMetri
   await add('scheduled_job_failure_rate', '定时任务失败率（24h）', 0.1, 0.25,
     `SELECT SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS n, COUNT(*) AS d FROM scheduled_job_runs WHERE started_at > datetime('now','-1 day')`)
   await add('open_exception_backlog', '异常任务积压', 0.001, 0.001,
-    `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL) + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n, 1 AS d`,
+    // Exclude MONITORING_ALERT rows: they are written by this same sweep, so
+    // counting them here would keep the metric pinned to CRITICAL and make it
+    // emit a fresh alert every day forever.
+    `SELECT (SELECT COUNT(*) FROM data_consistency_issues WHERE resolved_at IS NULL AND issue_type != 'MONITORING_ALERT') + (SELECT COUNT(*) FROM anomalous_order_reviews WHERE status = 'PENDING') AS n, 1 AS d`,
     '任一条未处理即 WARN')
   return metrics
 }
@@ -427,8 +438,19 @@ export async function collectMonitoringMetrics(c: Context): Promise<MonitorMetri
 // 调度步骤：跑一遍监控，若有 CRITICAL 指标则写入异常任务中心（去重按当天）。
 export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number }> {
   const metrics = await collectMonitoringMetrics(c)
+  const criticalKeys = new Set(metrics.filter(x => x.level === 'CRITICAL').map(x => x.key))
+  // Clear alerts for metrics that have recovered, so the exception queue reflects
+  // the current state rather than every spike that ever happened.
+  const recoveredKeys = metrics.filter(x => x.level !== 'CRITICAL').map(x => x.key)
+  if (recoveredKeys.length) {
+    await c.env.RENT.prepare(
+      `UPDATE data_consistency_issues SET resolved_at = CURRENT_TIMESTAMP
+       WHERE issue_type = 'MONITORING_ALERT' AND resolved_at IS NULL
+       AND substr(entity_id, 1, instr(entity_id, ':') - 1) IN (${recoveredKeys.map(() => '?').join(',')})`
+    ).bind(...recoveredKeys).run()
+  }
   let alerts = 0
-  for (const m of metrics.filter(x => x.level === 'CRITICAL')) {
+  for (const m of metrics.filter(x => criticalKeys.has(x.key))) {
     const res = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
       .bind(`dci-${nanoid(12)}`, 'MONITORING_ALERT', 'METRIC', `${m.key}:${new Date().toISOString().slice(0, 10)}`, JSON.stringify(m)).run() as any
     if (Number(res.meta?.changes ?? res.changes ?? 0) > 0) alerts++
@@ -457,6 +479,13 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   const next = mapping[status] || { order: status.toUpperCase(), payment: 'UNPAID', rental: status.toUpperCase() }
   const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount FROM orders WHERE id = ?').bind(orderId).first() as any
   await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
+  // Any path that lands the order on RETURNED/COMPLETED must stamp return_received_at,
+  // otherwise the RETURNED_ORDER_WITHOUT_RETURN_RECORD consistency check flags it. The
+  // staff verification flow already does this; do it here too for admin force-complete
+  // and auto-transitions that come through updateOrderStatus.
+  if (status === 'returned' || status === 'completed') {
+    await db.prepare("UPDATE orders SET return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP) WHERE id = ?").bind(orderId).run()
+  }
   if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
     await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
   }
