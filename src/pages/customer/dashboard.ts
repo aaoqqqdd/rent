@@ -12,7 +12,7 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
   const pendingPayment = orders.filter((order) => order.status === 'pending_payment').length
   const completedOrders = orders.filter((order) => order.status === 'completed').length
   const statusLabels: Record<string, string> = {
-    active: '租赁中', paid: '已付款', pending_payment: '待付款',
+    active: '租赁中', paid: '租赁已确认，等待开始', approved: '租赁已确认，等待开始', pending_payment: '待付款',
     pending_approval: '待审核', completed: '已完成', cancelled: '已取消'
   }
   const getDaysUntil = (dateValue: unknown) => {
@@ -91,7 +91,7 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
         ${orders.slice(0, 5).map((order) => {
           const device = devices.find(d => d.id === order.deviceId)
           const statusMap: Record<string, string> = {
-            'active': 'badge-success', 'paid': 'badge-info', 'pending_payment': 'badge-warning',
+            'active': 'badge-success', 'paid': 'badge-info', 'approved': 'badge-info', 'pending_payment': 'badge-warning',
             'pending_approval': 'badge-warning', 'completed': 'badge-primary', 'cancelled': 'badge-danger'
           }
           const statusClass = statusMap[order.status] || 'badge-info'

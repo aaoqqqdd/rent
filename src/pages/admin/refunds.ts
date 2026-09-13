@@ -19,7 +19,7 @@ export async function renderAdminRefunds(c: Context, user: any) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.min(page, totalPages);
   const result = await c.env.RENT.prepare(`
-    SELECT o.*, pending.id AS pending_refund_id, pending.refund_amount AS pending_refund_amount, pending.refund_bsb AS pending_refund_bsb, pending.refund_account_number AS pending_refund_account_number, pending.refund_account_name AS pending_refund_account_name, pending.deduction_reason AS pending_refund_reason FROM orders o
+    SELECT o.*, pending.id AS pending_refund_id, pending.refund_amount AS pending_refund_amount, pending.refund_bsb AS pending_refund_bsb, pending.refund_account_number AS pending_refund_account_number, pending.refund_account_name AS pending_refund_account_name, pending.deduction_reason AS pending_refund_reason, (SELECT COALESCE(SUM(a.amount), 0) FROM order_price_adjustments a WHERE a.order_id = o.id AND a.direction = 'decrease' AND a.status = 'succeeded' AND a.refund_method = 'pending_deposit' AND a.deposit_refunded = 0) AS pending_price_refund FROM orders o
     LEFT JOIN payment_refunds pending ON pending.order_id = o.id AND pending.type = 'early_return' AND pending.status = 'pending'
     WHERE (o.status = 'completed' OR (o.status = 'paid' AND o.startDate > ?))
       AND NOT EXISTS (SELECT 1 FROM payment_refunds r WHERE r.order_id = o.id AND r.status = 'succeeded')
@@ -61,7 +61,9 @@ export async function renderAdminRefunds(c: Context, user: any) {
           </thead>
           <tbody>
             ${ordersWithDetails.map(order => {
-              const refundAmount = order.pending_refund_amount != null ? order.pending_refund_amount : order.status === 'completed' ? (order.deposit_amount || order.depositAmount || 0) : (order.total_amount || order.totalAmount || 0);
+              const depositRefund = Number(order.deposit_amount || order.depositAmount || 0);
+              const priceRefund = Number(order.pending_price_refund || 0);
+              const refundAmount = order.pending_refund_amount != null ? order.pending_refund_amount : order.status === 'completed' ? depositRefund + priceRefund : (order.total_amount || order.totalAmount || 0);
               return `
                 <tr>
                   <td style="font-family: monospace;">${order.id}</td>
@@ -72,7 +74,7 @@ export async function renderAdminRefunds(c: Context, user: any) {
                   <td>${order.device?.name || '未知设备'}</td>
                   <td><span style="color: var(--danger); font-weight: bold;">${formatCurrency(refundAmount)}</span></td>
                   <td>
-                    <div>${order.pending_refund_amount != null ? '提前归还租金退款' : order.status === 'completed' ? '押金退款' : '租前取消全额退款'}</div>
+                    <div>${order.pending_refund_amount != null ? '提前归还租金退款' : order.status === 'completed' ? (priceRefund > 0 ? '押金 + 降价差价退款' : '押金退款') : '租前取消全额退款'}</div>
                     <small>${order.refundMethod === 'original' ? '原路退回' : '退回账户余额'}</small>
                     ${order.pending_refund_amount != null ? `<small style="display:block;color:var(--danger);">${order.pending_refund_reason || ''}<br>BSB：${order.pending_refund_bsb || '未填写'}<br>账号：${order.pending_refund_account_number || '未填写'}<br>账户名：${order.pending_refund_account_name || '未填写'}</small>` : ''}
                   </td>

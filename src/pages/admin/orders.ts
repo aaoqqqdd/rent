@@ -3,14 +3,15 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrders, getDevices, getUsers, formatCurrency, formatMelbourneDate } from '../../site';
+import { buildLayout, getDB, formatCurrency, formatMelbourneDate } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 
-// The order list has no server-side pagination yet; cap how many rows we ever
+// The order list has server-side pagination; cap how many rows we ever
 // render in one page load so the table stays usable as order volume grows.
 // Stats above the table (counts, revenue) are computed from the full filtered
-// set before this cap is applied, so they stay accurate.
+// set (via a separate aggregate query) before this cap is applied, so they
+// stay accurate.
 const ORDER_LIST_PAGE_SIZE = 200
 
 export const adminOrderStatusMap: Record<string, { text: string; class: string }> = {
@@ -24,61 +25,132 @@ export const adminOrderStatusMap: Record<string, { text: string; class: string }
   cancelled: { text: '已取消', class: 'badge-danger' }
 };
 
-export async function getFilteredAdminOrders(
-  c: Context,
-  filters?: {
-    userId?: string;
-    status?: string;
-    search?: string;
-    dateFrom?: string;
-    dateTo?: string;
-  }
-) {
-  const [allOrders, allUsers, allDevices] = await Promise.all([getOrders(c), getUsers(c), getDevices(c)]);
+const STATUS_ALIASES: Record<string, string> = { pending: 'pending_payment', in_progress: 'active', complete: 'completed', canceled: 'cancelled' }
+
+type AdminOrderFilters = {
+  userId?: string;
+  status?: string;
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+function normalizeAdminOrderFilters(filters?: AdminOrderFilters) {
   const userIdFilter = (filters?.userId || '').trim();
   const rawStatusFilter = String(filters?.status || 'all').trim().toLowerCase().replace(/[-\s]+/g, '_');
-  const statusFilter = ({ pending: 'pending_payment', in_progress: 'active', complete: 'completed', canceled: 'cancelled' } as Record<string, string>)[rawStatusFilter] || rawStatusFilter;
+  const statusFilter = STATUS_ALIASES[rawStatusFilter] || rawStatusFilter;
   const searchTerm = (filters?.search || '').trim();
   const dateFrom = (filters?.dateFrom || '').trim();
   const dateTo = (filters?.dateTo || '').trim();
+  return { userIdFilter, statusFilter, searchTerm, dateFrom, dateTo };
+}
 
-  const usersById = new Map(allUsers.map(item => [item.id, item]));
-  const devicesById = new Map(allDevices.map(item => [item.id, item]));
-  const ordersWithDetail = allOrders.map((order: any) => ({
+// Builds the shared WHERE clause (+ bound params) used by both the paginated
+// row query and the aggregate stats query, so the two stay consistent.
+function buildAdminOrderWhere(filters?: AdminOrderFilters) {
+  const { userIdFilter, statusFilter, searchTerm, dateFrom, dateTo } = normalizeAdminOrderFilters(filters);
+  const clauses: string[] = ['1=1'];
+  const params: any[] = [];
+
+  if (userIdFilter) {
+    clauses.push('o.userId = ?');
+    params.push(userIdFilter);
+  }
+
+  if (statusFilter !== 'all') {
+    clauses.push("REPLACE(REPLACE(LOWER(o.status), '-', '_'), ' ', '_') = ?");
+    params.push(statusFilter);
+  }
+
+  if (searchTerm) {
+    const escaped = searchTerm.toLowerCase().replace(/[\\%_]/g, (m) => `\\${m}`);
+    const like = `%${escaped}%`;
+    clauses.push(`(
+      LOWER(o.id) LIKE ? ESCAPE '\\'
+      OR LOWER(o.orderNo) LIKE ? ESCAPE '\\'
+      OR LOWER(u.name) LIKE ? ESCAPE '\\'
+      OR LOWER(u.email) LIKE ? ESCAPE '\\'
+      OR LOWER(d.name) LIKE ? ESCAPE '\\'
+      OR LOWER(d.brand) LIKE ? ESCAPE '\\'
+      OR LOWER(d.model) LIKE ? ESCAPE '\\'
+    )`);
+    params.push(like, like, like, like, like, like, like);
+  }
+
+  if (dateFrom) {
+    clauses.push("datetime(COALESCE(o.createdAt, '2020-01-01T00:00:00.000Z')) >= datetime(?)");
+    params.push(`${dateFrom}T00:00:00`);
+  }
+
+  if (dateTo) {
+    clauses.push("datetime(COALESCE(o.createdAt, '2020-01-01T00:00:00.000Z')) <= datetime(?)");
+    params.push(`${dateTo}T23:59:59`);
+  }
+
+  return { whereSql: clauses.join(' AND '), params };
+}
+
+function mapAdminOrderRow(row: any) {
+  const { customerName, customerEmail, customerAccountType, deviceName, deviceBrand, deviceModel, ...order } = row;
+  return {
     ...order,
-    customer: usersById.get(order.userId) || null,
-    device: devicesById.get(order.device_id || order.deviceId) || null,
-  }));
+    customer: order.userId ? { name: customerName, email: customerEmail, accountType: customerAccountType } : null,
+    device: order.deviceId ? { name: deviceName, brand: deviceBrand, model: deviceModel } : null,
+  };
+}
 
-  return ordersWithDetail.filter((order: any) => {
-    const matchesUser = !userIdFilter || String(order.userId) === String(userIdFilter);
-    const rawOrderStatus = String(order.status || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
-    const orderStatus = ({ pending: 'pending_payment', in_progress: 'active', complete: 'completed', canceled: 'cancelled' } as Record<string, string>)[rawOrderStatus] || rawOrderStatus;
-    const matchesStatus = statusFilter === 'all' || orderStatus === statusFilter;
+const ADMIN_ORDER_JOIN_SQL = `
+  FROM orders o
+  LEFT JOIN users u ON u.id = o.userId
+  LEFT JOIN devices d ON d.id = o.deviceId
+`
 
-    const searchableText = [
-      order.id,
-      order.orderNo,
-      order.customer?.name,
-      order.customer?.email,
-      order.device?.name,
-      order.device?.brand,
-      order.device?.model,
-    ].filter(Boolean).join(' ').toLowerCase();
+export async function getFilteredAdminOrders(
+  c: Context,
+  filters?: AdminOrderFilters,
+  pagination?: { limit: number; offset: number }
+) {
+  const db = getDB(c);
+  const { whereSql, params } = buildAdminOrderWhere(filters);
 
-    const matchesSearch = !searchTerm || searchableText.includes(searchTerm.toLowerCase());
+  let sql = `
+    SELECT o.*, u.name AS customerName, u.email AS customerEmail, u.account_type AS customerAccountType,
+           d.name AS deviceName, d.brand AS deviceBrand, d.model AS deviceModel
+    ${ADMIN_ORDER_JOIN_SQL}
+    WHERE ${whereSql}
+    ORDER BY o.createdAt DESC
+  `;
+  const bindParams = [...params];
+  if (pagination) {
+    sql += ' LIMIT ? OFFSET ?';
+    bindParams.push(pagination.limit, pagination.offset);
+  }
 
-    const createdDateValue = order.created_at || order.createdAt || '2020-01-01T00:00:00.000Z';
-    const createdDate = new Date(createdDateValue);
-    const matchesDateFrom = !dateFrom || createdDate >= new Date(`${dateFrom}T00:00:00`);
-    const matchesDateTo = !dateTo || createdDate <= new Date(`${dateTo}T23:59:59`);
+  const result = await db.prepare(sql).bind(...bindParams).all();
+  return ((result.results || []) as any[]).map(mapAdminOrderRow);
+}
 
-    return matchesUser && matchesStatus && matchesSearch && matchesDateFrom && matchesDateTo;
-  }).sort((a: any, b: any) => {
-    const aTime = new Date(a.created_at || a.createdAt || 0).getTime();
-    const bTime = new Date(b.created_at || b.createdAt || 0).getTime();
-    return bTime - aTime;
-  });
+export async function getAdminOrderStats(c: Context, filters?: AdminOrderFilters) {
+  const db = getDB(c);
+  const { whereSql, params } = buildAdminOrderWhere(filters);
+  const sql = `
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN LOWER(o.status) IN ('paid', 'active', 'completed') THEN o.totalAmount ELSE 0 END) AS revenue,
+      SUM(CASE WHEN o.status IN ('pending_approval', 'pending_payment', 'approved') THEN 1 ELSE 0 END) AS pendingCount,
+      SUM(CASE WHEN o.status IN ('paid', 'active') THEN 1 ELSE 0 END) AS activeCount,
+      SUM(CASE WHEN o.status = 'completed' THEN 1 ELSE 0 END) AS completedCount
+    ${ADMIN_ORDER_JOIN_SQL}
+    WHERE ${whereSql}
+  `;
+  const row = await db.prepare(sql).bind(...params).first() as any;
+  return {
+    total: Number(row?.total || 0),
+    revenue: Number(row?.revenue || 0),
+    pendingCount: Number(row?.pendingCount || 0),
+    activeCount: Number(row?.activeCount || 0),
+    completedCount: Number(row?.completedCount || 0),
+  };
 }
 
 export async function renderAdminOrders(c: Context, user: any) {
@@ -91,14 +163,20 @@ export async function renderAdminOrders(c: Context, user: any) {
 
   const errorMessage = url.searchParams.get('error')?.trim() || '';
   const successMessage = url.searchParams.get('success')?.trim() || '';
-  const allUsers = await getUsers(c);
-  const filteredOrders = await getFilteredAdminOrders(c, {
+  const orderFilters = {
     userId: userIdFilter,
     status: statusFilter,
     search: searchTerm,
     dateFrom,
     dateTo,
-  });
+  };
+  const db = getDB(c);
+  const [customerOptionsResult, pageOrders, stats] = await Promise.all([
+    db.prepare("SELECT id, name FROM users WHERE role = 'CUSTOMER' ORDER BY name").all(),
+    getFilteredAdminOrders(c, orderFilters, { limit: ORDER_LIST_PAGE_SIZE, offset: 0 }),
+    getAdminOrderStats(c, orderFilters),
+  ]);
+  const customerOptions = (customerOptionsResult.results || []) as any[];
 
   const exportQuery = new URLSearchParams({
     ...(userIdFilter ? { userId: userIdFilter } : {}),
@@ -108,11 +186,11 @@ export async function renderAdminOrders(c: Context, user: any) {
     ...(dateTo ? { dateTo } : {}),
   }).toString();
 
-  const revenueOrders = filteredOrders.filter((order: any) => ['paid', 'active', 'completed'].includes(String(order.status).toLowerCase()));
-  const totalRevenue = revenueOrders.reduce((sum: number, order: any) => sum + Number(order.total_amount || order.totalAmount || 0), 0);
-  const pendingCount = filteredOrders.filter((order: any) => ['pending_approval', 'pending_payment', 'approved'].includes(order.status)).length;
-  const activeCount = filteredOrders.filter((order: any) => ['paid', 'active'].includes(order.status)).length;
-  const completedCount = filteredOrders.filter((order: any) => order.status === 'completed').length;
+  const totalOrderCount = stats.total;
+  const totalRevenue = stats.revenue;
+  const pendingCount = stats.pendingCount;
+  const activeCount = stats.activeCount;
+  const completedCount = stats.completedCount;
 
   const body = `
     <div class="panel">
@@ -132,7 +210,7 @@ export async function renderAdminOrders(c: Context, user: any) {
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 20px 0;">
         <div class="panel" style="padding: 18px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe;">
           <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 8px;">总订单</div>
-          <div style="font-size: 1.8rem; font-weight: 700;">${filteredOrders.length}</div>
+          <div style="font-size: 1.8rem; font-weight: 700;">${totalOrderCount}</div>
         </div>
         <div class="panel" style="padding: 18px; background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); border: 1px solid #fed7aa;">
           <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 8px;">待处理</div>
@@ -162,7 +240,7 @@ export async function renderAdminOrders(c: Context, user: any) {
             <label for="userId" style="display: block; margin-bottom: 6px; font-weight: 600; color: var(--text-secondary);">客户筛选</label>
             <select id="userId" name="userId" class="form-control" style="width: 100%;">
               <option value="">全部客户</option>
-              ${allUsers.filter((u: any) => u.role === 'CUSTOMER').map((u: any) => `
+              ${customerOptions.map((u: any) => `
                 <option value="${u.id}" ${userIdFilter === u.id ? 'selected' : ''}>${u.name}</option>
               `).join('')}
             </select>
@@ -190,16 +268,16 @@ export async function renderAdminOrders(c: Context, user: any) {
         </form>
       </div>
 
-      ${filteredOrders.length === 0 ? `
+      ${totalOrderCount === 0 ? `
         <div style="text-align: center; padding: 48px 24px; color: var(--text-secondary);">
           <h3>暂无订单</h3>
           <p>${userIdFilter ? '当前用户暂无相关订单记录' : '没有符合筛选条件的订单记录'}</p>
         </div>
       ` : `
       <div style="margin-bottom: 12px; color: var(--text-secondary); font-size: 0.9rem;">
-        共 ${filteredOrders.length} 条订单
+        共 ${totalOrderCount} 条订单
         ${userIdFilter ? ' · 当前查看用户关联订单' : ''}
-        ${filteredOrders.length > ORDER_LIST_PAGE_SIZE ? ` · 仅显示最近 ${ORDER_LIST_PAGE_SIZE} 条，请使用筛选条件缩小范围查看其余订单` : ''}
+        ${totalOrderCount > ORDER_LIST_PAGE_SIZE ? ` · 仅显示最近 ${ORDER_LIST_PAGE_SIZE} 条，请使用筛选条件缩小范围查看其余订单` : ''}
       </div>
       <form id="bulk-order-form" method="POST" action="/admin/orders/bulk-update">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
@@ -233,7 +311,7 @@ export async function renderAdminOrders(c: Context, user: any) {
             </tr>
           </thead>
           <tbody>
-            ${filteredOrders.slice(0, ORDER_LIST_PAGE_SIZE).map((order: any) => {
+            ${pageOrders.map((order: any) => {
     const status = adminOrderStatusMap[order.status] || { text: order.status, class: 'badge-info' };
     const totalAmount = order.total_amount || order.totalAmount || 0;
     const startDate = order.start_date || order.startDate || '-';

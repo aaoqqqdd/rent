@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getDeviceRentalRules } from '../../site';
+import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot } from '../../site';
 import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../actions/stripePayments';
 import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
 import { Context } from 'hono';
@@ -38,8 +38,10 @@ function splitContractPhone(value: string): { phoneCode: string; phone: string }
   return { phoneCode: code, phone }
 }
 
-export function renderSigningProgress(step: number): string {
-  const items = [['01', '同意协议'], ['02', '确认资料与签署'], ['03', '选择支付']]
+export function renderSigningProgress(step: number, includePayment = true): string {
+  const items = includePayment
+    ? [['01', '同意协议'], ['02', '填写资料并签署'], ['03', '选择支付']]
+    : [['01', '同意协议'], ['02', '填写资料并完成签署']]
   return `<ol class="signing-steps" aria-label="合同签署进度">${items.map(([number, label], index) => {
     const itemStep = index + 1
     const state = itemStep < step ? 'complete' : itemStep === step ? 'current' : 'upcoming'
@@ -53,8 +55,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const escapeAttribute = (value: unknown) => sanitizePlainText(value, 500)
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   tokenOrNumber = escapeAttribute(tokenOrNumber)
-  errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
-  userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
   const viewerUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null);
   const currentUser = getCustomerSigningUser(viewerUser);
   if (currentUser) {
@@ -69,7 +69,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       ...userInput,
     }
   }
-  let contract = await getContractBySignToken(c, tokenOrNumber);
+  let contract = (await getContractBySignToken(c, tokenOrNumber))!;
 
 
   // 在模板中使用的 `token` 变量，映射传入的 tokenOrNumber
@@ -115,8 +115,28 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   // }
 
   const orderId = contract.rentalId || contract.rental_id;
-  const order = await getOrderById(c, orderId);
+  const order = (await getOrderById(c, orderId))!;
   if (!order) return buildLayout('合同签署 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>合同关联的订单不存在，请联系我们。</p></div>');
+  const contractData = typeof contract.contract_data === 'string'
+    ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })()
+    : (contract.contract_data || {})
+  const customerSnapshot = getContractCustomerSnapshot(contract)
+  if (customerSnapshot) {
+    const snapshotName = splitPersonName(customerSnapshot.name)
+    const snapshotPhone = splitContractPhone(customerSnapshot.phone)
+    userInput = {
+      ...userInput,
+      firstName: snapshotName.firstName,
+      lastName: snapshotName.lastName,
+      email: customerSnapshot.email,
+      phoneCode: snapshotPhone.phoneCode,
+      phone: snapshotPhone.phone,
+    }
+  }
+  errorMessage = errorMessage === 'EMAIL_EXISTS' ? errorMessage : (errorMessage ? escapeAttribute(errorMessage) : undefined)
+  userInput = Object.fromEntries(Object.entries(userInput).map(([key, value]) => [key, escapeAttribute(value)]))
+  // 网站订单由系统审批后自动生成合同；兼容已经生成但尚未写入标记的旧合同。
+  const isWebsiteOrderContract = Boolean(contractData.website_order) || String(order.status) === 'approved'
   const hasSavedCard = Boolean((order as any).stripe_payment_method_id)
   await loadSystemSettingsFromDB(c)
   const systemSettings = getSystemSettings();
@@ -137,18 +157,24 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       : (contract.contract_data || {})
     const windowsPassword = String(signedContractData.windows_password || '')
     const canViewWindowsPassword = viewerUser?.role === 'CUSTOMER' && String(order.userId || '') === String(viewerUser.id)
-    const paymentStatusLabel = order.status === 'paid'
-      ? '付款已完成，发票与收据已生成。'
-      : '合同已签署，订单仍未完成付款。请前往订单查看付款状态或联系工作人员。';
+    const isGuestAccount = contractCustomer?.accountType === 'guest'
+    const canViewGuestPassword = isGuestAccount && (!viewerUser || String(viewerUser.id) === String(order.userId || ''))
+    const guestPassword = canViewGuestPassword ? String(signedContractData.guest_password || '') : ''
+    const paymentStatusLabel = isWebsiteOrderContract
+      ? '合同已签署，订单已确认，无需在线付款。'
+      : order.status === 'paid'
+        ? '付款已完成，发票与收据已生成。'
+        : '合同已签署，订单仍未完成付款。请前往订单查看付款状态或联系工作人员。';
     const completedContent = `
       <div class="panel">
         <div class="entity-header"><div class="identity-strip mono"><span>E-SIGN / ${escapeAttribute(contract.contractNumber)}</span><span>合同已签署</span></div><div class="entity-heading"><div><p class="section-code">RENTAL AGREEMENT</p><h2>租赁协议已完成</h2><p>${escapeAttribute(device?.name || '租赁设备')} · ${escapeAttribute(order.startDate)} 至 ${escapeAttribute(order.endDate)}</p></div><span class="badge badge-success">已签署</span></div></div>
         <div class="panel" style="margin-top: 16px;">
           <p>${paymentStatusLabel}</p>
+          ${guestPassword ? `<section class="panel" style="margin-top:16px;text-align:left"><h3>临时账户</h3><p class="form-text">未注册正式账户，系统已为您创建临时账户，可用以下资料登录查看合同与订单。</p><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="mono">${escapeAttribute(contractCustomer?.email || '')}</strong></div><div><span class="section-note">密码</span><strong class="mono">${escapeAttribute(guestPassword)}</strong></div></div></section>` : ''}
           ${canViewWindowsPassword ? `<section class="panel" style="margin-top:16px;text-align:left"><h3>Windows 登录账户</h3><p class="form-text">系统已自动生成设备登录密码。该密码不是网站登录密码，不支持自定义修改；以后可在订单详情中重复查看。</p><code class="form-control mono" style="display:block;user-select:all;word-break:break-all;">${escapeAttribute(windowsPassword || '暂未生成')}</code></section>` : ''}
           <div class="grid grid-2" style="gap: 16px; margin-top: 24px;">
             <a class="button" href="${orderLink}">查看订单详情</a>
-            <a class="button button-secondary" href="${orderLink}">查看订单详情</a>
+            <a class="button button-secondary" href="/">返回首页</a>
           </div>
         </div>
       </div>
@@ -168,11 +194,15 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   let content = '';
   let title = '合同签署';
 
-  const progressBar = renderSigningProgress(step)
+  const progressStep = isWebsiteOrderContract
+    ? (step === 4 ? 2 : step)
+    : (step >= 3 ? 3 : step)
+  const progressBar = renderSigningProgress(progressStep, !isWebsiteOrderContract)
+  const viewStep = !isWebsiteOrderContract && step === 3 ? 4 : step
 
-  switch (step) {
+  switch (viewStep) {
     case 1:
-      title = '步骤 1/3: 阅读并同意租赁协议';
+      title = `步骤 1/${isWebsiteOrderContract ? 3 : 3}: 阅读并同意租赁协议`;
       content = `
         <div class="panel">
           ${progressBar}
@@ -198,7 +228,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       `;
       break;
     case 2:
-      title = '步骤 2/3: 填写资料并签署';
+      title = `步骤 2/${isWebsiteOrderContract ? 3 : 3}: ${isWebsiteOrderContract ? '填写资料' : '填写资料并签署'}`;
       content = `
         <div class="panel">
           ${progressBar}
@@ -208,23 +238,22 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
 
           <form method="POST" action="/contract/sign?token=${token}&step=2" id="sign-form" class="signing-form" novalidate>
             ${currentUser ? `
-              <section class="recorded-account"><div class="recorded-account__header"><div><span class="mono">ACCOUNT LINKED</span><h3>已关联账户</h3></div><span class="badge badge-success">已登录</span></div><p>已自动填写账户资料，您可以在签署前修改；保存后将同步更新账户。</p></section>
+              <section class="recorded-account"><div class="recorded-account__header"><div><span class="mono">ACCOUNT LINKED</span><h3>已关联账户</h3></div><span class="badge badge-success">已登录</span></div><p>${customerSnapshot ? '本网站订单的承租方资料已锁定，姓名、邮箱和联系电话不能修改。' : '已自动填写账户资料，您可以在签署前修改；保存后将同步更新账户。'}</p></section>
             ` : ''}
             <div class="grid grid-2">
-              <div class="form-group"><label class="form-label" for="firstName">名 / Given name</label><input id="firstName" class="form-control" name="firstName" value="${userInput.firstName ?? ''}" autocomplete="given-name" required><span class="field-error" data-error-for="firstName"></span></div>
-              <div class="form-group"><label class="form-label" for="lastName">姓 / Family name</label><input id="lastName" class="form-control" name="lastName" value="${userInput.lastName ?? ''}" autocomplete="family-name" required><span class="field-error" data-error-for="lastName"></span></div>
-              <div class="form-group"><label class="form-label" for="email">电子邮箱</label><input id="email" class="form-control" type="email" name="email" value="${userInput.email ?? ''}" autocomplete="email" required><span class="field-error" data-error-for="email"></span></div>
+              <div class="form-group"><label class="form-label" for="firstName">名 / Given name</label><input id="firstName" class="form-control" name="firstName" value="${userInput.firstName ?? ''}" autocomplete="given-name" required ${customerSnapshot ? 'readonly' : ''}><span class="field-error" data-error-for="firstName"></span></div>
+              <div class="form-group"><label class="form-label" for="lastName">姓 / Family name</label><input id="lastName" class="form-control" name="lastName" value="${userInput.lastName ?? ''}" autocomplete="family-name" required ${customerSnapshot ? 'readonly' : ''}><span class="field-error" data-error-for="lastName"></span></div>
+              <div class="form-group"><label class="form-label" for="email">电子邮箱</label><input id="email" class="form-control" type="email" name="email" value="${userInput.email ?? ''}" autocomplete="email" required ${customerSnapshot ? 'readonly' : ''}><span class="field-error" data-error-for="email"></span></div>
               ${currentUser ? '' : `<div class="form-group"><label class="form-label" for="referrer">推荐人代码（选填）</label><input id="referrer" class="form-control" name="referrer" value="${userInput.referrer ?? ''}" maxlength="64" placeholder="如有推荐人请填写"></div>`}
             </div>
-            <div class="form-group"><label class="form-label" for="phone">联系电话</label><div class="phone-field"><select id="phoneCode" name="phoneCode" class="form-control" required><option value="+61" ${!userInput.phoneCode || userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option><option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option><option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option><option value="+44" ${userInput.phoneCode === '+44' ? 'selected' : ''}>+44 英国</option><option value="+852" ${userInput.phoneCode === '+852' ? 'selected' : ''}>+852 香港</option><option value="+886" ${userInput.phoneCode === '+886' ? 'selected' : ''}>+886 台湾</option><option value="+65" ${userInput.phoneCode === '+65' ? 'selected' : ''}>+65 新加坡</option><option value="+82" ${userInput.phoneCode === '+82' ? 'selected' : ''}>+82 韩国</option><option value="+81" ${userInput.phoneCode === '+81' ? 'selected' : ''}>+81 日本</option></select><input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" autocomplete="tel-national" required placeholder="例如 0412 345 678"></div><span class="field-error" data-error-for="phone"></span></div>
+            <div class="form-group"><label class="form-label" for="phone">联系电话</label><div class="phone-field"><select id="phoneCode" name="phoneCode" class="form-control" required ${customerSnapshot ? 'disabled' : ''}><option value="+61" ${!userInput.phoneCode || userInput.phoneCode === '+61' ? 'selected' : ''}>+61 澳大利亚</option><option value="+86" ${userInput.phoneCode === '+86' ? 'selected' : ''}>+86 中国</option><option value="+1" ${userInput.phoneCode === '+1' ? 'selected' : ''}>+1 美国/加拿大</option><option value="+44" ${userInput.phoneCode === '+44' ? 'selected' : ''}>+44 英国</option><option value="+852" ${userInput.phoneCode === '+852' ? 'selected' : ''}>+852 香港</option><option value="+886" ${userInput.phoneCode === '+886' ? 'selected' : ''}>+886 台湾</option><option value="+65" ${userInput.phoneCode === '+65' ? 'selected' : ''}>+65 新加坡</option><option value="+82" ${userInput.phoneCode === '+82' ? 'selected' : ''}>+82 韩国</option><option value="+81" ${userInput.phoneCode === '+81' ? 'selected' : ''}>+81 日本</option></select>${customerSnapshot ? `<input type="hidden" name="phoneCode" value="${userInput.phoneCode ?? ''}">` : ''}<input id="phone" class="form-control" name="phone" value="${userInput.phone ?? ''}" autocomplete="tel-national" required placeholder="例如 0412 345 678" ${customerSnapshot ? 'readonly' : ''}></div><span class="field-error" data-error-for="phone"></span></div>
             ${currentUser ? '' : `
               <label class="account-choice"><input type="checkbox" id="createAccountCheckbox" name="createAccount" ${userInput.createAccount === 'true' ? 'checked' : ''}><span><strong>注册正式账户</strong><small>勾选后设置自己的密码；不勾选将自动创建访客账户并在签署完成后显示临时密码。</small></span></label>
               <p class="form-text account-consent-note">选择注册即表示默认同意<a href="/user-terms" target="_blank" rel="noopener">用户协议</a>、<a href="/service-terms" target="_blank" rel="noopener">服务条款</a>和<a href="/privacy" target="_blank" rel="noopener">隐私政策</a>。</p>
               <div class="page-notification page-notification--info" style="margin-bottom:16px;">不勾选“注册正式账户”即可继续作为访客签署。签署完成后系统会为您创建临时账户，并显示可登录的临时密码。</div>
               <div id="passwordFields" class="grid grid-2" hidden style="display:none"><div class="form-group"><label class="form-label" for="password">设置密码</label><input id="password" class="form-control" type="password" name="password" minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s])\\S{8,}" title="至少 8 位，并同时包含字母、数字和符号" autocomplete="new-password"><small class="form-text">至少 8 位，必须包含字母、数字和符号。</small><span class="field-error" data-error-for="password"></span></div><div class="form-group"><label class="form-label" for="passwordConfirm">确认密码</label><input id="passwordConfirm" class="form-control" type="password" name="passwordConfirm" minlength="8" autocomplete="new-password"><span class="field-error" data-error-for="passwordConfirm"></span></div></div>
             `}
-            <div class="page-notification page-notification--info"><strong>Windows 登录密码</strong><p>系统将在签署完成时自动生成安全密码并配置到租赁设备，不需要您手动输入。该密码与网站登录密码独立。</p></div>
-            <section class="signature-section"><h3>电子签署</h3><p class="form-text">输入全名签名</p><div class="form-group"><label class="form-label" for="esignSignature">请输入与上方姓名一致的签名。</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name" required><span class="field-error" data-error-for="esignSignature"></span></div></section>
+            ${isWebsiteOrderContract ? '' : '<section class="signature-section"><h3>电子签署</h3><p class="form-text">输入全名签名</p><div class="form-group"><label class="form-label" for="esignSignature">请输入与上方姓名一致的签名。</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name" required><span class="field-error" data-error-for="esignSignature"></span></div></section>'}
             <div id="form-error-summary" class="form-error-summary" role="alert" hidden>请先修正标记的资料。</div>
             <div class="record-actions"><a href="/contract/sign?token=${token}&step=1" class="button button-secondary">返回上一步</a><button class="button" id="sign-info-submit" type="submit">保存信息并进入下一步</button></div>
           </form>
@@ -264,11 +293,39 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       `;
       break;
     case 3:
-      title = '步骤 3/4: 电子签名';
-      content = `<div class="panel">${progressBar}<div class="contract-toolbar"><button class="button button-secondary" type="button" onclick="document.getElementById('esignSignature')?.focus();document.getElementById('signatureCanvas')?.scrollIntoView({behavior:'smooth',block:'center'})">开始签署</button><button class="button button-danger" type="button" onclick="location.href='/contract/sign?token=${token}&step=1'">拒绝</button><span class="section-note">签名后点击完成签署</span></div><h2>${title}</h2>${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}<p class="section-note">可输入姓名，或在签名板上手写签名。</p><form method="POST" action="/contract/sign?token=${token}&step=3" id="signature-form"><div class="form-group"><label class="form-label" for="esignSignature">输入姓名签名</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name"><small class="form-text">输入时必须与步骤2填写的完整姓名一致。</small></div><div class="form-group"><label class="form-label" for="signatureCanvas">手写签名</label><canvas id="signatureCanvas" class="signature-pad" width="700" height="180" aria-label="手写签名区域"></canvas><input type="hidden" id="handSignature" name="handSignature"><button class="button button-secondary button-sm" type="button" id="clearSignature">清除手写签名</button></div><div class="record-actions"><a href="/contract/sign?token=${token}&step=2" class="button button-secondary">返回上一步</a><button class="button" type="submit">完成签署并进入付款</button></div></form><script>(()=>{const canvas=document.getElementById('signatureCanvas'), hidden=document.getElementById('handSignature'), input=document.getElementById('esignSignature'), clear=document.getElementById('clearSignature');if(!canvas)return;const ctx=canvas.getContext('2d');ctx.lineWidth=2;ctx.lineCap='round';let drawing=false;const point=e=>{const r=canvas.getBoundingClientRect(),t=e.touches?.[0]||e;return{x:(t.clientX-r.left)*canvas.width/r.width,y:(t.clientY-r.top)*canvas.height/r.height}};const finish=()=>{if(drawing)hidden.value=canvas.toDataURL('image/png');drawing=false};const start=e=>{drawing=true;ctx.beginPath();ctx.moveTo(point(e).x,point(e).y);e.preventDefault()};const move=e=>{if(!drawing)return;const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke();e.preventDefault()};['mousedown','touchstart'].forEach(x=>canvas.addEventListener(x,start,{passive:false}));['mousemove','touchmove'].forEach(x=>canvas.addEventListener(x,move,{passive:false}));['mouseup','mouseleave','touchend'].forEach(x=>canvas.addEventListener(x,finish));clear.addEventListener('click',()=>{ctx.clearRect(0,0,canvas.width,canvas.height);hidden.value='';});document.getElementById('signature-form').addEventListener('submit',e=>{if(!input.value.trim()&&!hidden.value){e.preventDefault();input.focus();}});setTimeout(()=>document.getElementById('esignSignature')?.focus(),100)})();</script></div>`;
+      title = `步骤 3/${isWebsiteOrderContract ? 3 : 4}: 电子签名`;
+      const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
+      const unavailable = rentalRules.unavailableTimeSlots || {}
+      const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00'], ['morning', '9:00–12:00'], ['afternoon', '13:00–20:00'], ['evening_service', '21:00–23:00']]
+      const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value))
+      const timeSlotFields = `<div class="grid grid-2" style="margin: 20px 0;"><div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div></div>`
+      content = `<div class="panel">${progressBar}<div class="contract-toolbar"><button class="button button-secondary" type="button" onclick="document.getElementById('esignSignature')?.focus();document.getElementById('signatureCanvas')?.scrollIntoView({behavior:'smooth',block:'center'})">开始签署</button><button class="button button-danger" type="button" onclick="location.href='/contract/sign?token=${token}&step=1'">拒绝</button><span class="section-note">签名后点击完成签署</span></div><h2>${title}</h2>${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}<p class="section-note">可输入姓名，或在签名板上手写签名。${isWebsiteOrderContract ? '签署完成后合同将立即确认，无需付款。' : ''}</p><form method="POST" action="/contract/sign?token=${token}&step=3" id="signature-form">${isWebsiteOrderContract ? '<input type="hidden" name="noPayment" value="1">' : ''}<div class="form-group"><label class="form-label" for="esignSignature">输入姓名签名</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name"><small class="form-text">输入时必须与步骤2填写的完整姓名一致。</small></div><div class="form-group"><label class="form-label" for="signatureCanvas">手写签名</label><canvas id="signatureCanvas" class="signature-pad" width="700" height="180" aria-label="手写签名区域"></canvas><input type="hidden" id="handSignature" name="handSignature"><button class="button button-secondary button-sm" type="button" id="clearSignature">清除手写签名</button></div>${isWebsiteOrderContract ? timeSlotFields : ''}<div class="record-actions"><a href="/contract/sign?token=${token}&step=2" class="button button-secondary">返回上一步</a><button class="button" type="submit">${isWebsiteOrderContract ? '完成签署' : '完成签署并进入付款'}</button></div></form><script>(()=>{const canvas=document.getElementById('signatureCanvas'), hidden=document.getElementById('handSignature'), input=document.getElementById('esignSignature'), clear=document.getElementById('clearSignature');if(!canvas)return;const ctx=canvas.getContext('2d');ctx.lineWidth=2;ctx.lineCap='round';let drawing=false;const point=e=>{const r=canvas.getBoundingClientRect(),t=e.touches?.[0]||e;return{x:(t.clientX-r.left)*canvas.width/r.width,y:(t.clientY-r.top)*canvas.height/r.height}};const finish=()=>{if(drawing)hidden.value=canvas.toDataURL('image/png');drawing=false};const start=e=>{drawing=true;ctx.beginPath();ctx.moveTo(point(e).x,point(e).y);e.preventDefault()};const move=e=>{if(!drawing)return;const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke();e.preventDefault()};['mousedown','touchstart'].forEach(x=>canvas.addEventListener(x,start,{passive:false}));['mousemove','touchmove'].forEach(x=>canvas.addEventListener(x,move,{passive:false}));['mouseup','mouseleave','touchend'].forEach(x=>canvas.addEventListener(x,finish));clear.addEventListener('click',()=>{ctx.clearRect(0,0,canvas.width,canvas.height);hidden.value='';});document.getElementById('signature-form').addEventListener('submit',e=>{if(!input.value.trim()&&!hidden.value){e.preventDefault();input.focus();}});setTimeout(()=>document.getElementById('esignSignature')?.focus(),100)})();</script></div>`;
       break;
     case 4:
-      title = '步骤 3/3: 选择付款方式';
+      title = isWebsiteOrderContract ? '步骤 2/2: 确认取还时间并完成签约' : '步骤 3/3: 选择支付方式';
+      if (isWebsiteOrderContract) {
+        const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
+        const unavailable = rentalRules.unavailableTimeSlots || {}
+        const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00'], ['morning', '9:00–12:00'], ['afternoon', '13:00–20:00'], ['evening_service', '21:00–23:00']]
+        const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value))
+        content = `
+          <div class="panel">
+            ${progressBar}
+            <h2>${title}</h2>
+            ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+            <p class="section-note">合同签署不需要在线付款。请确认取货和归还时间，提交后合同立即完成签署。</p>
+            <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4">
+              <input type="hidden" name="noPayment" value="1">
+              <div class="grid grid-2" style="margin: 20px 0;">
+                <div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>
+                <div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>
+              </div>
+              <div class="record-actions"><a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=2" class="button button-secondary">返回上一步</a><button class="button" type="submit">确认并完成签约</button></div>
+            </form>
+          </div>
+        `
+        break
+      }
       const stripeFeeRate = getStripeProcessingFeeRate();
       const stripeFeePercent = (stripeFeeRate * 100).toFixed(2).replace(/\.00$/, '');
       const depositPaymentMode = depositPaymentModeForOrder(order);
@@ -277,7 +334,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
       const stripeImmediatelyPaidAmount = Math.max(0, Number(order.totalAmount) - orderDepositAmount);
       const stripeFee = Math.round(stripeImmediatelyPaidAmount * 100 * stripeFeeRate) / 100;
       const stripePrincipal = Number(order.totalAmount) - orderDepositAmount;
-      const stripeTotal = stripePrincipal + stripeFee;
+      const stripeTotal = depositPaymentMode === 'PREAUTH' ? Number(order.totalAmount) + stripeFee : stripePrincipal + stripeFee;
 
       // 在步骤3中获取订单和设备信息
 
@@ -332,7 +389,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
-                <span><strong>信用卡支付（Stripe）</strong><small>租金及已确定的时段服务费即时扣款 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，其中支付手续费 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）。${depositPaymentMode === 'PREAUTH' ? `押金 ${formatCurrency(orderDepositAmount)} 另作预授权（Visa/Mastercard 请求最多保留 30 天，其他卡 7 天）。` : depositPaymentMode === 'SETUP_INTENT' ? '本订单使用 SetupIntent 保存卡片，押金不预扣。' : ''}</small></span>
+                <span><strong>信用卡支付（Stripe）</strong><small>${depositPaymentMode === 'PREAUTH' ? `一次性预授权总额 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>（包含租金及服务费、押金和手续费）；归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。` : `租金及已确定的时段服务费即时扣款 <span data-price="stripeTotal">${formatCurrency(stripeTotal)}</span>，其中支付手续费 <span data-price="stripeFee">${formatCurrency(stripeFee)}</span>（${stripeFeePercent}%）。${depositPaymentMode === 'SETUP_INTENT' ? '本订单使用 SetupIntent 保存卡片，押金不预扣。' : ''}`}</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.bankTransfer ? `
@@ -355,13 +412,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">${stripeFeePercent}%</span></div>
-              <p>选择 Stripe 信用卡支付时，租金及已确定的时段服务费会立即扣款；手续费按这两项计算，不按押金计算。</p>
-              <dl>
-                <div><dt>租金及服务费</dt><dd data-price="stripePrincipal">${formatCurrency(stripePrincipal)}</dd></div>
-                <div><dt>${depositPaymentMode === 'PREAUTH' ? '押金预授权（不扣款）' : depositPaymentMode === 'SETUP_INTENT' ? '押金（SetupIntent，不预扣）' : '押金'}</dt><dd>${formatCurrency(orderDepositAmount)}</dd></div>
-                <div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div>
-                <div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div>
-              </dl>
+              <p>${depositPaymentMode === 'PREAUTH' ? '信用卡只创建一笔预授权；手续费按租金及服务费计算，不按押金计算。归还时再捕获实际应收金额。' : '选择 Stripe 信用卡支付时，租金及已确定的时段服务费会立即扣款；手续费按这两项计算，不按押金计算。'}</p>
+              ${depositPaymentMode === 'PREAUTH' ? `<dl><div class="payment-fee-notice__total"><dt>信用卡预授权总额</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div></dl>` : `<dl><div><dt>租金及服务费</dt><dd data-price="stripePrincipal">${formatCurrency(stripePrincipal)}</dd></div><div><dt>${depositPaymentMode === 'SETUP_INTENT' ? '押金（SetupIntent，不预扣）' : '押金'}</dt><dd>${formatCurrency(orderDepositAmount)}</dd></div><div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div><div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div></dl>`}
               <small class="payment-fee-notice__warning">付款全程由 Stripe 安全处理，本网站不存储您的银行卡号、有效期或安全码。继续付款即表示您已阅读并同意我们的《服务条款》和《隐私政策》，并同意 Stripe 的相关服务条款及隐私政策。</small>
             </aside>
             ` : ''}
@@ -405,6 +457,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const balanceRadio = document.getElementById('balance-payment-radio');
               const balanceShort = document.querySelector('[data-balance-insufficient]');
               const ORDER_DEPOSIT = ${orderDepositAmount};
+              const FULL_AUTHORIZATION = ${depositPaymentMode === 'PREAUTH' ? 'true' : 'false'};
               const RENT_ONLY = ${Number((stripePrincipal - orderServiceFee).toFixed(2))};
               const SERVICE_FEE_SLOTS = ['morning_service', 'evening_service'];
               const pickupTimeSlotSelect = document.getElementById('pickupTimeSlot');
@@ -413,7 +466,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 currentTotal = Number(total);
                 const stripePrincipalNow = Math.max(0, currentTotal - ORDER_DEPOSIT);
                 const fee = Math.round(stripePrincipalNow * 100 * ${stripeFeeRate}) / 100;
-                const stripeTotalNow = stripePrincipalNow + fee;
+                const stripeTotalNow = stripePrincipalNow + fee + (FULL_AUTHORIZATION ? ORDER_DEPOSIT : 0);
                 document.querySelectorAll('[data-price="orderTotal"]').forEach(el => { el.textContent = money(stripePrincipalNow); });
                 document.querySelectorAll('[data-price="stripePrincipal"]').forEach(el => { el.textContent = money(stripePrincipalNow); });
                 document.querySelectorAll('[data-price="stripeFee"]').forEach(el => { el.textContent = money(fee); });

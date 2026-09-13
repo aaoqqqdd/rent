@@ -22,6 +22,13 @@ export const ORDER_CHANGE_TYPE_LABELS: Record<string, string> = {
   INVENTORY_RELEASE: '释放库存',
 }
 
+export function formatOrderChangeActor(name: unknown, id: unknown): string {
+  const actorName = String(name ?? '').trim()
+  const actorId = String(id ?? '').trim()
+  if (actorName && actorId) return `${actorName}（${actorId}）`
+  return actorName || actorId || '—'
+}
+
 const ORDER_CHANGE_FIELD_LABELS: Record<string, string> = {
   deviceId: '设备',
   startDate: '起租日期',

@@ -37,6 +37,8 @@ import {
   createWithdrawalRequest,
   generateReferralCode,
   getOrderById,
+  getOrderByOrderNo,
+  staffOrderPath,
   insertOrder,
   updateOrderStatus,
   hasDeviceBookingConflict,
@@ -68,6 +70,7 @@ import {
   getContractById,
   getContractByOrderId,
   getContractByContractNumber,
+  ensureContractForOrder,
   updateContractTemplate,
   CONTRACT_OPERATIONAL_FIELDS,
   CONTRACT_SIGNED_FIELDS,
@@ -93,6 +96,8 @@ import {
   getAccessLevel
   , createNotification
   , getNotifications
+  , deleteRentalApplicationNotifications
+  , cleanupCompletedRentalApplicationNotifications
   , createDueDateNotifications
   , sanitizePlainText
   , renderNotificationMarkdown
@@ -112,14 +117,20 @@ import { getStripeConfigSummary } from './stripe'
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment } from './actions/stripePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
-import { styleSheetText as siteStyles, styleSheetVersion } from './lib/assetVersion'
-import { languageScript } from './lib/i18n'
+import {
+  styleSheetText as siteStyles,
+  styleSheetVersion,
+  appScriptText,
+  appScriptVersion,
+  languageScriptText,
+  languageScriptVersion,
+} from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
@@ -211,6 +222,18 @@ app.get('/styles.css', (c) => {
   return c.body(siteStyles)
 })
 
+app.get('/app.js', (c) => {
+  c.header('Content-Type', 'text/javascript; charset=utf-8')
+  const versioned = c.req.query('v') === appScriptVersion
+  c.header('Cache-Control', versioned
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=3600, stale-while-revalidate=86400')
+  c.header('ETag', `"${appScriptVersion}"`)
+  c.header('X-Content-Type-Options', 'nosniff')
+  if (c.req.header('If-None-Match') === `"${appScriptVersion}"`) return c.body(null, 304)
+  return c.body(appScriptText)
+})
+
 app.get('/favicon.svg', (c) => {
   c.header('Content-Type', 'image/svg+xml')
   c.header('Cache-Control', 'public, max-age=604800')
@@ -220,9 +243,14 @@ app.get('/favicon.ico', (c) => c.redirect('/favicon.svg', 301))
 
 app.get('/i18n.js', (c) => {
   c.header('Content-Type', 'text/javascript; charset=utf-8')
-  c.header('Cache-Control', 'no-cache, must-revalidate')
+  const versioned = c.req.query('v') === languageScriptVersion
+  c.header('Cache-Control', versioned
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=3600, stale-while-revalidate=86400')
+  c.header('ETag', `"${languageScriptVersion}"`)
   c.header('X-Content-Type-Options', 'nosniff')
-  return c.body(languageScript)
+  if (c.req.header('If-None-Match') === `"${languageScriptVersion}"`) return c.body(null, 304)
+  return c.body(languageScriptText)
 })
 
 const SYSTEM_STATUS_CACHE_KEY = 'https://rent.internal/api/system-status'
@@ -514,7 +542,7 @@ app.use('*', async (c, next) => {
     }
     const path = c.req.path
     const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result', '/notifications', '/notifications/unread'])
-    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/checkout|bank-transfer-proof))?$/)
+    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/(?:checkout|intent)|bank-transfer-proof))?$/)
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
@@ -549,7 +577,7 @@ app.use('*', async (c, next) => {
   const rateRule = c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
     : c.req.path === '/forgot-password' && c.req.method === 'POST' ? ['forgot', 5, 3600] as const
       : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
-        : /^\/customer\/orders\/[^/]+\/stripe\/checkout$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
+        : /^\/customer\/orders\/[^/]+\/stripe\/(?:checkout|intent)$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
           : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
             : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
               : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
@@ -1301,7 +1329,7 @@ app.post('/staff/orders/:orderId/early-return/approve', async (c) => {
   ])
   await updateOrderStatus(c, order.id, 'pending_return')
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'early_return_approved', title: '提前归还申请已批准', message: `订单 ${order.orderNo || order.id} 的提前归还申请已批准，请按通知安排归还设备。`, orderId: order.id })
-  return c.redirect(`/staff/orders/${order.id}`)
+  return c.redirect(staffOrderPath(order))
 })
 
 app.post('/customer/orders/:id/returned', async (c) => {
@@ -1382,7 +1410,7 @@ app.get('/admin/notifications', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
   const notifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
-  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(item.type || 'SYSTEM', 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>`).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
+  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => { const typeLabel = item.type === 'rental_application' ? '租赁申请' : item.type || '系统通知'; return `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(typeLabel, 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>` }).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
   return c.html(buildLayout('管理员通知中心', body, user))
 })
 
@@ -1553,6 +1581,7 @@ app.get('/notifications/unread', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [] }, 401)
   await ensureNotificationsTable(c)
+  await cleanupCompletedRentalApplicationNotifications(c, user.id)
   const query = "SELECT id, type, title, message, order_id, created_at FROM notifications WHERE recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 10"
   let result: any
   try {
@@ -1571,6 +1600,7 @@ app.get('/notifications/unread', async (c) => {
 app.get('/notifications/recent', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [], unreadCount: 0 }, 401)
+  await cleanupCompletedRentalApplicationNotifications(c, user.id)
   const result = await c.env.RENT.prepare("SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 10").bind(user.id).all() as any
   const unread = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND read_at IS NULL AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid))))").bind(user.id).first() as any
   return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message: notificationListMessage(item) })), unreadCount: Number(unread?.count || 0) })
@@ -1579,6 +1609,7 @@ app.get('/notifications/recent', async (c) => {
 app.get('/notifications/:id', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
+  await cleanupCompletedRentalApplicationNotifications(c, user.id)
   const item = await c.env.RENT.prepare("SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)").bind(c.req.param('id'), user.id).first() as any
   if (!item) return c.html(renderNotFound(), 404)
   await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
@@ -1706,9 +1737,9 @@ app.post('/customer/rent/:id', async (c) => {
   }
   const orderId = `o-${nanoid(8)}`
   await insertOrder(c, {
-    id: orderId, orderNo: null, userId: user.id,
+    id: orderId, orderNo: generateReferenceNumber('OD'), userId: user.id,
     deviceId: device.id, startDate, endDate, rentalPeriod, status: 'pending_approval',
-    paymentMethod: 'bank_transfer', totalAmount: rentAmount + device.depositAmount - discountAmount,
+    paymentMethod: 'card', totalAmount: rentAmount + device.depositAmount - discountAmount,
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
     deliveryMethod, deliveryFee: 0, rentalNote, couponCode: appliedCouponCode, discountAmount,
     createdAt: new Date().toISOString()
@@ -1816,9 +1847,12 @@ app.get('/staff/orders', async (c) => {
 
 app.use('/staff/orders/*', async (c, next) => {
   const user = c.get('user')
-  const orderId = c.req.path.split('/')[3]
-  if (user?.role === 'STAFF' && orderId && !['pending', 'ongoing'].includes(orderId)) {
-    const order = await getOrderById(c, orderId)
+  const segments = c.req.path.split('/')
+  const seg3 = segments[3]
+  if (user?.role === 'STAFF' && seg3 && !['pending', 'ongoing'].includes(seg3)) {
+    const seg4 = segments[4]
+    const isOrderNoPath = /^\d{8}$/.test(seg3) && !!seg4 && /^[0-9A-Za-z]{6}$/.test(seg4)
+    const order = isOrderNoPath ? await getOrderByOrderNo(c, `OD-${seg3}-${seg4}`) : await getOrderById(c, seg3)
     const customer = order ? await getUserById(c, order.userId) : null
     if (!order || customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   }
@@ -1835,6 +1869,17 @@ app.get('/staff/orders/ongoing', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderStaffOrdersOngoing(c, user))
+})
+
+app.get('/staff/orders/:date/:code', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+    return c.redirect('/login')
+  }
+  const order = await getOrderByOrderNo(c, `OD-${c.req.param('date')}-${c.req.param('code')}`)
+  if (!order) return c.html(renderNotFound(), 404)
+  await loadSystemSettingsFromDB(c)
+  return c.html(await pages.renderStaffOrderDetail(c, user, order.id))
 })
 
 app.get('/staff/orders/:id', async (c) => {
@@ -1856,7 +1901,7 @@ app.post('/staff/orders/:orderId/suspend', async (c) => {
   if (!['active', 'extended', 'overdue'].includes(String(order.status)) || !canTransitionOrder(order.status, 'suspended')) return c.text('当前订单状态不能暂停', 409)
   await updateOrderStatus(c, order.id, 'suspended')
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}暂停。`, orderId: order.id })
-  return c.redirect(`/staff/orders/${order.id}`)
+  return c.redirect(staffOrderPath(order))
 })
 
 // 员工操作 - 已付款订单完成取货后进入租赁中
@@ -1865,9 +1910,10 @@ app.get('/staff/orders/:orderId/handover', async (c) => {
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
   const customer = order ? await getUserById(c, order.userId) : null
-  if (!order || !['paid', 'pending_pickup'].includes(String(order.status)) || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
+  const handoverContract = order ? await getContractByOrderId(c, order.id) : null
+  if (!order || !(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && handoverContract?.status === 'signed')) || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, order.deviceId)
-  const body = `<div class="page-header"><div><p class="section-code">HANDOVER RECORD</p><h2>交付设备</h2><p>确认设备、配件和客户确认后，订单才会进入租赁中。</p></div><a class="button button-secondary" href="/staff/orders/${encodeURIComponent(order.id)}">返回订单</a></div><form class="panel" method="post" action="/staff/orders/${encodeURIComponent(order.id)}/pickup" data-site-confirm="确认交付记录无误并开始租赁？"><div class="grid grid-2"><div><label class="form-label">设备</label><input class="form-control" value="${sanitizePlainText(device?.name || order.deviceId, 160)}" readonly></div><div><label class="form-label" for="deviceSerialNumber">设备序列号</label><input class="form-control" id="deviceSerialNumber" name="deviceSerialNumber" value="${sanitizePlainText(device?.serialNumber || '', 160)}" required></div></div><div class="form-group"><label class="form-label" for="accessories">交付配件</label><textarea class="form-control" id="accessories" name="accessories" maxlength="1000" required placeholder="例如：电源适配器、充电线、电脑包"></textarea></div><div class="form-group"><label class="form-label" for="conditionNotes">设备状态与备注</label><textarea class="form-control" id="conditionNotes" name="conditionNotes" maxlength="2000" required placeholder="例如：外观正常，屏幕无划痕，电池状态正常"></textarea></div><label class="form-check"><input type="checkbox" name="customerConfirmed" value="1" required> 客户已当场确认设备序列号、配件及状态</label><div class="form-group"><label class="form-label" for="customerConfirmationName">客户确认姓名</label><input class="form-control" id="customerConfirmationName" name="customerConfirmationName" maxlength="120" value="${sanitizePlainText(customer?.name || '', 120)}" required></div><button class="button button-primary" type="submit">保存交付记录并开始租赁</button></form>`
+  const body = `<div class="page-header"><div><p class="section-code">HANDOVER RECORD</p><h2>交付设备</h2><p>确认设备、配件和客户确认后，订单才会进入租赁中。</p></div><a class="button button-secondary" href="${staffOrderPath(order)}">返回订单</a></div><form class="panel" method="post" action="/staff/orders/${encodeURIComponent(order.id)}/pickup" data-site-confirm="确认交付记录无误并开始租赁？"><div class="grid grid-2"><div><label class="form-label">设备</label><input class="form-control" value="${sanitizePlainText(device?.name || order.deviceId, 160)}" readonly></div><div><label class="form-label" for="deviceSerialNumber">设备序列号</label><input class="form-control" id="deviceSerialNumber" name="deviceSerialNumber" value="${sanitizePlainText(device?.serialNumber || '', 160)}" required></div></div><div class="form-group"><label class="form-label" for="accessories">交付配件</label><textarea class="form-control" id="accessories" name="accessories" maxlength="1000" required placeholder="例如：电源适配器、充电线、电脑包"></textarea></div><div class="form-group"><label class="form-label" for="conditionNotes">设备状态与备注</label><textarea class="form-control" id="conditionNotes" name="conditionNotes" maxlength="2000" required placeholder="例如：外观正常，屏幕无划痕，电池状态正常"></textarea></div><label class="form-check"><input type="checkbox" name="customerConfirmed" value="1" required> 客户已当场确认设备序列号、配件及状态</label><div class="form-group"><label class="form-label" for="customerConfirmationName">客户确认姓名</label><input class="form-control" id="customerConfirmationName" name="customerConfirmationName" maxlength="120" value="${sanitizePlainText(customer?.name || '', 120)}" required></div><button class="button button-primary" type="submit">保存交付记录并开始租赁</button></form>`
   return c.html(buildLayout('交付设备 - 电脑租赁管理系统', body, user))
 })
 
@@ -1878,7 +1924,8 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
   }
   const orderId = c.req.param('orderId')
   const pickupOrder = await getOrderById(c, orderId)
-  if (!pickupOrder || !['paid', 'pending_pickup'].includes(String(pickupOrder.status))) return c.json({ success: false, message: '只有待取货订单可以确认交付' }, 409)
+  const pickupContract = pickupOrder ? await getContractByOrderId(c, pickupOrder.id) : null
+  if (!pickupOrder || !(['paid', 'pending_pickup'].includes(String(pickupOrder.status)) || (pickupOrder.status === 'approved' && pickupContract?.status === 'signed'))) return c.json({ success: false, message: '只有已签署合同的待交付订单可以确认交付' }, 409)
   const customer = await getUserById(c, pickupOrder.userId)
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, pickupOrder.deviceId)
@@ -1899,7 +1946,8 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
   ])
   await recordDeviceLifecycle(c, pickupOrder.deviceId, 'RENTED', { orderId, reason: '工作人员确认设备已交付', changedBy: user.id })
   await createAuditLog(c, { actor: user, action: 'HANDOVER_COMPLETED', targetType: 'ORDER', targetId: orderId, before: { status: pickupOrder.status, rentalStatus: pickupOrder.rental_status }, after: { status: 'active', rentalStatus: 'ACTIVE', deviceSerialNumber: serialNumber, customerConfirmed: true }, reason: conditionNotes })
-  return wantsJson ? c.json({ success: true, redirect: `/staff/orders/${orderId}` }) : c.redirect(`/staff/orders/${orderId}`)
+  const pickupOrderPath = staffOrderPath(pickupOrder)
+  return wantsJson ? c.json({ success: true, redirect: pickupOrderPath }) : c.redirect(pickupOrderPath)
 })
 
 // 新增：员工操作 - 标记订单为已归还
@@ -1917,30 +1965,28 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const order = await getOrderById(c, c.req.param('orderId'))
   const customer = order ? await getUserById(c, order.userId) : null
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
   await loadSystemSettingsFromDB(c)
   const orderRentalRules = order ? await getDeviceRentalRules(c, order.deviceId) : null
   if (!order || !canTransitionOrder(order.status, 'approved') || await hasDeviceBookingConflict(c, order.deviceId, order.startDate, order.endDate, order.id, orderRentalRules?.bufferDays ?? 0)) return c.text('订单状态无效或设备档期冲突', 409)
+  const requestedDeliveryMethod = form.deliveryMethod == null ? String(order.deliveryMethod || order.delivery_method || 'Pickup') : String(form.deliveryMethod)
+  if (!['Pickup', 'Delivery'].includes(requestedDeliveryMethod)) return c.text('配送方式无效', 400)
+  const deliveryFeeText = String(form.deliveryFee ?? '').trim()
+  const deliveryFee = requestedDeliveryMethod === 'Delivery' ? Number(deliveryFeeText) : 0
+  if (requestedDeliveryMethod === 'Delivery' && (!deliveryFeeText || !Number.isFinite(deliveryFee) || deliveryFee < 0)) return c.text('选择送货上门时必须填写有效的配送费', 400)
+  const previousDeliveryFee = Number(order.deliveryFee || order.delivery_fee || 0)
+  const totalAmount = Number((Number(order.totalAmount || 0) - (Number.isFinite(previousDeliveryFee) ? previousDeliveryFee : 0) + deliveryFee).toFixed(2))
+  await c.env.RENT.prepare('UPDATE orders SET deliveryMethod = ?, deliveryFee = ?, totalAmount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = ?')
+    .bind(requestedDeliveryMethod, deliveryFee, totalAmount, order.id, 'pending_approval').run()
+  order.deliveryMethod = requestedDeliveryMethod
+  order.deliveryFee = deliveryFee
+  order.totalAmount = totalAmount
   await updateOrderStatus(c, order.id, 'approved')
-  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。`, orderId: order.id })
-
-  // 官网信用卡申请：押金在提交时已预授权 / 已保存卡片，审核通过后无需客户再次操作，
-  // 直接用已保存的支付方式自动扣租金（不含押金）。扣款失败则回退到人工付款页面。
-  const savedPaymentMethodId = String((order as any).stripe_payment_method_id || '')
-  if (order.paymentMethod === 'card' && savedPaymentMethodId && customer) {
-    try {
-      await updateOrderStatus(c, order.id, 'pending_payment')
-      const result = await createOrderPaymentIntent(c, customer, order.id, true)
-      if (result.alreadyPaid) {
-        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_charged', title: '租金已自动扣款', message: '审核通过后已使用您预留的信用卡自动扣取租金，押金已按之前的方式预授权 / 保存卡片处理。', orderId: order.id })
-      } else {
-        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '请完成租金付款', message: '审核通过后自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
-      }
-    } catch (error: any) {
-      console.error('Auto-charge rent on approval failed:', error?.message || error)
-      await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '请完成租金付款', message: '审核通过后自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
-    }
-  }
-  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+  await deleteRentalApplicationNotifications(c, order.id)
+  const contract = await ensureContractForOrder(c, order, user.id)
+  const signUrl = new URL(`/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1`, c.req.url).toString()
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_approved', title: '租赁申请已审核，合同待签署', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过${Number((order as any).deliveryFee || 0) > 0 ? `，配送费用为 ${Number((order as any).deliveryFee).toFixed(2)} AUD` : ''}。请打开以下链接签署租赁合同：${signUrl}`, orderId: order.id })
+  return c.redirect(staffOrderPath(order))
 })
 
 app.post('/staff/orders/:orderId/reject', async (c) => {
@@ -1952,9 +1998,10 @@ app.post('/staff/orders/:orderId/reject', async (c) => {
   if (order) {
     await updateOrderStatus(c, order.id, 'cancelled')
     await updateDeviceStatus(c, order.deviceId, 'available')
+    await deleteRentalApplicationNotifications(c, order.id)
     await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_application_rejected', title: '租赁申请未通过', message: `您的设备租赁申请已由${user.name || '工作人员'}拒绝，请联系工作人员了解详情。`, orderId: order.id })
   }
-  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+  return c.redirect(order ? staffOrderPath(order) : `/staff/orders/${c.req.param('orderId')}`)
 })
 
 app.post('/staff/orders/:orderId/mark-paid', async (c) => {
@@ -1973,7 +2020,8 @@ app.get('/staff/orders/:orderId/inspection', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
-  if (order) {
+  const inspectionStatuses = ['active', 'extended', 'overdue', 'suspended', 'pending_return']
+  if (order && inspectionStatuses.includes(String(order.status))) {
     await c.env.RENT.prepare('UPDATE devices SET inspection_requested_at = CURRENT_TIMESTAMP WHERE id = ?').bind(order.deviceId).run()
     await recordDeviceLifecycle(c, order.deviceId, 'INSPECTION', { orderId: order.id, reason: '已进入归还验机', changedBy: user.id })
   }
@@ -1984,7 +2032,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
-  if (!order || !['active', 'pending_return'].includes(order.status)) return c.text('当前订单不能验机', 409)
+  if (!order || !['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status))) return c.text('当前订单不能验机', 409)
   const form = await c.req.parseBody()
   const allowedCheck = new Set(['正常', '异常', '未测试'])
   const checks: Record<string, string> = {}
@@ -2025,7 +2073,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   ])
   await recordDeviceLifecycle(c, order.deviceId, damageDescription ? 'DAMAGED' : 'RETURNED', { orderId: order.id, reason: damageDescription || '归还验机完成', changedBy: user.id })
   await createAuditLog(c, { actor: user, action: damageDescription ? 'RETURN_INSPECTION_COMPLETED_WITH_DAMAGE' : 'RETURN_INSPECTION_COMPLETED', targetType: 'ORDER', targetId: order.id, before: { status: order.status, rentalStatus: order.rental_status }, after: { status: 'completed', rentalStatus: 'COMPLETED', inspectionId, damageReported: Boolean(damageDescription) }, reason: damageDescription || '归还验机完成' })
-  return c.redirect(`/staff/orders/${order.id}`)
+  return c.redirect(staffOrderPath(order))
 })
 
 app.post('/customer/orders/:orderId/inspection-dispute', async (c) => {
@@ -2050,7 +2098,7 @@ app.post('/staff/orders/:orderId/cancel', async (c) => {
     await updateOrderStatus(c, order.id, 'cancelled')
     await updateDeviceStatus(c, order.deviceId, 'available')
   }
-  return c.redirect(`/staff/orders/${c.req.param('orderId')}`)
+  return c.redirect(order ? staffOrderPath(order) : `/staff/orders/${c.req.param('orderId')}`)
 })
 
 app.get('/staff/contracts', async (c) => {
@@ -2381,7 +2429,7 @@ app.get('/contract/view/:id', async (c) => {
     const contract = await getContractById(c, c.req.param('id'))
     const order = contract ? await getOrderById(c, contract.rentalId) : null
     if (order && (user.role === 'ADMIN' || user.role === 'STAFF' || order.userId === user.id)) {
-      const orderPath = user.role === 'ADMIN' ? `/admin/orders/${order.id}` : user.role === 'STAFF' ? `/staff/orders/${order.id}` : `/customer/orders/${order.id}`
+      const orderPath = user.role === 'ADMIN' ? `/admin/orders/${order.id}` : user.role === 'STAFF' ? staffOrderPath(order) : `/customer/orders/${order.id}`
       return c.redirect(orderPath)
     }
   }
@@ -2450,18 +2498,36 @@ app.post('/customer/orders/:id/stripe/intent', async (c) => {
   }
 })
 
+app.post('/customer/orders/:id/price-adjustment/stripe/intent', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    const result = await createOrderPriceAdjustmentIntent(c, user, c.req.param('id'))
+    if (result.alreadyPaid) return c.json({ alreadyPaid: true })
+    return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法创建差价支付' }, 400)
+  }
+})
+
 app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || order.userId !== user.id || order.status !== 'pending_payment' || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
+  if (!order || order.userId !== user.id || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
   const form = await c.req.parseBody()
   const reference = String(form.referenceNumber || '').trim().slice(0, 100)
   const note = String(form.note || '').trim().slice(0, 500)
   let proofImageUrl = ''
   try { proofImageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) }
   if (!reference) return c.text('请填写付款 Reference', 400)
-  const payment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, order.paymentMethod).first() as any
+  const isAdjustment = String(form.priceAdjustment || '') === '1'
+  if (isAdjustment && order.status === 'pending_payment') return c.text('当前订单尚未完成首次付款', 409)
+  if (!isAdjustment && order.status !== 'pending_payment') return c.text('订单不能提交首次付款凭证', 409)
+  const adjustmentPayment = isAdjustment ? await createOrderPriceAdjustmentTransferPayment(c, user, order.id) : null
+  const payment = adjustmentPayment
+    ? { id: adjustmentPayment.paymentId }
+    : await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, order.paymentMethod).first() as any
   if (!payment) return c.text('未找到待审核的转账付款记录', 409)
   await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'superseded' WHERE payment_id = ? AND status = 'submitted'").bind(payment.id).run()
   await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')").bind(`proof-${nanoid(12)}`, payment.id, reference, note || null, proofImageUrl).run()
@@ -3216,10 +3282,11 @@ app.post('/admin/orders/:id/changes', async (c) => {
   }
 
   const after = { ...before, ...plan.patch }
+  const changeId = `och-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare('UPDATE orders SET deviceId = ?, startDate = ?, endDate = ?, rentalPeriod = ?, totalAmount = ?, depositAmount = ?, discount_amount = ?, pickupLocation = ?, returnLocation = ?, deliveryMethod = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?')
       .bind(after.deviceId, after.startDate, after.endDate, after.rentalPeriod, after.totalAmount, after.depositAmount, after.discountAmount, after.pickupLocation || null, after.returnLocation || null, after.deliveryMethod, order.id),
-    c.env.RENT.prepare('INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`och-${nanoid(12)}`, order.id, type, JSON.stringify(before), JSON.stringify(after), reason, admin.id),
+    c.env.RENT.prepare('INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(changeId, order.id, type, JSON.stringify(before), JSON.stringify(after), reason, admin.id),
   ])
   if (type === 'DEVICE_SWAP') { await releaseDeviceIfUnbooked(c, before.deviceId); await recordDeviceLifecycle(c, after.deviceId, 'RESERVED', { orderId: order.id, reason: '订单换机', changedBy: admin.id }) }
 
@@ -3243,6 +3310,15 @@ app.post('/admin/orders/:id/changes', async (c) => {
       }
     }
   }
+  const finalOrder = await getOrderById(c, order.id) as any
+  if (finalOrder && Number(finalOrder.totalAmount) < Number(before.totalAmount)) {
+    try {
+      const adjustment = await applyOrderPriceAdjustment(c, { orderId: order.id, beforeTotal: Number(before.totalAmount), afterTotal: Number(finalOrder.totalAmount), adjustmentId: `opa-${changeId}`, actorId: admin.id, refundMethod: form.priceRefundMethod })
+      if (adjustment.pendingDepositRefund) await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'order_price_adjustment', title: '订单价格已下调', message: `您的订单 ${order.orderNo || order.id} 已下调 ${adjustment.amount.toFixed(2)} AUD，转账类付款差价将在押金退款时一并退还。`, orderId: order.id })
+    } catch (error: any) {
+      return c.text(error?.message || '订单降价退款失败，请联系管理员处理', 502)
+    }
+  }
   await createAuditLog(c, { actor: admin, action: 'ORDER_CHANGED', targetType: 'ORDER', targetId: order.id, before, after, reason })
   return c.redirect(`/admin/orders/${order.id}`, 303)
 })
@@ -3259,7 +3335,7 @@ app.post('/admin/orders/:id/update', async (c) => {
   const isResume = status === 'active' && order?.status === 'suspended'
   if (!order || !editableStatuses.includes(status) || (status === 'active' && !isResume) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
   const automaticCancellationPayment = status === 'cancelled'
-    ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND status = 'paid' AND payment_method IN ('balance', 'card') LIMIT 1").bind(order.id).first()
+    ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND ((status = 'paid' AND payment_method IN ('balance', 'card')) OR (status = 'pending' AND payment_method = 'card' AND stripe_payment_intent_id = (SELECT stripe_deposit_payment_intent_id FROM orders WHERE id = ?))) LIMIT 1").bind(order.id, order.id).first()
     : null
   if (automaticCancellationPayment) {
     const response = await cancelAndRefund(c, user, order.id)
@@ -3282,14 +3358,26 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
-  if (!order || order.status !== 'pending_payment' || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单状态不允许审核', 409)
-  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!order || !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单状态不允许审核', 409)
+  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
   if (!proof) return c.text('没有待审核的转账信息', 409)
+  if (!proof.adjustment_id && order.status !== 'pending_payment') return c.text('订单状态不允许审核首次付款', 409)
+  if (proof.adjustment_id) {
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
+      c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
+      c.env.RENT.prepare("UPDATE order_price_adjustments SET status = 'succeeded', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(proof.adjustment_id),
+    ])
+    await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title: '差价付款审核已通过', message: `您的订单 ${order.orderNo || order.id} 差价付款凭证已审核通过，补交 ${Number(proof.adjustment_amount || 0).toFixed(2)} AUD。`, orderId: order.id })
+    await createAuditLog(c, { actor: user, action: 'PRICE_ADJUSTMENT_PAYMENT_APPROVED', targetType: 'ORDER_PRICE_ADJUSTMENT', targetId: proof.adjustment_id, after: { orderId: order.id, reference: proof.reference_number } })
+    return c.redirect('/admin/exceptions')
+  }
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
     c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
   ])
+  await ensureContractForOrder(c, order, user.id)
   await recordDeviceLifecycle(c, order.deviceId, 'RESERVED', { orderId: order.id, reason: '付款凭证审核通过', changedBy: user.id })
   await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(order.id).run()
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
@@ -3411,6 +3499,9 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   const refundText = String(form.refundAmount ?? '').trim()
   const refundAmount = Number(refundText)
   const depositAmount = Number(order.depositAmount || 0)
+  const pendingPriceRefund = Number((await c.env.RENT.prepare("SELECT COALESCE(SUM(amount), 0) AS amount FROM order_price_adjustments WHERE order_id = ? AND direction = 'decrease' AND status = 'succeeded' AND refund_method = 'pending_deposit' AND deposit_refunded = 0").bind(order.id).first() as any)?.amount || 0)
+  const remainingDepositRefund = Number((await c.env.RENT.prepare("SELECT COALESCE(SUM(refund_amount), 0) AS amount FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded'").bind(order.id).first() as any)?.amount || 0)
+  const maxRefundAmount = Number((Math.max(0, depositAmount - remainingDepositRefund) + pendingPriceRefund).toFixed(2))
   const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
   let deductionAmount = 0
   if (isSetupIntentDeposit) {
@@ -3418,8 +3509,10 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
     deductionAmount = Number(deductionText)
     if (!/^\d+(\.\d{1,2})?$/.test(deductionText) || !Number.isFinite(deductionAmount) || deductionAmount < 0 || deductionAmount > depositAmount) return c.text('扣款金额无效：不能高于押金金额', 400)
   } else {
-    if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > depositAmount) return c.text('退款金额无效：不能高于押金金额', 400)
-    deductionAmount = Number((depositAmount - refundAmount).toFixed(2))
+    if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > maxRefundAmount || (pendingPriceRefund > 0 && refundAmount < pendingPriceRefund)) return c.text(`退款金额无效：本次应至少包含差价 ${pendingPriceRefund.toFixed(2)} AUD，最多可退 ${maxRefundAmount.toFixed(2)} AUD`, 400)
+    const includedPriceRefund = Math.min(pendingPriceRefund, refundAmount)
+    const depositRefundAmount = Number((refundAmount - includedPriceRefund).toFixed(2))
+    deductionAmount = Number((depositAmount - depositRefundAmount).toFixed(2))
   }
   const deductionCategory = String(form.deductionCategory || '').trim()
   const deductionReason = String(form.deductionReason || '').trim()
@@ -3427,7 +3520,7 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   if (!['balance', 'original', 'bank_transfer'].includes(refundMethod)) return c.text('退款方式无效', 400)
   if (deductionAmount > 0 && !['DAMAGE', 'MISSING_ACCESSORY', 'LATE_FEE', 'DEVICE_NOT_RETURNED', 'OTHER'].includes(deductionCategory)) return c.text('请选择有效的押金扣款类别', 400)
   if (deductionAmount > 0 && !deductionReason) return c.text('扣除押金时必须填写原因', 400)
-  const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, refundAmount: isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
+  const snapshot = { orderId: order.id, orderNo: order.orderNo, customerId: order.userId, depositAmount, pendingPriceRefund, refundAmount: isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionCategory: deductionAmount ? deductionCategory : null, deductionReason: deductionAmount ? deductionReason : null, refundMethod, requestedAt: new Date().toISOString(), requestedBy: user.id }
   const settlementId = `dst-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),

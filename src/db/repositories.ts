@@ -59,11 +59,14 @@ export function normalizeUserRow(row: any): User {
   const deletionRequestedAt = row.deletionRequestedAt ?? row.deletion_requested_at ?? null
   const deletionScheduledAt = row.deletionScheduledAt ?? row.deletion_scheduled_at ?? null
   const identityStatus = row.identityStatus ?? row.identity_status ?? null
+  const stripeCustomerId = row.stripeCustomerId ?? row.stripe_customer_id ?? null
 
   return {
     ...row,
     identityStatus,
     identity_status: identityStatus,
+    stripeCustomerId,
+    stripe_customer_id: stripeCustomerId,
     account_number,
     accountNumber,
     commissionBalance,
@@ -150,7 +153,7 @@ function normalizeOrderRow(orderRow: any): Order {
   } as Order
 }
 
-function normalizeContractRow(contractRow: any): Contract {
+export function normalizeContractRow(contractRow: any): Contract {
   if (!contractRow) return null as any
 
   const validFrom = contractRow.validFrom ?? contractRow.valid_from
@@ -570,6 +573,12 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
   }
 
   return null
+}
+
+export async function getOrderByOrderNo(c: Context, orderNo: string): Promise<Order | null> {
+  const db = getDB(c)
+  const orderRow = await db.prepare('SELECT * FROM orders WHERE UPPER(orderNo) = ?').bind(orderNo.toUpperCase()).first()
+  return orderRow ? normalizeOrderRow(orderRow) : null
 }
 
 export async function getOrders(c?: Context): Promise<Order[]> {

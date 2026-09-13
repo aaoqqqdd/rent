@@ -53,6 +53,17 @@ test('reconciliation passes for a clean single-source order', () => {
   assert.equal(r.refundedTotal, 120)
 })
 
+test('reconciliation excludes card processing fee from component split', () => {
+  const r = evaluatePaymentReconciliation({
+    payments: [{ id: 'p-card', amount: 51.25, processing_fee: 1.25, status: 'paid' }],
+    paymentAllocations: [{ payment_id: 'p-card', amount: 50 }],
+    refunds: [],
+    refundAllocations: [],
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.errors.length, 0)
+})
+
 test('reconciliation flags over-refund, orphan allocation and unallocated refund', () => {
   const r = evaluatePaymentReconciliation({
     payments: [{ id: 'p1', amount: 100, status: 'paid' }],

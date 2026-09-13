@@ -5,7 +5,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan } from '../src/site'
+import { orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan, formatOrderChangeActor } from '../src/site'
 
 const baseOrder = {
   deviceId: 'd-1',
@@ -102,4 +102,10 @@ test('LOCATION_CHANGE validates delivery method and detects no-op edits', () => 
 
 test('unknown change type is rejected', () => {
   assert.deepEqual(buildOrderChangePlan('WHATEVER', orderChangeSnapshot(baseOrder), {}), { error: '不支持的订单修改类型' })
+})
+
+test('formatOrderChangeActor shows name and user id', () => {
+  assert.equal(formatOrderChangeActor('张三', 'AD-00000001'), '张三（AD-00000001）')
+  assert.equal(formatOrderChangeActor('', 'AD-00000001'), 'AD-00000001')
+  assert.equal(formatOrderChangeActor(null, null), '—')
 })

@@ -10,7 +10,7 @@ export function renderForgotPassword(message?: string) {
     <div class="page-centered">
       <div class="panel" style="width: 480px; text-align: center;">
         <div style="margin-bottom: 24px;">
-          <img src="/public/logo.svg" alt="Logo" style="width: 64px; height: 64px;"/>
+          <img src="/favicon.svg" alt="PC Rental" style="width: 64px; height: 64px;"/>
           <h2 style="margin-top: 12px;">找回密码</h2>
         </div>
         ${message ? `<div class="page-notification page-notification--info">${message}</div>` : ''}

@@ -5,7 +5,7 @@
 
 const ORDER_TRANSITIONS: Record<string, string[]> = {
   pending_approval: ['approved', 'awaiting_signature', 'cancelled'],
-  approved: ['pending_payment', 'paid', 'cancelled'],
+  approved: ['pending_payment', 'paid', 'pending_pickup', 'active', 'cancelled'],
   draft: ['pending_payment', 'cancelled'],
   pending_payment: ['paid', 'cancelled'],
   paid: ['pending_pickup', 'active', 'cancelled'],

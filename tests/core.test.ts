@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import styles from '../src/styles.css'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getCustomerSigningUser } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getContractCustomerSnapshot } from '../src/site'
 import { generateWindowsPassword } from '../src/lib/password'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
@@ -20,16 +20,18 @@ import { renderAdminDeviceEdit } from '../src/pages/admin/deviceEdit'
 import { renderStaffCustomerNew } from '../src/pages/staff/customerNew'
 import { renderRegister } from '../src/pages/public/register'
 import { renderNewContractPage } from '../src/pages/staff/newContract'
+import { renderAdminOrderReview } from '../src/pages/admin/orderReview'
 import { renderStaffContracts } from '../src/pages/staff/contracts'
 import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
 import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
-import { allocateProportionalRefund, refundableDepositFee, stripeCheckoutItems, stripePaymentAmounts } from '../src/actions/stripePayments'
+import { allocateProportionalRefund, refundableDepositFee, stripeAuthorizationAmount, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile, summarizeOrderPriceAdjustment, resolveOrderPriceAdjustmentRefundMethod } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
+import { renderStaffInspection } from '../src/pages/staff/inspection'
 import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
 
@@ -52,6 +54,14 @@ test('only customer accounts are treated as contract signers', () => {
   const customer = { id: 'customer-1', name: '真实客户', role: 'CUSTOMER' }
   assert.equal(getCustomerSigningUser(staff as any), null)
   assert.equal(getCustomerSigningUser(customer as any), customer)
+})
+
+test('Stripe customer profile uses the real customer identity', () => {
+  const profile = stripeCustomerProfile({ id: 'customer-1', name: '真实客户', email: 'customer@example.com', phone: '+61412345678' })
+  assert.equal(profile.get('name'), '真实客户')
+  assert.equal(profile.get('email'), 'customer@example.com')
+  assert.equal(profile.get('phone'), '+61412345678')
+  assert.equal(profile.get('metadata[user_id]'), 'customer-1')
 })
 
 test('new account passwords require letters, numbers, symbols, and eight characters', () => {
@@ -158,6 +168,28 @@ test('order numbers are created once after payment with the public reference for
   assert.equal(await ensureOrderNumber(context, 'o1', 'pi_different'), generated)
 })
 
+test('return inspection is available for every active rental status', async () => {
+  const statuses = ['active', 'extended', 'overdue', 'suspended', 'pending_return']
+  for (const status of statuses) {
+    const db = {
+      prepare(sql: string) {
+        const statement = {
+          bind() { return this },
+          async first() {
+            if (sql.includes('FROM orders')) return { id: 'o1', userId: 'u1', deviceId: 'd1', status, totalAmount: 100, depositAmount: 50, startDate: '2026-09-01', endDate: '2026-09-10' }
+            if (sql.includes('FROM devices')) return { id: 'd1', name: '测试设备', pricePerDay: 10, depositAmount: 50 }
+            return null
+          },
+        }
+        return statement
+      },
+    }
+    const html = await renderStaffInspection({ env: { RENT: db } } as any, { id: 'staff-1', role: 'STAFF', name: 'Staff' }, 'o1')
+    assert.match(html, /<h2>归还验机<\/h2>/)
+    assert.doesNotMatch(html, /当前订单不能执行归还验机/)
+  }
+})
+
 test('order updates never bind undefined values into D1', async () => {
   let bound: unknown[] = []
   let preparedSql = ''
@@ -202,19 +234,25 @@ test('saved customer bank details prefill an editable bank refund form', () => {
 })
 
 test('contract signing progress renders readable step labels and one current step', () => {
-  const html = renderSigningProgress(2)
-  assert.match(html, /signing-step--complete[^>]*>[\s\S]*同意协议/)
-  assert.match(html, /signing-step--current" aria-current="step"[\s\S]*确认资料/)
-  assert.match(html, /signing-step--upcoming[^>]*>[\s\S]*选择支付/)
-  assert.equal((html.match(/aria-current="step"/g) || []).length, 1)
-  assert.doesNotMatch(html, /\*\*/)
+  const websiteHtml = renderSigningProgress(2, false)
+  assert.match(websiteHtml, /signing-step--complete[^>]*>[\s\S]*同意协议/)
+  assert.match(websiteHtml, /signing-step--current" aria-current="step"[\s\S]*填写资料并完成签署/)
+  assert.doesNotMatch(websiteHtml, /选择支付|付款方式/)
+  assert.equal((websiteHtml.match(/aria-current="step"/g) || []).length, 1)
+  const staffSigningHtml = renderSigningProgress(2)
+  assert.match(staffSigningHtml, /signing-step--current" aria-current="step"[\s\S]*填写资料并签署/)
+  const staffPaymentHtml = renderSigningProgress(3)
+  assert.match(staffPaymentHtml, /signing-step--current" aria-current="step"[\s\S]*选择支付/)
+  assert.doesNotMatch(websiteHtml, /\*\*/)
 })
 
 test('Stripe adds 2.5% to rent and service fees while excluding the deposit', () => {
+  assert.deepEqual(stripePaymentAmounts(220, 200), { baseCents: 2000, feeCents: 50, chargedCents: 2050 })
   assert.deepEqual(stripePaymentAmounts(1100), { baseCents: 110000, feeCents: 2750, chargedCents: 112750 })
   assert.deepEqual(stripePaymentAmounts(99.99), { baseCents: 9999, feeCents: 250, chargedCents: 10249 })
   assert.deepEqual(stripePaymentAmounts(1100, 1000), { baseCents: 10000, feeCents: 250, chargedCents: 10250 })
   assert.deepEqual(stripePaymentAmounts(1100, 1000, 50), { baseCents: 10000, feeCents: 250, chargedCents: 10250 })
+  assert.equal(stripeAuthorizationAmount(220, 200), 22050)
 })
 
 test('rental length selects preauthorization or SetupIntent deposit handling', () => {
@@ -246,6 +284,25 @@ test('Stripe checkout contains rent and processing fee but no deposit', () => {
   ])
 })
 
+test('price adjustment summary exposes only the unpaid increase and tracks transfer refunds for deposit settlement', () => {
+  const order = { totalAmount: 120, depositAmount: 20, paymentMethod: 'bank_transfer', status: 'active' }
+  const payments = [{ amount: 110, rental_amount: 110, deposit_amount: 0, processing_fee: 0, status: 'paid' }]
+  const decrease = summarizeOrderPriceAdjustment(order, payments, [{ direction: 'decrease', status: 'succeeded', amount: 10, refund_method: 'pending_deposit', deposit_refunded: 0 }])
+  assert.equal(decrease.amountDue, 0)
+  assert.equal(decrease.pendingDepositRefund, 10)
+  const increase = summarizeOrderPriceAdjustment({ ...order, totalAmount: 130 }, payments, [{ direction: 'decrease', status: 'succeeded', amount: 10, refund_method: 'pending_deposit', deposit_refunded: 0 }])
+  assert.equal(increase.amountDue, 0)
+})
+
+test('price adjustment refund selection is applied to the appropriate channel', () => {
+  const card = { payment_method: 'card', stripe_payment_intent_id: 'pi_123' }
+  assert.equal(resolveOrderPriceAdjustmentRefundMethod('original', 'card', card), 'stripe')
+  assert.equal(resolveOrderPriceAdjustmentRefundMethod('balance', 'card', card), 'balance')
+  assert.equal(resolveOrderPriceAdjustmentRefundMethod('pending_deposit', 'bank_transfer', null), 'pending_deposit')
+  assert.throws(() => resolveOrderPriceAdjustmentRefundMethod('pending_deposit', 'card', card), /转账类订单/)
+  assert.throws(() => resolveOrderPriceAdjustmentRefundMethod('original', 'card', null), /Stripe 信用卡付款记录/)
+})
+
 test('payment results distinguish Stripe, bank transfer, and immediate balance payment', () => {
   assert.equal(paymentResultState({ paymentMethod: 'card', status: 'pending_payment' }, { status: 'pending' }), 'stripe_pending')
   assert.equal(paymentResultState({ paymentMethod: 'bank_transfer', status: 'pending_payment' }, { status: 'pending' }), 'bank_pending')
@@ -275,6 +332,24 @@ test('all registered contract variables render without leftovers', () => {
   const template = names.map(name => `\${${name}}`).join('|')
   const result = renderContractVariables(template, { id: 'c', rentalId: 'o', contractNumber: 'CN1', content: template, signedAt: null, status: 'signed', contract_data: values }, {}, {}, {}, values, true)
   assert.equal(result.includes('${'), false)
+})
+
+test('website contract customer identity uses the locked snapshot over account data', () => {
+  const contract = {
+    id: 'c', rentalId: 'o', contractNumber: 'CN1', content: '', signedAt: null, status: 'signed',
+    contract_data: JSON.stringify({
+      customer_name: '网站填写姓名',
+      customer_email: 'website@example.com',
+      customer_phone: '+61412345678',
+      customer_identity_locked_at: '2026-09-13T01:02:03.000Z',
+    }),
+  } as any
+  assert.deepEqual(getContractCustomerSnapshot(contract), {
+    name: '网站填写姓名', email: 'website@example.com', phone: '+61412345678', lockedAt: '2026-09-13T01:02:03.000Z',
+  })
+  assert.equal(renderContractVariables('{customer_name}|{customer_email}|{customer_phone}', contract, {}, {}, {
+    name: '账号姓名', email: 'account@example.com', phone: '+8613800000000',
+  }, { customer_name: '其他姓名' }, true), '网站填写姓名|website@example.com|+61412345678')
 })
 
 test('contract ID number is masked for internal viewers unless sensitive reveal is on', () => {
@@ -441,9 +516,10 @@ test('user management forms use the shared identity record design', async () => 
 test('admin device forms edit every field used by staff device search', () => {
   const user = { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }
   const newHtml = renderAdminDeviceNew(user)
-  for (const field of ['name', 'brand', 'model', 'assetTag', 'serialNumber', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'weeklyDiscountPercent', 'monthlyDiscountPercent']) {
+  for (const field of ['name', 'brand', 'model', 'serialNumber', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'weeklyDiscountPercent', 'monthlyDiscountPercent']) {
     assert.match(newHtml, new RegExp(`name="${field}"`))
   }
+  assert.match(newHtml, /id="assetTag"/)
   const editHtml = renderAdminDeviceEdit(user, { id: 'd1', name: 'MacBook Pro', brand: 'Apple', model: 'A2918', asset_tag: 'RENT-001', serialNumber: 'SN1', cpu: 'M3 Pro', ram: '18GB', storage: '512GB SSD', gpu: '18-core', os: 'macOS 15', description: '14 inch', pricePerDay: 50, depositAmount: 1000, weekly_discount_percent: 10, monthly_discount_percent: 20, status: 'available' })
   for (const expected of ['Apple', 'RENT-001', 'M3 Pro', '18GB', '512GB SSD', '18-core', 'macOS 15']) assert.match(editHtml, new RegExp(expected))
   assert.match(editHtml, /name="weeklyDiscountPercent"[^>]*value="10"/)
@@ -480,6 +556,27 @@ test('new contract delivery form emits valid autocomplete JavaScript', async () 
   assert.match(adminHtml, /id="booking-calendar"/)
   assert.match(adminHtml, /selectBookingDate/)
   assert.doesNotMatch(html, /GOOGLE_MAPS_API_KEY/)
+})
+
+test('website order review requires a delivery fee for delivery orders', async () => {
+  const context = {
+    env: {
+      RENT: {
+        prepare() {
+          return {
+            async all() {
+              return { results: [{ id: 'order-1', startDate: '2026-10-01', endDate: '2026-10-03', totalAmount: 800, depositAmount: 500, deliveryMethod: 'Delivery', deliveryFee: 0, createdAt: '2026-09-13T00:00:00.000Z', customerName: '客户', customerEmail: 'customer@example.com', accountType: 'formal', deviceName: 'MacBook', deviceCategory: '电脑' }] }
+            }
+          }
+        }
+      }
+    }
+  } as any
+  const html = await renderAdminOrderReview(context, { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' })
+  assertInlineScriptsParse(html)
+  assert.match(html, /name="deliveryMethod"/)
+  assert.match(html, /name="deliveryFee"[^>]*required/)
+  assert.match(html, /送货订单必须填写配送费/)
 })
 
 test('admin rental calendar filters all devices or a single device', async () => {
@@ -529,7 +626,7 @@ test('staff contract lists exclude contracts created by other employees', async 
     users: [{ id: 'staff-1', name: 'Staff One', role: 'STAFF' }, { id: 'u-own', name: 'Own Customer', role: 'CUSTOMER' }, { id: 'u-other', name: 'Other Customer', role: 'CUSTOMER' }],
     devices: [{ id: 'd1', name: 'Laptop' }],
   }
-  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
+  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { bind() { return this }, async all() { return { results: rows[table] || [] } } } } }
   const html = await renderStaffContracts({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff One', role: 'STAFF' })
   assert.match(html, /OWN-CONTRACT/)
   assert.doesNotMatch(html, /OTHER-CONTRACT/)
@@ -563,7 +660,7 @@ test('terminal contracts hide progress and editing while only finalized contract
     orders: ['o1', 'o2', 'o3'].map(id => ({ id, userId: 'u1', deviceId: 'd1', status: 'active', startDate: '2026-08-01', endDate: '2026-08-02' })),
     users: [{ id: 'staff-1', name: 'Staff', role: 'STAFF' }, { id: 'u1', name: 'Customer', role: 'CUSTOMER' }], devices: [{ id: 'd1', name: 'Laptop' }],
   }
-  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
+  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { bind() { return this }, async all() { return { results: rows[table] || [] } } } } }
   const html = await renderStaffContracts({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff', email: 'staff@example.com', role: 'STAFF' }, 'completed')
   assert.match(html, /COMPLETED/)
   assert.match(html, /contract\/view\/ct-completed/)
@@ -588,7 +685,7 @@ test('staff ongoing orders are read-only and limited to assigned customers', asy
     users: [{ id: 'own-customer', name: 'Own', staff_id: 'staff-1' }, { id: 'other-customer', name: 'Other', staff_id: 'staff-2' }],
     devices: [{ id: 'd1', name: 'Laptop' }],
   }
-  const db = { prepare(sql: string) { const table = /FROM\s+(orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
+  const db = { prepare(sql: string) { const table = /FROM\s+(orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { bind() { return this }, async all() { return { results: rows[table] || [] } } } } }
   const html = await renderStaffOrdersOngoing({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff', email: 'staff@example.com', role: 'STAFF' })
   assert.match(html, /OWN-1/)
   assert.doesNotMatch(html, /OTHER-1|REVIEW-1/)

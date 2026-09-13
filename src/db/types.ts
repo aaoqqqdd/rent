@@ -20,6 +20,8 @@ export interface User {
   accessLevel?: AccessLevel
   access_level?: AccessLevel
   phone?: string
+  stripe_customer_id?: string | null
+  stripeCustomerId?: string | null
   bsb?: string
   account?: string
   account_number?: string

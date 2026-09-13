@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getContractById, getOrderById, getUserById, formatMelbourneDateTime } from '../../site';
+import { buildLayout, getContractById, getOrderById, getUserById, formatMelbourneDateTime, sanitizePlainText } from '../../site';
 import { Context } from 'hono';
 
 export async function renderStaffContractProgress(c: Context, user: any, contractId: string) {
@@ -19,9 +19,8 @@ export async function renderStaffContractProgress(c: Context, user: any, contrac
   const customer = order ? await getUserById(c, order.userId) : null;
   const signLink = new URL(`/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1`, c.req.url).toString().replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 
-  // 客户信息脱敏处理
-  const maskedCustomerName = customer ? `${customer.name.charAt(0)}**` : '未知';
-  const maskedCustomerEmail = customer ? `${customer.email.substring(0, 3)}***@***.com` : '未知';
+  const customerName = customer ? sanitizePlainText(customer.name, 200) : '未知';
+  const customerEmail = customer ? sanitizePlainText(customer.email, 254) : '未知';
 
   const body = `
     <div class="page-header"><div><p class="section-code">SIGNING STATUS</p><h2>合同签署进度</h2><p>合同 ${contract.contractNumber} 的签署状态与客户交付链接。</p></div><a class="button button-secondary" href="/staff/contracts">返回合同管理</a></div>
@@ -40,9 +39,9 @@ export async function renderStaffContractProgress(c: Context, user: any, contrac
       </div>
 
       <div class="contract-section">
-        <h4>客户信息 (脱敏)</h4>
-        <p>姓名: ${maskedCustomerName}</p>
-        <p>邮箱: ${maskedCustomerEmail}</p>
+        <h4>客户信息</h4>
+        <p>姓名: ${customerName}</p>
+        <p>邮箱: ${customerEmail}</p>
       </div>
 
       ${contract.status === 'pending_sign' ? `<div class="contract-section">

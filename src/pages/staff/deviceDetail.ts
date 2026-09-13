@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getDeviceById, formatCurrency, getOrders, getUsers } from '../../site';
+import { buildLayout, getDeviceById, formatCurrency, getOrders, getUsers, staffOrderPath } from '../../site';
 import { Context } from 'hono';
 
 export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: string) {
@@ -45,7 +45,7 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
           <table class="table"><thead><tr><th>订单号</th><th>客户</th><th>租期</th><th>状态</th><th>操作</th></tr></thead><tbody>
             ${orders.map((order) => {
               const customer = usersData.find(u => u.id === order.userId)
-              return `<tr><td>${order.orderNo}</td><td>${customer?.name ?? 'N/A'}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${order.status}</td><td><a class="link-button" href="/staff/orders/${order.id}">查看订单</a></td></tr>`
+              return `<tr><td>${order.orderNo}</td><td>${customer?.name ?? 'N/A'}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${order.status}</td><td><a class="link-button" href="${staffOrderPath(order)}">查看订单</a></td></tr>`
             }).join('')}
           </tbody></table>
         </div>

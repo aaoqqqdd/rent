@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, reconcileOrderPayments } from '../../site'
+import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, ensureContractForOrder, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, formatOrderChangeActor, reconcileOrderPayments } from '../../site'
 import { renderReconciliationPanel } from '../partials/reconciliationPanel'
 import type { Context } from 'hono'
 
@@ -16,9 +16,10 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   }
   const customer = await getUserById(c, order.userId)
   if (user.role !== 'ADMIN' && customer?.staffId !== user.id) {
-    return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2><p>员工只能查看自己名下客户的订单。</p></div>', user)
+    return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2></div>', user)
   }
-  const [device, contract, timeChanges, changeHistory] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT change_type, before_json, after_json, reason, changed_by, created_at FROM order_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all()])
+  const [device, existingContract, timeChanges, changeHistory] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT h.change_type, h.before_json, h.after_json, h.reason, h.changed_by, h.created_at, u.name AS changed_by_name FROM order_change_history h LEFT JOIN users u ON u.id = h.changed_by WHERE h.order_id = ? ORDER BY h.created_at DESC LIMIT 20').bind(order.id).all()])
+  const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
     c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
@@ -47,21 +48,23 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         <div class="order-info-card order-actions-card">
           <h3>操作</h3>
           ${['STAFF', 'ADMIN'].includes(user.role) && order.status === 'pending_approval' ? `
-            <form method="POST" action="/staff/orders/${order.id}/approve" style="margin-bottom: 10px;">
+            <form method="POST" action="/staff/orders/${order.id}/approve" class="order-approval-form" style="margin-bottom: 10px;">
+              <label class="form-label" for="order-delivery-method">交付方式</label>
+              <select id="order-delivery-method" name="deliveryMethod" class="form-control"><option value="Pickup" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? '' : 'selected'}>客户自取</option><option value="Delivery" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? 'selected' : ''}>送货上门</option></select>
+              <div id="order-delivery-fee-field" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? '' : 'hidden'}><label class="form-label" for="order-delivery-fee">配送费（AUD）</label><input id="order-delivery-fee" name="deliveryFee" class="form-control" type="number" min="0" step="0.01" value="${Number(order.deliveryFee || 0).toFixed(2)}" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? 'required' : 'disabled'} placeholder="请输入配送费"></div>
               <button class="button button-primary" type="submit">批准订单</button>
             </form>
             <form method="POST" action="/staff/orders/${order.id}/reject">
               <button class="button button-danger" type="submit">拒绝订单</button>
             </form>
           ` : ''}
-          ${order.status === 'approved' && !contract ? `<a class="button button-primary" href="/staff/contracts/new">前往新建合同</a>` : ''}
           ${order.status === 'pending_payment' ? `
             <p class="alert">银行转账需由管理员审核客户提交的 Reference 后确认付款。</p>
           ` : ''}
-          ${order.status === 'paid' ? `<button class="button button-primary" type="button" id="open-handover-dialog">记录交付并开始租赁</button>` : ''}
+          ${(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && contract?.status === 'signed')) ? `<button class="button button-primary" type="button" id="open-handover-dialog">记录交付并开始租赁</button>` : ''}
           ${order.status === 'active' && order.early_return_requested_at ? `<div class="alert">客户已申请提前归还，等待审批。<form method="post" action="/staff/orders/${order.id}/early-return/approve" style="display:inline;margin-left:12px" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-sm button-warning" type="submit">批准提前归还</button></form></div>` : ''}
           ${['active', 'extended', 'overdue'].includes(String(order.status)) ? `<form method="POST" action="/staff/orders/${order.id}/suspend" data-site-confirm="确认暂停这笔租赁吗？"><button class="button button-warning" type="submit">暂停租赁</button><small class="form-text">仅绑定该客户的员工或管理员可以操作。</small></form>` : ''}
-          ${['active', 'pending_return'].includes(String(order.status)) ? `
+          ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `
             <a class="button button-success" href="/staff/orders/${order.id}/inspection">设备归还 / 归还验机</a>
           ` : ''}
           ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
@@ -81,7 +84,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         try { after = JSON.parse(item.after_json || '{}') } catch (_) {}
         const diffs = diffOrderSnapshots(before, after)
         const detail = diffs.length ? diffs.map(d => `<div>${esc(d.label)}：<span class="mono">${esc(String(d.before ?? '—'))}</span> → <strong class="mono">${esc(String(d.after ?? '—'))}</strong></div>`).join('') : '—'
-        return `<tr><td class="mono">${esc(formatMelbourneDateTime(item.created_at))}</td><td>${esc(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${esc(item.reason || '—')}</td><td class="mono">${esc(item.changed_by || '—')}</td></tr>`
+        return `<tr><td class="mono">${esc(formatMelbourneDateTime(item.created_at))}</td><td>${esc(ORDER_CHANGE_TYPE_LABELS[item.change_type] || item.change_type)}</td><td>${detail}</td><td>${esc(item.reason || '—')}</td><td>${esc(formatOrderChangeActor(item.changed_by_name, item.changed_by))}</td></tr>`
       }).join('')}</tbody></table></div></section>` : ''}
 
       ${renderReconciliationPanel({ reconciliation, paymentSources, refundRows }, { readOnly: true, margin: '20px 0 0' })}
@@ -90,7 +93,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         <div class="section-title order-section-heading" style="margin-top: 24px;"><h3>合同详情 #${contract.contractNumber || '待生成'}</h3><span class="section-note">查看合同状态、签署记录和正式合同文件。</span></div>
         <div class="contract-detail-meta"><span><small>合同状态</small><strong>${contract.status === 'signed' || contract.status === 'completed' ? '已签署' : contract.status === 'pending_sign' ? '待签署' : contract.status}</strong></span><span><small>签署时间（墨尔本）</small><strong>${formatMelbourneDateTime(contract.signedAt) || '尚未签署'}</strong></span><span><small>有效期</small><strong>${contract.validFrom || order.startDate} 至 ${contract.validUntil || order.endDate}</strong></span></div>
         <div class="contract-actions" style="margin-bottom: 16px; display: flex; gap: 12px;">
-          ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}?from=order" target="_blank">查看/下载合同</a>` : '<span class="section-note">正式合同将在客户完成签署后开放。</span>'}
+          ${contract.status === 'signed' ? `<a class="button" href="/contract/view/${contract.id}?from=order" target="_blank">查看/下载合同</a>` : contract.status === 'pending_sign' ? `<a class="button button-primary" href="/contract/sign?token=${encodeURIComponent(contract.signToken || '')}&step=1" target="_blank">打开签约链接</a>` : '<span class="section-note">正式合同将在客户完成签署后开放。</span>'}
           ${contractExpired ? '<span class="badge danger">已过期</span>' : contract.status === 'signed' ? `<span class="badge success">已签署</span>` : `<span class="badge warning-badge">${contract.status === 'pending_sign' ? '待签署' : '草稿'}</span>`}
         </div>
       ` : '<p style="margin-top: 24px;">暂无相关租赁合同。</p>'}
@@ -98,18 +101,20 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
       ${order.status === 'pending_payment' ? `
         <div class="section-title" style="margin-top: 24px;"><h3>支付信息</h3></div>
         <div class="payment-options" style="display: flex; gap: 20px; margin-top: 16px;">
-          <div class="payment-card">
+          ${order.paymentMethod === 'bank_transfer' ? `<div class="payment-card">
             <h4>银行转账</h4>
             <p><strong>银行名称:</strong> ${systemSettings.bankDetails.bankName || '—'}</p>
             <p><strong>BSB:</strong> ${systemSettings.bankDetails.bsb}</p>
             <p><strong>账号:</strong> ${systemSettings.bankDetails.account}</p>
             <p>客户需转账 ${formatCurrency(order.totalAmount)} 到以上账户。</p>
-          </div>
-          ${systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : ''}
+          </div>` : ''}
+          ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p>客户需扫码支付并提交付款凭证等待审核。</p></div>` : ''}
+          ${order.paymentMethod === 'card' || !order.paymentMethod ? (systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : '') : ''}
         </div>
       ` : ''}
     </div>
-    ${order.status === 'paid' ? `<dialog id="handover-dialog" class="panel" style="max-width:680px;width:calc(100% - 32px)"><form id="handover-form"><div class="section-title"><h2>交付设备</h2><button class="button button-secondary" type="button" id="close-handover-dialog">关闭</button></div><p class="section-note">确认设备、配件和客户核对后，订单将进入租赁中。</p><div id="handover-error" class="page-notification page-notification--error" hidden></div><div class="grid grid-2"><div><label class="form-label">设备</label><input class="form-control" value="${device?.name || order.deviceId}" readonly></div><div><label class="form-label">设备序列号</label><input class="form-control" name="deviceSerialNumber" value="${device?.serialNumber || ''}" required></div></div><label class="form-label">交付配件</label><textarea class="form-control" name="accessories" required maxlength="1000" placeholder="例如：电源适配器、充电线、电脑包"></textarea><label class="form-label">设备状态与备注</label><textarea class="form-control" name="conditionNotes" required maxlength="2000" placeholder="例如：外观正常，屏幕无划痕"></textarea><label class="form-check"><input type="checkbox" name="customerConfirmed" value="1" required> 客户已当场核对设备序列号、配件及状态</label><label class="form-label">客户确认姓名</label><input class="form-control" name="customerConfirmationName" value="${customer?.name || ''}" required maxlength="120"><div class="record-actions"><button class="button button-primary" type="submit">确认交付并开始租赁</button></div></form></dialog><script>(()=>{const dialog=document.getElementById('handover-dialog'),open=document.getElementById('open-handover-dialog'),close=document.getElementById('close-handover-dialog'),form=document.getElementById('handover-form'),error=document.getElementById('handover-error');open?.addEventListener('click',()=>dialog.showModal());close?.addEventListener('click',()=>dialog.close());form?.addEventListener('submit',async event=>{event.preventDefault();error.hidden=true;const response=await fetch('/staff/orders/${order.id}/pickup',{method:'POST',headers:{Accept:'application/json'},body:new FormData(form)});const data=await response.json().catch(()=>({message:'交付保存失败'}));if(!response.ok||!data.success){error.textContent=data.message||'交付保存失败';error.hidden=false;return;}location.href=data.redirect||location.href;});})();</script>` : ''}
+    ${(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && contract?.status === 'signed')) ? `<dialog id="handover-dialog" class="panel" style="max-width:680px;width:calc(100% - 32px)"><form id="handover-form"><div class="section-title"><h2>交付设备</h2><button class="button button-secondary" type="button" id="close-handover-dialog">关闭</button></div><p class="section-note">确认设备、配件和客户核对后，订单将进入租赁中。</p><div id="handover-error" class="page-notification page-notification--error" hidden></div><div class="grid grid-2"><div><label class="form-label">设备</label><input class="form-control" value="${device?.name || order.deviceId}" readonly></div><div><label class="form-label">设备序列号</label><input class="form-control" name="deviceSerialNumber" value="${device?.serialNumber || ''}" required></div></div><label class="form-label">交付配件</label><textarea class="form-control" name="accessories" required maxlength="1000" placeholder="例如：电源适配器、充电线、电脑包"></textarea><label class="form-label">设备状态与备注</label><textarea class="form-control" name="conditionNotes" required maxlength="2000" placeholder="例如：外观正常，屏幕无划痕"></textarea><label class="form-check"><input type="checkbox" name="customerConfirmed" value="1" required> 客户已当场核对设备序列号、配件及状态</label><label class="form-label">客户确认姓名</label><input class="form-control" name="customerConfirmationName" value="${customer?.name || ''}" required maxlength="120"><div class="record-actions"><button class="button button-primary" type="submit">确认交付并开始租赁</button></div></form></dialog><script>(()=>{const dialog=document.getElementById('handover-dialog'),open=document.getElementById('open-handover-dialog'),close=document.getElementById('close-handover-dialog'),form=document.getElementById('handover-form'),error=document.getElementById('handover-error');open?.addEventListener('click',()=>dialog.showModal());close?.addEventListener('click',()=>dialog.close());form?.addEventListener('submit',async event=>{event.preventDefault();error.hidden=true;const response=await fetch('/staff/orders/${order.id}/pickup',{method:'POST',headers:{Accept:'application/json'},body:new FormData(form)});const data=await response.json().catch(()=>({message:'交付保存失败'}));if(!response.ok||!data.success){error.textContent=data.message||'交付保存失败';error.hidden=false;return;}location.href=data.redirect||location.href;});})();</script>` : ''}
+    <script>(()=>{const form=document.querySelector('.order-approval-form'),method=form?.querySelector('[name="deliveryMethod"]'),fee=form?.querySelector('[name="deliveryFee"]'),field=document.getElementById('order-delivery-fee-field');if(!method||!fee||!field)return;const sync=()=>{const delivery=method.value==='Delivery';field.hidden=!delivery;fee.required=delivery;fee.disabled=!delivery};method.addEventListener('change',sync);sync()})();</script>
   `
   return buildLayout('订单详情 - 电脑租赁管理系统', body, user)
 }

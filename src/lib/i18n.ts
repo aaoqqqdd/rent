@@ -95,6 +95,7 @@ export const languageScript = String.raw`
     return browserLanguages.some(function (language) { return /^en(?:-|$)/i.test(String(language)); }) ? 'en' : 'zh';
   };
   var writeLanguage = function (value) { try { localStorage.setItem(storageKey, value); } catch (_) {} };
+  var cleanChinesePunctuation = function (value) { return String(value || '').replace(/[。；]/g, ''); };
   var translateText = function (value) {
     var text = String(value || '');
     if (!text.trim()) return text;
@@ -126,7 +127,7 @@ export const languageScript = String.raw`
     if (originalTitle) {
       var titleNode = { __rentI18nSource: originalTitle.replace(/ - (?:电脑租赁管理系统|PC Rental)$/, '') };
       var title = sourceFor(titleNode, titleNode.__rentI18nSource);
-      document.title = language === 'en' ? translateText(title) + ' - PC Rental' : originalTitle;
+      document.title = cleanChinesePunctuation(language === 'en' ? translateText(title) + ' - PC Rental' : originalTitle);
     }
     var scope = root || document.body;
     if (!scope) return;
@@ -135,7 +136,7 @@ export const languageScript = String.raw`
     while ((node = walker.nextNode())) {
       if (shouldSkip(node)) continue;
       var source = sourceFor(node, node.nodeValue || '');
-      node.nodeValue = language === 'en' ? translateText(source) : source;
+      node.nodeValue = cleanChinesePunctuation(language === 'en' ? translateText(source) : source);
     }
     scope.querySelectorAll('input[placeholder], textarea[placeholder], [title], [aria-label], input[type="submit"], input[type="button"]').forEach(function (element) {
       ['placeholder', 'title', 'aria-label', 'value'].forEach(function (attribute) {
@@ -143,7 +144,7 @@ export const languageScript = String.raw`
         var value = element.getAttribute(attribute) || '';
         var source = element.getAttribute('data-i18n-' + attribute) || value;
         element.setAttribute('data-i18n-' + attribute, source);
-        element.setAttribute(attribute, language === 'en' ? translateText(source) : source);
+        element.setAttribute(attribute, cleanChinesePunctuation(language === 'en' ? translateText(source) : source));
       });
     });
     document.querySelectorAll('[data-language-label]').forEach(function (button) {

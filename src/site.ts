@@ -5,19 +5,21 @@
 
 import { Context } from 'hono'
 import rawLayoutTemplate from './layout.html'
-import { styleSheetHref } from './lib/assetVersion'
+import { styleSheetHref, appScriptHref, languageScriptHref } from './lib/assetVersion'
 import { nanoid } from 'nanoid'
 
 // 给 styles.css / app.js 链接注入内容指纹版本号，配合 ?v=<hash> 的一年期 immutable 缓存。
 const layoutTemplate = rawLayoutTemplate
   .replace('href="/styles.css"', `href="${styleSheetHref}"`)
+  .replace('src="{{APP_SCRIPT}}"', `src="${appScriptHref}"`)
+  .replace('src="/i18n.js"', `src="${languageScriptHref}"`)
 
 // ---------------------------------------------------------------------------
 // 通用工具函数已拆分到 src/lib/*。这里 import 供本文件内部使用，并在文件内
 // 统一 re-export，让既有 `import { ... } from './site'`（页面 / action / 测试）
 // 保持零改动。
 // ---------------------------------------------------------------------------
-import { generateReferenceNumber, generateContractNumber } from './lib/reference'
+import { generateReferenceNumber, generateContractNumber, splitOrderNo, staffOrderPath } from './lib/reference'
 import {
   sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
   renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
@@ -35,7 +37,7 @@ import { safeJsonParse } from './lib/json'
 import { dispatchChannelAlert } from './notifyChannels'
 
 export {
-  generateReferenceNumber, generateContractNumber,
+  generateReferenceNumber, generateContractNumber, splitOrderNo, staffOrderPath,
   sanitizeRichHtml, sanitizePlainText, neutralizeTemplateTokens,
   renderNotificationMarkdown, renderFlexibleContent, renderEmailNotificationHtml, createPageBreakHtml,
   splitPersonName, combinePersonName, getAvatarInitials,
@@ -46,6 +48,7 @@ export {
   parseCookie,
   generateUserId, generateReferralCode,
   validateHostedImageUrls,
+  formatOrderChangeActor,
 }
 export type { Role, AccessLevel }
 
@@ -60,7 +63,7 @@ export function getCustomerSigningUser(user: User | null | undefined): User | nu
 import { canTransitionOrder } from './domain/orderStatus'
 import {
   ORDER_CHANGE_TYPES, ORDER_CHANGE_TYPE_LABELS,
-  orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan,
+  orderChangeSnapshot, diffOrderSnapshots, buildOrderChangePlan, formatOrderChangeActor,
 } from './domain/orderChanges'
 import type { OrderChangeType, OrderChangePlan } from './domain/orderChanges'
 import {
@@ -148,7 +151,7 @@ import {
   normalizeUserRow, userHasColumn,
   generateUniqueUserId, getUserById, findUserByEmail, verifyUserCredentials, findUserByReferralCode,
   getUsers, getUsersByIds, getUsersAsync, insertUser, updateUser,
-  getOrderById, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
+  getOrderById, getOrderByOrderNo, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
   insertOrder, ensureOrderNumber, updateOrder, updateOrderInDB, hasDeviceBookingConflict,
   getDeviceById, getDeviceBySerialNumber, getDevices, getDevicesByIds, getDevicesAsync,
   insertDevice, updateDevice, deleteDevice, updateDeviceStatus, recordDeviceLifecycle, releaseDeviceIfUnbooked,
@@ -159,7 +162,7 @@ import {
 export {
   generateUniqueUserId, getUserById, findUserByEmail, verifyUserCredentials, findUserByReferralCode,
   getUsers, getUsersByIds, getUsersAsync, insertUser, updateUser,
-  getOrderById, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
+  getOrderById, getOrderByOrderNo, getOrders, getOrdersForUser, getOrdersWithDetailsForUser, getOrdersByIds, getOrdersAsync,
   insertOrder, ensureOrderNumber, updateOrder, updateOrderInDB, hasDeviceBookingConflict,
   getDeviceById, getDeviceBySerialNumber, getDevices, getDevicesByIds, getDevicesAsync,
   insertDevice, updateDevice, deleteDevice, updateDeviceStatus, recordDeviceLifecycle, releaseDeviceIfUnbooked,
@@ -186,6 +189,7 @@ export type { ErrorLevel }
 import { recordBalanceTransaction, recordFinancialLedgerEntry } from './services/ledger'
 import {
   ensureNotificationsTable, createNotification, getNotifications,
+  deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications,
   createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
 } from './services/notifications'
@@ -204,6 +208,7 @@ import { getPendingOrdersWithDetails, getStaffDashboardData } from './services/s
 export {
   recordBalanceTransaction, recordFinancialLedgerEntry,
   ensureNotificationsTable, createNotification, getNotifications,
+  deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications,
   createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
@@ -301,6 +306,7 @@ export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<num
     const changes = Number(result.meta?.changes ?? result.changes ?? 0)
     if (changes > 0) {
       cancelled += changes
+      await c.env.RENT.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign')").bind(order.id).run()
       await c.env.RENT.prepare(`UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND status = 'pending'`).bind(order.id).run()
       await releaseDeviceIfUnbooked(c, order.deviceId)
       const { releaseCouponForOrder } = await import('./actions/coupons')
@@ -582,6 +588,8 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   if (previous?.deviceId && lifecycleStatus) await recordDeviceLifecycle(c, previous.deviceId, lifecycleStatus, { orderId, reason: `订单状态：${status}` })
   await syncReferralOrderState(c, orderId, next.rental)
   if (status === 'cancelled') {
+    // 订单取消时同步作废尚未签署的合同；已签署合同保留原状态和签署记录。
+    await db.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign')").bind(orderId).run()
     // Dynamic import avoids a static circular dependency (actions/coupons.ts imports
     // recordFinancialLedgerEntry from this file).
     const { releaseCouponForOrder } = await import('./actions/coupons')
@@ -642,7 +650,7 @@ export async function markWebhookFailed(c: Context, recordId: string, reason: st
 export async function reconcileOrderPayments(c: Context, orderId: string): Promise<ReconResult> {
   const db = getDB(c)
   const [payments, refunds] = await Promise.all([
-    db.prepare('SELECT id, amount, status FROM payments WHERE rental_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
+    db.prepare('SELECT id, amount, processing_fee, status FROM payments WHERE rental_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
     db.prepare('SELECT id, payment_id, refund_amount, status FROM payment_refunds WHERE order_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
   ])
   const paymentRows = payments as any[]
@@ -961,6 +969,25 @@ export const CONTRACT_VARIABLE_GROUPS = [
 // 完善.md — 普通 STAFF 不得查看完整证件号码。
 export const SENSITIVE_CONTRACT_FIELDS = new Set(['customer_id_number'])
 
+export type ContractCustomerSnapshot = {
+  name: string
+  email: string
+  phone: string
+  lockedAt: string
+}
+
+export function getContractCustomerSnapshot(contract: Pick<Contract, 'contract_data'>): ContractCustomerSnapshot | null {
+  const stored = typeof contract.contract_data === 'string'
+    ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {})
+    : (contract.contract_data || {})
+  const lockedAt = String(stored.customer_identity_locked_at || '').trim()
+  const name = String(stored.customer_name || '').trim()
+  const email = String(stored.customer_email || '').trim()
+  const phone = String(stored.customer_phone || '').trim()
+  if (!lockedAt || !name || !email || !phone) return null
+  return { name, email, phone, lockedAt }
+}
+
 export async function logSensitiveDataAccess(
   c: Context,
   input: { actorId: string; targetUserId: string; field: string; purpose: string },
@@ -990,9 +1017,9 @@ export function renderContractVariables(content: string, contract: Contract, ord
     company_contact: systemSettings.companyDetails.contact,
     company_website: systemSettings.companyDetails.website,
     company_logo: systemSettings.companyDetails.logo,
-    customer_name: customer?.name,
-    customer_phone: customer?.phone,
-    customer_email: customer?.email,
+    customer_name: stored.customer_name || customer?.name,
+    customer_phone: stored.customer_phone || customer?.phone,
+    customer_email: stored.customer_email || customer?.email,
     customer_address: stored.customer_address || customer?.address,
     customer_dob: stored.customer_dob || customer?.dob,
     customer_country: stored.customer_country || customer?.country,
@@ -1269,6 +1296,63 @@ export async function getContractTemplate(c: Context): Promise<ContractTemplate>
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+// 为已审核订单准备客户签署用的合同。审批和订单详情页都会调用此函数，
+// 因此必须先查已有合同，避免重复生成签约链接。
+export async function ensureContractForOrder(c: Context, order: Order, createdBy?: string | null): Promise<Contract> {
+  const existing = await getContractByOrderId(c, order.id)
+  if (existing && existing.status !== 'cancelled' && !existing.deleted_at) return existing
+
+  const now = new Date()
+  const signExpiresAt = new Date(now)
+  signExpiresAt.setDate(signExpiresAt.getDate() + 7)
+  const device = await getDeviceById(c, order.deviceId)
+  const customer = order.userId ? await getUserById(c, order.userId) : null
+  const template = await getContractTemplate(c)
+  const customerSnapshot = customer?.role === 'CUSTOMER' && customer.name && customer.email && customer.phone
+    ? {
+        customer_name: customer.name,
+        customer_email: customer.email,
+        customer_phone: customer.phone,
+        customer_identity_locked_at: now.toISOString(),
+      }
+    : {}
+  const contract: Contract = {
+    id: `ct-${nanoid(10)}`,
+    rentalId: order.id,
+    contractNumber: generateContractNumber(),
+    content: template.content,
+    signedAt: null,
+    createdAt: now.toISOString(),
+    signToken: nanoid(32),
+    status: 'pending_sign',
+    validFrom: order.startDate || null,
+    validUntil: order.endDate || null,
+    signExpiresAt: signExpiresAt.toISOString(),
+    createdBy: createdBy || null,
+    device_condition: '交付时以设备验机记录为准。',
+    device_accessories: null,
+    late_fee_per_day: 0,
+    repair_cost: null,
+    pickup_location: order.pickupLocation || null,
+    return_location: order.returnLocation || null,
+    contract_data: {
+      website_order: true,
+      ...customerSnapshot,
+      invoice_number: '',
+      delivery_method: order.deliveryMethod || 'Pickup',
+      delivery_fee: Number(order.deliveryFee || order.delivery_fee || 0).toFixed(2),
+      pickup_location: order.pickupLocation || '',
+      return_location: order.returnLocation || '',
+      agreement_version: '1.0',
+      device_name: device?.name || '',
+    },
+  }
+
+  await insertContract(c, contract)
+  await c.env.RENT.prepare('UPDATE orders SET contractId = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(contract.id, order.id).run()
+  return contract
 }
 
 export async function updateContractTemplate(c: Context, newTemplate: { id: string; name: string; content: string }): Promise<ContractTemplate> {

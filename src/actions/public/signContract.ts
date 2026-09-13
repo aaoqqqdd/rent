@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -39,12 +39,18 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
     return new Response('合同链接无效或已过期', { status: 404 });
   }
 
+  const contractData = typeof contract.contract_data === 'string'
+    ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })()
+    : (contract.contract_data || {})
+  const signingOrderForRouting = await getOrderById(c, contract.rentalId || contract.rental_id)
+  const isWebsiteOrderContract = Boolean(contractData.website_order) || String(signingOrderForRouting?.status || '') === 'approved'
+
   // 步骤 5 完成后合同已签署；访客没有登录态，返回/重复提交时不能再次进入付款选择页。
   if (step === 5 && (contract.status === 'signed' || contract.signedAt)) {
     const orderId = contract.rentalId || contract.rental_id
     return new Response(null, {
       status: 303,
-      headers: { Location: `/payment/result?orderId=${encodeURIComponent(String(orderId || ''))}` },
+      headers: { Location: isWebsiteOrderContract ? `/customer/orders/${encodeURIComponent(String(orderId || ''))}` : `/payment/result?orderId=${encodeURIComponent(String(orderId || ''))}` },
     })
   }
 
@@ -133,15 +139,14 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             hasPhoneCode: !!phoneCode,
             hasPhone: !!submittedPhone
           });
-          throw new Error('请完整填写姓名、邮箱和联系电话；电子签名必须与姓名一致。');
-        }
-        const typedSignature = String(esignSignature || '').trim()
-        const signature = typedSignature
-        if (!signature || signature !== name) {
-          throw new Error('请输入与姓名一致的签名，或完成手写签名。')
+          throw new Error('请完整填写姓名、邮箱和联系电话。');
         }
         if (cleanFirstName.length > 100 || cleanLastName.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           throw new Error('姓名或电子邮箱格式不正确。')
+        }
+        const signature = String(esignSignature || '').trim()
+        if (!isWebsiteOrderContract && (!signature || signature !== name)) {
+          throw new Error('请输入与姓名一致的签名。')
         }
 
         // 如果选择创建账户，密码是必填的
@@ -203,11 +208,40 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error(errorMessages[phoneCode] || '电话号码格式不正确，请检查国家代码和手机号。');
         }
 
+        const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
+        const lockedCustomerSnapshot = isWebsiteOrderContract ? getContractCustomerSnapshot(contract) : null
+        if (lockedCustomerSnapshot && (
+          lockedCustomerSnapshot.name !== name ||
+          lockedCustomerSnapshot.email !== email ||
+          lockedCustomerSnapshot.phone !== fullPhone
+        )) {
+          throw new Error('该网站订单的承租方资料已锁定，不能修改姓名、邮箱或联系电话。')
+        }
+
+        if (isWebsiteOrderContract && !lockedCustomerSnapshot) {
+          const lockedAt = new Date().toISOString()
+          const lockedData = {
+            ...contractData,
+            customer_name: name,
+            customer_email: email,
+            customer_phone: fullPhone,
+            customer_identity_locked_at: lockedAt,
+          }
+          const lockResult = await c.env.RENT.prepare(`UPDATE contracts SET contract_data = ? WHERE id = ? AND COALESCE(json_extract(contract_data, '$.customer_identity_locked_at'), '') = ''`)
+            .bind(JSON.stringify(lockedData), contract.id).run() as any
+          if (Number(lockResult?.meta?.changes ?? lockResult?.changes ?? 0) < 1) {
+            throw new Error('该网站订单的承租方资料已锁定，请刷新页面后继续。')
+          }
+          contractData.customer_name = name
+          contractData.customer_email = email
+          contractData.customer_phone = fullPhone
+          contractData.customer_identity_locked_at = lockedAt
+        }
+
         // 从数据库检查邮箱是否已存在
         const existingUser = await c.env.RENT.prepare('SELECT * FROM users WHERE email = ?').bind(email).first() as any
         if (currentUser) {
           if (existingUser && existingUser.id !== currentUser.id) throw new Error('该邮箱已被其他账户使用，请更换电子邮箱。')
-          const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
           await updateUser(c, currentUser.id, { name, email, phone: fullPhone })
           await updateSignSession(c, token, { userIdToLink: currentUser.id });
         } else if (existingUser) {
@@ -238,14 +272,13 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
 
         // 保存用户信息到会话
-        const fullPhone = `${phoneCode}${phoneCode === '+61' && phoneToValidate.startsWith('0') ? phoneToValidate.slice(1) : phoneToValidate}`
         const windowsPassword = String(signSession.windowsPassword || generateWindowsPassword())
         await updateSignSession(c, token, { windowsPassword,
-          userInfo: { ...body, windowsPassword, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, esignSignature: signature }
+          userInfo: { ...body, windowsPassword, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, ...(signature ? { esignSignature: signature } : {}) }
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
 
-        redirectUrl = `/contract/sign?token=${token}&step=4`;
+        redirectUrl = `/contract/sign?token=${token}&step=${isWebsiteOrderContract ? 3 : 3}`;
         break;
 
       case 3: {
@@ -254,13 +287,15 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const signature = typedSignature;
         if (!signature || signature !== String(signSession.userInfo.name || '').trim()) throw new Error('请输入与姓名一致的签名。');
         await updateSignSession(c, token, { userInfo: { ...signSession.userInfo, esignSignature: signature } });
-        redirectUrl = `/contract/sign?token=${token}&step=4`;
-        break;
+        if (!isWebsiteOrderContract) {
+          redirectUrl = `/contract/sign?token=${token}&step=4`;
+          break;
+        }
       }
 
       case 4:
-        // Step 4: 选择支付方式并完成签约
-        await logError(c, 'DEBUG', `Processing step 4: Payment method selection and contract finalization`, undefined, { token });
+        // Step 4: 确认取还时间并完成签约；合同签署流程不处理付款。
+        await logError(c, 'DEBUG', `Processing step 4: Contract finalization without payment`, undefined, { token });
         await loadSystemSettingsFromDB(c)
         const signingOrder = await getOrderById(c, contract.rentalId)
         if (!signingOrder) throw new Error('合同关联的订单不存在。')
@@ -271,9 +306,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先填写您的个人信息。');
         }
 
-        const paymentMethod = (order as any).stripe_payment_method_id ? 'stripe' : String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || '')
+        const noPayment = isWebsiteOrderContract
+        const paymentMethod = String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || 'card')
+        const stripePaymentSelected = paymentMethod === 'stripe' || paymentMethod === 'card'
         // 押金处理方式不再由客户手选：跟着支付方式自动走——信用卡预授权 / SetupIntent，否则银行转账。
-        const depositMethod = normalizeSecurityDepositMethod(paymentMethod === 'stripe' ? 'card_hold' : 'bank_transfer')
+        const depositMethod = normalizeSecurityDepositMethod(stripePaymentSelected ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
@@ -304,7 +341,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请选择一种支付方式。');
         }
         const enabledMethods = [
-          ...(getSystemSettings().paymentMethods.stripe ? ['stripe'] : []),
+          ...(getSystemSettings().paymentMethods.stripe ? ['stripe', 'card'] : []),
           ...(getSystemSettings().paymentMethods.bankTransfer ? ['bank_transfer'] : []),
           ...(getSystemSettings().paymentMethods.alipay && getSystemSettings().rmbPayment.alipayQrUrl ? ['alipay'] : []),
           ...(getSystemSettings().paymentMethods.wechat && getSystemSettings().rmbPayment.wechatQrUrl ? ['wechat'] : []),
@@ -312,7 +349,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         ]
         if (paymentMethod === 'balance' && !canUseBalance) throw new Error('只有已登录的正式客户账户可以使用余额支付')
         if (!enabledMethods.includes(paymentMethod)) throw new Error('所选支付方式当前不可用')
-        if (paymentMethod === 'stripe') await getStripeRuntimeConfig(c)
+        if (stripePaymentSelected) await getStripeRuntimeConfig(c)
         if (paymentMethod === 'bank_transfer' && refundMethod === 'original') {
           if (!/^\d{3}-?\d{3}$/.test(refundBsb) || !/^\d{4,10}$/.test(refundAccountNumber) || !refundAccountName) {
             throw new Error('选择银行原路退款时，请填写正确的账户名、BSB 和银行账号')
@@ -323,8 +360,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
 
-        if (depositMethod === 'card_hold' && paymentMethod !== 'stripe') throw new Error('信用卡预授权押金需要同时使用 Stripe 信用卡支付租金')
-        const selectedDepositMode = depositMethod === 'card_hold' && paymentMethod === 'stripe'
+        if (depositMethod === 'card_hold' && !stripePaymentSelected) throw new Error('信用卡预授权押金需要同时使用 Stripe 信用卡支付租金')
+        const selectedDepositMode = depositMethod === 'card_hold' && stripePaymentSelected
           ? await resolveDepositPaymentMode(c, order)
           : 'PAID'
         await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ?, deposit_status = CASE WHEN depositAmount > 0 THEN ? ELSE \'NOT_REQUIRED\' END WHERE id = ?')
@@ -335,7 +372,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         // **核心签约逻辑**
         const userInfo = signSession.userInfo;
         const userIdToLink = signSession.userIdToLink;
-        let userId = userIdToLink && await getUserById(c, userIdToLink) ? userIdToLink : undefined;
+        const linkedUser = userIdToLink ? await getUserById(c, userIdToLink) : null
+        // 新建合同时订单会暂时指向创建合同的员工；员工 ID 不能成为签约客户或 Stripe 客户。
+        let userId = linkedUser?.role === 'CUSTOMER' ? userIdToLink : undefined;
         let guestPassword = String(signSession.guestPassword || '')
 
         // 1. 如果没有已存在的用户ID，则创建新用户
@@ -453,8 +492,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         // 2. 更新订单信息
         // 处理余额支付
-        let orderStatus: Order['status'] = 'pending_payment';
-        if (paymentMethod === 'balance') {
+        let orderStatus: Order['status'] = noPayment ? 'approved' : 'pending_payment';
+        if (!noPayment && paymentMethod === 'balance') {
           const existingBalancePayment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'balance' AND status = 'paid' LIMIT 1").bind(contract.rentalId).first()
           if (existingBalancePayment) {
             orderStatus = 'paid'
@@ -484,13 +523,13 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           }
         }
 
-        if (orderStatus === 'paid') {
+        if (noPayment || orderStatus === 'paid') {
           await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(contract.rentalId).run()
         }
 
         await updateOrderInDB(c, contract.rentalId, {
           userId: userId,
-          paymentMethod: (paymentMethod === 'stripe' ? 'card' : paymentMethod) as Order['paymentMethod'],
+          paymentMethod: (stripePaymentSelected ? 'card' : paymentMethod) as Order['paymentMethod'],
           status: orderStatus,
           // 合同已经通过 contracts.orderId 关联订单；不要在签署时写入可选的反向外键，
           // 兼容旧数据库中 contractId 外键定义不一致的订单表。
@@ -501,7 +540,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await c.env.RENT.prepare(`UPDATE orders SET refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ? WHERE id = ?`)
           .bind(refundMethod, refundMethod === 'original' ? refundBsb || null : null, refundMethod === 'original' ? refundAccountNumber || null : null, refundMethod === 'original' ? refundAccountName || null : null, contract.rentalId).run()
 
-        if (paymentMethod === 'balance' || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {
+        if (!noPayment && (paymentMethod === 'balance' || ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod))) {
           const paymentOrder = await c.env.RENT.prepare('SELECT totalAmount, depositAmount FROM orders WHERE id = ?').bind(contract.rentalId).first() as any
           const paymentTotal = Math.max(0, Number(paymentOrder?.totalAmount || 0) - Number(paymentOrder?.depositAmount || 0))
           const existingPayment = await c.env.RENT.prepare('SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(contract.rentalId, paymentMethod).first() as any
@@ -533,7 +572,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           }
         }
         let stripePayment: { clientSecret?: string; publishableKey?: string; setupIntent?: boolean } | null = null
-        if (paymentMethod === 'stripe') {
+        if (!noPayment && stripePaymentSelected) {
           const stripeUser = await getUserById(c, userId)
           if (!stripeUser) throw new Error('无法读取付款用户信息')
           const setupIntentId = String(body.stripeSetupIntentId || '').trim()
@@ -547,7 +586,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             if (!intent.alreadyPaid && intent.clientSecret) stripePayment = { clientSecret: intent.clientSecret, publishableKey: intent.publishableKey }
           }
         }
-        if (paymentMethod === 'balance') {
+        if (!noPayment && paymentMethod === 'balance') {
           await ensureOrderNumber(c, contract.rentalId)
           await issueInvoice(c, contract.rentalId)
           await enqueueRentalUserCreation(c, await getOrderById(c, contract.rentalId))
@@ -574,6 +613,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           // Windows 账户密码需要由设备代理和订单详情重复读取，按需求保留为可读取值；
           // 该字段不参与网站登录认证，只对订单所有者展示。
           windows_password: String(userInfo.windowsPassword || '').trim(),
+          // 访客临时密码：sign_sessions 会在签约完成后立即删除，无法再从会话读取；
+          // 网站登录密码本身已哈希存储不可逆，这里保留明文副本供重新访问已完成合同页时展示。
+          guest_password: guestPassword || existingData.guest_password || '',
           signer_name: signerName,
           customer_initials: existingData.customer_initials || customerInitials,
           esign_signature: userInfo.esignSignature,
@@ -631,8 +673,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             orderId: contract.rentalId,
             contractNumber: signedContractNumber,
             guest: guestPassword ? { email: userInfo.email, password: guestPassword } : null,
-            redirectTarget: `/customer/orders/${contract.rentalId}`,
-            resultUrl: `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`,
+            redirectTarget: noPayment ? `/customer/orders/${contract.rentalId}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`,
+            resultUrl: noPayment ? `/customer/orders/${encodeURIComponent(contract.rentalId)}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`,
           })
           res.headers.append('Set-Cookie', draftCookie)
           if (guestPassword) {
@@ -642,8 +684,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           return res
         }
         if (guestPassword) {
-          const paymentUrl = stripePayment ? `/customer/orders/${encodeURIComponent(contract.rentalId)}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
-          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${stripePayment ? '前往付款' : '查看付款结果'}</a></div></div>`
+          const paymentUrl = noPayment ? `/customer/orders/${encodeURIComponent(contract.rentalId)}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
+          const guestActionText = noPayment ? '查看订单详情' : '查看付款结果'
+          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${guestActionText}</a></div></div>`
           const response = c.html(buildLayout('保存访客登录资料', guestPage))
           response.headers.append('Set-Cookie', draftCookie)
           const session = await createAuthSession(c, userId)
@@ -656,7 +699,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           response.headers.append('Set-Cookie', draftCookie)
           return response
         }
-        redirectUrl = `/payment/result?orderId=${contract.rentalId}`;
+        redirectUrl = noPayment ? `/customer/orders/${contract.rentalId}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`;
         await logError(c, 'INFO', `Contract signing process completed successfully`, undefined, {
           token,
           contractId: contract.id,

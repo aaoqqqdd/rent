@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrders, getAllContracts, getUsers, getDevices } from '../../site'
+import { buildLayout, getOrders, getAllContracts, getUsers, getDevices, staffOrderPath } from '../../site'
 import type { Context } from 'hono'
 
 export async function renderStaffRentalsTracking(c: Context, user: any, status?: string, searchTerm?: string) {
@@ -14,7 +14,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
   const visibleOrderIds = new Set(visibleContracts.map(contract => contract.rentalId))
   const visibleOrders = user.role === 'ADMIN' ? allOrders : allOrders.filter(order => visibleOrderIds.has(order.id))
 
-  const rentalStatuses = ['draft', 'pending_approval', 'approved', 'pending_payment', 'paid', 'active', 'pending_pickup', 'pending_return']
+  const rentalStatuses = ['draft', 'pending_approval', 'approved', 'pending_payment', 'paid', 'active', 'extended', 'overdue', 'suspended', 'pending_pickup', 'pending_return']
   const allStatuses = [...rentalStatuses, 'completed', 'cancelled', 'expiring']
   
   // 根据URL参数筛选订单
@@ -97,26 +97,26 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
               .map((order: any) => {
                 const contract = visibleContracts.find((ct: any) => ct.rentalId === order.id || ct.rental_id === order.id)
                 const hasSignedContract = contract?.status === 'signed'
-                const statusText: Record<string, string> = { draft: '草稿', pending_approval: '待审核', approved: '待付款', pending_payment: '待付款', paid: '已付款', active: '当前租赁中', pending_pickup: '待拿取', pending_return: '待归还', completed: '已完成', cancelled: '已取消' };
+                const statusText: Record<string, string> = { draft: '草稿', pending_approval: '待审核', approved: '待付款', pending_payment: '待付款', paid: '已付款', active: '当前租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', completed: '已完成', cancelled: '已取消' };
                 const rentalDays = order.startDate && order.endDate ? Math.max(1, Math.ceil((new Date(order.endDate).getTime() - new Date(order.startDate).getTime()) / (1000 * 60 * 60 * 24))) : '-'
                 const actionButton = (() => {
                   // 合同已签署
                   if (hasSignedContract) {
-                    // 订单状态为待拿取
-                    if (order.status === 'paid') {
-                      return `<button class="button button-sm button-primary" onclick="window.siteConfirm('确认客户已完成取货吗？确认后订单将变为租赁中。', () => fetch('/staff/orders/${order.id}/pickup', { method: 'POST' }).then((response) => { if (!response.ok) throw new Error('取货确认失败'); window.location.reload(); }).catch((error) => window.alert(error.message)));">已拿取</button>`;
+                    // 交付记录包含设备和客户确认信息，必须先填写交付表单。
+                    if (['paid', 'pending_pickup'].includes(order.status)) {
+                      return `<a class="button button-sm button-primary" href="/staff/orders/${order.id}/handover">记录交付</a>`;
                     }
-                    // 订单状态为待归还
-                    if (order.status === 'pending_return') {
+                    // 订单处于可归还状态
+                    if (['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(order.status)) {
                       return `<a class="button button-sm button-info" href="/staff/orders/${order.id}/inspection">归还验机</a>`;
                     }
                     // 订单状态为已完成
-                    if (order.status === 'completed') return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
+                    if (order.status === 'completed') return `<a class="button button-sm button-secondary" href="${staffOrderPath(order)}">查看订单</a>`;
                     // 其他已签署状态，例如刚签署完成，但订单状态还未更新为pending_pickup
-                    return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
+                    return `<a class="button button-sm button-secondary" href="${staffOrderPath(order)}">查看订单</a>`;
                    }
                    // 合同未签署或已取消等情况
-                   return `<a class="button button-sm button-secondary" href="/staff/orders/${order.id}">查看订单</a>`;
+                   return `<a class="button button-sm button-secondary" href="${staffOrderPath(order)}">查看订单</a>`;
                  })();
                 return `
                 <tr>

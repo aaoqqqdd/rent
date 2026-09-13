@@ -17,7 +17,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
   const order = await getOrderById(c, orderId);
   const contract = order ? await getContractByOrderId(c, order.id) : null;
   const paymentMethod = String(order?.paymentMethod ?? 'card')
-  const payment = order ? await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod).first() as any : null
+  const payment = order ? await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, deposit_amount FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod).first() as any : null
   const status = paymentResultState(order, payment, cancelled)
   let title = '';
   let message = '';
@@ -29,10 +29,13 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
   const loadingSpinner = '<span class="pr-spinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>';
 
   if (status === 'success') {
-    title = paymentMethod === 'balance' ? '余额支付已完成' : '支付成功！';
+    const preauthorized = paymentMethod !== 'balance' && payment?.status === 'pending' && Number(payment?.deposit_amount || 0) > 0
+    title = paymentMethod === 'balance' ? '余额支付已完成' : preauthorized ? '信用卡预授权成功' : '支付成功！';
     message = paymentMethod === 'balance'
       ? `已从您的账户余额即时扣除 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>，订单已完成付款，网站发票与收据已生成。`
-      : `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已成功支付 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>${Number(payment?.processing_fee || 0) ? `，其中租金及服务费支付手续费为 ${formatCurrency(payment.processing_fee)}（不计入押金）` : ''}。网站发票与收据已生成。`;
+      : preauthorized
+        ? `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已预授权 <strong>${formatCurrency(payment?.amount ?? 0)}</strong>。归还设备后，系统将捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。`
+        : `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已成功支付 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>${Number(payment?.processing_fee || 0) ? `，其中租金及服务费支付手续费为 ${formatCurrency(payment.processing_fee)}（不计入押金）` : ''}。网站发票与收据已生成。`;
     icon = `
       <div class="icon-wrapper success">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-check"><polyline points="20 6 9 17 4 12"></polyline></svg>

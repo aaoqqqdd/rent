@@ -60,7 +60,7 @@ export function buildRefundAllocation(
 }
 
 export interface ReconInput {
-  payments: { id: string; amount: number; status: string }[]
+  payments: { id: string; amount: number; processing_fee?: number; status: string }[]
   paymentAllocations: { payment_id: string; amount: number }[]
   refunds: { id: string; payment_id: string | null; refund_amount: number; status: string }[]
   refundAllocations: { refund_id: string; payment_id: string; amount: number }[]
@@ -101,8 +101,11 @@ export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
 
   for (const p of paidPayments) {
     const allocC = input.paymentAllocations.filter(a => a.payment_id === p.id).reduce((s, a) => s + toCents(a.amount), 0)
-    if (allocC > 0 && Math.abs(allocC - toCents(p.amount)) > EPS) {
-      issues.push({ code: 'ALLOCATION_MISMATCH', severity: 'error', detail: `付款 ${p.id} 实付 ${money(toCents(p.amount))}，拆分合计却是 ${money(allocC)}` })
+    // payment.amount includes the card processing fee, while allocation rows
+    // represent the business components (rental/deposit) before that fee.
+    const allocatedPaymentC = toCents(p.amount) - toCents(p.processing_fee || 0)
+    if (allocC > 0 && Math.abs(allocC - allocatedPaymentC) > EPS) {
+      issues.push({ code: 'ALLOCATION_MISMATCH', severity: 'error', detail: `付款 ${p.id} 实付 ${money(allocatedPaymentC)}（含手续费 ${money(toCents(p.processing_fee || 0))}），拆分合计却是 ${money(allocC)}` })
     }
     const refundedC = input.refundAllocations.filter(r => r.payment_id === p.id).reduce((s, r) => s + toCents(r.amount), 0)
     if (refundedC - toCents(p.amount) > EPS) {
