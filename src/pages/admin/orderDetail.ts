@@ -80,6 +80,9 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const isPreauthDeposit = isCardPayment && String((order as any).deposit_payment_mode || '') === 'PREAUTH'
   const preauthFee = Math.round(Math.max(0, Number(order.totalAmount) - depositAmount) * 0.025 * 100) / 100
   const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, isSetupIntentDeposit ? 'card_hold' : 'bank_transfer')
+  const customerRefundMethod = order.refundMethod === 'original'
+    ? (order.paymentMethod === 'bank_transfer' ? 'bank_transfer' : 'original')
+    : order.refundMethod === 'balance' ? 'balance' : ''
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
@@ -252,11 +255,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
               <input class="form-control" name="returnLocation" maxlength="200" value="${escapeHtml(order.returnLocation || '')}">
             </div>
             <div class="order-change-fields" data-for="REFUND_METHOD" hidden>
-              <p class="section-note" style="margin:0 0 10px">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。这里设置的退款方式会作为归还验机完成后处理押金退款时的默认方式。</p>
+              <p class="section-note" style="margin:0 0 10px">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。</p>
               <label class="form-label" for="orderRefundMethod">退款方式</label>
               <select class="form-control" id="orderRefundMethod" name="refundMethod">
-                <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额</option>
-                <option value="original" ${order.refundMethod === 'original' ? 'selected' : ''}>原路退回${order.paymentMethod === 'bank_transfer' ? '（银行转账）' : ''}</option>
+                <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额${customerRefundMethod === 'balance' ? '（当前选择）' : ''}</option>
+                <option value="original" ${order.refundMethod === 'original' ? 'selected' : ''}>原路退回${order.paymentMethod === 'bank_transfer' ? '（银行转账）' : ''}${customerRefundMethod === 'original' ? '（当前选择）' : ''}</option>
               </select>
               ${order.paymentMethod === 'bank_transfer' ? `<div id="orderRefundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
               <script>document.getElementById('orderRefundMethod')?.addEventListener('change',e=>{document.getElementById('orderRefundBankFields').hidden=e.target.value!=='original'})</script>` : ''}
@@ -295,16 +298,16 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
         ${showRefundCard ? `<div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #c2410c;">退款处理</h4>
-          <p class="section-note">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。管理员可选择本次退款方式，提交后按所选方式处理。</p>
+          <p class="section-note">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。</p>
           ${hasTransferPriceRefund ? `<div class="alert"><strong>转账类付款待退差价：${formatCurrency(pendingPriceRefund)}</strong><br>该金额将在本次押金退款中一并退还；押金可退 ${formatCurrency(remainingDepositRefund)}，本次最多合计 ${formatCurrency(remainingRefundTotal)}。</div>` : ''}
           ${completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${depositSettlement && completedRefund?.status !== 'succeeded' ? `<div class="alert">结算单 ${escapeHtml(depositSettlement.settlement_number)}：${escapeHtml(depositSettlement.status)}${depositSettlement.review_note ? ` · ${escapeHtml(depositSettlement.review_note)}` : ''}</div>` : ''}
           ${canSettleDeposit ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" onsubmit="return confirm('${depositSettlement?.status === 'APPROVED' ? '确认按已批准结算单执行本次押金结算吗？' : '确认提交本次押金结算供 Manager 审批吗？'}');">
             ${isSetupIntentDeposit ? `<input type="hidden" name="refundMethod" value="original"><p class="section-note">长期租赁：押金未预扣。无损坏或逾期时填 0；只有发生实际费用时才从已保存卡片扣款。</p>` : `<label class="form-label" for="refundMethod">退款方式</label>
             <select class="form-control" id="refundMethod" name="refundMethod" required>
-              <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额</option>
-              <option value="original" ${order.refundMethod === 'original' && order.paymentMethod !== 'bank_transfer' ? 'selected' : ''}>原路退回</option>
-              <option value="bank_transfer" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? 'selected' : ''}>银行转账</option>
+              <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额${customerRefundMethod === 'balance' ? '（当前选择）' : ''}</option>
+              <option value="original" ${order.refundMethod === 'original' && order.paymentMethod !== 'bank_transfer' ? 'selected' : ''}>原路退回${customerRefundMethod === 'original' ? '（当前选择）' : ''}</option>
+              <option value="bank_transfer" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? 'selected' : ''}>银行转账${customerRefundMethod === 'bank_transfer' ? '（当前选择）' : ''}</option>
             </select>
             <div id="refundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
             <script>document.getElementById('refundMethod')?.addEventListener('change',e=>{document.getElementById('refundBankFields').hidden=e.target.value!=='bank_transfer'})</script>`}
