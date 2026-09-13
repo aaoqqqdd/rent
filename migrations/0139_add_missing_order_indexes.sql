@@ -3,16 +3,14 @@
 -- Noncommercial use, modification, and distribution are permitted.
 -- Keep this notice and the LICENSE file with all copies and modified versions.
 
--- Admin/staff order list pages filter and join on these columns on every
--- request; without indexes each filtered query is a full table scan.
-CREATE INDEX IF NOT EXISTS idx_orders_userId ON orders(userId);
+-- orders is queried on every customer dashboard load (WHERE userId), every
+-- admin/staff order list (WHERE status / deviceId), and the admin dashboard
+-- aggregate counts (status, startDate, endDate). None of those columns had
+-- an index, so these were full table scans.
+CREATE INDEX IF NOT EXISTS idx_orders_userid ON orders(userId);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
-CREATE INDEX IF NOT EXISTS idx_orders_deviceId ON orders(deviceId);
-CREATE INDEX IF NOT EXISTS idx_orders_startDate ON orders(startDate);
-CREATE INDEX IF NOT EXISTS idx_orders_endDate ON orders(endDate);
-CREATE INDEX IF NOT EXISTS idx_orders_createdAt ON orders(createdAt);
-CREATE INDEX IF NOT EXISTS idx_orders_orderNo_upper ON orders(UPPER(orderNo));
-
--- Staff/admin contract list pages filter by status alongside the existing
--- idx_contracts_created_by index.
-CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
+CREATE INDEX IF NOT EXISTS idx_orders_deviceid ON orders(deviceId);
+CREATE INDEX IF NOT EXISTS idx_orders_start_date ON orders(startDate);
+CREATE INDEX IF NOT EXISTS idx_orders_end_date ON orders(endDate);
+CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(createdAt DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_order_no_upper ON orders(UPPER(orderNo));
