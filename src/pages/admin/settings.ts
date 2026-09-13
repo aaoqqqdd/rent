@@ -5,8 +5,14 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = []) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
+  const ts = {
+    configured: Boolean(turnstile.configured),
+    usingEnvFallback: Boolean(turnstile.usingEnvFallback),
+    siteKey: turnstile.siteKey || '',
+    secretKeyMasked: turnstile.secretKeyMasked || '',
+  };
   const nc = {
     emailProvider: notify.emailProvider || 'resend',
     resend: notify.resend || { from: '', apiKeyMasked: '', configured: false, usingEnvFallback: false },
@@ -48,8 +54,16 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">PUSH</span><div><h3>通知渠道</h3><p>邮件服务商用于发送所有系统邮件（验证、收据、合同、退款、协议更新等），Resend / Brevo / MailerSend 三选一，都提供免费额度。通用 Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。</p></div></div>
+          <div class="form-section-title"><span class="mono">BOT</span><div><h3>Cloudflare Turnstile 人机验证</h3><p>当前状态：${ts.configured ? (ts.usingEnvFallback ? '已配置（使用环境变量 TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY）' : '已配置') : '未配置'}。用于注册页拦截机器人。在 Cloudflare 控制台「Turnstile」中创建站点获取密钥。Secret Key 加密保存，留空表示保留原值。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="turnstileSiteKey">Site Key</label><input class="form-control" id="turnstileSiteKey" name="turnstileSiteKey" value="${ts.siteKey}" placeholder="0x4AAAAAAA..."></div>
+            <div class="form-group"><label class="form-label" for="turnstileSecretKey">Secret Key</label><input class="form-control" type="password" id="turnstileSecretKey" name="turnstileSecretKey" placeholder="${ts.secretKeyMasked || '0x4AAAAAAA...'}" autocomplete="new-password"></div>
+          </div>
+          <div class="checkbox-group"><input type="checkbox" id="clearTurnstileConfig" name="clearTurnstileConfig"><label for="clearTurnstileConfig">清除已保存的 Turnstile 配置（改回使用环境变量）</label></div>
+        </section>
 
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">PUSH</span><div><h3>通知渠道</h3><p>邮件服务商用于发送所有系统邮件（验证、收据、合同、退款、协议更新等），Resend / Brevo / MailerSend 三选一，都提供免费额度。通用 Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。</p></div></div>
           <div class="form-group">
             <label class="form-label" for="emailProvider">当前生效的邮件服务商</label>
             <select class="form-control" id="emailProvider">
@@ -184,6 +198,11 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             secretKey: formData.get('stripeSecretKey'),
             webhookSecret: formData.get('stripeWebhookSecret'),
             clear: formData.has('clearStripeConfig'),
+          },
+          turnstileConfig: {
+            siteKey: formData.get('turnstileSiteKey'),
+            secretKey: formData.get('turnstileSecretKey'),
+            clear: formData.has('clearTurnstileConfig'),
           },
           emailTransport: {
             host: inputValue('smtpHost'),

@@ -6,6 +6,7 @@
 import type { Context } from 'hono'
 import { getStripeRuntimeConfig } from '../stripe'
 import { resolveEmailCredentials, getNotifyChannelsSummary } from '../notifyChannels'
+import { getTurnstileRuntimeConfig } from '../turnstile'
 
 export type ConnectivityStatus = 'ok' | 'warning' | 'error' | 'unconfigured'
 
@@ -117,8 +118,8 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
         detail = '密钥有效，地点详情接口可访问'
       }
     } else if (definition.id === 'turnstile') {
-      const secret = String((c.env as any).TURNSTILE_SECRET_KEY || '').trim()
-      if (!secret) { status = 'unconfigured'; detail = '尚未配置 TURNSTILE_SECRET_KEY' }
+      const { secretKey: secret } = await getTurnstileRuntimeConfig(c)
+      if (!secret) { status = 'unconfigured'; detail = '尚未配置 Turnstile Secret Key（后台「系统设置」或 TURNSTILE_SECRET_KEY）' }
       else {
         const response = await timedFetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret, response: 'connectivity-probe' }) })
         if (!response.ok) throw new Error(`Turnstile 返回 HTTP ${response.status}`)
