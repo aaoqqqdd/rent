@@ -71,9 +71,9 @@ function addRisk(reasons: string[], label: string, points: number): number {
   return points
 }
 
-export function calculateCustomerRiskAssessment(facts: CustomerRiskFacts, now: Date = new Date()): CustomerRiskAssessment {
+export function calculateCustomerRiskAssessment(facts: CustomerRiskFacts, _now: Date = new Date()): CustomerRiskAssessment {
   const reasons: string[] = []
-  const activeFlags = (facts.activeFlags || []).filter((flag) => isRiskFlagCurrentlyActive(flag, now))
+  const activeFlags = (facts.activeFlags || []).filter((flag) => isRiskFlagCurrentlyActive(flag))
   let score = 0
 
   if (Number(facts.balance || 0) < 0) score += addRisk(reasons, '账户余额为负', 30)
@@ -144,7 +144,7 @@ export function calculateReferralRiskAssessment(facts: ReferralRiskFacts): Refer
   return { score: cappedScore, level, requiresReview: Boolean(facts.customerRiskBlocked) || cappedScore >= RISK_SCORE_BLOCK_THRESHOLD, reasons }
 }
 
-export interface RiskFlagLike { flag_type?: string; severity?: string; status?: string }
+export interface RiskFlagLike { flag_type?: string; severity?: string; status?: string; expires_at?: string | null }
 
 export function isRiskFlagCurrentlyActive(flag: RiskFlagLike | null | undefined): boolean {
   return !!flag && String(flag.status || '').toUpperCase() === 'ACTIVE'

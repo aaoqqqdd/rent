@@ -32,15 +32,15 @@ test('high and hard-block risk flags block regardless of score', () => {
   assert.equal(calculateCustomerRiskAssessment({ activeFlags: [{ flag_type: 'CHARGEBACK', severity: 'LOW', status: 'ACTIVE' }] }, NOW).blocked, true)
 })
 
-test('expired and resolved flags do not affect the score', () => {
+test('expired timestamps do not clear active flags; only resolution does', () => {
   const result = calculateCustomerRiskAssessment({
     activeFlags: [
       { flag_type: 'CHARGEBACK', severity: 'HIGH', status: 'ACTIVE', expires_at: '2026-01-01 00:00:00' },
       { flag_type: 'FRAUD_SUSPECTED', severity: 'HIGH', status: 'RESOLVED', expires_at: null },
     ],
   }, NOW)
-  assert.equal(result.score, 0)
-  assert.equal(result.blocked, false)
+  assert.equal(result.score, 40)
+  assert.equal(result.blocked, true)
 })
 
 test('high referral risk goes to manual review', () => {

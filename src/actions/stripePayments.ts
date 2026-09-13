@@ -1009,6 +1009,13 @@ function cancellationRefundChannel(payment: any): 'balance' | 'stripe' | 'bank_t
   return 'unavailable'
 }
 
+export function stripeDepositSettlementCaptureAmount(payment: any, deductionAmount: number, refundMethod: string): number {
+  if (refundMethod === 'balance') return Math.max(0, Number(payment?.amount || 0))
+  const rentalAmount = Math.max(0, Number(payment?.rental_amount || 0))
+  const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
+  return Number((rentalAmount + processingFee + Math.max(0, deductionAmount)).toFixed(2))
+}
+
 function validateDepositDeduction(form: Record<string, any>, depositAmount: number, deductionAmount: number): { category: string; reason: string } | Response {
   const category = String(form.deductionCategory || '').trim()
   const reason = String(form.deductionReason || '').trim()
@@ -1036,10 +1043,11 @@ async function settlePreauthorizedDeposit(c: Context, admin: any, order: any, fo
   const deductionAmount = Number(Math.max(0, depositAmount - totalReleased).toFixed(2))
   const deduction = validateDepositDeduction(form, depositAmount, deductionAmount)
   if (deduction instanceof Response) return deduction
-  const rentalAmount = Math.max(0, Number(payment.rental_amount || 0))
-  const processingFee = Math.max(0, Number(payment.processing_fee || 0))
-  const fullAuthorization = rentalAmount > 0
-  const captureAmount = Number((fullAuthorization ? rentalAmount + processingFee + deductionAmount : deductionAmount).toFixed(2))
+  const selectedRefundMethod = String(form.refundMethod || order.refundMethod || 'balance')
+  if (!['balance', 'original'].includes(selectedRefundMethod)) return c.text('退款方式无效', 400)
+  const fullAuthorization = Number(payment.rental_amount || 0) > 0
+  // 退回余额时先完整捕获预授权，再把押金退款入账；否则未捕获的押金部分会被直接释放。
+  const captureAmount = stripeDepositSettlementCaptureAmount(payment, deductionAmount, selectedRefundMethod)
   if (captureAmount > Number(payment.amount || 0)) return c.text('捕获金额超过信用卡预授权上限', 409)
 
   let intent = await stripeRequest(c, `payment_intents/${authorizationId}`).catch(() => null)
@@ -1055,15 +1063,20 @@ async function settlePreauthorizedDeposit(c: Context, admin: any, order: any, fo
 
   const nextStatus = deductionAmount >= depositAmount ? 'FORFEITED' : deductionAmount > 0 ? 'PARTIALLY_DEDUCTED' : 'REFUNDED'
   const statements: any[] = [
-    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = 0, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(nextStatus, deductionAmount, order.id),
+    c.env.RENT.prepare('UPDATE orders SET refundMethod = ? WHERE id = ?').bind(selectedRefundMethod, order.id),
+    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(nextStatus, deductionAmount, selectedRefundMethod === 'balance' ? totalReleased : 0, order.id),
     c.env.RENT.prepare('UPDATE devices SET status = \'available\' WHERE id = ?').bind(order.deviceId),
   ]
-  if (deductionAmount > 0) {
+  if (deductionAmount > 0 || (selectedRefundMethod === 'balance' && refundAmount > 0)) {
     statements.push(c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, status, processed_by, refund_method)
-      VALUES (?, ?, ?, ?, 'deposit', 0, 0, 0, ?, ?, ?, 'succeeded', ?, 'stripe')`)
-      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, deductionAmount, deduction.category, deduction.reason, admin.id))
+      VALUES (?, ?, ?, ?, 'deposit', ?, ?, 0, ?, ?, ?, 'succeeded', ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, depositAmount, selectedRefundMethod === 'balance' ? refundAmount : 0, deductionAmount, deductionAmount > 0 ? deduction.category : null, deductionAmount > 0 ? deduction.reason : '押金结算', admin.id, selectedRefundMethod === 'balance' ? 'balance' : 'stripe'))
+  }
+  if (selectedRefundMethod === 'balance' && refundAmount > 0) {
+    statements.push(c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(refundAmount, order.userId))
   }
   await c.env.RENT.batch(statements)
+  if (selectedRefundMethod === 'balance' && refundAmount > 0) await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '押金退款退回账户余额', admin.id)
   if (fullAuthorization && intent.status === 'succeeded') await issueInvoice(c, order.id)
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
