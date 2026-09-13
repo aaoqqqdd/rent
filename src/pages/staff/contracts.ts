@@ -3,13 +3,37 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAllContracts, getOrders, getUsers, getDevices, isContractExpired, isContractFinalized, sanitizePlainText, formatMelbourneDateTime, staffOrderPath } from '../../site'
+import { buildLayout, getDB, getOrders, getUsers, getDevices, isContractExpired, isContractFinalized, sanitizePlainText, formatMelbourneDateTime, staffOrderPath } from '../../site'
 import type { Context } from 'hono'
+import { normalizeContractRow } from '../../db/repositories'
+
+const CONTRACT_STATUSES = ['pending_sign', 'signed', 'cancelled', 'completed']
+
+// Pre-filters contracts by owner/status in SQL (both indexed) instead of
+// pulling the whole contracts table; the JS-side filtering further down is
+// left untouched so behavior is identical regardless of what this returns.
+// 'expired' isn't a stored status (it's computed from signExpiresAt), so it
+// isn't pushed down here.
+async function getPrefilteredContracts(c: Context, ownerId?: string, status?: string) {
+  const db = getDB(c)
+  const clauses: string[] = []
+  const params: any[] = []
+  if (ownerId) { clauses.push('(created_by = ? OR createdBy = ?)'); params.push(ownerId, ownerId) }
+  if (status && CONTRACT_STATUSES.includes(status)) { clauses.push('status = ?'); params.push(status) }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+  const result = await db.prepare(`SELECT * FROM contracts ${where}`).bind(...params).all()
+  return ((result.results || []) as any[]).map(normalizeContractRow)
+}
 
 export async function renderStaffContracts(c: Context, user: any, status?: string, successMessage?: string, errorMessage?: string, searchTerm?: string, staffId?: string) {
   const isAdmin = user.role === 'ADMIN'
   const basePath = isAdmin ? '/admin/contracts' : '/staff/contracts'
-  let [allContracts, allOrders, allUsers, allDevices] = await Promise.all([getAllContracts(c), getOrders(c), getUsers(c), getDevices(c)])
+  // Only the mandatory non-admin "own contracts" scope is safe to push into
+  // SQL here: the optional admin staffId filter still needs validating
+  // against staffAccounts (derived from allUsers) before it applies, so that
+  // stays as the existing JS-side filter below.
+  const ownerPrefilter = isAdmin ? undefined : user.id
+  let [allContracts, allOrders, allUsers, allDevices] = await Promise.all([getPrefilteredContracts(c, ownerPrefilter, status), getOrders(c), getUsers(c), getDevices(c)])
   const ordersById = new Map(allOrders.map(order => [order.id, order]))
   const usersById = new Map(allUsers.map(account => [account.id, account]))
   const devicesById = new Map(allDevices.map(device => [device.id, device]))

@@ -666,7 +666,7 @@ test('staff contract lists exclude contracts created by other employees', async 
     users: [{ id: 'staff-1', name: 'Staff One', role: 'STAFF' }, { id: 'u-own', name: 'Own Customer', role: 'CUSTOMER' }, { id: 'u-other', name: 'Other Customer', role: 'CUSTOMER' }],
     devices: [{ id: 'd1', name: 'Laptop' }],
   }
-  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
+  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { bind() { return this }, async all() { return { results: rows[table] || [] } } } } }
   const html = await renderStaffContracts({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff One', role: 'STAFF' })
   assert.match(html, /OWN-CONTRACT/)
   assert.doesNotMatch(html, /OTHER-CONTRACT/)
@@ -700,7 +700,7 @@ test('terminal contracts hide progress and editing while only finalized contract
     orders: ['o1', 'o2', 'o3'].map(id => ({ id, userId: 'u1', deviceId: 'd1', status: 'active', startDate: '2026-08-01', endDate: '2026-08-02' })),
     users: [{ id: 'staff-1', name: 'Staff', role: 'STAFF' }, { id: 'u1', name: 'Customer', role: 'CUSTOMER' }], devices: [{ id: 'd1', name: 'Laptop' }],
   }
-  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
+  const db = { prepare(sql: string) { const table = /FROM\s+(contracts|orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { bind() { return this }, async all() { return { results: rows[table] || [] } } } } }
   const html = await renderStaffContracts({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff', email: 'staff@example.com', role: 'STAFF' }, 'completed')
   assert.match(html, /COMPLETED/)
   assert.match(html, /contract\/view\/ct-completed/)
@@ -725,7 +725,7 @@ test('staff ongoing orders are read-only and limited to assigned customers', asy
     users: [{ id: 'own-customer', name: 'Own', staff_id: 'staff-1' }, { id: 'other-customer', name: 'Other', staff_id: 'staff-2' }],
     devices: [{ id: 'd1', name: 'Laptop' }],
   }
-  const db = { prepare(sql: string) { const table = /FROM\s+(orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { async all() { return { results: rows[table] || [] } } } } }
+  const db = { prepare(sql: string) { const table = /FROM\s+(orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { bind() { return this }, async all() { return { results: rows[table] || [] } } } } }
   const html = await renderStaffOrdersOngoing({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff', email: 'staff@example.com', role: 'STAFF' })
   assert.match(html, /OWN-1/)
   assert.doesNotMatch(html, /OTHER-1|REVIEW-1/)

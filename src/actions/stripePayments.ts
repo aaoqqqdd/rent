@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus } from '../site'
+import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation } from '../site'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { releaseCouponForOrder } from './coupons'
 import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
@@ -35,6 +35,29 @@ function orderServiceFee(order: any): number {
 
 function orderDeposit(order: any): number {
   return Math.max(0, Number(order.depositAmount ?? order.deposit_amount ?? 0))
+}
+
+// Stripe 后台展示用的收款说明。付款成功前订单号还没生成，先用内部 id 兜底，
+// 付款/预授权成功分配到正式订单号后由 refreshStripePaymentDescriptions 补写。
+function orderPaymentLabel(order: any): string {
+  return `设备租赁订单 ${order.orderNo || order.id}`
+}
+
+async function refreshStripePaymentDescriptions(c: Context, orderId: string): Promise<void> {
+  const order = await getOrderById(c, orderId)
+  if (!order?.orderNo) return
+  const label = orderPaymentLabel(order)
+  const rows = await c.env.RENT.prepare(
+    "SELECT stripe_payment_intent_id, deposit_amount, rental_amount FROM payments WHERE rental_id = ? AND payment_method = 'card' AND stripe_payment_intent_id IS NOT NULL"
+  ).bind(orderId).all() as any
+  for (const row of (rows.results || []) as any[]) {
+    const intentId = String(row.stripe_payment_intent_id || '')
+    if (!/^pi_[A-Za-z0-9_]+$/.test(intentId)) continue
+    const hasDeposit = Number(row.deposit_amount || 0) > 0
+    const hasRent = Number(row.rental_amount || 0) > 0
+    const item = hasDeposit && hasRent ? '租金+押金预授权' : hasDeposit ? '押金预授权' : '租金及服务费'
+    await stripeRequest(c, `payment_intents/${intentId}`, new URLSearchParams({ description: `${label}｜${item}` })).catch(() => {})
+  }
 }
 
 export async function resolveDepositPaymentMode(c: Context, order: any, paymentMethodId = ''): Promise<DepositPaymentMode> {
@@ -70,6 +93,7 @@ export async function createBalanceTopUpIntent(c: Context, user: any, topUpId: s
       processing_fee: String(feeCents),
     },
     idempotencyKey: `topup-pi-${topUpId}`,
+    description: `账户余额充值｜${topUpId}`,
   })
   await c.env.RENT.prepare("UPDATE balance_topups SET stripe_payment_intent_id = ?, processing_fee = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .bind(intent.id, feeCents / 100, topUpId).run()
@@ -90,6 +114,7 @@ async function upsertPaymentIntent(c: Context, opts: {
   confirmNow?: boolean
   setupFutureUsage?: 'off_session'
   captureMethod?: 'manual'
+  description?: string
 }): Promise<any> {
   const reusableStatuses = ['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing']
   if (opts.existingIntentId) {
@@ -100,6 +125,7 @@ async function upsertPaymentIntent(c: Context, opts: {
       if (opts.customerId) params.set('customer', opts.customerId)
       if (opts.setupFutureUsage) params.set('setup_future_usage', opts.setupFutureUsage)
       if (opts.captureMethod) params.set('capture_method', opts.captureMethod)
+      if (opts.description) params.set('description', opts.description)
       if (opts.confirmNow) { params.set('confirm', 'true'); params.set('off_session', 'true') }
       Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
       if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
@@ -119,6 +145,7 @@ async function upsertPaymentIntent(c: Context, opts: {
   if (opts.customerId) params.set('customer', opts.customerId)
   if (opts.setupFutureUsage) params.set('setup_future_usage', opts.setupFutureUsage)
   if (opts.captureMethod) params.set('capture_method', opts.captureMethod)
+  if (opts.description) params.set('description', opts.description)
   if (opts.confirmNow) { params.set('confirm', 'true'); params.set('off_session', 'true') }
   if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
   Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
@@ -148,29 +175,42 @@ async function createDepositAuthorization(c: Context, order: any, paymentMethodI
   const authorizationWindowDays = depositAuthorizationWindowDays(cardBrand)
   const rentalPeriod = Number(order.rentalPeriod ?? order.rental_period ?? 0)
   const requiresExtendedWindow = rentalPeriod > authorizationWindowDays
-  const params = new URLSearchParams({
+  const createParams = new URLSearchParams({
     amount: String(cents(depositAmount)),
     currency: 'aud',
     ...(customerId ? { customer: customerId } : {}),
     payment_method: paymentMethodId,
+    // 手动扣款（预授权）不是所有账户默认启用的自动支付方式（Klarna / Afterpay / Link 等）都支持，
+    // 不显式限定为 card 会导致 Stripe 报 "not eligible for the requested card features"。
+    'payment_method_types[0]': 'card',
     capture_method: 'manual',
-    confirm: 'true',
-    off_session: 'true',
-    'expand[]': 'latest_charge',
+    description: `${orderPaymentLabel(order)}｜押金预授权`,
     'metadata[order_id]': String(order.id),
     'metadata[type]': 'deposit_authorization',
     'metadata[deposit_amount]': String(cents(depositAmount)),
     'metadata[card_brand]': cardBrand || 'unknown',
     'metadata[authorization_window_days]': String(authorizationWindowDays),
   })
-  if (authorizationWindowDays === 30 && requiresExtendedWindow) params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
+  // 先创建（不 confirm），再单独 confirm——这样"先尝试延长授权、失败后退回标准授权"这两次
+  // 尝试落在同一个 PaymentIntent 上，不会在 Stripe 后台留下一个作废的重复对象。
+  const created = await stripeRequest(c, 'payment_intents', createParams, `deposit-auth-${order.id}`)
+  const confirmParams = () => new URLSearchParams({ off_session: 'true', 'expand[]': 'latest_charge' })
   let intent: any
   try {
-    intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-${order.id}`)
+    const params = confirmParams()
+    if (authorizationWindowDays === 30 && requiresExtendedWindow) params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
+    intent = await stripeRequest(c, `payment_intents/${created.id}/confirm`, params, `deposit-auth-confirm-${order.id}`)
   } catch (error) {
-    if (authorizationWindowDays !== 30) throw error
-    params.delete('payment_method_options[card][request_extended_authorization]')
-    intent = await stripeRequest(c, 'payment_intents', params, `deposit-auth-standard-${order.id}`)
+    if (!(authorizationWindowDays === 30 && requiresExtendedWindow)) {
+      await stripeRequest(c, `payment_intents/${created.id}/cancel`, new URLSearchParams()).catch(() => {})
+      throw error
+    }
+    try {
+      intent = await stripeRequest(c, `payment_intents/${created.id}/confirm`, confirmParams(), `deposit-auth-confirm-standard-${order.id}`)
+    } catch (retryError) {
+      await stripeRequest(c, `payment_intents/${created.id}/cancel`, new URLSearchParams()).catch(() => {})
+      throw retryError
+    }
   }
   if (!['requires_capture', 'succeeded'].includes(String(intent.status))) throw new Error('押金预授权未完成，请重新验证信用卡。')
   if (requiresExtendedWindow) {
@@ -210,7 +250,7 @@ export async function createOrderSetupIntent(c: Context, user: any, orderId: str
     if (existing && existing.customer && ['requires_payment_method', 'requires_confirmation', 'requires_action'].includes(String(existing.status)) && existing.client_secret) {
       const existingCustomerId = stripeCustomerId(existing.customer)
       await syncStripeCustomerProfile(c, existingCustomerId, user)
-      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(existingCustomerId, user.id).run()
+      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(existingCustomerId, user.id).run()
       return { clientSecret: existing.client_secret, publishableKey: await getStripePublishableKey(c) }
     }
   }
@@ -255,7 +295,7 @@ async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, payme
     const existingCustomer = stripeCustomerId(paymentMethod.customer)
     if (existingCustomer) {
       await syncStripeCustomerProfile(c, existingCustomer, user)
-      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(existingCustomer, userId).run()
+      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(existingCustomer, userId).run()
       return existingCustomer
     }
   }
@@ -281,7 +321,7 @@ async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, payme
       const existingId = String(existing.id)
       await syncStripeCustomerProfile(c, existingId, user)
       if (paymentMethodId) await stripeRequest(c, `payment_methods/${paymentMethodId}/attach`, new URLSearchParams({ customer: existingId }), `rent-payment-method-attach-${paymentMethodId}`)
-      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(existingId, userId).run()
+      await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(existingId, userId).run()
       return existingId
     }
   }
@@ -290,7 +330,7 @@ async function ensureStripeCustomerForPaymentMethod(c: Context, user: any, payme
   const customerId = String(customer.id || '')
   if (!/^cus_[A-Za-z0-9_]+$/.test(customerId)) throw new Error('Stripe 客户资料创建失败，请重试')
   if (paymentMethodId) await stripeRequest(c, `payment_methods/${paymentMethodId}/attach`, new URLSearchParams({ customer: customerId }), `rent-payment-method-attach-${paymentMethodId}`)
-  await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(customerId, userId).run()
+  await c.env.RENT.prepare('UPDATE users SET stripe_customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(customerId, userId).run()
   return customerId
 }
 
@@ -366,6 +406,7 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     confirmNow,
     setupFutureUsage: depositMode === 'PREAUTH' ? 'off_session' : undefined,
     captureMethod: useFullAuthorization ? 'manual' : undefined,
+    description: `${orderPaymentLabel(order)}｜${useFullAuthorization ? '租金+押金预授权' : '租金及服务费'}`,
   })
   const alreadyPaid = intent.status === 'succeeded'
   if (!alreadyPaid && !intent.client_secret) throw new Error('Stripe 未返回有效支付凭据')
@@ -384,12 +425,28 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     await c.env.RENT.prepare("UPDATE orders SET stripe_deposit_payment_intent_id = ?, deposit_payment_mode = 'PREAUTH', deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = ? WHERE id = ?")
       .bind(intent.id, depositAmount, order.id).run()
   }
-  if (fullAuthorization && !useFullAuthorization && alreadyPaid) await createDepositAuthorization(c, order, savedPaymentMethodId)
+  if (alreadyPaid) {
+    // 先分配正式订单号，这样接下来（若有）单独建立的押金预授权 PaymentIntent
+    // 创建时就能直接带上正式单号，不用等后面再补刷描述。
+    order.orderNo = await ensureOrderNumber(c, order.id).catch(() => order.orderNo)
+  }
+  if (fullAuthorization && !useFullAuthorization && alreadyPaid) {
+    // 租金已经扣款成功；押金预授权失败不该让整个付款请求报错，否则客户会看到"支付失败"
+    // 但实际租金已经扣款的矛盾状态。留给 webhook 的兜底逻辑或人工跟进即可。
+    try {
+      await createDepositAuthorization(c, order, savedPaymentMethodId)
+    } catch (error: any) {
+      console.error('Deposit authorization failed after rent payment succeeded:', error?.message || error)
+    }
+  }
   if (alreadyPaid) {
     await c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id).run()
     // confirmNow 可能直接返回 succeeded，不一定会再触发可依赖的 webhook；
     // 付款在签约后完成时也必须在这里补开发票。
     await issueInvoice(c, order.id)
+    // useFullAuthorization 的合并授权在拿到正式订单号之前就已创建，这里把 Stripe
+    // 侧描述统一刷新成正式的 OD 单号。
+    await refreshStripePaymentDescriptions(c, order.id)
     return { clientSecret: '', publishableKey: '', amountCents: authorizationCents, alreadyPaid: true }
   }
   return { clientSecret: intent.client_secret as string, publishableKey: await getStripePublishableKey(c), amountCents: authorizationCents }
@@ -520,6 +577,7 @@ export async function createOrderPriceAdjustmentIntent(c: Context, user: any, or
     customerId: await ensureStripeCustomerForPaymentMethod(c, user, ''),
     metadata: { order_id: order.id, customer_id: String(user.id), type: 'price_adjustment', adjustment_id: adjustmentId, amount: String(cents(summary.amountDue)), processing_fee: String(feeCents) },
     idempotencyKey: `price-adjustment-pi-${adjustmentId}`,
+    description: `${orderPaymentLabel(order)}｜订单差价补款`,
   })
   const alreadyPaid = intent.status === 'succeeded'
   const paymentId = String(existingPayment?.id || `p-${nanoid(12)}`)
@@ -868,7 +926,9 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
   if (paidOrderId) {
     try {
       const paidOrder = await getOrderById(c, paidOrderId)
+      await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
       if (paidOrder) {
+        paidOrder.orderNo = (await c.env.RENT.prepare('SELECT orderNo FROM orders WHERE id = ?').bind(paidOrderId).first() as any)?.orderNo || paidOrder.orderNo
         await recordExternalRentalFlow(c, paidOrder.userId, Number(paidOrder.totalAmount) - orderDeposit(paidOrder), '信用卡', null, paidOrder.id)
         await recordDeviceLifecycle(c, paidOrder.deviceId, 'RESERVED', { orderId: paidOrder.id, reason: '信用卡付款成功' })
         if (depositPaymentModeForOrder(paidOrder) === 'PREAUTH' && !String((paidOrder as any).stripe_deposit_payment_intent_id || '') && String((paidOrder as any).stripe_payment_method_id || '')) {
@@ -876,8 +936,8 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
         }
         await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(paidOrder.id).run()
       }
-      await ensureOrderNumber(c, paidOrderId, String(session.payment_intent || session.id || ''))
       await issueInvoice(c, paidOrderId)
+      await refreshStripePaymentDescriptions(c, paidOrderId)
       await enqueueRentalUserCreation(c, await getOrderById(c, paidOrderId))
     } catch (error: any) {
       console.error('Stripe webhook post-processing failed:', error?.message || error)
@@ -889,6 +949,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       if (authorizedOrder) {
         await recordDeviceLifecycle(c, authorizedOrder.deviceId, 'RESERVED', { orderId: authorizedOrder.id, reason: '信用卡预授权成功' })
         await ensureOrderNumber(c, authorizedOrder.id, String(session.id || ''))
+        await refreshStripePaymentDescriptions(c, authorizedOrderId)
         await enqueueRentalUserCreation(c, authorizedOrder)
       }
     } catch (error: any) {
@@ -1158,6 +1219,18 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'early_return' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -amount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '提前归还未使用租金退款', createdBy: admin.id, metadata: { channel } })
   await issueCreditNote(c, order.id, amount, 0, `early-${nanoid(12)}`)
+}
+
+// 客户主动取消自己的待支付订单：尚未发生实际扣款（无论是常规 PaymentIntent 还是
+// 短租的一次性预授权），取消时会一并告诉 Stripe 放弃未结算的 PaymentIntent（见
+// applyPendingPaymentCancellation），无需退款。
+export async function cancelPendingPaymentOrderByCustomer(c: Context, user: any, orderId: string): Promise<void> {
+  const order = await getOrderById(c, orderId)
+  if (!order || order.userId !== user.id) throw new Error('订单不存在或无权访问')
+  if (order.status !== 'pending_payment') throw new Error('该订单当前不是待支付状态，不能取消')
+  const cancelled = await applyPendingPaymentCancellation(c, order as any)
+  if (!cancelled) throw new Error('订单状态已变化，请刷新后重试')
+  await revokeReferralRewardForOrder(c, order.id, '客户取消待支付订单')
 }
 
 export async function cancelAndRefund(c: Context, admin: any, orderId: string): Promise<Response> {

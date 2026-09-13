@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency, getDevices, getOrders, getUsers, sanitizePlainText, staffOrderPath } from '../../site'
+import { buildLayout, formatCurrency, getDB, getDevices, getUsers, sanitizePlainText, staffOrderPath } from '../../site'
 import type { Context } from 'hono'
 
 const ongoingStatuses = new Set(['approved', 'pending_payment', 'paid', 'pending_pickup', 'active', 'extended', 'overdue', 'suspended', 'pending_return'])
@@ -11,8 +11,18 @@ const statusLabels: Record<string, string> = {
   approved: '等待合同签署', pending_payment: '等待付款', paid: '待交付', pending_pickup: '待客户取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还验机',
 }
 
+// Pre-filters to the ongoing statuses in SQL (indexed) rather than pulling
+// the entire orders table; the in-memory filter below is kept as-is so
+// behavior stays identical regardless of what the query layer returns.
+async function getOngoingStatusOrders(c: Context) {
+  const db = getDB(c)
+  const placeholders = Array.from(ongoingStatuses).map(() => '?').join(', ')
+  const result = await db.prepare(`SELECT * FROM orders WHERE status IN (${placeholders})`).bind(...Array.from(ongoingStatuses)).all()
+  return (result.results || []) as any[]
+}
+
 export async function renderStaffOrdersOngoing(c: Context, user: any) {
-  const [orders, users, devices] = await Promise.all([getOrders(c), getUsers(c), getDevices(c)])
+  const [orders, users, devices] = await Promise.all([getOngoingStatusOrders(c), getUsers(c), getDevices(c)])
   const usersById = new Map(users.map(account => [account.id, account]))
   const devicesById = new Map(devices.map(device => [device.id, device]))
   const ongoingOrders = orders.filter(order => ongoingStatuses.has(order.status) && (user.role === 'ADMIN' || usersById.get(order.userId)?.staffId === user.id))

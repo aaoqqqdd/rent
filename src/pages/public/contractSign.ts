@@ -682,7 +682,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               function showStripeSetupForm(stripe) {
                 stopPoll();
                 panel.innerHTML =
-                  '<div class="payment-wait" style="max-width:520px">'
+                  '<div class="payment-wait">'
                   + '<h2>保存卡片并支付租金</h2>'
                   + '<p>Stripe 先验证并保存卡片，随后只支付租金及服务费；押金不会放入这笔 PaymentIntent。</p>'
                   + '<div id="sign-stripe-element" style="margin:14px 0;min-height:44px;text-align:left"></div>'
@@ -720,7 +720,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               function showStripeForm(stripe) {
                 stopPoll();
                 panel.innerHTML =
-                  '<div class="payment-wait" style="max-width:520px">'
+                  '<div class="payment-wait">'
                   + '<h2>信用卡支付</h2>'
                   + '<p>卡信息由 Stripe 处理，本站不保存卡号、有效期或安全码。</p>'
                   + '<div id="sign-stripe-element" style="margin:14px 0;min-height:44px;text-align:left"></div>'
