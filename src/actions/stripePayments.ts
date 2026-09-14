@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation } from '../site'
+import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation, logError } from '../site'
 import { createNotification } from '../services/notifications'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { squareRequest } from '../square'
@@ -14,6 +14,25 @@ import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaym
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
+}
+
+// issueInvoice / issueCreditNote 必须各自独立 try/catch，绝不能被同一个 try 块里
+// 其它后处理步骤（记录设备状态、发放推荐奖励等）的异常连带跳过——那样会导致订单
+// 已经 status = 'paid' 却永久没有发票，且只在 console.error 里看不见任何记录。
+async function issueInvoiceSafely(c: Context, orderId: string, contextLabel: string): Promise<void> {
+  try {
+    await issueInvoice(c, orderId)
+  } catch (error: any) {
+    await logError(c, 'CRITICAL', `Stripe 发票开具失败：${contextLabel}`, error, { orderId })
+  }
+}
+
+async function issueCreditNoteSafely(c: Context, orderId: string, amount: number, refundedProcessingFee: number, refundKey: string, contextLabel: string): Promise<void> {
+  try {
+    await issueCreditNote(c, orderId, amount, refundedProcessingFee, refundKey)
+  } catch (error: any) {
+    await logError(c, 'CRITICAL', `Stripe 贷记单开具失败：${contextLabel}`, error, { orderId, amount, refundedProcessingFee })
+  }
 }
 
 async function completeSplitSquarePayment(c: Context, squarePaymentId: string, expectedCents: number): Promise<any> {
@@ -492,8 +511,9 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
   if (alreadyPaid) {
     await c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id).run()
     // confirmNow 可能直接返回 succeeded，不一定会再触发可依赖的 webhook；
-    // 付款在签约后完成时也必须在这里补开发票。
-    await issueInvoice(c, order.id)
+    // 付款在签约后完成时也必须在这里补开发票。开票失败不能让整个付款请求报 500——
+    // 订单和付款都已落库为 paid，客户不该看到"支付失败"；失败要能被查到才能补开。
+    await issueInvoiceSafely(c, order.id, 'createOrderPaymentIntent confirmNow')
     // useFullAuthorization 的合并授权在拿到正式订单号之前就已创建，这里把 Stripe
     // 侧描述统一刷新成正式的 OD 单号。
     await refreshStripePaymentDescriptions(c, order.id)
@@ -793,7 +813,7 @@ export async function applyOrderPriceAdjustment(c: Context, opts: { orderId: str
   const completed = await c.env.RENT.prepare('SELECT id FROM order_price_adjustments WHERE id = ? AND status = \'succeeded\'').bind(opts.adjustmentId).first() as any
   if (completed && refundMethod !== 'pending_deposit') {
     await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -refundAmount, customerId: order.userId, orderId: order.id, sourceType: 'ORDER_PRICE_ADJUSTMENT', sourceId: completed.id, description: '订单降价差价退款', createdBy: opts.actorId || null, metadata: { refundMethod } })
-    await issueCreditNote(c, order.id, refundAmount, 0, `price-adjustment-${opts.adjustmentId}`)
+    await issueCreditNoteSafely(c, order.id, refundAmount, 0, `price-adjustment-${opts.adjustmentId}`, 'applyOrderPriceAdjustment')
   }
   return { amount: refundAmount, pendingDepositRefund: refundMethod === 'pending_deposit' }
 }
@@ -1063,11 +1083,18 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
         }
         await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(paidOrder.id).run()
       }
-      await issueInvoice(c, paidOrderId)
+    } catch (error: any) {
+      await logError(c, 'ERROR', 'Stripe webhook post-processing failed', error, { orderId: paidOrderId, eventId: event.id, eventType: event.type })
+    }
+    // 发票开具必须独立于上面的后处理步骤：设备状态、推荐奖励等任一环节抛错都不该
+    // 连带跳过开票，否则订单已经 status = 'paid' 却永久没有发票（且旧代码只有
+    // console.error，没有任何可查询记录）。
+    await issueInvoiceSafely(c, paidOrderId, `webhook ${event.type}`)
+    try {
       await refreshStripePaymentDescriptions(c, paidOrderId)
       await enqueueRentalUserCreation(c, await getOrderById(c, paidOrderId))
     } catch (error: any) {
-      console.error('Stripe webhook post-processing failed:', error?.message || error)
+      await logError(c, 'ERROR', 'Stripe webhook post-processing (descriptions/user) failed', error, { orderId: paidOrderId, eventId: event.id, eventType: event.type })
     }
   }
   if (authorizedOrderId) {
@@ -1212,7 +1239,7 @@ async function settlePreauthorizedDeposit(c: Context, admin: any, order: any, fo
   }
   await c.env.RENT.batch(statements)
   if (selectedRefundMethod === 'balance' && refundAmount > 0) await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '押金退款退回账户余额', admin.id)
-  if (fullAuthorization && intent.status === 'succeeded') await issueInvoice(c, order.id)
+  if (fullAuthorization && intent.status === 'succeeded') await issueInvoiceSafely(c, order.id, 'settlePreauthorizedDeposit')
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 
@@ -1335,7 +1362,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (!isBankTransfer) {
     const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
     if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -totalRefundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: refundItemLabel, createdBy: admin.id, metadata: { channel, principal: refundAmount, processingFee: refundedProcessingFee } })
-    if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount, refundedProcessingFee, `deposit-${nanoid(12)}`)
+    if (refundAmount > 0) await issueCreditNoteSafely(c, order.id, refundAmount, refundedProcessingFee, `deposit-${nanoid(12)}`, 'refundDeposit')
   }
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
@@ -1372,7 +1399,7 @@ export async function refundUnusedRentalDays(c: Context, admin: any, order: any,
   if (channel === 'balance') await recordBalanceTransaction(c, order.userId, amount, 'refund_credit', `提前归还未使用租金退款`, admin.id)
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'early_return' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -amount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '提前归还未使用租金退款', createdBy: admin.id, metadata: { channel } })
-  await issueCreditNote(c, order.id, amount, 0, `early-${nanoid(12)}`)
+  await issueCreditNoteSafely(c, order.id, amount, 0, `early-${nanoid(12)}`, 'refundUnusedRentalDays')
 }
 
 // 客户主动取消自己的待支付订单：尚未发生实际扣款（无论是常规 PaymentIntent 还是
@@ -1457,7 +1484,7 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string, r
   await releaseCouponForOrder(c, order.id)
   await revokeReferralRewardForOrder(c, order.id, '订单取消并退款')
   if (channel === 'balance') await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '取消订单全额退款', admin.id)
-  await issueCreditNote(c, order.id, Math.max(0, refundAmount - refundedProcessingFee), refundedProcessingFee, `cancellation-${nanoid(12)}`)
+  await issueCreditNoteSafely(c, order.id, Math.max(0, refundAmount - refundedProcessingFee), refundedProcessingFee, `cancellation-${nanoid(12)}`, 'cancelAndRefund')
   await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status, deviceId: order.deviceId }), JSON.stringify({ status: 'cancelled', deviceReleased: true }), reason || '取消订单并退款', admin.id).run()
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -refundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '取消订单全额退款', createdBy: admin.id, metadata: { channel, refundedProcessingFee } })
