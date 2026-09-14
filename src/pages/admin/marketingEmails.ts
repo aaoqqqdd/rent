@@ -5,7 +5,7 @@ const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, x => ({ 
 const MARKETING_VARIABLES = '{customer_name}、{customer_email}、{coupon_code}、{discount_text}、{unsubscribe_url}、{company_name}、{company_email}'
 
 function variableIndex(): string {
-  return `<details class="variable-index"><summary>可用变量（${MARKETING_VARIABLES.split('、').length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${MARKETING_VARIABLES.split('、').map(v => `<code>${v}</code>`).join('')}</div><p class="form-text">{coupon_code} 和 {discount_text} 仅在下方选择了优惠码后才会被替换，否则会原样保留，请按需使用。退订链接无需手动插入 {unsubscribe_url}：系统会在每封邮件末尾自动附上「取消订阅」链接。</p></section></details>`
+  return `<details class="variable-index"><summary>可用变量（${MARKETING_VARIABLES.split('、').length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${MARKETING_VARIABLES.split('、').map(v => `<code>${v}</code>`).join('')}</div><ul class="variable-index-notes"><li><code>{coupon_code}</code> 和 <code>{discount_text}</code> 仅在下方选择了优惠码后才会被替换，否则会原样保留，请按需使用。</li><li>退订链接无需手动插入 <code>{unsubscribe_url}</code>：系统会在每封邮件末尾自动附上「取消订阅」链接。</li></ul></section></details>`
 }
 
 function templateManager(templates: any[]): string {

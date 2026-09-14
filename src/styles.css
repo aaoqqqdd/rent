@@ -3454,6 +3454,22 @@ tr:hover td {
   font-weight: 700;
 }
 
+.variable-index-notes {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: .82rem;
+  line-height: 1.6;
+}
+
+.variable-index-notes li + li {
+  margin-top: 6px;
+}
+
+.variable-index-notes code {
+  font-size: .8em;
+}
+
 .contract-variable-group {
   margin-top: 15px;
 }
