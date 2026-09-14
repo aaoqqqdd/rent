@@ -162,6 +162,8 @@ export interface Order {
   deposit_payment_mode?: 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
   depositPaymentMode?: 'PAID' | 'PREAUTH' | 'SETUP_INTENT'
   stripe_deposit_payment_intent_id?: string | null
+  deposit_status?: string
+  settlement_status?: 'NOT_APPLICABLE' | 'PENDING' | 'SETTLED'
   couponCode?: string | null
   discountAmount?: number
   dailyRate: number

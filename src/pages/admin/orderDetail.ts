@@ -126,6 +126,9 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     'cancelled': { label: '已取消', color: '#dc2626', bg: '#fee2e2', icon: '' }
   };
   const currentStatus = statusLabels[order.status] || { label: order.status, color: '#6b7280', bg: '#f3f4f6', icon: '' };
+  // 订单“已完成”只代表设备已归还，跟押金是否真正结清（deposit_status）是两回事，
+  // 单独一个徽章显示，不能让“已完成”看起来什么都办完了（对应 o-af1VCjmW 那次事故）。
+  const settlementPending = order.status === 'completed' && order.settlement_status === 'PENDING';
   const refundStatusLabel = completedRefund?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : completedRefund?.status === 'succeeded' ? (Number(completedRefund.refund_amount || 0) < Number(completedRefund.refundable_amount || completedRefund.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : '';
 
   const body = `
@@ -137,7 +140,10 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             <p style="margin: 0; opacity: 0.9;">查看和管理订单的详细信息</p>
           </div>
         </div>
-        <span style="padding: 10px 20px; border-radius: 9999px; font-weight: 600; font-size: 1rem; background: ${currentStatus.bg}; color: ${currentStatus.color}; display: inline-flex; align-items: center; gap: 8px;">${currentStatus.label}</span>
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span style="padding: 10px 20px; border-radius: 9999px; font-weight: 600; font-size: 1rem; background: ${currentStatus.bg}; color: ${currentStatus.color}; display: inline-flex; align-items: center; gap: 8px;">${currentStatus.label}</span>
+          ${settlementPending ? `<span style="padding: 10px 20px; border-radius: 9999px; font-weight: 600; font-size: 1rem; background: #fef3c7; color: #b45309; display: inline-flex; align-items: center; gap: 8px;" title="押金尚未结清，不能视为完全办结">押金待结算</span>` : ''}
+        </div>
       </div>
     </div>
 
