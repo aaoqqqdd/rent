@@ -505,7 +505,9 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     try {
       await createDepositAuthorization(c, order, savedPaymentMethodId)
     } catch (error: any) {
-      console.error('Deposit authorization failed after rent payment succeeded:', error?.message || error)
+      // 失败后 order.deposit_payment_mode 仍然停在 PREAUTH，但 Stripe 侧从未真正
+      // 建立预授权——不记录就没人知道，日后结算押金时只会看到"未找到押金预授权记录"。
+      await logError(c, 'CRITICAL', 'Deposit authorization failed after rent payment succeeded', error, { orderId: order.id })
     }
   }
   if (alreadyPaid) {
