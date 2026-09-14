@@ -123,7 +123,7 @@ import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteK
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createSquareDepositPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
 import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
@@ -2690,18 +2690,6 @@ app.post('/customer/orders/:id/stripe/intent', async (c) => {
     return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
   } catch (error: any) {
     return c.json({ error: error?.message || '无法创建 Stripe 支付' }, 400)
-  }
-})
-
-app.post('/customer/orders/:id/stripe/deposit-intent', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
-  try {
-    const result = await createSquareDepositPaymentIntent(c, user, c.req.param('id'))
-    if (result.alreadyPaid) return c.json({ alreadyPaid: true })
-    return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
-  } catch (error: any) {
-    return c.json({ error: error?.message || '无法创建 Stripe 押金付款' }, 400)
   }
 })
 
