@@ -346,13 +346,13 @@ export async function renderAdminOrders(c: Context, user: any) {
                   <td>${createdAt ? formatMelbourneDate(createdAt) : '-'}</td>
                   <td>
                     <div style="display: flex; flex-direction: column; gap: 8px; min-width: 160px;">
-                      <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; gap: 8px; align-items: center;">
+                      ${!['completed', 'cancelled'].includes(String(order.status)) ? `<form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; gap: 8px; align-items: center;">
                         <select name="status" class="form-control" style="min-width: 110px; padding: 6px 10px; font-size: 0.85rem;">
                           ${order.status === 'suspended' ? '<option value="active">恢复租赁</option>' : '<option value="suspended">暂停租赁（仅管理员）</option>'}
-                          <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
+                          <option value="cancelled">已取消</option>
                         </select>
                         <button type="submit" class="button button-secondary" style="padding: 6px 10px; font-size: 0.8rem;">更新</button>
-                      </form>
+                      </form>` : ''}
                       <a class="link-button" href="/admin/orders/${order.id}">查看详情</a>
                     </div>
                   </td>
