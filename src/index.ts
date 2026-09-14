@@ -107,6 +107,7 @@ import {
   , renderNotificationMarkdown
   , renderFlexibleContent
   , renderEmailNotificationHtml
+  , renderMarketingEmailHtml
   , ensureNotificationsTable
   , getContractBySignToken
   , enqueueRentalUserDeletion
@@ -1662,6 +1663,245 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
   if (!id.startsWith('custom_')) return c.text('内置模板不能删除', 400)
   await c.env.RENT.prepare('DELETE FROM email_templates WHERE id = ?').bind(id).run()
   return c.redirect('/admin/email-templates')
+})
+
+async function ensureMarketingEmailTables(db: any): Promise<void> {
+  await db.prepare("CREATE TABLE IF NOT EXISTS marketing_email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run()
+  await db.prepare("CREATE TABLE IF NOT EXISTS marketing_campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', coupon_mode TEXT NOT NULL DEFAULT 'none', coupon_id TEXT, unique_discount_type TEXT, unique_discount_value REAL, unique_max_discount_amount REAL, unique_expires_at TEXT, recipient_count INTEGER NOT NULL DEFAULT 0, sent_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'SENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT)").run()
+  await db.prepare("CREATE TABLE IF NOT EXISTS marketing_campaign_recipients (id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL, customer_id TEXT NOT NULL, email TEXT NOT NULL, coupon_code TEXT, status TEXT NOT NULL DEFAULT 'PENDING', error_message TEXT, sent_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run()
+  try { await db.prepare('ALTER TABLE marketing_campaign_recipients ADD COLUMN unsubscribe_token TEXT').run() } catch (_) { }
+  try { await db.prepare('ALTER TABLE users ADD COLUMN marketing_email_opt_out INTEGER NOT NULL DEFAULT 0').run() } catch (_) { }
+  try { await db.prepare('ALTER TABLE users ADD COLUMN marketing_opt_out_at TEXT').run() } catch (_) { }
+}
+
+function generateUnsubscribeToken(): string {
+  return nanoid(32)
+}
+
+function isMarketingOptedOut(account: any): boolean {
+  return Number(account?.marketing_email_opt_out) === 1
+}
+
+function marketingDiscountText(discountType: string, discountValue: number, maxDiscountAmount?: number | null): string {
+  const base = discountType === 'percent' ? `${discountValue}% 的折扣` : `AUD$${Number(discountValue).toFixed(2)} 的优惠`
+  return maxDiscountAmount ? `${base}（最高优惠 AUD$${Number(maxDiscountAmount).toFixed(2)}）` : base
+}
+
+function generateMarketingCouponCode(prefix: string): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let suffix = ''
+  for (let i = 0; i < 8; i++) suffix += alphabet[Math.floor(Math.random() * alphabet.length)]
+  const cleanPrefix = String(prefix || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 12)
+  return cleanPrefix ? `${cleanPrefix}-${suffix}` : suffix
+}
+
+// Reuses the coupons table for one-off per-recipient codes: max_uses = 1 and
+// max_uses_per_customer = 1 make each generated code single-use by construction,
+// so no schema change is needed to scope a coupon to one customer.
+async function createUniqueMarketingCoupon(c: any, params: { discountType: string; discountValue: number; maxDiscountAmount: number | null; expiresAt: string | null; prefix: string; createdBy: string }): Promise<string> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateMarketingCouponCode(params.prefix)
+    try {
+      await c.env.RENT.prepare("INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, max_uses_per_customer, max_discount_amount, expires_at, active, status, created_by) VALUES (?, ?, ?, ?, 1, 1, ?, ?, 1, 'ACTIVE', ?)")
+        .bind(`cp-${nanoid(10)}`, code, params.discountType, params.discountValue, params.maxDiscountAmount, params.expiresAt, params.createdBy).run()
+      return code
+    } catch (error: any) {
+      if (!String(error?.message || '').toLowerCase().includes('unique')) throw error
+    }
+  }
+  throw new Error('无法生成唯一优惠码，请重试')
+}
+
+async function sendMarketingCampaignEmails(c: any, params: { campaignId: string; subject: string; body: string; themeColor: string; discountText: string; recipients: { id: string; customerId: string; email: string; couponCode: string | null; unsubscribeToken: string }[] }): Promise<void> {
+  const companyDetails = getSystemSettings().companyDetails || {}
+  const companyName = String(companyDetails.name || 'PC Rental')
+  const companyEmail = String(companyDetails.email || '')
+  const origin = new URL(c.req.url).origin
+  const { apiKey, from } = await resolveEmailCredentials(c)
+  let sent = 0, failed = 0
+  for (const row of params.recipients) {
+    const recipient = await getUserById(c, row.customerId)
+    if (isMarketingOptedOut(recipient)) {
+      await c.env.RENT.prepare("UPDATE marketing_campaign_recipients SET status = 'FAILED', error_message = '客户已取消订阅营销邮件' WHERE id = ?").bind(row.id).run()
+      failed++
+      continue
+    }
+    const unsubscribeUrl = `${origin}/unsubscribe?token=${encodeURIComponent(row.unsubscribeToken)}`
+    const vars: Record<string, string> = {
+      customer_name: String(recipient?.name || ''),
+      customer_email: row.email,
+      company_name: companyName,
+      company_email: companyEmail,
+      coupon_code: row.couponCode || '',
+      discount_text: row.couponCode ? params.discountText : '',
+      unsubscribe_url: unsubscribeUrl,
+    }
+    const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
+    const filledSubject = fill(params.subject)
+    const filledBody = fill(params.body)
+    let ok = false
+    let errorMessage = ''
+    if (!apiKey || !from) {
+      errorMessage = '邮件服务尚未配置'
+    } else {
+      const html = renderMarketingEmailHtml(filledSubject, filledBody, companyName, params.themeColor, unsubscribeUrl)
+      const text = `${filledBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}\n\n取消订阅营销邮件：${unsubscribeUrl}`
+      const result = await sendLoggedEmail(c, { eventType: 'MARKETING', recipient: row.email, key: `marketing:${params.campaignId}:${row.id}`, subject: filledSubject, text, html })
+      ok = result.ok
+      if (!ok) errorMessage = '发送失败'
+    }
+    if (ok) sent++; else failed++
+    await c.env.RENT.prepare('UPDATE marketing_campaign_recipients SET status = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?').bind(ok ? 'SENT' : 'FAILED', errorMessage || null, ok ? 1 : 0, row.id).run()
+  }
+  const finalStatus = sent === 0 && failed > 0 ? 'FAILED' : 'SENT'
+  await c.env.RENT.prepare('UPDATE marketing_campaigns SET sent_count = ?, failed_count = ?, status = ?, sent_at = CURRENT_TIMESTAMP WHERE id = ?').bind(sent, failed, finalStatus, params.campaignId).run()
+}
+
+app.get('/admin/marketing-emails', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureMarketingEmailTables(c.env.RENT)
+  const templates = ((await c.env.RENT.prepare('SELECT * FROM marketing_email_templates ORDER BY updated_at DESC').all()).results || []) as any[]
+  const campaigns = ((await c.env.RENT.prepare('SELECT * FROM marketing_campaigns ORDER BY created_at DESC LIMIT 50').all()).results || []) as any[]
+  const coupons = ((await c.env.RENT.prepare("SELECT id, code, discount_type, discount_value FROM coupons WHERE active = 1 AND status = 'ACTIVE' ORDER BY created_at DESC").all()).results || []) as any[]
+  const activeCustomers = (await getUsers(c)).filter((account: any) => account.role === 'CUSTOMER' && account.status === 'active' && account.email)
+  const customers = activeCustomers.filter((account: any) => !isMarketingOptedOut(account))
+  const optedOutCount = activeCustomers.length - customers.length
+  return c.html(pages.renderAdminMarketingEmails(user, { templates, campaigns, coupons, customers, optedOutCount }))
+})
+
+app.get('/admin/marketing-emails/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const campaign = await c.env.RENT.prepare('SELECT * FROM marketing_campaigns WHERE id = ?').bind(c.req.param('id')).first() as any
+  if (!campaign) return c.html(renderNotFound(), 404)
+  const recipients = ((await c.env.RENT.prepare('SELECT * FROM marketing_campaign_recipients WHERE campaign_id = ? ORDER BY created_at').bind(campaign.id).all()).results || []) as any[]
+  return c.html(pages.renderAdminMarketingEmailDetail(user, campaign, recipients))
+})
+
+app.post('/admin/marketing-emails/templates', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const name = String(form.name || '').trim().slice(0, 80)
+  const subject = String(form.subject || '').trim().slice(0, 200)
+  const body = String(form.body || '').trim().slice(0, 10000)
+  if (!name || !subject || !body) return c.text('模板名称、主题和正文不能为空', 400)
+  await ensureMarketingEmailTables(c.env.RENT)
+  const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#f0a35b'
+  await c.env.RENT.prepare('INSERT INTO marketing_email_templates (id, name, subject, body, theme_color, created_by) VALUES (?, ?, ?, ?, ?, ?)').bind(`mktpl_${nanoid(12)}`, name, subject, body, themeColor, user.id).run()
+  return c.redirect('/admin/marketing-emails')
+})
+
+app.post('/admin/marketing-emails/templates/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const name = String(form.name || '').trim().slice(0, 80)
+  const subject = String(form.subject || '').trim().slice(0, 200)
+  const body = String(form.body || '').trim().slice(0, 10000)
+  if (!name || !subject || !body) return c.text('模板名称、主题和正文不能为空', 400)
+  const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#f0a35b'
+  await c.env.RENT.prepare('UPDATE marketing_email_templates SET name = ?, subject = ?, body = ?, theme_color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(name, subject, body, themeColor, c.req.param('id')).run()
+  return c.redirect('/admin/marketing-emails')
+})
+
+app.post('/admin/marketing-emails/templates/:id/delete', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await c.env.RENT.prepare('DELETE FROM marketing_email_templates WHERE id = ?').bind(c.req.param('id')).run()
+  return c.redirect('/admin/marketing-emails')
+})
+
+app.post('/admin/marketing-emails/send', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureMarketingEmailTables(c.env.RENT)
+  const form = await c.req.parseBody()
+  const name = String(form.name || '').trim().slice(0, 120)
+  const templateId = String(form.templateId || 'custom')
+  let subject = String(form.subject || '').trim().slice(0, 200)
+  let body = String(form.body || '').trim().slice(0, 20000)
+  let themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#f0a35b'
+  if (templateId !== 'custom') {
+    const template = await c.env.RENT.prepare('SELECT subject, body, theme_color FROM marketing_email_templates WHERE id = ?').bind(templateId).first() as any
+    if (template) { subject = template.subject; body = template.body; themeColor = template.theme_color || themeColor }
+  }
+  if (!name || !subject || !body) return c.text('批次名称、邮件主题和正文不能为空', 400)
+
+  const allCustomers = (await getUsers(c)).filter((account: any) => account.role === 'CUSTOMER' && account.status === 'active' && account.email && !isMarketingOptedOut(account))
+  let recipients: any[]
+  if (form.sendToAll) {
+    recipients = allCustomers
+  } else {
+    const rawIds = Array.isArray(form.recipientId) ? form.recipientId : (form.recipientId ? [form.recipientId] : [])
+    const idSet = new Set(rawIds.map(String))
+    recipients = allCustomers.filter((account: any) => idSet.has(String(account.id)))
+  }
+  if (!recipients.length) return c.text('请至少选择一位收件人，或勾选发送给全部活跃客户', 400)
+
+  const couponMode = ['none', 'shared', 'unique'].includes(String(form.couponMode)) ? String(form.couponMode) : 'none'
+  let sharedCoupon: any = null
+  let uniqueConfig: { discountType: string; discountValue: number; maxDiscountAmount: number | null; expiresAt: string | null; prefix: string } | null = null
+  let discountText = ''
+  if (couponMode === 'shared') {
+    sharedCoupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ? AND active = 1').bind(String(form.couponId || '')).first() as any
+    if (!sharedCoupon) return c.text('请选择一个有效的优惠码', 400)
+    discountText = marketingDiscountText(sharedCoupon.discount_type, sharedCoupon.discount_value, sharedCoupon.max_discount_amount)
+  } else if (couponMode === 'unique') {
+    const discountType = ['percent', 'fixed'].includes(String(form.uniqueDiscountType)) ? String(form.uniqueDiscountType) : 'percent'
+    const discountValue = Number(form.uniqueDiscountValue)
+    if (!Number.isFinite(discountValue) || discountValue <= 0 || (discountType === 'percent' && discountValue > 100)) return c.text('请输入有效的折扣值', 400)
+    const maxDiscountAmount = form.uniqueMaxDiscountAmount ? Number(form.uniqueMaxDiscountAmount) : null
+    const expiresAt = String(form.uniqueExpiresAt || '').replace('T', ' ') || null
+    uniqueConfig = { discountType, discountValue, maxDiscountAmount, expiresAt, prefix: String(form.uniqueCodePrefix || '').trim() }
+    discountText = marketingDiscountText(discountType, discountValue, maxDiscountAmount)
+  }
+
+  const campaignId = `camp_${nanoid(12)}`
+  await c.env.RENT.prepare('INSERT INTO marketing_campaigns (id, name, subject, body, theme_color, coupon_mode, coupon_id, unique_discount_type, unique_discount_value, unique_max_discount_amount, unique_expires_at, recipient_count, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(campaignId, name, subject, body, themeColor, couponMode, couponMode === 'shared' ? sharedCoupon.id : null, uniqueConfig?.discountType || null, uniqueConfig?.discountValue ?? null, uniqueConfig?.maxDiscountAmount ?? null, uniqueConfig?.expiresAt || null, recipients.length, user.id).run()
+
+  const recipientRows: { id: string; customerId: string; email: string; couponCode: string | null; unsubscribeToken: string }[] = []
+  for (const recipient of recipients) {
+    let couponCode: string | null = null
+    if (couponMode === 'shared') couponCode = String(sharedCoupon.code).toUpperCase()
+    else if (couponMode === 'unique' && uniqueConfig) couponCode = await createUniqueMarketingCoupon(c, { ...uniqueConfig, createdBy: user.id })
+    const recipientRowId = `mcr_${nanoid(12)}`
+    const unsubscribeToken = generateUnsubscribeToken()
+    await c.env.RENT.prepare('INSERT INTO marketing_campaign_recipients (id, campaign_id, customer_id, email, coupon_code, unsubscribe_token) VALUES (?, ?, ?, ?, ?, ?)').bind(recipientRowId, campaignId, recipient.id, String(recipient.email).toLowerCase(), couponCode, unsubscribeToken).run()
+    recipientRows.push({ id: recipientRowId, customerId: recipient.id, email: String(recipient.email).toLowerCase(), couponCode, unsubscribeToken })
+  }
+
+  await createAuditLog(c, { actor: user, action: 'MARKETING_EMAIL_CAMPAIGN_CREATED', targetType: 'MARKETING_CAMPAIGN', targetId: campaignId, after: { name, recipientCount: recipients.length, couponMode } })
+
+  c.executionCtx.waitUntil(sendMarketingCampaignEmails(c, { campaignId, subject, body, themeColor, discountText, recipients: recipientRows }))
+
+  return c.redirect('/admin/marketing-emails?success=' + encodeURIComponent(`营销邮件已开始发送，共 ${recipients.length} 位收件人`))
+})
+
+// 退订链接无需登录：令牌来自某次群发的收件人行（marketing_campaign_recipients），
+// 只用于定位该行对应的客户账号，退订状态则持久写在 users 表上，对之后的所有批次都生效。
+app.get('/unsubscribe', async (c) => {
+  await ensureMarketingEmailTables(c.env.RENT)
+  const token = String(c.req.query('token') || '').trim()
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return c.html(pages.renderUnsubscribeResult('取消订阅链接无效，请从营销邮件中重新点击链接。', false), 400)
+  const recipient = await c.env.RENT.prepare('SELECT customer_id, email FROM marketing_campaign_recipients WHERE unsubscribe_token = ?').bind(token).first() as any
+  if (!recipient) return c.html(pages.renderUnsubscribeResult('取消订阅链接无效或已失效。', false), 404)
+  const account = await getUserById(c, recipient.customer_id)
+  if (isMarketingOptedOut(account)) return c.html(pages.renderUnsubscribeResult('您已成功取消订阅营销邮件，无需重复操作。'))
+  return c.html(pages.renderUnsubscribeConfirm(token, recipient.email))
+})
+
+app.post('/unsubscribe', async (c) => {
+  await ensureMarketingEmailTables(c.env.RENT)
+  const form = await c.req.parseBody()
+  const token = String(form.token || '').trim()
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return c.html(pages.renderUnsubscribeResult('取消订阅链接无效，请从营销邮件中重新点击链接。', false), 400)
+  const recipient = await c.env.RENT.prepare('SELECT customer_id FROM marketing_campaign_recipients WHERE unsubscribe_token = ?').bind(token).first() as any
+  if (!recipient) return c.html(pages.renderUnsubscribeResult('取消订阅链接无效或已失效。', false), 404)
+  await c.env.RENT.prepare("UPDATE users SET marketing_email_opt_out = 1, marketing_opt_out_at = CURRENT_TIMESTAMP WHERE id = ?").bind(recipient.customer_id).run()
+  return c.html(pages.renderUnsubscribeResult('您已成功取消订阅营销邮件，我们不会再向您发送促销邮件。您仍会收到订单、合同等账户相关的重要通知邮件。'))
 })
 
 app.get('/notifications/announcements', async (c) => {
