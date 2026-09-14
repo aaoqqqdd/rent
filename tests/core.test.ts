@@ -50,6 +50,7 @@ test('receipt payment summary includes every paid payment method', () => {
     { payment_method: 'balance' },
     { payment_method: 'card', payment_provider: 'stripe' },
   ]), '信用卡 + 账户余额')
+  assert.equal(formatInvoicePaymentMethods([{ payment_method: 'card', payment_provider: 'square' }]), '礼品卡')
   assert.equal(formatInvoicePaymentMethods([{ payment_method: 'wechat' }]), '微信支付')
 })
 
