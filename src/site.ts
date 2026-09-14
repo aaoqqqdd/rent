@@ -309,7 +309,36 @@ export async function cancelExpiredPendingPaymentOrders(c: Context): Promise<num
   for (const order of (orders.results || []) as any[]) {
     if (await applyPendingPaymentCancellation(c, order)) cancelled += 1
   }
+  return cancelled + await cancelExpiredPendingBalanceTopUps(c)
+}
+
+// 余额充值也使用 pending 表示尚未完成付款；超过 24 小时后改为失败态，
+// 沿用手动取消充值的状态约定，避免继续显示为可支付记录。
+export async function cancelExpiredPendingBalanceTopUps(c: Context): Promise<number> {
+  const topups = await c.env.RENT.prepare(`
+    SELECT id, stripe_payment_intent_id FROM balance_topups
+    WHERE status = 'pending'
+      AND datetime(created_at) <= datetime('now', '-24 hours')
+  `).all() as any
+  let cancelled = 0
+  for (const topup of (topups.results || []) as any[]) {
+    if (await applyPendingBalanceTopUpCancellation(c, topup)) cancelled += 1
+  }
   return cancelled
+}
+
+async function applyPendingBalanceTopUpCancellation(c: Context, topup: { id: string; stripe_payment_intent_id?: string | null }): Promise<boolean> {
+  const result = await c.env.RENT.prepare(`
+    UPDATE balance_topups
+    SET status = 'failed',
+        note = CASE WHEN note IS NULL OR note = '' THEN '系统自动取消：超过24小时未完成付款' ELSE note || '；系统自动取消：超过24小时未完成付款' END,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending'
+  `).bind(topup.id).run() as any
+  const changes = Number(result.meta?.changes ?? result.changes ?? 0)
+  if (changes < 1) return false
+  await releaseStripePendingIntent(c, topup.stripe_payment_intent_id, `pending-topup-cancel-${topup.id}`)
+  return true
 }
 
 // 把一笔待支付订单标记为已取消：订单本身状态翻转成功时才继续收尾（取消合同草稿、
@@ -338,12 +367,16 @@ async function releaseStripePendingPaymentIntents(c: Context, orderId: string): 
     "SELECT stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = 'pending' AND stripe_payment_intent_id IS NOT NULL"
   ).bind(orderId).all() as any
   for (const payment of (pendingPayments.results || []) as any[]) {
-    const intentId = String(payment.stripe_payment_intent_id || '')
-    if (!/^pi_[A-Za-z0-9_]+$/.test(intentId)) continue
-    const intent = await stripeRequest(c, `payment_intents/${intentId}`).catch(() => null)
-    if (intent && ['requires_payment_method', 'requires_confirmation', 'requires_action', 'requires_capture'].includes(String(intent.status))) {
-      await stripeRequest(c, `payment_intents/${intentId}/cancel`, new URLSearchParams(), `pending-payment-cancel-${orderId}`).catch(() => null)
-    }
+    await releaseStripePendingIntent(c, payment.stripe_payment_intent_id, `pending-payment-cancel-${orderId}`)
+  }
+}
+
+async function releaseStripePendingIntent(c: Context, rawIntentId: unknown, idempotencyKey: string): Promise<void> {
+  const intentId = String(rawIntentId || '')
+  if (!/^pi_[A-Za-z0-9_]+$/.test(intentId)) return
+  const intent = await stripeRequest(c, `payment_intents/${intentId}`).catch(() => null)
+  if (intent && ['requires_payment_method', 'requires_confirmation', 'requires_action', 'requires_capture'].includes(String(intent.status))) {
+    await stripeRequest(c, `payment_intents/${intentId}/cancel`, new URLSearchParams(), idempotencyKey).catch(() => null)
   }
 }
 

@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import styles from '../src/styles.css'
-import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getAccountTypeDisplay, getCustomerSigningUser, getContractCustomerSnapshot } from '../src/site'
+import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getAccountTypeDisplay, getCustomerSigningUser, getContractCustomerSnapshot, cancelExpiredPendingBalanceTopUps } from '../src/site'
 import { generateWindowsPassword } from '../src/lib/password'
 import { renderAdminSettings } from '../src/pages/admin/settings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
@@ -193,6 +193,33 @@ test('terminal order states cannot be reopened', () => {
   assert.equal(canTransitionOrder('pending_payment', 'paid'), true)
   assert.equal(canTransitionOrder('completed', 'active'), false)
   assert.equal(canTransitionOrder('cancelled', 'paid'), false)
+})
+
+test('balance top-ups pending for more than 24 hours are cancelled by the sweep', async () => {
+  const statements: Array<{ sql: string; args: unknown[] }> = []
+  const db = {
+    prepare(sql: string) {
+      const statement: any = {
+        args: [] as unknown[],
+        bind(...args: unknown[]) { this.args = args; return this },
+        async all() {
+          statements.push({ sql, args: this.args })
+          return { results: sql.includes('FROM balance_topups') ? [{ id: 'topup-old', stripe_payment_intent_id: null }] : [] }
+        },
+        async run() {
+          statements.push({ sql, args: this.args })
+          return { meta: { changes: 1 } }
+        },
+      }
+      return statement
+    },
+  }
+
+  assert.equal(await cancelExpiredPendingBalanceTopUps({ env: { RENT: db } } as any), 1)
+  assert.match(statements[0].sql, /status = 'pending'/)
+  assert.match(statements[0].sql, /datetime\(created_at\).*'-24 hours'/s)
+  assert.match(statements[1].sql, /SET status = 'failed'/)
+  assert.deepEqual(statements[1].args, ['topup-old'])
 })
 
 test('unsigned contracts display as expired after their signing deadline', () => {
