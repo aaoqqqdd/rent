@@ -217,6 +217,7 @@ export const systemSettings = {
     bankTransfer: true,
     balancePayment: true,
     processingFeeRate: 0.025,
+    squareProcessingFeeRate: 0.022,
     alipay: false,
     wechat: false,
   },
