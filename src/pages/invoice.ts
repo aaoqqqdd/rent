@@ -10,7 +10,7 @@ const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => 
 
 const paymentMethodLabel = (payment: any): string => {
   if (payment?.payment_provider === 'square') return 'Square 礼品卡'
-  if (payment?.payment_method === 'card') return '信用卡（Stripe）'
+  if (payment?.payment_method === 'card') return '信用卡'
   if (payment?.payment_method === 'balance') return '账户余额'
   if (payment?.payment_method === 'bank_transfer') return '银行转账'
   if (payment?.payment_method === 'alipay') return '支付宝'

@@ -11,6 +11,10 @@ export function renderCustomerBalanceTopUp(c: Context, user: any, error = '', pe
   const isSquareTopUp = String(payTopup?.payment_method || '') === 'square'
   const payFee = payTopup ? Math.round(Number(payTopup.amount) * (isSquareTopUp ? squareFeeRate : feeRate) * 100) / 100 : 0
   const payTotal = payTopup ? Number(payTopup.amount) + payFee : 0
+  const squarePaid = payTopup && isSquareTopUp ? Number(payTopup.square_paid_amount || 0) : 0
+  const squareRemaining = Math.max(0, Number((payTotal - squarePaid).toFixed(2)))
+  const pendingSquareTarget = pending && Number(pending.square_paid_amount || 0) > 0 ? Number(pending.amount) + Math.round(Number(pending.amount) * squareFeeRate * 100) / 100 : 0
+  const pendingAmount = pendingSquareTarget > 0 ? Math.max(0, Number((pendingSquareTarget - Number(pending.square_paid_amount || 0)).toFixed(2))) : Number(pending?.amount || 0)
   const body = `<div class="entity-header"><div class="identity-strip mono"><span>ACCOUNT / TOP UP</span><span>WALLET FUNDING</span></div><div class="entity-heading"><div><p class="section-code">WALLET</p><h2>余额充值</h2><p>选择充值金额和支付方式，充值到账后可用于租赁订单付款。</p></div><strong class="balance-hero-value">${formatCurrency(user.balance)}</strong></div></div>
     ${success ? `<div class="page-notification page-notification--success">付款已提交，到账后余额会自动更新，可刷新查看。</div>` : ''}
     ${error ? `<div class="page-notification page-notification--error">${error}</div>` : ''}
