@@ -4173,7 +4173,12 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
     c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING' WHERE id = ?").bind(order.id),
   ])
   await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_AUTO_APPROVED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, after: { ...snapshot, status: 'APPROVED' }, reason: deductionReason || '管理员提交，自动审批通过' })
-  return c.redirect(`/admin/orders/${order.id}`, 303)
+  const response = await refundDeposit(c, user, order.id, form)
+  if (response.status < 400) {
+    await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'EXECUTED', executed_by = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'APPROVED'").bind(user.id, settlementId).run()
+    await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_EXECUTED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, before: { status: 'APPROVED' }, after: { status: 'EXECUTED' } })
+  }
+  return response
 })
 
 app.get('/manager/deposit-settlements', async (c) => {

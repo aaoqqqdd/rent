@@ -106,8 +106,14 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const canSettleDeposit = order.status === 'completed' && (isSetupIntentDeposit || remainingRefundTotal > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED')
   const canCancelBeforeHandover = !order.handover_completed_at && !['cancelled', 'completed', 'returned', 'pending_return'].includes(String(order.status))
   const pendingBankTransferRefund = completedRefund?.status === 'pending' && completedRefund.refund_method === 'bank_transfer' ? completedRefund : null
-  const showRefundCard = order.status === 'completed' || (canCancelBeforeHandover && !completedRefund) || Boolean(pendingBankTransferRefund)
+  const depositFullySettled = Boolean(depositSettlement) && depositSettlement.status === 'EXECUTED'
+  const showRefundCard = Boolean(pendingBankTransferRefund) || (canCancelBeforeHandover && !completedRefund) || (order.status === 'completed' && !depositFullySettled)
   const canHandover = ['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && contract?.status === 'signed')
+  const hasOrderActions = canModifyOrder
+    || ['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status))
+    || (isSquarePayment && order.status === 'pending_payment')
+    || (isCardPayment && order.status === 'pending_payment')
+    || showRefundCard
 
   const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
     'pending': { label: '待处理', color: '#d97706', bg: '#fef3c7', icon: '' },
@@ -213,10 +219,10 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     </div>
 
     <div class="panel">
-      <div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 24px;">
+      ${hasOrderActions ? `<div style="padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 24px;">
         <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">订单管理操作</h3>
       </div>
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;">
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;">`: ''}
         ${canModifyOrder ? `<div style="padding:24px;background:linear-gradient(135deg,#eef2ff 0%,#e0e7ff 100%);border-radius:16px">
           <h4 style="margin:0 0 12px 0;color:#4338ca;display:flex;align-items:center;gap:8px">订单修改</h4>
           <p class="section-note">调整关键字段会记录到订单修改历史并写入审计日志；换机与改期会自动做库存冲突检查。</p>
@@ -380,7 +386,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           </form>` : ''}
           ${canCancelBeforeHandover && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/cancel-and-refund" onsubmit="return confirm('确定取消订单并全额退还 ${formatCurrency(order.totalAmount)} 吗？');"><button type="submit" class="button button-danger">取消并全额退款</button></form>` : ''}
         </div>` : ''}
-      </div>
+      ${hasOrderActions ? '</div>' : ''}
       <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
         <a href="/admin/orders" class="button button-secondary" style="padding: 12px 32px; border-radius: 10px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">← 返回订单列表</a>
         <form method="POST" action="/admin/orders/${order.id}/delete" onsubmit="return confirm('删除订单是不可恢复的操作。确定要删除此订单吗？');">
