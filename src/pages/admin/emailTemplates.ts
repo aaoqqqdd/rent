@@ -34,7 +34,9 @@ export async function renderAdminEmailTemplates(c: any, user: any) {
     seed('rental_application_approved', '网站订单：申请已通过', '租赁申请已审核通过 - {order_number}',
       `<h2>租赁申请已审核通过</h2><p>您好 {customer_name}：</p><p>您的租赁申请已通过审核，感谢您选择 <strong>{company_name}</strong>。</p><h3>订单详情</h3><table style="width:100%; border-collapse:collapse;"><tbody><tr><td style="padding:8px 0; color:#666;">订单编号</td><td style="padding:8px 0;"><strong>{order_number}</strong></td></tr><tr><td style="padding:8px 0; color:#666;">租赁设备</td><td style="padding:8px 0;">{device_name}</td></tr><tr><td style="padding:8px 0; color:#666;">配送费用</td><td style="padding:8px 0;">{delivery_fee}</td></tr></tbody></table><p>请点击以下链接完成租赁合同的电子签署：<br><a href="{sign_url}">{sign_url}</a></p><p>如有疑问，请联系 <a href="mailto:{company_email}">{company_email}</a>，并提供订单编号 <strong>{order_number}</strong>。</p>${sign}${footer}`),
     seed('rental_application_rejected', '网站订单：申请未通过', '租赁申请未通过 - {order_number}',
-      `<h2>租赁申请未通过</h2><p>您好 {customer_name}：</p><p>很抱歉，您提交的租赁申请未能通过审核。</p><h3>订单详情</h3><table style="width:100%; border-collapse:collapse;"><tbody><tr><td style="padding:8px 0; color:#666;">订单编号</td><td style="padding:8px 0;"><strong>{order_number}</strong></td></tr><tr><td style="padding:8px 0; color:#666;">租赁设备</td><td style="padding:8px 0;">{device_name}</td></tr></tbody></table><p>如需了解详情或重新提交申请，请联系 <a href="mailto:{company_email}">{company_email}</a>。</p>${sign}${footer}`)
+      `<h2>租赁申请未通过</h2><p>您好 {customer_name}：</p><p>很抱歉，您提交的租赁申请未能通过审核。</p><h3>订单详情</h3><table style="width:100%; border-collapse:collapse;"><tbody><tr><td style="padding:8px 0; color:#666;">订单编号</td><td style="padding:8px 0;"><strong>{order_number}</strong></td></tr><tr><td style="padding:8px 0; color:#666;">租赁设备</td><td style="padding:8px 0;">{device_name}</td></tr></tbody></table><p>如需了解详情或重新提交申请，请联系 <a href="mailto:{company_email}">{company_email}</a>。</p>${sign}${footer}`),
+    seed('site_notification', '站内通知（自动邮件）', '{title}',
+      `<h2>{title}</h2><p>您好 {customer_name}：</p><p>{message}</p>${sign}${footer}`)
   ])
   const rows = (await c.env.RENT.prepare('SELECT * FROM email_templates ORDER BY name').all()).results as any[]
   const pageSize = 10
@@ -42,7 +44,7 @@ export async function renderAdminEmailTemplates(c: any, user: any) {
   const page = Math.min(Math.max(1, Number(new URL(c.req.url).searchParams.get('page') || 1) || 1), pageCount)
   const pageRows = rows.slice((page - 1) * pageSize, page * pageSize)
   const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x] || x))
-  const variables = '{customer_name}、{customer_email}、{order_number}、{contract_number}、{device_name}、{start_date}、{end_date}、{rental_period}、{pickup_date}、{pickup_location}、{return_date}、{return_location}、{total_amount}、{deposit_amount}、{refund_amount}、{payment_due_date}、{delivery_method}、{delivery_address}、{delivery_fee}、{rental_note}、{sign_url}、{verification_url}、{reset_url}、{company_name}、{company_email}'
+  const variables = '{title}、{message}、{customer_name}、{customer_email}、{order_number}、{contract_number}、{device_name}、{start_date}、{end_date}、{rental_period}、{pickup_date}、{pickup_location}、{return_date}、{return_location}、{total_amount}、{deposit_amount}、{refund_amount}、{payment_due_date}、{delivery_method}、{delivery_address}、{delivery_fee}、{rental_note}、{sign_url}、{verification_url}、{reset_url}、{company_name}、{company_email}'
   const variableIndex = `<details class="variable-index"><summary>可用变量（${variables.split('、').length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${variables.split('、').map(variable => `<code>${variable}</code>`).join('')}</div></section></details>`
   const isBuiltin = (id: string) => !String(id).startsWith('custom_')
   const themeOf = (row: any) => row.theme_color || (isBuiltin(row.id) ? '#f0a35b' : '#71818d')
