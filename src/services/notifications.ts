@@ -14,6 +14,58 @@ import { resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert }
 
 const STAFF_ROLES = new Set(['ADMIN', 'MANAGER', 'STAFF'])
 
+// 站内通知不带专属邮件模板的类型统一走这条兜底模板；管理员可以在「通知模板」
+// 页面里改标题/正文/主题色。announcement（通告）和 manual（后台手动发送）两种
+// 类型本来就有各自的「站内/邮件」选择开关，这里不重复发信，避免同一条消息
+// 收到两封邮件。
+const SITE_NOTIFICATION_TEMPLATE_ID = 'site_notification'
+const SITE_NOTIFICATION_TEMPLATE_NAME = '站内通知（自动邮件）'
+const SITE_NOTIFICATION_TEMPLATE_SUBJECT = '{title}'
+const SITE_NOTIFICATION_TEMPLATE_BODY = '<h2>{title}</h2><p>您好 {customer_name}：</p><p>{message}</p><p><strong>{company_name}</strong><br>{company_email}</p><hr style="border:0; border-top:1px solid #ddd; margin:24px 0;"><p style="font-size:12px; color:#888;">此邮件由系统自动发送，请勿直接回复。</p>'
+const SKIP_AUTO_EMAIL_TYPES = new Set(['announcement', 'manual'])
+
+let siteNotificationTemplateReady: Promise<void> | null = null
+
+async function ensureSiteNotificationEmailTemplate(c: Context): Promise<void> {
+  if (!siteNotificationTemplateReady) siteNotificationTemplateReady = (async () => {
+    await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
+    try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'").run() } catch (_) { /* column already exists */ }
+    try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#f0a35b'").run() } catch (_) { /* column already exists */ }
+    await c.env.RENT.prepare("INSERT OR IGNORE INTO email_templates (id, name, subject, body, format) VALUES (?, ?, ?, ?, 'html')")
+      .bind(SITE_NOTIFICATION_TEMPLATE_ID, SITE_NOTIFICATION_TEMPLATE_NAME, SITE_NOTIFICATION_TEMPLATE_SUBJECT, SITE_NOTIFICATION_TEMPLATE_BODY).run()
+  })()
+  try { await siteNotificationTemplateReady } catch (error) { siteNotificationTemplateReady = null; throw error }
+}
+
+// 给一条已创建的站内信补发邮件：找收件人邮箱、找兜底模板、套用变量、发信。
+// 尽力而为——任何一步失败都不影响站内信本身，调用方只需 catch 掉即可。
+async function sendNotificationEmail(c: Context, notification: { recipientId: string; type: string; title: string; message: string }): Promise<void> {
+  if (SKIP_AUTO_EMAIL_TYPES.has(notification.type)) return
+  const { apiKey, from } = await resolveEmailCredentials(c)
+  if (!apiKey || !from) return
+  const recipient = await c.env.RENT.prepare('SELECT name, email FROM users WHERE id = ?').bind(notification.recipientId).first() as any
+  const email = String(recipient?.email || '').trim()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith('@invalid.local')) return
+
+  await ensureSiteNotificationEmailTemplate(c)
+  const template = await c.env.RENT.prepare('SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = ?').bind(SITE_NOTIFICATION_TEMPLATE_ID).first() as any
+  if (!template || template.enabled === 0) return
+
+  const companyDetails = getSystemSettings().companyDetails || ({} as any)
+  const vars: Record<string, string> = {
+    title: notification.title,
+    message: notification.message,
+    customer_name: normalizeCustomerName(recipient?.name),
+    customer_email: email,
+    company_name: String(companyDetails.name || ''),
+    company_email: String(companyDetails.email || ''),
+  }
+  const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
+  const subject = fill(String(template.subject || SITE_NOTIFICATION_TEMPLATE_SUBJECT))
+  const html = renderEmailNotificationHtml(subject, fill(String(template.body || SITE_NOTIFICATION_TEMPLATE_BODY)), vars.company_name, template.theme_color || '#f0a35b')
+  await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(notification.message, 2000), html })
+}
+
 // 判断某个收件人是不是员工/管理员（结果按请求缓存）。用于决定这条通知
 // 是否要同时广播到已启用的推送 Webhook——客户的站内信不会往管理员的推送渠道里灌。
 async function isStaffRecipient(c: Context, recipientId: string): Promise<boolean> {
@@ -185,11 +237,12 @@ export async function deliverPendingAgreementNotifications(c: Context): Promise<
   return queued.length
 }
 
-export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string; expiresAt?: string | null; dedupeKey?: string | null }): Promise<void> {
+export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string; expiresAt?: string | null; dedupeKey?: string | null; notifyByEmail?: boolean }): Promise<void> {
   await ensureNotificationsTable(c)
   const id = `nt-${crypto.randomUUID()}`
-  await c.env.RENT.prepare('INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at, dedupe_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null, notification.expiresAt || null, notification.dedupeKey || null).run()
+  const result = await c.env.RENT.prepare('INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at, dedupe_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, notification.recipientId, notification.type, notification.title, notification.message, notification.orderId || null, notification.senderId || null, notification.expiresAt || null, notification.dedupeKey || null).run() as any
+  const inserted = Number(result.meta?.changes ?? result.changes ?? 0) > 0
 
   // 员工/管理员收到的通知同步广播到已启用的推送渠道；尽力而为，绝不影响站内信。
   try {
@@ -199,6 +252,12 @@ export async function createNotification(c: Context, notification: { recipientId
     }
   } catch (error: any) {
     console.error('dispatchChannelAlert failed:', error?.message || error)
+  }
+
+  // 补发邮件：尽力而为，绝不影响站内信；重复通知（dedupe 命中）不重复发信。
+  if (inserted && notification.notifyByEmail !== false) {
+    try { await sendNotificationEmail(c, notification) }
+    catch (error: any) { console.error('sendNotificationEmail failed:', error?.message || error) }
   }
 }
 
@@ -315,7 +374,7 @@ export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
     const orderLabel = proof.orderNo || proof.order_id
     const title = `${method}付款待审核超过 1 小时`
     const message = `订单 ${orderLabel} 的${method}付款凭证已提交超过 1 小时，客户：${proof.customer_name || '未填写'}，金额：AUD ${Number(proof.totalAmount || 0).toFixed(2)}。请尽快审核。`
-    await Promise.all(admins.map((admin: any) => createNotification(c, { recipientId: admin.id, type: 'payment_review_overdue', title, message, orderId: proof.order_id })))
+    await Promise.all(admins.map((admin: any) => createNotification(c, { recipientId: admin.id, type: 'payment_review_overdue', title, message, orderId: proof.order_id, notifyByEmail: false })))
     if (apiKey && from) {
       const html = renderEmailNotificationHtml(title, `<p>${message}</p><p><a href="${new URL(`/admin/orders/${proof.order_id}`, c.req.url).toString()}">打开订单审核</a></p>`, getSystemSettings().companyDetails.name)
       const recipients = admins.map((admin: any) => admin.email).filter((email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
