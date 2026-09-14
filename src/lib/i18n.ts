@@ -385,7 +385,10 @@ export const languageScript = String.raw`
     '最新订单': 'Recent orders', '最近的5条租赁记录': 'The 5 most recent rental records',
     '未知用户': 'Unknown customer', '未知设备': 'Unknown device', '设备概览': 'Device overview',
     '最近的5台设备状态': 'Status of the 5 most recent devices', '当前租用者': 'Current renter',
-    '暂无订单': 'No orders yet', '暂无设备': 'No devices yet', '远程操作': 'Remote actions', '管理员仪表盘': 'Admin dashboard'
+    '暂无订单': 'No orders yet', '暂无设备': 'No devices yet', '远程操作': 'Remote actions', '管理员仪表盘': 'Admin dashboard',
+    '仅在下方选择了优惠码后才会被替换，否则会原样保留，请按需使用。': 'is only substituted once you select a coupon below; otherwise it is left as-is — use as needed.',
+    '退订链接无需手动插入': 'No need to manually insert the unsubscribe link',
+    '：系统会在每封邮件末尾自动附上「取消订阅」链接。': ': the system automatically appends an "Unsubscribe" link to the end of every email.'
   };
 
   var keys = Object.keys(translations).sort(function (a, b) { return b.length - a.length; });
