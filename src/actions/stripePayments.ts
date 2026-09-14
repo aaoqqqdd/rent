@@ -1388,8 +1388,8 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string, r
   const order = await getOrderById(c, orderId)
   if (!order) return c.text('订单不存在', 404)
   const mayReleasePendingAuthorization = order.status === 'pending_payment' && String((order as any).deposit_payment_mode || '') === 'PREAUTH'
-  const canCancelBeforeHandover = ['paid', 'pending_pickup'].includes(String(order.status)) && !order.handover_completed_at
-  if (!canCancelBeforeHandover && !mayReleasePendingAuthorization) return c.text('只有尚未交付且已付款的订单可以全额取消退款', 409)
+  const canCancelBeforeHandover = !order.handover_completed_at && !['cancelled', 'completed', 'returned', 'pending_return'].includes(String(order.status))
+  if (!canCancelBeforeHandover && !mayReleasePendingAuthorization) return c.text('只有尚未交付的订单可取消', 409)
   const existingRefund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded'").bind(order.id).first()
   if (existingRefund) return c.text('该订单已经全额退款', 409)
   const payment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND (status = 'paid' OR (status = 'pending' AND payment_method = 'card' AND stripe_payment_intent_id = (SELECT stripe_deposit_payment_intent_id FROM orders WHERE id = ?))) ORDER BY CASE WHEN status = 'paid' THEN 0 ELSE 1 END, paid_at DESC LIMIT 1").bind(order.id, order.id).first() as any
