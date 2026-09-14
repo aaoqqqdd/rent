@@ -33,7 +33,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
   const active = records.filter((r) => !['CANCELLED', 'REVERSED'].includes(r.status))
   const totalReward = active.reduce((sum, r) => sum + (r.amount || 0), 0)
   const pendingReward = active
-    .filter((r) => r.status === 'PENDING' || r.status === 'APPROVED')
+    .filter((r) => r.status === 'PENDING' || r.status === 'PENDING_REVIEW' || r.status === 'APPROVED')
     .reduce((sum, r) => sum + (r.amount || 0), 0)
   const withdrawnReward = active
     .filter((r) => r.withdrawn_at)

@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, ensureContractForOrder, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, formatOrderChangeActor, reconcileOrderPayments } from '../../site'
+import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, formatMelbourneDateTime, getContractByOrderId, ensureContractForOrder, getCustomerRiskAssessment, systemSettings, isContractExpired, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, formatOrderChangeActor, reconcileOrderPayments } from '../../site'
 import { renderReconciliationPanel } from '../partials/reconciliationPanel'
 import type { Context } from 'hono'
 
@@ -19,15 +19,17 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
     return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2></div>', user)
   }
   const [device, existingContract, timeChanges, changeHistory] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT h.change_type, h.before_json, h.after_json, h.reason, h.changed_by, h.created_at, u.name AS changed_by_name FROM order_change_history h LEFT JOIN users u ON u.id = h.changed_by WHERE h.order_id = ? ORDER BY h.created_at DESC LIMIT 20').bind(order.id).all()])
+  const risk = !existingContract && order.status === 'approved' && customer?.role === 'CUSTOMER' ? await getCustomerRiskAssessment(c, customer.id) : null
+  if (risk?.blocked) return buildLayout('订单风控限制 - 电脑租赁管理系统', `<div class="panel"><h2>订单存在风控限制</h2><p>客户风险分 ${risk.score}/100，员工不能为该客户创建合同。请由管理员完成风控处理后再继续。</p></div>`, user)
   const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
-    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_method, payment_provider, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ])
   const contractExpired = contract ? isContractExpired(contract) : false
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
-  const statusLabels: Record<string, string> = { pending: '待处理', pending_approval: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', approved: '租赁已确认，等待开始', paid: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
+  const statusLabels: Record<string, string> = { pending: '待处理', pending_approval: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', approved: '已审核，等待签署/付款', paid: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
 
   const body = `
     <div class="panel order-detail-shell staff-order-detail">
@@ -63,14 +65,16 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           ` : ''}
           ${(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && contract?.status === 'signed')) ? `<button class="button button-primary" type="button" id="open-handover-dialog">记录交付并开始租赁</button>` : ''}
           ${order.status === 'active' && order.early_return_requested_at ? `<div class="alert">客户已申请提前归还，等待审批。<form method="post" action="/staff/orders/${order.id}/early-return/approve" style="display:inline;margin-left:12px" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-sm button-warning" type="submit">批准提前归还</button></form></div>` : ''}
-          ${['active', 'extended', 'overdue'].includes(String(order.status)) ? `<form method="POST" action="/staff/orders/${order.id}/suspend" data-site-confirm="确认暂停这笔租赁吗？"><button class="button button-warning" type="submit">暂停租赁</button><small class="form-text">仅绑定该客户的员工或管理员可以操作。</small></form>` : ''}
+          ${['active', 'extended', 'overdue'].includes(String(order.status)) ? `<form method="POST" action="/staff/orders/${order.id}/suspend" data-site-confirm="确认暂停这笔租赁吗？"><label class="form-label" for="suspend-reason">暂停原因（必填，将随通知发送给客户）</label><input class="form-control" id="suspend-reason" name="reason" maxlength="300" required placeholder="例如：设备无货 / 客户申请"><button class="button button-warning" type="submit" style="margin-top:8px">暂停租赁</button><small class="form-text">仅绑定该客户的员工或管理员可以操作。</small></form>` : ''}
           ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `
-            <a class="button button-success" href="/staff/orders/${order.id}/inspection">设备归还 / 归还验机</a>
+            <a class="button button-success" href="/staff/orders/${order.id}/inspection" data-full-navigation="true">设备归还 / 归还验机</a>
           ` : ''}
           ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
           ${user.role === 'ADMIN' && (order.status === 'active' || order.status === 'paid') ? `
-            <form method="POST" action="/staff/orders/${order.id}/cancel">
-              <button class="button button-danger" type="submit">取消订单</button>
+            <form method="POST" action="/staff/orders/${order.id}/cancel" data-site-confirm="确认取消这笔订单吗？">
+              <label class="form-label" for="cancel-reason">取消原因（必填，将随通知发送给客户）</label>
+              <input class="form-control" id="cancel-reason" name="reason" maxlength="300" required placeholder="例如：设备无货 / 订单金额错误">
+              <button class="button button-danger" type="submit" style="margin-top:8px">取消订单</button>
             </form>
           ` : ''}
         </div>
@@ -109,7 +113,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
             <p>客户需转账 ${formatCurrency(order.totalAmount)} 到以上账户。</p>
           </div>` : ''}
           ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p>客户需扫码支付并提交付款凭证等待审核。</p></div>` : ''}
-          ${order.paymentMethod === 'card' || !order.paymentMethod ? (systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : '') : ''}
+          ${String(order.paymentProvider || (order as any).payment_provider || '') === 'square' ? (systemSettings.paymentMethods.square ? `<div class="payment-card"><h4>Square 礼品卡支付</h4><p>客户将通过 Square Gift Card 安全组件付款。</p></div>` : '') : order.paymentMethod === 'card' || !order.paymentMethod ? (systemSettings.paymentMethods.stripe ? `<div class="payment-card"><h4>信用卡支付（Stripe）</h4><p>客户将通过 Stripe 托管结账页付款。</p></div>` : '') : ''}
         </div>
       ` : ''}
     </div>

@@ -3,11 +3,11 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, ensureContractForOrder, formatCurrency, formatMelbourneDateTime, validateHostedImageUrls, isContractFinalized, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, formatOrderChangeActor, reconcileOrderPayments } from '../../site';
+import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrderId, ensureContractForOrder, getCustomerRiskAssessment, formatCurrency, formatMelbourneDateTime, validateHostedImageUrls, isContractFinalized, diffOrderSnapshots, ORDER_CHANGE_TYPE_LABELS, formatOrderChangeActor, reconcileOrderPayments } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 import { renderReconciliationPanel } from '../partials/reconciliationPanel';
-import { normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
+import { normalizeSecurityDepositMethod } from '../../domain/paymentPlan';
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
@@ -31,20 +31,23 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     c.env.RENT.prepare('SELECT h.change_type, h.before_json, h.after_json, h.reason, h.changed_by, h.created_at, u.name AS changed_by_name FROM order_change_history h LEFT JOIN users u ON u.id = h.changed_by WHERE h.order_id = ? ORDER BY h.created_at DESC LIMIT 20').bind(order.id).all(),
     c.env.RENT.prepare("SELECT id, name, status FROM devices WHERE id != ? AND status NOT IN ('retired') ORDER BY name LIMIT 200").bind(order.deviceId).all()
   ]) as any[];
+  const risk = !existingContract && order.status === 'approved' && customer?.role === 'CUSTOMER' ? await getCustomerRiskAssessment(c, customer.id) : null
+  if (risk?.blocked) return buildLayout('订单风控限制 - 电脑租赁管理系统', `<div class="panel"><h2>订单存在风控限制</h2><p>客户风险分 ${risk.score}/100，当前不能创建合同。请先完成风控处理后再继续。</p></div>`, user)
   const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
-    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee, stripe_payment_intent_id FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_method, payment_provider, amount, status, processing_fee, stripe_payment_intent_id FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ]);
   const canModifyOrder = !['completed', 'cancelled'].includes(String(order.status));
   const paymentMethodLabels: Record<string, string> = {
-    card: '信用卡（Stripe）', stripe: '信用卡（Stripe）', bank_transfer: '银行转账',
+    card: '信用卡（Stripe）', stripe: '信用卡（Stripe）', square: 'Square 礼品卡', bank_transfer: '银行转账',
     alipay: '支付宝', wechat: '微信', balance: '账户余额',
   };
   const paymentMethod = String(order.paymentMethod || (order as any).payment_method || 'card');
-  const paymentMethodLabel = paymentMethodLabels[paymentMethod] || paymentMethod;
-  const isCardPayment = ['card', 'stripe'].includes(paymentMethod)
+  const isSquarePayment = String(order.paymentProvider || (order as any).payment_provider || '') === 'square'
+  const paymentMethodLabel = isSquarePayment ? 'Square 礼品卡' : paymentMethodLabels[paymentMethod] || paymentMethod;
+  const isCardPayment = !isSquarePayment && ['card', 'stripe'].includes(paymentMethod)
   const isTransferPayment = ['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)
   const transferProofPaymentMethod = String(transferProof?.proof_payment_method || '')
   const isAdjustmentTransferProof = Boolean(transferProof?.adjustment_id && ['bank_transfer', 'alipay', 'wechat'].includes(transferProofPaymentMethod))
@@ -60,7 +63,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
     ['阅读并同意协议', '客户打开签署链接阅读完整合同'],
     ['填写客户资料', '客户确认身份与联系方式'],
     ['电子签名', '客户输入姓名完成电子签署'],
-    ['Stripe 支付', '客户通过 Stripe 支付租金及服务费'],
+    [isSquarePayment ? 'Square 礼品卡支付' : 'Stripe 支付', isSquarePayment ? '客户通过 Square 礼品卡支付租金及服务费' : '客户通过 Stripe 支付租金及服务费'],
   ];
   const renderWorkflow = () => `<ol class="signing-steps admin-order-signing-steps" style="grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0;">${contractWorkflow.map(([title, description], index) => {
     const itemStep = index + 1;
@@ -79,17 +82,23 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
   const isPreauthDeposit = isCardPayment && String((order as any).deposit_payment_mode || '') === 'PREAUTH'
   const preauthFee = Math.round(Math.max(0, Number(order.totalAmount) - depositAmount) * 0.025 * 100) / 100
-  const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, isSetupIntentDeposit ? 'card_hold' : 'bank_transfer')
+  const customerRefundMethod = order.refundMethod === 'original'
+    ? (paymentMethod === 'bank_transfer' ? 'bank_transfer' : 'original')
+    : order.refundMethod === 'balance' ? 'balance' : ''
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
+  const canSettleDeposit = order.status === 'completed' && (isSetupIntentDeposit || remainingRefundTotal > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED')
+  const canCancelBeforeHandover = ['paid', 'pending_pickup'].includes(String(order.status)) && !order.handover_completed_at
+  const showRefundCard = order.status === 'completed' || (canCancelBeforeHandover && !completedRefund)
+  const canHandover = ['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && contract?.status === 'signed')
 
   const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
     'pending': { label: '待处理', color: '#d97706', bg: '#fef3c7', icon: '' },
     'pending_payment': { label: '待付款', color: '#d97706', bg: '#fef3c7', icon: '' },
     'awaiting_signature': { label: '待签合同', color: '#7c3aed', bg: '#ede9fe', icon: '' },
     'paid': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '' },
-    'approved': { label: '租赁已确认，等待开始', color: '#059669', bg: '#d1fae5', icon: '' },
+    'approved': { label: '已审核，等待签署/付款', color: '#7c3aed', bg: '#ede9fe', icon: '' },
     'pending_pickup': { label: '待取货', color: '#0891b2', bg: '#cffafe', icon: '' },
     'active': { label: '租赁中', color: '#2563eb', bg: '#dbeafe', icon: '' },
     'extended': { label: '已延期 / 租赁中', color: '#2563eb', bg: '#dbeafe', icon: '' },
@@ -118,11 +127,11 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
 
     <div class="order-detail-actions">
       ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
-      ${['paid', 'pending_pickup'].includes(String(order.status)) ? `<a class="button button-primary" href="/staff/orders/${order.id}/handover">记录交付并开始租赁</a>` : ''}
+      ${canHandover ? `<a class="button button-primary" href="/staff/orders/${order.id}/handover">记录交付并开始租赁</a>` : ''}
       ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order">查看合同</a>` : ''}
       ${contract && contract.status === 'pending_sign' ? `<a class="button button-primary" href="/staff/contracts/${encodeURIComponent(contract.id)}/progress">查看合同签署进度</a>` : ''}
     </div>
-    <section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>合同签署流程</h3><span class="section-note">${contract ? (contractFinalized ? '合同已签署' : '等待客户完成电子签名') : '合同尚未生成'}</span></div>${renderWorkflow()}${contract && contract.status === 'pending_sign' ? `<div class="record-actions" style="margin-top: 16px;"><a class="button button-secondary" href="/staff/contracts/${encodeURIComponent(contract.id)}/progress">打开签署链接管理</a></div>` : !contract ? '<p class="section-note" style="margin-top: 16px;">订单通过审核后，系统会自动生成客户签署合同。</p>' : ''}</section>
+    <section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>合同签署流程</h3><span class="section-note">${contract ? (contractFinalized ? '合同已签署' : '等待客户完成电子签名') : '合同尚未生成'}</span></div>${renderWorkflow()}${contract && contract.status === 'pending_sign' ? `<div class="record-actions" style="margin-top: 16px;"><a class="button button-secondary" href="/staff/contracts/${encodeURIComponent(contract.id)}/progress">打开签署链接管理</a></div>` : !contract ? '<p class="section-note" style="margin-top: 16px;">订单通过审核后，系统会自动生成客户签署合同。</p>' : ''}${order.status === 'approved' && contract?.status === 'pending_sign' ? '<p class="alert" style="margin-top: 16px;">当前订单还没有开始租赁：客户需先完成合同签署并完成付款，随后才能记录交付并开始租赁。</p>' : ''}</section>
     ${statusHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>租赁状态历史</h3><span class="section-note">最近 ${statusHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>状态变化</th><th>触发方式</th><th>原因</th></tr></thead><tbody>${statusHistory.results.map((item: any) => `<tr><td class="mono">${escapeHtml(formatMelbourneDateTime(item.created_at))}</td><td>${escapeHtml(item.old_status || '—')} → <strong>${escapeHtml(item.new_status)}</strong></td><td>${escapeHtml(item.trigger_type)}${item.triggered_by ? ` · ${escapeHtml(item.triggered_by)}` : ''}</td><td>${escapeHtml(item.reason || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
     ${changeHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>订单修改历史</h3><span class="section-note">最近 ${changeHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>类型</th><th>变更内容</th><th>原因</th><th>操作人</th></tr></thead><tbody>${changeHistory.results.map((item: any) => {
       let before: any = {}; let after: any = {};
@@ -204,6 +213,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
                 <option value="DEVICE_SWAP">更换设备</option>
                 <option value="PRICE_ADJUSTMENT">调整价格 / 押金</option>
                 <option value="LOCATION_CHANGE">修改取还地点</option>
+                <option value="REFUND_METHOD">修改押金退款方式</option>
               </select>
             </div>
             <div class="order-change-fields" data-for="EXTENSION" hidden>
@@ -228,14 +238,12 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
               <input class="form-control" type="number" min="0" step="0.01" name="discountAmount" value="${Number((order as any).discount_amount || 0)}">
               <div style="margin-top:12px;padding:16px;background:linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%);border-radius:12px">
                 <strong style="display:block;color:#c2410c;margin-bottom:6px">退款处理</strong>
-                <p class="section-note" style="margin:0 0 10px">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。管理员可选择本次降价退款方式，提交后按所选方式处理。</p>
                 <label class="form-label" for="priceRefundMethod">降价退款方式</label>
                 <select class="form-control" id="priceRefundMethod" name="priceRefundMethod">
                   <option value="balance" ${defaultPriceRefundMethod === 'balance' ? 'selected' : ''}>退回账户余额</option>
                   ${hasStripeRefundSource ? `<option value="original" ${defaultPriceRefundMethod === 'original' ? 'selected' : ''}>原路退回（Stripe 信用卡）</option>` : ''}
                   ${isTransferPayment ? `<option value="pending_deposit" ${defaultPriceRefundMethod === 'pending_deposit' ? 'selected' : ''}>并入后续押金退款</option>` : ''}
                 </select>
-                <small class="form-text">仅当新订单总额低于当前总额时处理退款；涨价时该选择不生效。</small>
               </div>
             </div>
             <div class="order-change-fields" data-for="LOCATION_CHANGE" hidden>
@@ -247,7 +255,16 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
               <label class="form-label">取货地点</label>
               <input class="form-control" name="pickupLocation" maxlength="200" value="${escapeHtml(order.pickupLocation || '')}">
               <label class="form-label">归还地点</label>
-              <input class="form-control" name="returnLocation" maxlength="200" value="${escapeHtml(order.returnLocation || '')}">
+            <input class="form-control" name="returnLocation" maxlength="200" value="${escapeHtml(order.returnLocation || '')}">
+            </div>
+            <div class="order-change-fields" data-for="REFUND_METHOD" hidden>
+              <label class="form-label" for="orderRefundMethod">退款方式</label>
+              <select class="form-control" id="orderRefundMethod" name="refundMethod">
+                <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额${customerRefundMethod === 'balance' ? '（当前选择）' : ''}</option>
+                <option value="original" ${order.refundMethod === 'original' ? 'selected' : ''}>原路退回${order.paymentMethod === 'bank_transfer' ? '（银行转账）' : ''}${customerRefundMethod === 'original' ? '（当前选择）' : ''}</option>
+              </select>
+              ${order.paymentMethod === 'bank_transfer' ? `<div id="orderRefundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
+              <script>document.getElementById('orderRefundMethod')?.addEventListener('change',e=>{document.getElementById('orderRefundBankFields').hidden=e.target.value!=='original'})</script>` : ''}
             </div>
             <div>
               <label class="form-label" for="orderChangeReason">修改原因（必填）</label>
@@ -257,13 +274,14 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           </form>
           <script>(function(){var sel=document.getElementById('changeType');if(!sel)return;var form=sel.closest('form');function sync(){var groups=form.querySelectorAll('.order-change-fields');for(var i=0;i<groups.length;i++){groups[i].hidden=groups[i].getAttribute('data-for')!==sel.value;}}sel.addEventListener('change',sync);sync();})();</script>
         </div>` : ''}
-        ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>设备归还</h4><p>${String(order.status) === 'pending_return' ? '客户已获批提前归还，请完成归还验机。' : order.early_return_requested_at ? '客户已申请提前归还，等待审批。' : '订单租赁中，可申请提前归还并安排验机。'}</p>${String(order.status) === 'active' && order.early_return_requested_at ? `<form method="post" action="/staff/orders/${order.id}/early-return/approve" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-warning" type="submit">批准提前归还</button></form>` : ''}<a class="button button-info" href="/staff/orders/${order.id}/inspection">归还验机</a></div>` : ''}
+        ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>设备归还</h4><p>${String(order.status) === 'pending_return' ? '客户已获批提前归还，请完成归还验机。' : order.early_return_requested_at ? '客户已申请提前归还，等待审批。' : '订单租赁中，可申请提前归还并安排验机。'}</p>${String(order.status) === 'active' && order.early_return_requested_at ? `<form method="post" action="/staff/orders/${order.id}/early-return/approve" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-warning" type="submit">批准提前归还</button></form>` : ''}<a class="button button-info" href="/staff/orders/${order.id}/inspection" data-full-navigation="true">归还验机</a></div>` : ''}
         ${((order.paymentMethod === 'bank_transfer' || (isAdjustmentTransferProof && transferProofPaymentMethod === 'bank_transfer')) && (String(order.status) !== 'active' || transferProof?.status === 'submitted')) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>银行转账审核${isAdjustmentTransferProof ? '（差价）' : ''}</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>备注：${escapeHtml(transferProof.note || '-')}</p>${proofImage ? `<a href="${escapeHtml(proofImage)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(proofImage)}" alt="转账凭证" loading="lazy" referrerpolicy="no-referrer" style="max-width:100%;max-height:320px;border-radius:8px"></a>` : '<p class="alert">凭证图片链接缺失或无效</p>'}<p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交转账 Reference。</p>'}</div>` : ''}
         ${(isAdjustmentTransferProof && ['alipay', 'wechat'].includes(transferProofPaymentMethod) || ['alipay', 'wechat'].includes(String(order.paymentMethod))) ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>${(isAdjustmentTransferProof ? transferProofPaymentMethod : order.paymentMethod) === 'alipay' ? '支付宝' : '微信'}付款审核${isAdjustmentTransferProof ? '（差价）' : ''}</h4>${transferProof ? `<p>Reference：<strong>${escapeHtml(transferProof.reference_number)}</strong></p><p>状态：${escapeHtml(transferProof.status)}</p>${transferProof.status === 'submitted' ? `<div style="display:flex;gap:10px"><form method="post" action="/admin/orders/${order.id}/transfer-proof/approve"><button class="button button-primary" type="submit">审核通过</button></form><form method="post" action="/admin/orders/${order.id}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" placeholder="驳回原因" required><button class="button button-danger" type="submit">驳回</button></form></div>` : ''}` : '<p>客户尚未提交付款凭证。</p>'}</div>` : ''}
-        ${['card', 'stripe'].includes(paymentMethod) && String(order.status) === 'pending_payment' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>Stripe 信用卡支付</h4><p>客户完成合同签署后，通过订单详情页的 Stripe 安全支付组件支付租金及服务费。银行卡信息不会保存到本站。</p></div>` : ''}
+        ${isSquarePayment && String(order.status) === 'pending_payment' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>Square 礼品卡支付</h4><p>客户完成合同签署后，通过订单详情页的 Square Gift Card 安全组件支付租金及服务费。</p></div>` : ''}
+        ${isCardPayment && String(order.status) === 'pending_payment' ? `<div style="padding:24px;background:#eff6ff;border-radius:16px"><h4>Stripe 信用卡支付</h4><p>客户完成合同签署后，通过订单详情页的 Stripe 安全支付组件支付租金及服务费。银行卡信息不会保存到本站。</p></div>` : ''}
         <div style="padding: 24px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #1e40af; display: flex; align-items: center; gap: 8px;">更新订单状态</h4>
-          <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; flex-direction: column; gap: 16px;">
+          <form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" id="orderStatusForm" style="display: flex; flex-direction: column; gap: 16px;">
             <div>
               <label for="status" style="display: block; margin-bottom: 8px; font-weight: 500; color: #374151;">选择新状态</label>
               <select id="status" name="status" style="width: 100%; padding: 14px 16px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 1rem; transition: all 0.2s; outline: none; background: white;" onfocus="this.style.borderColor='#3b82f6';this.style.boxShadow='0 0 0 3px rgba(59,130,246,0.1)'" onblur="this.style.borderColor='#e5e7eb';this.style.boxShadow='none'">
@@ -271,8 +289,40 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
                 <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>已取消</option>
               </select>
             </div>
+            <div id="statusReasonGroup" hidden>
+              <label class="form-label" for="statusReasonPreset">常见原因</label>
+              <select class="form-control" id="statusReasonPreset">
+                <option value="">-- 选择常见原因（可选） --</option>
+                <option value="设备无货">设备无货</option>
+                <option value="订单金额错误">订单金额错误</option>
+                <option value="客户申请">客户申请</option>
+                <option value="__custom__">其他（请在下方填写）</option>
+              </select>
+              <label class="form-label" for="statusReason" style="margin-top: 10px;">暂停/取消原因（必填，将随通知发送给客户）</label>
+              <textarea class="form-control" id="statusReason" name="reason" maxlength="300" rows="2" placeholder="请输入暂停/取消原因"></textarea>
+            </div>
             <button type="submit" class="button button-primary" style="padding: 14px; border-radius: 12px; font-weight: 600; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 4px 14px 0 rgba(59,130,246,0.4);">更新状态</button>
           </form>
+          <script>(function(){
+            var form = document.getElementById('orderStatusForm');
+            if (!form) return;
+            var statusSelect = form.querySelector('#status');
+            var reasonGroup = form.querySelector('#statusReasonGroup');
+            var reasonPreset = form.querySelector('#statusReasonPreset');
+            var reasonText = form.querySelector('#statusReason');
+            function sync() {
+              var needsReason = statusSelect.value === 'suspended' || statusSelect.value === 'cancelled';
+              reasonGroup.hidden = !needsReason;
+              reasonText.required = needsReason;
+            }
+            statusSelect.addEventListener('change', sync);
+            reasonPreset.addEventListener('change', function () {
+              if (!reasonPreset.value) return;
+              if (reasonPreset.value === '__custom__') { reasonText.value = ''; reasonText.focus(); return; }
+              reasonText.value = reasonPreset.value;
+            });
+            sync();
+          })();</script>
           ${['active', 'pending_return'].includes(String(order.status)) ? `<form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form force-complete-form" data-force-confirm="true" style="margin-top: 12px;">
             <input type="hidden" name="status" value="completed">
             <input type="hidden" name="force" value="1">
@@ -281,18 +331,17 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           </form>` : ''}
         </div>
 
-        <div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
+        ${showRefundCard ? `<div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
           <h4 style="margin: 0 0 16px 0; color: #c2410c;">退款处理</h4>
-          <p class="section-note">Security Deposit 押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}。管理员可选择本次退款方式，提交后按所选方式处理。</p>
           ${hasTransferPriceRefund ? `<div class="alert"><strong>转账类付款待退差价：${formatCurrency(pendingPriceRefund)}</strong><br>该金额将在本次押金退款中一并退还；押金可退 ${formatCurrency(remainingDepositRefund)}，本次最多合计 ${formatCurrency(remainingRefundTotal)}。</div>` : ''}
           ${completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${depositSettlement && completedRefund?.status !== 'succeeded' ? `<div class="alert">结算单 ${escapeHtml(depositSettlement.settlement_number)}：${escapeHtml(depositSettlement.status)}${depositSettlement.review_note ? ` · ${escapeHtml(depositSettlement.review_note)}` : ''}</div>` : ''}
-          ${order.status === 'completed' && (isSetupIntentDeposit || remainingRefundTotal > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED') ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" onsubmit="return confirm('${depositSettlement?.status === 'APPROVED' ? '确认按已批准结算单执行本次押金结算吗？' : '确认提交本次押金结算供 Manager 审批吗？'}');">
+          ${canSettleDeposit ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" onsubmit="return confirm('${depositSettlement?.status === 'APPROVED' ? '确认按已批准结算单执行本次押金结算吗？' : '确认提交本次押金结算供 Manager 审批吗？'}');">
             ${isSetupIntentDeposit ? `<input type="hidden" name="refundMethod" value="original"><p class="section-note">长期租赁：押金未预扣。无损坏或逾期时填 0；只有发生实际费用时才从已保存卡片扣款。</p>` : `<label class="form-label" for="refundMethod">退款方式</label>
             <select class="form-control" id="refundMethod" name="refundMethod" required>
-              <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额</option>
-              <option value="original" ${order.refundMethod === 'original' && order.paymentMethod !== 'bank_transfer' ? 'selected' : ''}>原路退回</option>
-              <option value="bank_transfer" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? 'selected' : ''}>银行转账</option>
+              <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额${customerRefundMethod === 'balance' ? '（当前选择）' : ''}</option>
+              <option value="original" ${order.refundMethod === 'original' && order.paymentMethod !== 'bank_transfer' ? 'selected' : ''}>原路退回${customerRefundMethod === 'original' ? '（当前选择）' : ''}</option>
+              <option value="bank_transfer" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? 'selected' : ''}>银行转账${customerRefundMethod === 'bank_transfer' ? '（当前选择）' : ''}</option>
             </select>
             <div id="refundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
             <script>document.getElementById('refundMethod')?.addEventListener('change',e=>{document.getElementById('refundBankFields').hidden=e.target.value!=='bank_transfer'})</script>`}
@@ -311,8 +360,8 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             <textarea class="form-control" id="deductionReason" name="deductionReason">${escapeHtml(depositSettlement?.status === 'APPROVED' ? depositSettlement.deduction_reason || '' : '')}</textarea>
             <button type="submit" class="button button-warning" style="margin-top:12px;">${depositSettlement?.status === 'APPROVED' ? '执行已批准结算' : '提交结算审批'}</button>
           </form>` : ''}
-          ${order.status === 'paid' && order.startDate > today && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/cancel-and-refund" onsubmit="return confirm('确定取消订单并全额退还 ${formatCurrency(order.totalAmount)} 吗？');">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先完成银行转账，再确认取消订单。</div>' : ''}<button type="submit" class="button button-danger">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '确认已转账并取消订单' : '取消并全额退款'}</button></form>` : ''}
-        </div>
+          ${canCancelBeforeHandover && !completedRefund ? `<form method="POST" action="/admin/orders/${order.id}/cancel-and-refund" onsubmit="return confirm('确定取消订单并全额退还 ${formatCurrency(order.totalAmount)} 吗？');">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '<div class="alert">请先完成银行转账，再确认取消订单。</div>' : ''}<button type="submit" class="button button-danger">${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '确认已转账并取消订单' : '取消并全额退款'}</button></form>` : ''}
+        </div>` : ''}
       </div>
       <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
         <a href="/admin/orders" class="button button-secondary" style="padding: 12px 32px; border-radius: 10px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">← 返回订单列表</a>

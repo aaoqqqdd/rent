@@ -7,7 +7,7 @@ import { customAlphabet } from 'nanoid'
 
 const referenceCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
 
-export function generateReferenceNumber(prefix: 'OD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD' | 'CN', at = new Date()): string {
+export function generateReferenceNumber(prefix: 'OD' | 'CTR' | 'TXN' | 'INV' | 'RCP' | 'RFD' | 'CN' | 'TOP', at = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(at)
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
   return `${prefix}-${values.year}${values.month}${values.day}-${referenceCode()}`

@@ -5,7 +5,9 @@
 
 import type { Context } from 'hono'
 import { getStripeRuntimeConfig } from '../stripe'
-import { resolveResendCredentials, getNotifyChannelsSummary } from '../notifyChannels'
+import { getSquareRuntimeConfig } from '../square'
+import { resolveEmailCredentials, getNotifyChannelsSummary } from '../notifyChannels'
+import { getTurnstileRuntimeConfig } from '../turnstile'
 
 export type ConnectivityStatus = 'ok' | 'warning' | 'error' | 'unconfigured'
 
@@ -27,8 +29,8 @@ export interface ConnectivityProbeResult extends ConnectivityProbeDefinition {
 export const CONNECTIVITY_PROBES: ConnectivityProbeDefinition[] = [
   { id: 'database', label: 'Cloudflare D1', category: 'CORE', endpoint: 'RENT binding', description: '验证 Worker 到主数据库的查询通道。' },
   { id: 'stripe', label: 'Stripe API', category: 'PAYMENT', endpoint: 'api.stripe.com/v1/account', description: '使用已保存的密钥读取 Stripe 账户，不创建付款。' },
-  { id: 'resend', label: 'Resend 邮件 API', category: 'MESSAGING', endpoint: 'api.resend.com/emails', description: '验证邮件发送权限及服务连通性，不发送邮件。' },
-  { id: 'telegram', label: 'Telegram 推送', category: 'MESSAGING', endpoint: 'api.telegram.org/bot*/getMe', description: '校验已保存的 Bot Token，不发送消息。' },
+  { id: 'square', label: 'Square API', category: 'PAYMENT', endpoint: 'connect.squareup.com/v2/locations', description: '使用已保存的密钥读取 Square 门店，不创建付款。' },
+  { id: 'email', label: '邮件发送 API', category: 'MESSAGING', endpoint: 'Resend / Brevo / MailerSend', description: '验证当前生效的邮件服务商密钥及连通性，不发送邮件。' },
   { id: 'notifyWebhook', label: '通用推送 Webhook', category: 'MESSAGING', endpoint: '已配置的 Webhook 地址', description: '检查通用推送 Webhook 是否已配置并启用，不发送请求。' },
   { id: 'exchange', label: 'AUD/CNY 汇率', category: 'PAYMENT', endpoint: 'api.frankfurter.app/latest', description: '读取澳元兑人民币实时汇率。' },
   { id: 'github', label: 'GitHub 客户端发布', category: 'DEVICE', endpoint: 'api.github.com/releases/latest', description: '验证 Windows 客户端更新检查通道。' },
@@ -65,18 +67,28 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
       const response = await timedFetch('https://api.stripe.com/v1/account', { headers: { Authorization: `Bearer ${secretKey}` } })
       if (!response.ok) throw new Error(`Stripe 返回 HTTP ${response.status}`)
       detail = '密钥有效，账户接口可访问'
-    } else if (definition.id === 'resend') {
-      const { apiKey } = await resolveResendCredentials(c)
-      if (!apiKey) { status = 'unconfigured'; detail = '尚未配置 Resend API Key（后台「通知渠道」或 RESEND_API_KEY）' }
-      else {
-        const response = await timedFetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' }, body: '{}' })
-        if (response.status === 401 || response.status === 403 || response.status >= 500) throw new Error(`Resend 返回 HTTP ${response.status}`)
-        detail = '密钥与发送权限有效，未投递测试邮件'
+    } else if (definition.id === 'square') {
+      const config = await getSquareRuntimeConfig(c)
+      const host = config.environment === 'production' ? 'connect.squareup.com' : 'connect.squareupsandbox.com'
+      const response = await timedFetch(`https://${host}/v2/locations/${encodeURIComponent(config.locationId)}`, { headers: { Authorization: `Bearer ${config.accessToken}`, Accept: 'application/json', 'Square-Version': '2026-08-19' } })
+      if (!response.ok) throw new Error(`Square 返回 HTTP ${response.status}`)
+      detail = 'Access Token 有效，门店接口可访问'
+    } else if (definition.id === 'email') {
+      const { provider, apiKey } = await resolveEmailCredentials(c)
+      if (!apiKey) { status = 'unconfigured'; detail = '尚未配置邮件服务商密钥（后台「通知渠道」或 RESEND_API_KEY）' }
+      else if (provider === 'brevo') {
+        const response = await timedFetch('https://api.brevo.com/v3/account', { headers: { 'api-key': apiKey, Accept: 'application/json' } })
+        if (!response.ok) throw new Error(`Brevo 返回 HTTP ${response.status}`)
+        detail = 'Brevo 密钥有效，账户接口可访问'
+      } else if (provider === 'mailersend') {
+        const response = await timedFetch('https://api.mailersend.com/v1/domains', { headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' } })
+        if (!response.ok) throw new Error(`MailerSend 返回 HTTP ${response.status}`)
+        detail = 'MailerSend 密钥有效，域名接口可访问'
+      } else {
+        const response = await timedFetch('https://api.resend.com/domains', { headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' } })
+        if (!response.ok) throw new Error(`Resend 返回 HTTP ${response.status}`)
+        detail = 'Resend 密钥有效，域名接口可访问，未投递测试邮件'
       }
-    } else if (definition.id === 'telegram') {
-      const summary = await getNotifyChannelsSummary(c)
-      if (!summary.telegram.configured) { status = 'unconfigured'; detail = '尚未配置 Telegram Bot Token / Chat ID' }
-      else { status = summary.telegram.enabled ? 'ok' : 'warning'; detail = summary.telegram.enabled ? 'Bot Token 与 Chat ID 已配置并启用' : '已配置但未启用推送' }
     } else if (definition.id === 'notifyWebhook') {
       const summary = await getNotifyChannelsSummary(c)
       if (!summary.webhook.configured) { status = 'unconfigured'; detail = '尚未配置通用推送 Webhook' }
@@ -114,8 +126,8 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
         detail = '密钥有效，地点详情接口可访问'
       }
     } else if (definition.id === 'turnstile') {
-      const secret = String((c.env as any).TURNSTILE_SECRET_KEY || '').trim()
-      if (!secret) { status = 'unconfigured'; detail = '尚未配置 TURNSTILE_SECRET_KEY' }
+      const { secretKey: secret } = await getTurnstileRuntimeConfig(c)
+      if (!secret) { status = 'unconfigured'; detail = '尚未配置 Turnstile Secret Key（后台「系统设置」或 TURNSTILE_SECRET_KEY）' }
       else {
         const response = await timedFetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret, response: 'connectivity-probe' }) })
         if (!response.ok) throw new Error(`Turnstile 返回 HTTP ${response.status}`)
@@ -133,7 +145,7 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
   } catch (error: any) {
     console.error(`Connectivity probe ${definition.id} failed:`, error?.message || error)
     const message = String(error?.name === 'AbortError' ? '请求超时（8 秒）' : error?.message || '请求失败')
-    if ((definition.id === 'stripe' && message.includes('尚未配置 Stripe'))) status = 'unconfigured'
+    if ((definition.id === 'stripe' && message.includes('尚未配置 Stripe')) || (definition.id === 'square' && message.includes('尚未配置 Square'))) status = 'unconfigured'
     else status = 'error'
     detail = message.slice(0, 160)
   }

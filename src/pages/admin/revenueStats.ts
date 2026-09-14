@@ -6,7 +6,7 @@ const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) =
 export async function getRevenueData(c: Context) {
   const [orders, refundsResult, withdrawalsResult] = await Promise.all([
     getOrdersAsync(c),
-    c.env.RENT.prepare("SELECT id, order_id, refund_amount, type, created_at FROM payment_refunds WHERE status = 'succeeded' ORDER BY created_at DESC").all(),
+    c.env.RENT.prepare("SELECT id, order_id, refund_amount, type, created_at FROM payment_refunds WHERE status = 'succeeded' AND type <> 'deposit' ORDER BY created_at DESC").all(),
     c.env.RENT.prepare("SELECT id, user_id, amount, status, requested_at, processed_at FROM commission_withdrawals WHERE status = 'completed' ORDER BY processed_at DESC, requested_at DESC").all(),
   ])
   return { orders: orders as any[], refunds: (refundsResult.results || []) as any[], withdrawals: (withdrawalsResult.results || []) as any[] }

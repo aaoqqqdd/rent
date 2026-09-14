@@ -6,7 +6,9 @@
 import { Context } from 'hono'
 import { getSystemSettings, loadSystemSettingsFromDB, updateSystemSettings } from '../../site'
 import { getStripeConfigSummary, saveStripeConfig } from '../../stripe'
+import { getTurnstileConfigSummary, saveTurnstileConfig } from '../../turnstile'
 import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
+import { getSquareConfigSummary, saveSquareConfig } from '../../square'
 import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChannels'
 import { enqueueAgreementUpdate } from '../../services/notifications'
 
@@ -62,6 +64,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     priceStrategy: payload.priceStrategy ?? getSystemSettings().priceStrategy,
     paymentMethods: {
       stripe: Boolean(payload.paymentMethods?.stripe),
+      square: Boolean(payload.paymentMethods?.square),
       bankTransfer: Boolean(payload.paymentMethods?.bankTransfer),
       balancePayment: Boolean(payload.paymentMethods?.balancePayment),
       alipay: Boolean(payload.paymentMethods?.alipay),
@@ -103,6 +106,23 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   }
 
   if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)
+
+  const squareConfigInput = payload.squareConfig
+  const shouldSaveSquareConfig = Boolean(squareConfigInput && (squareConfigInput.accessToken || squareConfigInput.webhookSignatureKey || squareConfigInput.applicationId || squareConfigInput.locationId || squareConfigInput.clear === true))
+  if (shouldSaveSquareConfig) await saveSquareConfig(c, squareConfigInput)
+
+  const turnstileConfigInput = payload.turnstileConfig
+  // Mirror the Stripe rule: only persist when a secret is actually supplied
+  // (or on an explicit clear). The Site Key alone is always echoed back by the
+  // form, so triggering on it would break every save on env-var deployments.
+  const shouldSaveTurnstileConfig = Boolean(
+    turnstileConfigInput &&
+    (
+      turnstileConfigInput.secretKey ||
+      turnstileConfigInput.clear === true
+    )
+  )
+  if (shouldSaveTurnstileConfig) await saveTurnstileConfig(c, turnstileConfigInput)
   const emailTransportInput = payload.emailTransport
   const shouldSaveEmailTransport = Boolean(
     emailTransportInput &&
@@ -121,10 +141,14 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     notifyChannelsInput &&
     (
       notifyChannelsInput.clear === true ||
+      notifyChannelsInput.emailProvider !== undefined ||
       notifyChannelsInput.resendApiKey || notifyChannelsInput.resendClear === true ||
       notifyChannelsInput.resendFrom !== undefined ||
-      'telegramEnabled' in notifyChannelsInput || 'serverChanEnabled' in notifyChannelsInput || 'webhookEnabled' in notifyChannelsInput ||
-      notifyChannelsInput.telegramBotToken || notifyChannelsInput.serverChanSendKey || notifyChannelsInput.webhookUrl
+      notifyChannelsInput.brevoApiKey || notifyChannelsInput.brevoClear === true ||
+      notifyChannelsInput.brevoFrom !== undefined ||
+      notifyChannelsInput.mailersendApiKey || notifyChannelsInput.mailersendClear === true ||
+      notifyChannelsInput.mailersendFrom !== undefined ||
+      'webhookEnabled' in notifyChannelsInput || notifyChannelsInput.webhookUrl
     )
   )
   if (shouldSaveNotifyChannels) await saveNotifyChannels(c, notifyChannelsInput)
@@ -132,5 +156,5 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   await updateSystemSettings(c, next as any)
   await loadSystemSettingsFromDB(c)
 
-  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c) })
+  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), square: await getSquareConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c), turnstile: await getTurnstileConfigSummary(c) })
 }

@@ -51,7 +51,7 @@ import {
   canTransitionPaymentDispute,
   PAYMENT_DISPUTE_STATES,
   RISK_FLAG_TYPES,
-  findBlockingRiskFlag,
+  getCustomerRiskAssessment,
   timingSafeEqualStr,
   collectMonitoringMetrics,
   getMonitoringHistory,
@@ -117,10 +117,13 @@ import {
 import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
+import { getSquareConfigSummary } from './square'
+import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteKey } from './turnstile'
 import { getEmailConfigSummary } from './emailConfig'
-import { getNotifyChannelsSummary, saveNotifyChannels, resolveResendCredentials, dispatchChannelAlert } from './notifyChannels'
+import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
+import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
@@ -173,28 +176,22 @@ function rentalPeriodPassed(date: string, period: string, today: string): boolea
 async function sendLoggedEmail(c: any, input: { eventType: string, recipient: string, key: string, subject: string, text: string, html?: string, orderId?: string, templateId?: string }): Promise<{ ok: boolean }> {
   const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, order_id, template_id, idempotency_key, status, subject, text_body, html_body, last_attempt_at) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP)").bind(`email-${nanoid(12)}`, input.eventType, input.recipient, input.orderId || null, input.templateId || null, input.key, input.subject, input.text, input.html || null).run() as any
   if (!claimed.meta?.changes) return { ok: true }
-  const { apiKey, from } = await resolveResendCredentials(c)
-  if (!apiKey || !from) { await c.env.RENT.prepare("UPDATE email_events SET status = 'FAILED', retry_count = retry_count + 1, error_message = 'Email transport is not configured' WHERE idempotency_key = ?").bind(input.key).run(); return { ok: false } }
-  try {
-    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [input.recipient], subject: input.subject, text: input.text, html: input.html }) })
-    const result = await response.json().catch(() => ({})) as any
-    await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = CASE WHEN ? THEN retry_count ELSE retry_count + 1 END, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, response.ok ? 1 : 0, input.key).run()
-    return { ok: response.ok }
-  } catch (error: any) { await c.env.RENT.prepare("UPDATE email_events SET status = 'FAILED', retry_count = retry_count + 1, error_message = ? WHERE idempotency_key = ?").bind(String(error?.message || error).slice(0, 500), input.key).run(); return { ok: false } }
+  const result = await sendTransactionalEmail(c, { to: input.recipient, subject: input.subject, text: input.text, html: input.html })
+  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = CASE WHEN ? THEN retry_count ELSE retry_count + 1 END, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error, result.ok ? 1 : 0, result.ok ? 1 : 0, input.key).run()
+  return { ok: result.ok }
 }
 
 async function sendPaymentReviewEmail(c: any, customer: any, subject: string, message: string, orderId: string): Promise<void> {
   const email = String(customer?.email || '').trim()
-  const { apiKey, from } = await resolveResendCredentials(c)
+  const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return
   try {
     const key = `payment-review:${orderId}:${email}:${subject}`
     const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, order_id, idempotency_key, status) VALUES (?, 'PAYMENT_REVIEW', ?, ?, ?, 'PENDING')").bind(`email-${nanoid(12)}`, email, orderId, key).run() as any
     if (!claimed.meta?.changes) return
     const html = renderEmailNotificationHtml(subject, `<p>${sanitizePlainText(message, 1000)}</p><p><a href="${new URL(`/customer/orders/${encodeURIComponent(orderId)}`, c.req.url).toString()}">查看订单详情</a></p>`, getSystemSettings().companyDetails.name)
-    const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [email], subject, text: message, html }) })
-    const result = await response.json().catch(() => ({})) as any
-    await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, key).run()
+    const result = await sendTransactionalEmail(c, { to: email, subject, text: message, html })
+    await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error, result.ok ? 1 : 0, key).run()
   } catch (error: any) { console.error('Payment review email failed:', error) }
 }
 
@@ -567,7 +564,7 @@ app.use('*', async (c, next) => {
     }
     const path = c.req.path
     const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result', '/notifications', '/notifications/unread'])
-    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/(?:checkout|intent)|bank-transfer-proof))?$/)
+    const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/(?:checkout|intent)|square\/(?:config|payment)|bank-transfer-proof))?$/)
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
@@ -579,11 +576,11 @@ app.use('*', async (c, next) => {
 
 app.use('*', async (c, next) => {
   const contentLength = Number(c.req.header('Content-Length') || 0)
-  const maxBody = c.req.path === '/webhooks/stripe' ? 512 * 1024 : 128 * 1024
+  const maxBody = ['/webhooks/stripe', '/webhooks/square'].includes(c.req.path) ? 512 * 1024 : 128 * 1024
   if (contentLength > maxBody) return c.text('Request body too large', 413)
   const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
   const isPublicOrderLookup = c.req.path === '/public/order-lookup'
-  if (c.req.method === 'POST' && c.req.path !== '/webhooks/stripe' && !isPublicOrderLookup) {
+  if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square'].includes(c.req.path) && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
     if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
@@ -770,7 +767,7 @@ app.get('/register', async (c) => {
     return c.redirect('/')
   }
   const referralCode = String(c.req.query('ref') || '').trim().toUpperCase().slice(0, 10)
-  return c.html(pages.renderRegister(undefined, String((c.env as any).TURNSTILE_SITE_KEY || ''), referralCode))
+  return c.html(pages.renderRegister(undefined, await getTurnstileSiteKey(c), referralCode))
 })
 
 app.get('/ref/:code', async (c) => {
@@ -796,12 +793,11 @@ async function sendEmailVerification(c: any, user: any) {
   await c.env.RENT.prepare('INSERT INTO email_verifications (id, user_id, email, token_hash, sent_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)').bind(nanoid(), user.id, user.email, tokenHash, now.toISOString(), expiresAt).run()
   const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, idempotency_key, status) VALUES (?, 'EMAIL_VERIFICATION', ?, ?, 'PENDING')").bind(`email-${nanoid(12)}`, user.email, eventKey).run() as any
   if (!claimed.meta?.changes) return
-  const { apiKey, from } = await resolveResendCredentials(c)
+  const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) { await c.env.RENT.prepare("UPDATE email_events SET status = 'SKIPPED', error_message = 'Email transport is not configured' WHERE idempotency_key = ?").bind(eventKey).run(); return }
   const verifyUrl = `${new URL(c.req.url).origin}/verify-email?token=${encodeURIComponent(token)}`
-  const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [user.email], subject: '验证您的邮箱 - PC Rental', text: `您好 ${user.name}，请在 24 小时内打开以下链接验证邮箱：\n${verifyUrl}` }) })
-  const result = await response.json().catch(() => ({})) as any
-  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, eventKey).run()
+  const result = await sendTransactionalEmail(c, { to: user.email, subject: '验证您的邮箱 - PC Rental', text: `您好 ${user.name}，请在 24 小时内打开以下链接验证邮箱：\n${verifyUrl}` })
+  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE idempotency_key = ?").bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error, result.ok ? 1 : 0, eventKey).run()
 }
 
 // 公开法务页面。metaKey 与 legalMetadata 的键一致；varPrefix 生成 `${prefix}_version`
@@ -877,9 +873,9 @@ app.post('/register', async (c) => {
   const { firstName, lastName, email, password, passwordConfirm, referrer, countryCode, phone } = form
   const cookieReferral = (c.req.header('cookie') || '').match(/(?:^|;\s*)referral_code=([^;]+)/)?.[1] || ''
   const suppliedReferral = decodeURIComponent(String(referrer || cookieReferral || '')).trim().toUpperCase().slice(0, 10)
-  const renderRegistrationError = (message: string) => pages.renderRegister(message, String((c.env as any).TURNSTILE_SITE_KEY || ''), suppliedReferral)
+  const { siteKey: turnstileSiteKey, secretKey: turnstileSecret } = await getTurnstileRuntimeConfig(c)
+  const renderRegistrationError = (message: string) => pages.renderRegister(message, turnstileSiteKey, suppliedReferral)
   const turnstileToken = String(form['cf-turnstile-response'] || '')
-  const turnstileSecret = String((c.env as any).TURNSTILE_SECRET_KEY || '')
   if (!turnstileSecret || !turnstileToken) return c.html(renderRegistrationError('请先完成人机验证。'), 400)
   const turnstileResult = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: turnstileSecret, response: turnstileToken, remoteip: c.req.header('CF-Connecting-IP') }) }).then(r => r.json()).catch(() => ({ success: false })) as any
   if (!turnstileResult.success) return c.html(renderRegistrationError('人机验证失败，请重试。'), 400)
@@ -1015,10 +1011,10 @@ app.post('/forgot-password', async (c) => {
     const tokenHash = Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
     await c.env.RENT.prepare('UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL').bind(user.id).run()
     await c.env.RENT.prepare('INSERT INTO password_resets (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, datetime(\'now\', \'+30 minutes\'))').bind(`reset-${nanoid(12)}`, user.id, tokenHash).run()
-    const { apiKey, from } = await resolveResendCredentials(c)
+    const { apiKey, from } = await resolveEmailCredentials(c)
     if (apiKey && from) {
       const resetUrl = `${new URL(c.req.url).origin}/reset-password?token=${encodeURIComponent(token)}`
-      await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [email], subject: '重置您的登录密码 - PC Rental', text: `您好 ${user.name || ''}，请在 30 分钟内打开以下链接重置密码：\n${resetUrl}` }) }).catch(error => console.error('Password reset email failed:', error))
+      await sendTransactionalEmail(c, { to: email, subject: '重置您的登录密码 - PC Rental', text: `您好 ${user.name || ''}，请在 30 分钟内打开以下链接重置密码：\n${resetUrl}` }).catch(error => console.error('Password reset email failed:', error))
     }
   }
   return c.html(pages.renderForgotPassword('如果该邮箱已注册，重置链接将发送到您的邮箱。'))
@@ -1115,7 +1111,7 @@ app.post('/customer/balance/top-up', async (c) => {
   if (['alipay', 'wechat'].includes(method) && (!(getSystemSettings().paymentMethods as any)[method] || !getSystemSettings().rmbPayment[`${method}QrUrl`])) return c.text('该人民币支付方式当前未启用', 400)
   const rmbRate = ['alipay', 'wechat'].includes(method) ? await getAudCnyRate().catch(() => null) : null
   if (['alipay', 'wechat'].includes(method) && !rmbRate) return c.text('暂时无法获取实时汇率，请稍后重试', 503)
-  const id = `topup-${nanoid(12)}`
+  const id = generateReferenceNumber('TOP')
   await c.env.RENT.prepare("INSERT INTO balance_topups (id, user_id, amount, payment_method, cny_amount, status) VALUES (?, ?, ?, ?, ?, 'pending')").bind(id, user.id, Number(amount.toFixed(2)), method, rmbRate ? roundCnyUp(amount, rmbRate) : null).run()
   if (['bank_transfer', 'alipay', 'wechat'].includes(method)) {
     await c.env.RENT.prepare("UPDATE balance_topups SET status = 'awaiting_transfer' WHERE id = ?").bind(id).run()
@@ -1216,10 +1212,11 @@ app.get('/admin/users/:id/risk', async (c) => {
   const target = await getUserById(c, c.req.param('id'))
   if (!target || target.role !== 'CUSTOMER') return c.text('客户不存在', 404)
   const [activeFlags, history] = await Promise.all([
-    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) ORDER BY created_at DESC").bind(target.id).all().then(r => r.results || []),
-    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND (status = 'RESOLVED' OR (status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP)) ORDER BY created_at DESC LIMIT 50").bind(target.id).all().then(r => r.results || []),
+    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY created_at DESC").bind(target.id).all().then(r => r.results || []),
+    c.env.RENT.prepare("SELECT * FROM risk_flags WHERE customer_id = ? AND status = 'RESOLVED' ORDER BY created_at DESC LIMIT 50").bind(target.id).all().then(r => r.results || []),
   ])
-  return c.html(pages.renderAdminRiskFlags(admin, target, activeFlags as any[], history as any[]))
+  const riskAssessment = await getCustomerRiskAssessment(c, target.id)
+  return c.html(pages.renderAdminRiskFlags(admin, target, activeFlags as any[], history as any[], riskAssessment))
 })
 
 app.post('/admin/users/:id/risk', async (c) => {
@@ -1232,11 +1229,10 @@ app.post('/admin/users/:id/risk', async (c) => {
   const severity = ['LOW', 'MEDIUM', 'HIGH'].includes(String(form.severity)) ? String(form.severity) : 'MEDIUM'
   const reason = String(form.reason || '').trim().slice(0, 500)
   const evidence = String(form.evidence || '').trim().slice(0, 1000) || null
-  const expiresAt = String(form.expiresAt || '').replace('T', ' ') || null
   if (!(RISK_FLAG_TYPES as readonly string[]).includes(flagType) || !reason) return c.text('请选择有效的风险类型并填写原因', 400)
   const flagId = `rf-${nanoid(12)}`
-  await c.env.RENT.prepare('INSERT INTO risk_flags (id, customer_id, flag_type, severity, reason, evidence, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(flagId, target.id, flagType, severity, reason, evidence, admin.id, expiresAt).run()
+  await c.env.RENT.prepare('INSERT INTO risk_flags (id, customer_id, flag_type, severity, reason, evidence, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(flagId, target.id, flagType, severity, reason, evidence, admin.id).run()
   await createAuditLog(c, { actor: admin, action: 'RISK_FLAG_CREATED', targetType: 'USER', targetId: target.id, after: { flagType, severity, reason }, reason })
   return c.redirect(`/admin/users/${encodeURIComponent(target.id)}/risk`, 303)
 })
@@ -1254,8 +1250,17 @@ app.post('/admin/users/:id/risk/:flagId/resolve', async (c) => {
   return c.redirect(`/admin/users/${encodeURIComponent(c.req.param('id'))}/risk`, 303)
 })
 
+const BALANCE_TOPUP_REDIRECT_TARGETS = ['/admin/exceptions', '/admin/orders/balance-topups']
+function resolveBalanceTopupRedirect(raw: unknown) {
+  const value = String(raw || '')
+  const path = value.split('?')[0]
+  return BALANCE_TOPUP_REDIRECT_TARGETS.includes(path) ? value : '/admin/exceptions'
+}
+
 app.post('/admin/balance-topups/:id/approve', async (c) => {
   const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const redirectTo = resolveBalanceTopupRedirect(form.redirect)
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).first() as any
   if (!topup) return c.text('充值记录不存在或已处理', 409)
   const claimed = await c.env.RENT.prepare("UPDATE balance_topups SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(topup.id).run()
@@ -1265,14 +1270,16 @@ app.post('/admin/balance-topups/:id/approve', async (c) => {
     c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) SELECT ?, ?, ?, ROUND(balance, 2), 'top_up_transfer', ?, ? FROM users WHERE id = ?").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id, topup.user_id),
   ])
   await createAuditLog(c, { actor: admin, action: 'BALANCE_TOPUP_APPROVED', targetType: 'BALANCE_TOPUP', targetId: topup.id, after: { amount: topup.amount, userId: topup.user_id } })
-  return c.redirect('/admin/exceptions')
+  return c.redirect(redirectTo)
 })
 
 app.post('/admin/balance-topups/:id/reject', async (c) => {
   const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const redirectTo = resolveBalanceTopupRedirect(form.redirect)
   const result = await c.env.RENT.prepare("UPDATE balance_topups SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).run()
   if (!result.meta?.changes) return c.text('充值记录不存在或已处理', 409)
-  return c.redirect('/admin/exceptions')
+  return c.redirect(redirectTo)
 })
 
 app.get('/customer/guest', async (c) => {
@@ -1452,11 +1459,11 @@ app.get('/notifications', async (c) => {
   const emailTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM email_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
   const emailTemplateOptions = `<option value="custom">自定义通知</option>${emailTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
   const recipientOptions = recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')
-  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};search.addEventListener('input',update);select.addEventListener('change',update);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<a class="notification-item ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><div><strong>${sanitizePlainText(item.title, 200)}</strong><div class="notification-message">${renderNotificationMarkdown(notificationListMessage(item))}</div><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div>${item.order_id ? `<span class="button button-sm button-secondary">查看订单</span>` : ''}</a>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
+  const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 Markdown）</label><textarea class="form-control markdown-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 Markdown，自定义通知时必填）</label><textarea class="form-control markdown-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount'),template=document.getElementById('notificationTemplate'),title=document.getElementById('notificationTitle'),message=document.getElementById('notificationMessage');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};const syncTemplateFields=()=>{const custom=!template||template.value==='custom';[title,message].forEach(field=>{if(!field)return;field.required=custom;field.setAttribute('aria-required',String(custom));});};search.addEventListener('input',update);select.addEventListener('change',update);template?.addEventListener('change',syncTemplateFields);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();syncTemplateFields();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<a class="notification-item ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><div><strong>${sanitizePlainText(item.title, 200)}</strong><div class="notification-message">${renderNotificationMarkdown(notificationListMessage(item))}</div><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div>${item.order_id ? `<span class="button button-sm button-secondary">查看订单</span>` : ''}</a>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
   const pagination = pageCount > 1 ? `<nav class="pagination" aria-label="通知分页">${Array.from({ length: pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === page ? 'button-primary' : 'button-secondary'}" href="/notifications?page=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''
   const bodyWithAnnouncementExpiry = body.replace('name="message" maxlength="2000" required></textarea>', 'name="message" maxlength="2000" required></textarea><div class="form-group"><label class="form-label" for="announcementExpiresAt">下架日期和时间（选填）</label><input class="form-control" id="announcementExpiresAt" name="expiresAt" type="datetime-local"><small class="form-text">到时间后，所有用户都不会再看到这条通告。</small></div>')
   const bodyWithSendAnchor = bodyWithAnnouncementExpiry.replace('<form method="post" action="/notifications/send" class="panel notification-compose">', '<form id="send-notification" method="post" action="/notifications/send" class="panel notification-compose">')
-  const bodyWithTemplateChoice = bodyWithSendAnchor.replace('<div class="form-group"><label class="form-label" for="notificationTitle">标题</label>', `<div class="form-group"><label class="form-label" for="notificationTemplate">发送内容</label><select class="form-control" id="notificationTemplate" name="templateId">${emailTemplateOptions}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题</label>`)
+  const bodyWithTemplateChoice = bodyWithSendAnchor.replace('<div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>', `<div class="form-group"><label class="form-label" for="notificationTemplate">发送内容</label><select class="form-control" id="notificationTemplate" name="templateId">${emailTemplateOptions}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>`)
   const bodyWithArchiveLink = user.role === 'ADMIN' ? bodyWithTemplateChoice.replace('<h3>发布通告</h3>', '<div class="section-title"><h3>发布通告</h3><a class="link-button" href="/admin/announcements">历史通告 →</a></div>') : bodyWithTemplateChoice
   return c.html(buildLayout('通知中心', bodyWithArchiveLink + pagination, user))
 })
@@ -1466,7 +1473,7 @@ app.get('/admin/notifications', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
   const notifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
-  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => { const typeLabel = item.type === 'rental_application' ? '租赁申请' : item.type || '系统通知'; return `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(typeLabel, 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>` }).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
+  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核、推荐风险审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => { const typeLabel = item.type === 'rental_application' ? '租赁申请' : item.type === 'referral_risk_review' ? '推荐风险审核' : item.type || '系统通知'; return `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(typeLabel, 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>` }).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
   return c.html(buildLayout('管理员通知中心', body, user))
 })
 
@@ -1590,8 +1597,8 @@ app.post('/admin/email-templates/send', async (c) => {
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
   if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: fill(template.body) })
   if (['email', 'both'].includes(channel)) {
-    const { apiKey, from } = await resolveResendCredentials(c)
-    if (!apiKey || !from) return c.text('尚未配置邮件服务：请在后台「通知渠道」填写 Resend API Key 与发件邮箱，或设置 RESEND_API_KEY / EMAIL_FROM', 503)
+    const { apiKey, from } = await resolveEmailCredentials(c)
+    if (!apiKey || !from) return c.text('尚未配置邮件服务：请在后台「通知渠道」配置 Resend / Brevo / MailerSend 之一，或设置 RESEND_API_KEY / EMAIL_FROM', 503)
     const filledBody = fill(template.body)
     const html = renderEmailNotificationHtml(fill(template.subject), filledBody, vars.company_name, template.theme_color || '#71818d')
     const sent = await sendLoggedEmail(c, { eventType: 'TEMPLATE', recipient: mailTo, key: `template:${String(form.templateId || 'custom')}:${mailTo}:${JSON.stringify(vars)}`, subject: fill(template.subject), text: filledBody, html, templateId: String(form.templateId || '') || undefined })
@@ -1749,14 +1756,15 @@ app.get('/customer/devices', async (c) => {
 app.get('/customer/rent/:id', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
-  return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user))
+  const risk = await getCustomerRiskAssessment(c, user.id)
+  return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, risk.blocked ? '您的账户当前存在风控限制，暂时无法自助下单，请联系客服协助处理' : undefined))
 })
 
 app.post('/customer/rent/:id', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
-  const riskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, status, expires_at FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE'").bind(user.id).all()).results as any[]
-  if (findBlockingRiskFlag(riskFlags)) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前无法自助下单，请联系客服协助处理'), 403)
+  const risk = await getCustomerRiskAssessment(c, user.id)
+  if (risk.blocked) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '您的账户当前存在风控限制，暂时无法自助下单，请联系客服协助处理'), 403)
   const account = await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first() as any
   if (Number(account?.balance || 0) < 0) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, `您的账户余额为负（${Number(account.balance).toFixed(2)} AUD），请先充值至非负后再下单。`), 403)
   const device = await getDeviceById(c, c.req.param('id'))
@@ -1961,17 +1969,6 @@ app.get('/staff/orders/ongoing', async (c) => {
   return c.html(await pages.renderStaffOrdersOngoing(c, user))
 })
 
-app.get('/staff/orders/:date/:code', async (c) => {
-  const user = c.get('user')
-  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
-    return c.redirect('/login')
-  }
-  const order = await getOrderByOrderNo(c, `OD-${c.req.param('date')}-${c.req.param('code')}`)
-  if (!order) return c.html(renderNotFound(), 404)
-  await loadSystemSettingsFromDB(c)
-  return c.html(await pages.renderStaffOrderDetail(c, user, order.id))
-})
-
 app.get('/staff/orders/:id', async (c) => {
   const user = c.get('user')
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
@@ -1989,8 +1986,11 @@ app.post('/staff/orders/:orderId/suspend', async (c) => {
   const customer = order ? await getUserById(c, order.userId) : null
   if (!order || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
   if (!['active', 'extended', 'overdue'].includes(String(order.status)) || !canTransitionOrder(order.status, 'suspended')) return c.text('当前订单状态不能暂停', 409)
-  await updateOrderStatus(c, order.id, 'suspended')
-  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}暂停。`, orderId: order.id })
+  const suspendForm = await c.req.parseBody()
+  const suspendReason = String(suspendForm.reason || '').trim().slice(0, 300)
+  if (!suspendReason) return c.text('请填写暂停原因', 400)
+  await updateOrderStatus(c, order.id, 'suspended', { reason: suspendReason, triggeredBy: user.id })
+  await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}暂停，原因：${suspendReason}。`, orderId: order.id })
   return c.redirect(staffOrderPath(order))
 })
 
@@ -2055,6 +2055,8 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   const order = await getOrderById(c, c.req.param('orderId'))
   const customer = order ? await getUserById(c, order.userId) : null
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
+  const customerRisk = customer?.role === 'CUSTOMER' ? await getCustomerRiskAssessment(c, customer.id) : null
+  if (customerRisk?.blocked) return c.text(`该客户存在风控限制，不能创建合同或审核订单（风险分 ${customerRisk.score}/100）`, 403)
   const form = await c.req.parseBody()
   await loadSystemSettingsFromDB(c)
   const orderRentalRules = order ? await getDeviceRentalRules(c, order.deviceId) : null
@@ -2216,6 +2218,19 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   return c.redirect(staffOrderPath(order))
 })
 
+// 必须注册在 /staff/orders/:orderId/handover、/staff/orders/:orderId/inspection 等二段式字面量路由之后，
+// 否则 Hono 会先匹配到这个 :date/:code 通配路由，导致那些操作链接一律 404。
+app.get('/staff/orders/:date/:code', async (c) => {
+  const user = c.get('user')
+  if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
+    return c.redirect('/login')
+  }
+  const order = await getOrderByOrderNo(c, `OD-${c.req.param('date')}-${c.req.param('code')}`)
+  if (!order) return c.html(renderNotFound(), 404)
+  await loadSystemSettingsFromDB(c)
+  return c.html(await pages.renderStaffOrderDetail(c, user, order.id))
+})
+
 app.post('/customer/orders/:orderId/inspection-dispute', async (c) => {
   const user = c.get('user') as any
   if (!user || user.role !== 'CUSTOMER') return c.html(renderForbidden(), 403)
@@ -2234,9 +2249,13 @@ app.post('/staff/orders/:orderId/cancel', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('orderId'))
+  const cancelForm = await c.req.parseBody()
+  const cancelReason = String(cancelForm.reason || '').trim().slice(0, 300)
   if (order) {
-    await updateOrderStatus(c, order.id, 'cancelled')
+    if (!cancelReason) return c.text('请填写取消原因', 400)
+    await updateOrderStatus(c, order.id, 'cancelled', { reason: cancelReason, triggeredBy: user.id })
     await updateDeviceStatus(c, order.deviceId, 'available')
+    await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '工作人员'}取消，原因：${cancelReason}。`, orderId: order.id })
   }
   return c.redirect(order ? staffOrderPath(order) : `/staff/orders/${c.req.param('orderId')}`)
 })
@@ -2517,7 +2536,8 @@ app.get('/api/payment/status', async (c) => {
     (user.accountType === 'guest' && String(user.guestOrderId || '') === orderId)
   if (!ownsOrder) return c.json({ error: 'forbidden' }, 403)
   const paymentMethod = String(order.paymentMethod ?? 'card')
-  const payment = await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method FROM payments WHERE rental_id = ? AND payment_method = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod).first() as any
+  const provider = String(order.paymentProvider || (paymentMethod === 'card' ? 'stripe' : 'internal'))
+  const payment = await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, payment_provider FROM payments WHERE rental_id = ? AND payment_method = ? AND COALESCE(payment_provider, ?) = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod, provider, provider).first() as any
   const state = pages.paymentResultState(order, payment, false)
   return c.json({ state, orderNo: order.orderNo || null, redirectTarget: `/customer/orders/${order.id}` }, 200, { 'Cache-Control': 'no-store' })
 })
@@ -2639,6 +2659,28 @@ app.post('/customer/orders/:id/stripe/intent', async (c) => {
   }
 })
 
+app.get('/customer/orders/:id/square/config', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    return c.json(await getSquareGiftCardConfigForOrder(c, user, c.req.param('id')), 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法读取 Square 配置' }, 400)
+  }
+})
+
+app.post('/customer/orders/:id/square/payment', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    const body = await c.req.json() as any
+    const result = await createSquareGiftCardPayment(c, user, c.req.param('id'), body?.sourceId)
+    return c.json(result)
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法创建 Square 礼品卡付款' }, 400)
+  }
+})
+
 app.post('/customer/orders/:id/price-adjustment/stripe/intent', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
@@ -2660,23 +2702,27 @@ app.post('/customer/orders/:id/switch-payment-method', async (c) => {
   if (!order || order.userId !== user.id || order.status !== 'pending_payment') return c.text('订单当前不能切换支付方式', 409)
   const form = await c.req.parseBody()
   const targetMethod = String(form.paymentMethod || '')
-  if (!['bank_transfer', 'alipay', 'wechat'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
+  if (!['square', 'bank_transfer', 'alipay', 'wechat'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
   await loadSystemSettingsFromDB(c)
   const settings = getSystemSettings()
-  const enabled = targetMethod === 'bank_transfer' ? settings.paymentMethods.bankTransfer
+  const enabled = targetMethod === 'square' ? settings.paymentMethods.square
+    : targetMethod === 'bank_transfer' ? settings.paymentMethods.bankTransfer
     : targetMethod === 'alipay' ? (settings.paymentMethods.alipay && settings.rmbPayment.alipayQrUrl)
     : (settings.paymentMethods.wechat && settings.rmbPayment.wechatQrUrl)
   if (!enabled) return c.text('该支付方式当前未启用', 409)
   if (String(order.paymentMethod) === targetMethod) return c.redirect(`/customer/orders/${order.id}`)
   const paymentTotal = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
-  const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, targetMethod).first() as any
+  const storedPaymentMethod = targetMethod === 'square' ? 'card' : targetMethod
+  const provider = targetMethod === 'square' ? 'square' : 'internal'
+  if (targetMethod === 'square') await getSquareConfigSummary(c).then(summary => { if (!summary.configured) throw new Error('Square 尚未配置') })
+  const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND payment_provider = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, storedPaymentMethod, provider).first() as any
   if (!existing) {
     await c.env.RENT.prepare(`
-      INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, deposit_amount, rental_amount, currency, status)
-      VALUES (?, ?, ?, ?, ?, 0, ?, 'AUD', 'pending')
-    `).bind(`p-${nanoid(12)}`, order.id, user.id, targetMethod, paymentTotal, paymentTotal).run()
+      INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, currency, status)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'AUD', 'pending')
+    `).bind(`p-${nanoid(12)}`, order.id, user.id, storedPaymentMethod, provider, paymentTotal, paymentTotal).run()
   }
-  await c.env.RENT.prepare("UPDATE orders SET paymentMethod = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(targetMethod, order.id).run()
+  await c.env.RENT.prepare("UPDATE orders SET paymentMethod = ?, payment_provider = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(storedPaymentMethod, provider, order.id).run()
   return c.redirect(`/customer/orders/${order.id}`)
 })
 
@@ -2717,6 +2763,15 @@ app.post('/webhooks/stripe', async (c) => {
     // redelivers it; the handler is idempotent, so a later retry completes it
     // instead of the failure being silently swallowed.
     console.error('Stripe webhook processing failed:', error?.message || error)
+    return c.json({ received: false, error: 'processing_failed' }, 500)
+  }
+})
+
+app.post('/webhooks/square', async (c) => {
+  try {
+    return await handleSquareWebhook(c)
+  } catch (error: any) {
+    console.error('Square webhook processing failed:', error?.message || error)
     return c.json({ received: false, error: 'processing_failed' }, 500)
   }
 })
@@ -2970,7 +3025,7 @@ app.get('/admin/devices/reports', async (c) => {
 app.get('/admin/exceptions', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases, disputes, anomalousOrders, consistencyIssues, failingJobs] = await Promise.all([
+  const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases, disputes, anomalousOrders, consistencyIssues, failingJobs, referralRewards] = await Promise.all([
     c.env.RENT.prepare("SELECT bt.id, bt.user_id, bt.amount, bt.payment_method, bt.reference, bt.note, u.name AS user_name FROM balance_topups bt LEFT JOIN users u ON u.id = bt.user_id WHERE bt.status = 'submitted' ORDER BY bt.updated_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT pp.id, pp.payment_id, p.rental_id, pp.reference_number, pp.uploaded_at, o.orderNo FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN orders o ON o.id = p.rental_id WHERE pp.status = 'submitted' ORDER BY pp.uploaded_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, endDate FROM orders WHERE status IN ('active', 'extended', 'overdue', 'pending_return') AND endDate < ? ORDER BY endDate ASC LIMIT 50").bind(new Date().toISOString().slice(0, 10)).all(),
@@ -2990,6 +3045,16 @@ app.get('/admin/exceptions', async (c) => {
       FROM ranked WHERE rn <= 3 AND status = 'FAILED'
       GROUP BY job_name HAVING COUNT(*) = 3
     `).all(),
+    c.env.RENT.prepare(`
+      SELECT rw.id, rw.reward_number, rw.customer_id, rw.reward_amount, rw.reason,
+             r.referee_customer_id, referrer.name AS referrer_name, referee.name AS referee_name
+      FROM referral_rewards rw
+      JOIN referrals r ON r.id = rw.referral_id
+      LEFT JOIN users referrer ON referrer.id = rw.customer_id
+      LEFT JOIN users referee ON referee.id = r.referee_customer_id
+      WHERE rw.status = 'PENDING_REVIEW'
+      ORDER BY rw.updated_at ASC LIMIT 50
+    `).all(),
   ]) as any[]
   const sections = [
     ['待审核充值', topups.results, '/admin/exceptions', (item: any) => `<strong>${sanitizePlainText(item.user_name || item.user_id, 100)}</strong> · ${sanitizePlainText(item.payment_method, 30)} · AUD$${Number(item.amount).toFixed(2)}<div class="record-actions"><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/approve" data-site-confirm="确认通过这笔充值并立即入账吗？"><button class="button button-sm button-primary">通过并入账</button></form><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/reject" data-site-confirm="确认驳回这笔充值吗？"><button class="button button-sm button-danger">驳回</button></form></div>`],
@@ -3000,10 +3065,12 @@ app.get('/admin/exceptions', async (c) => {
     ['待审核损坏记录', damageCases.results, '/admin/inspections', (item: any) => `订单 ${item.order_id} · ${item.description || '待补充损坏说明'}`],
     ['待处理支付争议', disputes.results, '/admin/finance/payment-disputes', (item: any) => `订单 ${sanitizePlainText(item.order_id || '-', 50)} · ${sanitizePlainText(item.currency, 10)}$${Number(item.amount).toFixed(2)} · ${sanitizePlainText(item.reason || '未说明原因', 100)}`],
     ['待审核异常订单', anomalousOrders.results, '/admin/finance/anomalous-orders', (item: any) => `订单 ${sanitizePlainText(item.orderNo || item.order_id, 50)} · ${sanitizePlainText(item.anomaly_type, 100)} · 已自动暂停`],
+    ['待审核推荐奖励', referralRewards.results, '/admin/referrals', (item: any) => `<strong>${sanitizePlainText(item.referrer_name || item.customer_id, 100)}</strong> 推荐 <strong>${sanitizePlainText(item.referee_name || item.referee_customer_id, 100)}</strong> · AUD$${Number(item.reward_amount || 0).toFixed(2)} · ${sanitizePlainText(item.reason || '风险分达到审核阈值', 200)}<div class="record-actions"><a class="button button-sm button-primary" href="/admin/referrals">查看并审核</a></div>`],
+    ['待审核推荐奖励', referralRewards.results, '/admin/referrals', (item: any) => `<strong>${sanitizePlainText(item.referrer_name || item.customer_id, 100)}</strong> 推荐 <strong>${sanitizePlainText(item.referee_name || item.referee_customer_id, 100)}</strong> · AUD$${Number(item.reward_amount || 0).toFixed(2)} · ${sanitizePlainText(item.reason || '风险分达到审核阈值', 200)}<div class="record-actions"><a class="button button-sm button-primary" href="/admin/referrals/${encodeURIComponent(item.id)}">查看并审核</a></div>`],
     ['数据不一致', consistencyIssues.results, '/admin/exceptions', (item: any) => `${sanitizePlainText(item.issue_type, 60)} · ${sanitizePlainText(item.entity_type, 30)} ${sanitizePlainText(item.entity_id, 60)} · 发现于 ${formatMelbourneDateTime(item.detected_at)}`],
     ['连续失败的定时任务', failingJobs.results, '/admin/monitoring', (item: any) => `${sanitizePlainText(item.job_name, 80)} · 最近失败于 ${formatMelbourneDateTime(item.last_failed_at)} · ${sanitizePlainText(item.last_error || '无错误信息', 200)}`],
   ] as const
-  const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和押金异常；所有充值与转账审核均在此完成。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
+  const body = `<div class="page-header"><div><p class="section-code">EXCEPTION QUEUE</p><h2>异常任务中心</h2><p>按最早发生时间处理付款、归还、设备和推荐奖励风控异常；所有待审核事项集中显示在这里。</p></div></div><div class="stats-grid">${sections.map(([name, items]) => `<div class="stat-card ${items.length ? 'warning' : ''}"><h3>${name}</h3><div class="value">${items.length}</div></div>`).join('')}</div>${sections.map(([name, items, href, label]) => `<section class="panel" style="margin-top:20px"><div class="section-title"><h3>${name}</h3>${href !== '/admin/exceptions' ? `<a class="button button-sm button-secondary" href="${href}">前往处理</a>` : ''}</div>${items.length ? `<ul class="notification-list">${items.map(item => `<li>${label(item)}</li>`).join('')}</ul>` : '<p class="empty-state">暂无待处理事项。</p>'}</section>`).join('')}`
   return c.html(buildLayout('异常任务中心', body, admin))
 })
 
@@ -3038,7 +3105,7 @@ app.post('/admin/referrals/:id/revoke', async (c) => {
   const form = await c.req.parseBody()
   const reason = String(form.reason || '').trim().slice(0, 300)
   if (!reason) return c.text('撤销推荐奖励必须填写原因', 400)
-  const reward = await c.env.RENT.prepare("SELECT order_id FROM referral_rewards WHERE id = ? AND status IN ('PENDING', 'AVAILABLE')").bind(c.req.param('id')).first() as any
+  const reward = await c.env.RENT.prepare("SELECT order_id FROM referral_rewards WHERE id = ? AND status IN ('PENDING', 'PENDING_REVIEW', 'AVAILABLE')").bind(c.req.param('id')).first() as any
   if (!reward?.order_id) return c.text('该推荐奖励不存在或已处理', 409)
   await revokeReferralRewardForOrder(c, reward.order_id, reason)
   await createAuditLog(c, { actor: admin, action: 'REFERRAL_REWARD_REVOKED', targetType: 'REFERRAL_REWARD', targetId: c.req.param('id'), reason })
@@ -3066,12 +3133,11 @@ app.post('/manager/email-events/:id/retry', async (c) => {
   if (!user || !['MANAGER', 'ADMIN'].includes(getAccessLevel(user))) return c.html(renderForbidden(), 403)
   const event = await c.env.RENT.prepare("SELECT * FROM email_events WHERE id = ? AND status <> 'SENT' AND retry_count < max_attempts").bind(c.req.param('id')).first() as any
   if (!event) return c.text('邮件事件不存在、已发送或已超过最大重试次数', 409)
-  const { apiKey, from } = await resolveResendCredentials(c)
+  const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) return c.text('邮件服务尚未配置', 503)
-  const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: [event.recipient], subject: event.subject, text: event.text_body, html: event.html_body || undefined }) })
-  const result = await response.json().catch(() => ({})) as any
-  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?").bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status), response.ok ? 1 : 0, event.id).run()
-  await createAuditLog(c, { actor: user, action: 'EMAIL_EVENT_RETRIED', targetType: 'EMAIL_EVENT', targetId: event.id, after: { status: response.ok ? 'SENT' : 'FAILED' } })
+  const result = await sendTransactionalEmail(c, { to: event.recipient, subject: event.subject, text: event.text_body, html: event.html_body || undefined })
+  await c.env.RENT.prepare("UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, retry_count = retry_count + 1, last_attempt_at = CURRENT_TIMESTAMP, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?").bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error, result.ok ? 1 : 0, event.id).run()
+  await createAuditLog(c, { actor: user, action: 'EMAIL_EVENT_RETRIED', targetType: 'EMAIL_EVENT', targetId: event.id, after: { status: result.ok ? 'SENT' : 'FAILED' } })
   return c.redirect('/manager/email-events', 303)
 })
 
@@ -3233,8 +3299,7 @@ app.get('/admin/withdrawals', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
-  const body = await pages.renderWithdrawalsPanel(c)
-  return c.html(buildLayout('佣金提现 - 电脑租赁管理系统', body, user))
+  return c.html(buildLayout('佣金提现审核 - 电脑租赁管理系统', await pages.renderWithdrawalsPanel(c), user))
 })
 
 app.get('/admin/payment-reviews', async (c) => {
@@ -3359,6 +3424,14 @@ app.get('/admin/orders', async (c) => {
   return c.html(await pages.renderAdminOrders(c, user))
 })
 
+app.get('/admin/orders/balance-topups', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.html(await pages.renderAdminBalanceTopups(c, user))
+})
+
 app.get('/admin/order-review', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -3425,9 +3498,9 @@ app.post('/admin/orders/:id/changes', async (c) => {
   const admin = c.get('user')
   if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id')) as any
-  if (!order || ['completed', 'cancelled'].includes(order.status)) return c.text('订单不存在或已结束，不能修改', 409)
   const form = await c.req.parseBody()
   const type = String(form.changeType || '')
+  if (!order || order.status === 'cancelled' || (order.status === 'completed' && type !== 'REFUND_METHOD')) return c.text('订单不存在或已结束，不能修改', 409)
   const reason = String(form.reason || '').trim().slice(0, 500)
   if (!reason) return c.text('订单修改必须填写原因', 400)
 
@@ -3442,6 +3515,10 @@ app.post('/admin/orders/:id/changes', async (c) => {
     pickupLocation: form.pickupLocation != null ? String(form.pickupLocation) : undefined,
     returnLocation: form.returnLocation != null ? String(form.returnLocation) : undefined,
     deliveryMethod: form.deliveryMethod != null ? String(form.deliveryMethod) : undefined,
+    refundMethod: form.refundMethod != null ? String(form.refundMethod) : undefined,
+    refundBsb: form.refundBsb != null ? String(form.refundBsb) : undefined,
+    refundAccountNumber: form.refundAccountNumber != null ? String(form.refundAccountNumber) : undefined,
+    refundAccountName: form.refundAccountName != null ? String(form.refundAccountName) : undefined,
   })
   if ('error' in plan) return c.text(plan.error, 400)
 
@@ -3457,8 +3534,8 @@ app.post('/admin/orders/:id/changes', async (c) => {
   const after = { ...before, ...plan.patch }
   const changeId = `och-${nanoid(12)}`
   await c.env.RENT.batch([
-    c.env.RENT.prepare('UPDATE orders SET deviceId = ?, startDate = ?, endDate = ?, rentalPeriod = ?, totalAmount = ?, depositAmount = ?, discount_amount = ?, pickupLocation = ?, returnLocation = ?, deliveryMethod = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(after.deviceId, after.startDate, after.endDate, after.rentalPeriod, after.totalAmount, after.depositAmount, after.discountAmount, after.pickupLocation || null, after.returnLocation || null, after.deliveryMethod, order.id),
+    c.env.RENT.prepare('UPDATE orders SET deviceId = ?, startDate = ?, endDate = ?, rentalPeriod = ?, totalAmount = ?, depositAmount = ?, discount_amount = ?, pickupLocation = ?, returnLocation = ?, deliveryMethod = ?, refundMethod = ?, refundBsb = ?, refundAccountNumber = ?, refundAccountName = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(after.deviceId, after.startDate, after.endDate, after.rentalPeriod, after.totalAmount, after.depositAmount, after.discountAmount, after.pickupLocation || null, after.returnLocation || null, after.deliveryMethod, after.refundMethod, after.refundBsb || null, after.refundAccountNumber || null, after.refundAccountName || null, order.id),
     c.env.RENT.prepare('INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(changeId, order.id, type, JSON.stringify(before), JSON.stringify(after), reason, admin.id),
   ])
   if (type === 'DEVICE_SWAP') { await releaseDeviceIfUnbooked(c, before.deviceId); await recordDeviceLifecycle(c, after.deviceId, 'RESERVED', { orderId: order.id, reason: '订单换机', changedBy: admin.id }) }
@@ -3514,15 +3591,17 @@ app.post('/admin/orders/:id/update', async (c) => {
   const form = await c.req.parseBody()
   const status = String(form.status || '')
   const force = String(form.force || '') === '1'
+  const reason = String(form.reason || '').trim().slice(0, 300)
   const order = await getOrderById(c, c.req.param('id'))
   const editableStatuses = ['suspended', 'active', 'cancelled']
   const isResume = status === 'active' && order?.status === 'suspended'
   if (!order || !editableStatuses.includes(status) || (status === 'active' && !isResume) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
+  if ((status === 'suspended' || status === 'cancelled') && !reason) return wantsJson ? c.json({ ok: false, error: '请填写暂停/取消原因' }, 400) : c.text('请填写暂停/取消原因', 400)
   const automaticCancellationPayment = status === 'cancelled'
     ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND ((status = 'paid' AND payment_method IN ('balance', 'card')) OR (status = 'pending' AND payment_method = 'card' AND stripe_payment_intent_id = (SELECT stripe_deposit_payment_intent_id FROM orders WHERE id = ?))) LIMIT 1").bind(order.id, order.id).first()
     : null
   if (automaticCancellationPayment) {
-    const response = await cancelAndRefund(c, user, order.id)
+    const response = await cancelAndRefund(c, user, order.id, reason)
     if (response.status >= 400) return wantsJson ? c.json({ ok: false, error: await response.text() }, response.status as any) : response
     return wantsJson ? c.json({ ok: true, refunded: true }) : response
   }
@@ -3530,7 +3609,9 @@ app.post('/admin/orders/:id/update', async (c) => {
     const contract = await c.env.RENT.prepare('SELECT contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
     if (!JSON.parse(contract?.contract_data || '{}').inspection_date && !force) return wantsJson ? c.json({ ok: false, error: '完成订单前必须提交归还验机' }, 409) : c.text('完成订单前必须提交归还验机', 409)
   }
-  await updateOrderStatus(c, order.id, status)
+  await updateOrderStatus(c, order.id, status, { reason, triggeredBy: user.id })
+  if (status === 'suspended') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}暂停，原因：${reason}。`, orderId: order.id })
+  if (status === 'cancelled') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}取消，原因：${reason}。`, orderId: order.id })
   if (status === 'completed') await enqueueRentalUserDeletion(c, order)
   if (status === 'cancelled' || status === 'completed') await releaseDeviceIfUnbooked(c, order.deviceId)
   if (status === 'paid') await ensureOrderNumber(c, order.id)
@@ -3558,6 +3639,9 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
     await createAuditLog(c, { actor: user, action: 'PRICE_ADJUSTMENT_PAYMENT_APPROVED', targetType: 'ORDER_PRICE_ADJUSTMENT', targetId: proof.adjustment_id, after: { orderId: order.id, reference: proof.reference_number } })
     return c.redirect('/admin/exceptions')
   }
+  const riskCustomer = await getUserById(c, order.userId)
+  const customerRisk = riskCustomer?.role === 'CUSTOMER' ? await getCustomerRiskAssessment(c, riskCustomer.id) : null
+  if (customerRisk?.blocked) return c.text(`该客户存在风控限制，不能创建合同或审核订单（风险分 ${customerRisk.score}/100）`, 403)
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
@@ -3618,11 +3702,13 @@ app.post('/admin/orders/bulk-update', async (c) => {
 
   const form = await c.req.parseBody()
   const targetStatus = String(form.status || '')
+  const reason = String(form.reason || '').trim().slice(0, 300)
   const selectedIds = Array.isArray(form.orderIds) ? form.orderIds.map(String) : form.orderIds ? [String(form.orderIds)] : []
 
   if (!['suspended', 'cancelled'].includes(targetStatus) || selectedIds.length === 0) {
     return c.redirect('/admin/orders')
   }
+  if ((targetStatus === 'suspended' || targetStatus === 'cancelled') && !reason) return c.text('请填写暂停/取消原因', 400)
 
   const selectedOrders = await Promise.all(selectedIds.map(orderId => getOrderById(c, orderId)))
   const validOrders = selectedOrders.filter((order): order is NonNullable<typeof order> => Boolean(order && canTransitionOrder(order.status, targetStatus)))
@@ -3633,11 +3719,13 @@ app.post('/admin/orders/bulk-update', async (c) => {
       ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND status = 'paid' AND payment_method IN ('balance', 'card') LIMIT 1").bind(order.id).first()
       : null
     if (automaticCancellationPayment) {
-      const response = await cancelAndRefund(c, user, order.id)
+      const response = await cancelAndRefund(c, user, order.id, reason)
       if (response.status >= 400) return c.text(await response.text(), response.status as any)
     } else {
-      await updateOrderStatus(c, order.id, targetStatus)
+      await updateOrderStatus(c, order.id, targetStatus, { reason, triggeredBy: user.id })
       if (targetStatus === 'cancelled') await releaseDeviceIfUnbooked(c, order.deviceId)
+      if (targetStatus === 'suspended') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}暂停，原因：${reason}。`, orderId: order.id })
+      if (targetStatus === 'cancelled') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}取消，原因：${reason}。`, orderId: order.id })
     }
   }
 
@@ -3870,7 +3958,9 @@ app.get('/admin/reports', async (c) => {
   const since = `datetime('now', '-${windowDays} days')`
   const [rentalRevenue, refundTotal, deposits, outstanding, overdue, fleet, rentedDays, damage, maintenance, coupon, referral, methods] = await Promise.all([
     c.env.RENT.prepare(`SELECT COALESCE(SUM(COALESCE(rental_amount, amount)), 0) AS v FROM payments WHERE status = 'paid' AND paid_at >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT COALESCE(SUM(refund_amount), 0) AS v FROM payment_refunds WHERE status = 'succeeded' AND created_at >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(CASE WHEN r.type = 'cancellation' THEN MAX(0, MIN(r.refund_amount, COALESCE(p.rental_amount, 0))) ELSE MAX(0, r.refund_amount) END), 0) AS v
+      FROM payment_refunds r LEFT JOIN payments p ON p.id = r.payment_id
+      WHERE r.status = 'succeeded' AND r.type <> 'deposit' AND r.created_at >= ${since}`).first<{ v: number }>(),
     c.env.RENT.prepare(`SELECT
         COALESCE(SUM(CASE WHEN deposit_status IN ('HELD','PAID','PARTIALLY_DEDUCTED','REFUND_PENDING') THEN deposit_held_amount ELSE 0 END), 0) AS held,
         COALESCE(SUM(CASE WHEN deposit_status IN ('REFUNDED','PARTIALLY_REFUNDED') AND deposit_refund_at >= ${since} THEN deposit_refund_amount ELSE 0 END), 0) AS refunded,
@@ -3884,7 +3974,7 @@ app.get('/admin/reports', async (c) => {
     c.env.RENT.prepare(`SELECT COALESCE(SUM(cost), 0) AS v FROM maintenance_records WHERE COALESCE(completed_at, started_at) >= ${since}`).first<{ v: number }>(),
     c.env.RENT.prepare(`SELECT COALESCE(SUM(discount_amount), 0) AS v FROM coupon_redemptions WHERE status = 'REDEEMED' AND COALESCE(redeemed_at, created_at) >= ${since}`).first<{ v: number }>(),
     c.env.RENT.prepare(`SELECT COALESCE(SUM(reward_amount), 0) AS v FROM referral_rewards WHERE status IN ('APPROVED','AVAILABLE') AND created_at >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT payment_method AS method, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS count FROM payments WHERE status = 'paid' AND paid_at >= ${since} GROUP BY payment_method`).all(),
+    c.env.RENT.prepare(`SELECT CASE WHEN payment_method = 'card' AND payment_provider = 'square' THEN 'square' ELSE payment_method END AS method, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS count FROM payments WHERE status = 'paid' AND paid_at >= ${since} GROUP BY CASE WHEN payment_method = 'card' AND payment_provider = 'square' THEN 'square' ELSE payment_method END`).all(),
   ])
   return c.html(pages.renderAdminOperationsReport(user, {
     windowDays,
@@ -4416,18 +4506,25 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c)))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c)))
 })
 
 app.post('/admin/notify-channels/test', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.json({ error: '需要管理员权限' }, 403)
   try {
-    const results = await dispatchChannelAlert(c, {
-      title: 'PC Rental 测试推送',
-      message: `这是一条来自管理后台的测试通知，发送人：${user.name || user.email || user.id}。`,
-      url: new URL('/admin/settings', c.req.url).toString(),
-    })
+    const title = 'PC Rental 测试推送'
+    const message = `这是一条来自管理后台的测试通知，发送人：${user.name || user.email || user.id}。`
+    const results = await dispatchChannelAlert(c, { title, message, url: new URL('/admin/settings', c.req.url).toString() }, { force: false })
+    const email = String(user.email || '').trim()
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      const { provider, apiKey, from } = await resolveEmailCredentials(c)
+      if (!apiKey || !from) results.push({ channel: `email (${provider})`, ok: false, detail: !apiKey ? '尚未配置当前邮件服务商 API Key' : '尚未配置发件邮箱' })
+      else {
+        const sent = await sendTransactionalEmail(c, { to: email, subject: title, text: message })
+        results.push({ channel: `email (${provider})`, ok: sent.ok, detail: sent.ok ? `已发送至 ${email}` : (sent.error || '发送失败') })
+      }
+    } else results.push({ channel: 'email', ok: false, detail: '管理员账户没有有效邮箱，无法发送测试邮件' })
     return c.json({ success: true, results })
   } catch (error: any) {
     return c.json({ error: String(error?.message || error).slice(0, 300) }, 500)
@@ -5194,7 +5291,42 @@ export default {
           for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
             try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) { }
           }
-          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET name = '删除账户', email = 'deleted-account-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, balance = 0, commission_balance = 0, password_hash = 'disabled', password_salt = 'disabled', referral_code = NULL, referrer_id = NULL, staff_id = NULL, user_agreement_accepted_ip = NULL, status = 'inactive', account_status = 'inactive', deleted_at = CURRENT_TIMESTAMP, deletion_requested_at = NULL, deletion_scheduled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
+          // Legacy databases differ in which of these columns they carry (snake_case
+          // vs camelCase, and some never had a bank `account` column at all — the app
+          // treats it as an alias of account_number). Building the SET clause from the
+          // columns that actually exist keeps this from failing with "no such column".
+          const userColumns = new Set<string>(
+            ((await env.RENT.prepare('PRAGMA table_info(users)').all()).results || []).map((row: any) => String(row.name))
+          )
+          const scrubExpr: Record<string, string> = {
+            name: `'删除账户'`,
+            email: `'deleted-account-' || id || '@invalid.local'`,
+            phone: 'NULL',
+            bsb: 'NULL',
+            account: 'NULL',
+            account_number: 'NULL',
+            accountNumber: 'NULL',
+            balance: '0',
+            commission_balance: '0',
+            commissionBalance: '0',
+            password_hash: `'disabled'`,
+            password_salt: `'disabled'`,
+            referral_code: 'NULL',
+            referrer_id: 'NULL',
+            staff_id: 'NULL',
+            user_agreement_accepted_ip: 'NULL',
+            status: `'inactive'`,
+            account_status: `'inactive'`,
+            deleted_at: 'CURRENT_TIMESTAMP',
+            deletion_requested_at: 'NULL',
+            deletion_scheduled_at: 'NULL',
+            updated_at: 'CURRENT_TIMESTAMP',
+          }
+          const setClause = Object.entries(scrubExpr)
+            .filter(([col]) => userColumns.has(col))
+            .map(([col, expr]) => `${col} = ${expr}`)
+            .join(', ')
+          const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET ${setClause} WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
           return Number(deletedAccountResult.meta?.changes || 0)
         })
 

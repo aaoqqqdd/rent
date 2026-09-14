@@ -5,8 +5,8 @@
 
 import { buildLayout, formatCurrency, sanitizePlainText, formatMelbourneDate } from '../../site';
 
-const statusLabels: Record<string, string> = { PENDING: '待结算', AVAILABLE: '已发放', CANCELLED: '已撤销' }
-const statusBadge: Record<string, string> = { PENDING: 'badge-warning', AVAILABLE: 'badge-success', CANCELLED: 'badge-danger' }
+const statusLabels: Record<string, string> = { PENDING: '待结算', PENDING_REVIEW: '待风险审核', AVAILABLE: '已发放', CANCELLED: '已撤销' }
+const statusBadge: Record<string, string> = { PENDING: 'badge-warning', PENDING_REVIEW: 'badge-danger', AVAILABLE: 'badge-success', CANCELLED: 'badge-danger' }
 
 export function renderAdminReferrals(user: any, rewards: any[] = [], settlementDays: number) {
   const rows = rewards.map((reward: any) => `<tr>
@@ -17,18 +17,20 @@ export function renderAdminReferrals(user: any, rewards: any[] = [], settlementD
     <td><span class="badge ${statusBadge[reward.status] || 'badge-info'}">${statusLabels[reward.status] || reward.status}</span></td>
     <td>${reward.qualified_at ? formatMelbourneDate(reward.qualified_at) : '-'}</td>
     <td>${sanitizePlainText(reward.reason || '-', 200)}</td>
-    <td>${reward.status === 'PENDING' ? `
-      <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/release" style="display:inline"><button class="button button-sm button-primary" type="submit">立即发放</button></form>
+    <td>${reward.status === 'PENDING' || reward.status === 'PENDING_REVIEW' ? `
+      <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/release" style="display:inline"><button class="button button-sm button-primary" type="submit">${reward.status === 'PENDING_REVIEW' ? '审核并发放' : '立即发放'}</button></form>
       <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/revoke" style="display:inline"><input class="form-control" name="reason" maxlength="300" required placeholder="撤销原因" style="width:140px;display:inline-block"><button class="button button-sm button-danger" type="submit">撤销</button></form>
     ` : reward.status === 'AVAILABLE' ? `
       <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/revoke" style="display:inline"><input class="form-control" name="reason" maxlength="300" required placeholder="撤销原因" style="width:140px;display:inline-block"><button class="button button-sm button-danger" type="submit">撤销</button></form>
     ` : '-'}</td>
   </tr>`).join('')
   const pendingCount = rewards.filter((r: any) => r.status === 'PENDING').length
+  const reviewCount = rewards.filter((r: any) => r.status === 'PENDING_REVIEW').length
   const availableTotal = rewards.filter((r: any) => r.status === 'AVAILABLE').reduce((sum: number, r: any) => sum + Number(r.reward_amount || 0), 0)
-  const body = `<div class="page-header"><div><p class="section-code">GROWTH / REFERRAL</p><h2>推荐奖励管理</h2><p>订单完成后奖励进入待结算状态，结算期（当前 ${settlementDays} 天）满且无未解决支付争议时自动发放到账户余额；也可以手动立即发放或撤销。</p></div></div>
+  const body = `<div class="page-header"><div><p class="section-code">GROWTH / REFERRAL</p><h2>推荐奖励管理</h2><p>订单完成后奖励进入待结算状态，结算期（当前 ${settlementDays} 天）满且无未解决支付争议时自动发放到账户余额；高风险奖励会进入待风险审核，管理员确认后才可发放。</p></div></div>
   <div class="stats-grid">
     <div class="stat-card ${pendingCount ? 'warning' : ''}"><h3>待结算</h3><div class="value">${pendingCount}</div></div>
+    <div class="stat-card ${reviewCount ? 'warning' : ''}"><h3>待风险审核</h3><div class="value">${reviewCount}</div></div>
     <div class="stat-card"><h3>已发放总额</h3><div class="value">${formatCurrency(availableTotal)}</div></div>
     <div class="stat-card"><h3>全部记录</h3><div class="value">${rewards.length}</div></div>
   </div>

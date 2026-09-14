@@ -26,7 +26,7 @@ import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
 import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
-import { allocateProportionalRefund, balanceAfterPriceAdjustment, refundableDepositFee, stripeAuthorizationAmount, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile, summarizeOrderPriceAdjustment, resolveOrderPriceAdjustmentRefundMethod } from '../src/actions/stripePayments'
+import { allocateProportionalRefund, balanceAfterPriceAdjustment, refundableDepositFee, stripeAuthorizationAmount, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile, stripeDepositSettlementCaptureAmount, summarizeOrderPriceAdjustment, resolveOrderPriceAdjustmentRefundMethod } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
 import { paymentResultState } from '../src/pages/public/paymentResult'
@@ -139,6 +139,16 @@ test('guest sessions show their deletion date and only the guest workspace navig
   assert.match(html, /访客合同中心/)
   assert.doesNotMatch(html, /推荐计划/)
   assert.doesNotMatch(html, /个人资料/)
+})
+
+test('admin exception center belongs to system settings navigation', () => {
+  const html = buildLayout('管理员页面', '<p>admin</p>', {
+    id: 'admin-1', name: 'Admin User', email: 'admin@example.com', role: 'ADMIN',
+  } as any)
+  const financeGroup = html.slice(html.indexOf('<summary>财务管理'), html.indexOf('</details>', html.indexOf('<summary>财务管理')))
+  const systemGroup = html.slice(html.indexOf('<summary>系统设置'), html.indexOf('</details>', html.indexOf('<summary>系统设置')))
+  assert.doesNotMatch(financeGroup, /异常任务中心/)
+  assert.match(systemGroup, /异常任务中心/)
 })
 
 test('guest order links preserve the bound order identifier', async () => {
@@ -368,6 +378,12 @@ test('deposit refunds do not return a processing fee because the fee excludes de
   assert.equal(refundableDepositFee(499.99, stripePayment), 0)
   assert.equal(refundableDepositFee(1000, { payment_method: 'bank_transfer', processing_fee: 0 }), 0)
   assert.equal(refundableDepositFee(1000, { payment_method: 'card', processing_fee: 0 }), 0)
+})
+
+test('Stripe deposit refunds to balance capture the full authorization', () => {
+  const payment = { amount: 122.5, rental_amount: 100, processing_fee: 2.5 }
+  assert.equal(stripeDepositSettlementCaptureAmount(payment, 0, 'balance'), 122.5)
+  assert.equal(stripeDepositSettlementCaptureAmount(payment, 10, 'original'), 112.5)
 })
 
 test('mixed-payment refunds are proportional, rounded to cents, and never exceed a source balance', () => {
