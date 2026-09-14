@@ -57,6 +57,46 @@ export function renderEmailNotificationHtml(title: unknown, content: unknown, co
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title></head><body style="margin:0;background:#e9eef1;color:#172331;font-family:Arial,'Noto Sans SC',sans-serif;"><div style="padding:32px 16px;background:#e9eef1;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #cbd7df;box-shadow:0 12px 32px rgba(23,35,49,.12);"><tr><td style="padding:28px 32px;background:#172331;color:#f5f8fa;border-bottom:5px solid ${accent};"><div style="font:700 12px/1.2 Arial,sans-serif;letter-spacing:2px;color:${accent};">PR / PC RENTAL</div><div style="margin-top:14px;font-size:12px;letter-spacing:1.5px;color:#aebdca;">ASSET OPS · CUSTOMER NOTICE</div></td></tr><tr><td style="padding:36px 32px 30px;"><div style="font:700 11px/1.2 Arial,sans-serif;letter-spacing:1.8px;color:${accent};text-transform:uppercase;">${safeCompany} / MESSAGE</div><h1 style="margin:12px 0 22px;font-size:28px;line-height:1.25;color:#172331;">${safeTitle}</h1><div style="height:1px;background:#d7e0e6;margin-bottom:24px;"></div><div style="font-size:16px;line-height:1.8;color:#40515e;">${messageHtml}</div></td></tr><tr><td style="padding:20px 32px;background:#f5f8fa;border-top:1px solid #d7e0e6;color:#71818d;font:11px/1.7 monospace;">${safeCompany}<br>这是一封系统通知邮件，请勿直接回复。</td></tr></table></div></body></html>`
 }
 
+// Marketing emails are admin-authored (ADMIN role only) and rendered solely by the
+// recipient's mail client, not by our own site — so unlike renderNotificationMarkdown's
+// narrow allowlist (aimed at user/staff-submitted content shown inside our own pages),
+// this only needs to strip actively dangerous content (script execution, event handlers)
+// while leaving full layout/styling freedom for real marketing HTML (tables, buttons,
+// inline styles, <style> blocks) that the shared allowlist would otherwise mangle.
+export function sanitizeMarketingEmailHtml(value: unknown): string {
+  return sanitizeHtml(String(value ?? '').slice(0, 20000), {
+    allowedTags: false,
+    allowedAttributes: false,
+    allowedSchemes: ['http', 'https', 'mailto', 'tel', 'data'],
+    disallowedTagsMode: 'discard',
+    allowVulnerableTags: true, // script/style are dropped or defanged below, not left as-is; this only silences sanitize-html's console warning about them being in the (here: unrestricted) allowedTags set
+    exclusiveFilter: (frame) => ['script', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'noscript'].includes(frame.tag.toLowerCase()),
+    transformTags: {
+      '*': (tagName, attribs) => {
+        const safe: Record<string, string> = {}
+        for (const [key, value] of Object.entries(attribs)) {
+          if (/^on/i.test(key)) continue
+          if (['href', 'src', 'background', 'action'].includes(key.toLowerCase()) && /^\s*javascript:/i.test(value)) continue
+          safe[key] = value
+        }
+        return { tagName, attribs: safe }
+      },
+    },
+  })
+}
+
+export function renderMarketingEmailHtml(title: unknown, content: unknown, companyName = 'PC Rental', themeColor = '#f0a35b', unsubscribeUrl?: string): string {
+  const safeTitle = sanitizePlainText(title, 200)
+  const safeCompany = sanitizePlainText(companyName, 120)
+  const accent = /^#[0-9a-f]{6}$/i.test(String(themeColor)) ? String(themeColor) : '#f0a35b'
+  const messageHtml = sanitizeMarketingEmailHtml(content)
+  const safeUnsubscribeUrl = unsubscribeUrl ? sanitizePlainText(unsubscribeUrl, 500) : ''
+  const footer = safeUnsubscribeUrl
+    ? `${safeCompany}<br>这是一封营销推广邮件。如不想再收到此类邮件，请<a href="${safeUnsubscribeUrl}" style="color:#71818d;text-decoration:underline;">点击取消订阅</a>。`
+    : `${safeCompany}<br>这是一封营销推广邮件。`
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title></head><body style="margin:0;background:#e9eef1;color:#172331;font-family:Arial,'Noto Sans SC',sans-serif;"><div style="padding:32px 16px;background:#e9eef1;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #cbd7df;box-shadow:0 12px 32px rgba(23,35,49,.12);"><tr><td style="padding:28px 32px;background:#172331;color:#f5f8fa;border-bottom:5px solid ${accent};"><div style="font:700 12px/1.2 Arial,sans-serif;letter-spacing:2px;color:${accent};">PR / PC RENTAL</div><div style="margin-top:14px;font-size:12px;letter-spacing:1.5px;color:#aebdca;">MARKETING</div></td></tr><tr><td style="padding:36px 32px 30px;"><div style="font:700 11px/1.2 Arial,sans-serif;letter-spacing:1.8px;color:${accent};text-transform:uppercase;">${safeCompany} / OFFER</div><h1 style="margin:12px 0 22px;font-size:28px;line-height:1.25;color:#172331;">${safeTitle}</h1><div style="height:1px;background:#d7e0e6;margin-bottom:24px;"></div><div style="font-size:16px;line-height:1.8;color:#40515e;">${messageHtml}</div></td></tr><tr><td style="padding:20px 32px;background:#f5f8fa;border-top:1px solid #d7e0e6;color:#71818d;font:11px/1.7 monospace;">${footer}</td></tr></table></div></body></html>`
+}
+
 export function createPageBreakHtml(): string {
   return '<div class="page-break" style="page-break-after: always; break-after: page;"></div><p><br></p>'
 }
