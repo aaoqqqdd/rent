@@ -200,6 +200,7 @@ export async function renderAdminOrders(c: Context, user: any) {
           <span class="section-note">查看和管理系统中的所有订单。</span>
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <a href="/admin/orders/balance-topups" class="button button-secondary">余额充值订单</a>
           <a href="/admin/orders/export${exportQuery ? `?${exportQuery}` : ''}" class="button button-secondary">导出 CSV</a>
         </div>
       </div>
