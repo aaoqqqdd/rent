@@ -338,7 +338,7 @@ export const languageScript = String.raw`
     '相关条款': 'related terms', '已更新，请查看最新内容': 'have been updated. Please review the latest version', '自定义通知': 'Custom notifications',
     '订单和归还提醒': 'Order and return reminders', '已选': 'Selected', '请输入完整注册信息': 'Please fill in the complete registration information',
     '该电子邮箱已被注册': 'This email is already registered', '无效的推荐码': 'Invalid referral code', '验证邮件已发送至': 'Verification email sent to',
-    '（服务费10%）': ' (10% service fee)', '网站订单审核': 'Website order review', '无法读取地址详情，请手工填写': 'Unable to look up address details; please fill it in manually',
+    '（服务费10%）': ' (10% service fee)', '网站订单审核': 'Website order review', '订单审核': 'Order review', '无法读取地址详情，请手工填写': 'Unable to look up address details; please fill it in manually',
     '支付宝/微信交易单号': 'Alipay/WeChat transaction ID', '无效的步骤': 'Invalid step', '请从第一步开始签署合同': 'Please start signing the contract from step 1',
     '点击这里返回第一步': 'Click here to return to step 1', '租赁协议签署': 'Rental agreement signing', '发送通知': 'Send notification',
     '例如 CT-2026-000123': 'e.g. CT-2026-000123', '合同页脚 / 二维码中的校验码': 'The verification code on the contract footer / QR code',
@@ -370,7 +370,22 @@ export const languageScript = String.raw`
     '收件人明细': 'Recipient details', '错误信息': 'Error message', '返回营销邮件': 'Back to marketing emails',
     '发送给全部活跃客户（': 'Send to all active customers (', ' 人）': ' people)', '另有 ': 'An additional ',
     ' 位客户已取消订阅营销邮件，未在下方收件人列表中显示。': ' customer(s) have unsubscribed from marketing emails and are not shown in the recipient list below.',
-    ' 批次': ' batches', '可用变量（': 'Available variables (', ' 项）': ' items)', '主题色': 'Accent color'
+    ' 批次': ' batches', '可用变量（': 'Available variables (', ' 项）': ' items)', '主题色': 'Accent color',
+    // 管理员仪表盘（首页，最常被看到的页面）
+    '这是您的管理员控制中心，管理整个系统的所有数据和设置。': 'This is your admin control center — manage all data and settings across the system.',
+    '总收入': 'Total revenue', '↑ 已支付/租赁中/已完成订单，不含已取消': '↑ Paid / active / completed orders, excluding cancelled',
+    '活跃租赁': 'Active rentals', '正在进行中的订单': 'Orders currently in progress',
+    '待处理订单': 'Pending orders', '需要处理的订单': 'Orders that need action',
+    '可用设备': 'Available devices', '可租赁的设备数量': 'Number of devices available to rent',
+    '注册用户': 'Registered users', '有效用户数（不含已删除访客账户）': 'Active users (excluding deleted guest accounts)',
+    '今日运营': "Today's operations", '今日取货': 'Pickups today', '今日归还': 'Returns today',
+    '逾期租赁': 'Overdue rentals', '预留设备': 'Reserved devices', '维护中设备': 'Devices in maintenance',
+    '损坏设备': 'Damaged devices', '近7日失败付款': 'Failed payments (last 7 days)',
+    '近7日失败远程命令': 'Failed remote commands (last 7 days)', '待处理损坏记录': 'Damage records awaiting review',
+    '最新订单': 'Recent orders', '最近的5条租赁记录': 'The 5 most recent rental records',
+    '未知用户': 'Unknown customer', '未知设备': 'Unknown device', '设备概览': 'Device overview',
+    '最近的5台设备状态': 'Status of the 5 most recent devices', '当前租用者': 'Current renter',
+    '暂无订单': 'No orders yet', '暂无设备': 'No devices yet', '远程操作': 'Remote actions', '管理员仪表盘': 'Admin dashboard'
   };
 
   var keys = Object.keys(translations).sort(function (a, b) { return b.length - a.length; });
