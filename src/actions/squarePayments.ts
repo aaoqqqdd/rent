@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getSystemSettings, issueInvoice, loadSystemSettingsFromDB, claimWebhookEvent, markWebhookFailed, markWebhookProcessed } from '../site'
+import { ensureOrderNumber, getOrderById, getSystemSettings, issueInvoice, loadSystemSettingsFromDB, claimWebhookEvent, markWebhookFailed, markWebhookProcessed, logError } from '../site'
 import { getSquareRuntimeConfig, squareRequest, syncSquareCustomerProfile, verifySquareWebhook } from '../square'
 import { getStripePublishableKey, stripeRequest } from '../stripe'
 import { balancePriceAdjustmentSettlementStatements, getOrderPriceAdjustmentSummary } from './stripePayments'
@@ -122,8 +122,10 @@ async function finalizeSquarePayment(c: Context, order: any, paymentId: string, 
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', square_payment_id = ?, transaction_id = COALESCE(transaction_id, ?), paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND payment_provider = 'square'").bind(String(squarePayment.id || ''), transactionId, paymentId),
     ...(Number(order.depositAmount ?? order.deposit_amount ?? 0) > 0 && String(order.deposit_status || '').toUpperCase() === 'PENDING' ? [] : [c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'card', payment_provider = 'square', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id)]),
   ])
-  await ensureOrderNumber(c, order.id).catch(() => { })
-  await issueInvoice(c, order.id).catch(error => console.error(JSON.stringify({ message: 'Square invoice issue failed', error: error instanceof Error ? error.message : String(error), orderId: order.id })))
+  await ensureOrderNumber(c, order.id).catch(error => logError(c, 'WARNING', 'ensureOrderNumber failed after Square payment', error, { orderId: order.id }))
+  // 与 Stripe 侧同一个教训：开票失败绝不能只有 console.error——那样订单已经
+  // paid，发票却永久缺失，而且没有任何可查询记录。
+  await issueInvoice(c, order.id).catch(error => logError(c, 'CRITICAL', 'Square invoice issue failed', error, { orderId: order.id }))
 }
 
 function squareAmount(squarePayment: any): { amount: number; currency: string } {

@@ -115,6 +115,7 @@ import {
   , lockReferralRelationship
   , createAuditLog
   , formatMelbourneDateTime
+  , logError
 } from './site'
 import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
@@ -2392,7 +2393,7 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
         await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
       }
     } catch (error: any) {
-      console.error('Auto-charge rent on approval failed:', error?.message || error)
+      await logError(c, 'ERROR', 'Auto-charge rent on approval failed', error, { orderId: order.id })
       await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
     }
     return c.redirect(staffOrderPath(order))
@@ -3033,8 +3034,10 @@ app.post('/customer/orders/:id/switch-payment-method', async (c) => {
       c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'balance', payment_provider = 'internal', deposit_status = CASE WHEN ? > 0 THEN 'PAID' ELSE deposit_status END, deposit_paid_at = CASE WHEN ? > 0 THEN COALESCE(deposit_paid_at, CURRENT_TIMESTAMP) ELSE deposit_paid_at END, deposit_held_amount = CASE WHEN ? > 0 THEN ? ELSE deposit_held_amount END, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(depositCents, depositCents, depositCents, depositCents / 100, order.id),
     ])
     await recordBalanceTransaction(c, user.id, -paymentTotal, 'rental_payment', `订单 ${order.orderNo || order.id} 礼品卡差额及押金`, null, nextBalance)
-    await ensureOrderNumber(c, order.id).catch(() => {})
-    await issueInvoice(c, order.id).catch(() => {})
+    await ensureOrderNumber(c, order.id).catch(error => logError(c, 'WARNING', 'ensureOrderNumber failed after balance payment method switch', error, { orderId: order.id }))
+    // 完全静默的 .catch(() => {}) 曾经是发票丢失且查无记录的根因（见 8f746d9）——
+    // 这里同样不能吞掉失败，必须落到 error_logs 才能被发现和补开。
+    await issueInvoice(c, order.id).catch(error => logError(c, 'CRITICAL', 'issueInvoice failed after balance payment method switch', error, { orderId: order.id }))
     return c.redirect(`/customer/orders/${order.id}`)
   }
   const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND payment_provider = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, storedPaymentMethod, provider).first() as any
@@ -4008,7 +4011,9 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
     await ensureContractForOrder(c, order, user.id)
     await recordDeviceLifecycle(c, order.deviceId, 'RESERVED', { orderId: order.id, reason: '礼品卡差额及押金转账审核通过', changedBy: user.id })
     await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
-    await issueInvoice(c, order.id)
+    // 不能让开票异常把整个审核请求报 500——付款凭证已经批准、订单已经 paid，
+    // 失败必须落 error_logs 才能被发现（同 8f746d9 的教训）。
+    await issueInvoice(c, order.id).catch(error => logError(c, 'CRITICAL', 'issueInvoice failed after Square residual bank-transfer approval', error, { orderId: order.id }))
     return c.redirect('/admin/exceptions')
   }
   const riskCustomer = await getUserById(c, order.userId)
@@ -4024,7 +4029,8 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(order.id).run()
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
   await recordExternalRentalFlow(c, order.userId, Number(order.totalAmount), '银行转账', user.id, order.id)
-  await issueInvoice(c, order.id)
+  // 同上：开票失败要能被看见，且不能挡住下面的 Windows 账号创建步骤继续执行。
+  await issueInvoice(c, order.id).catch(error => logError(c, 'CRITICAL', 'issueInvoice failed after bank-transfer approval', error, { orderId: order.id }))
   // Bank-transfer approval is a completed payment event too: enqueue the
   // Windows rental-user creation immediately instead of waiting for the cron.
   const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any

@@ -10,6 +10,7 @@
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
 import { getDB, getTableColumns as getCachedTableColumns } from '../db/client'
+import { logError } from './audit'
 
 async function getTableColumns(c: Context, tableName: string): Promise<string[]> {
   const allowedTables = new Set(['commission_withdrawals'])
@@ -145,8 +146,14 @@ export async function createWithdrawalRequest(
     return { success: true, message: '提现申请已提交，预计2个工作日处理' }
   } catch (error) {
     // Reservation went through but the rest failed — put the commission back.
-    await db.prepare('UPDATE users SET commission_balance = ROUND(commission_balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalizedAmount, userId).run().catch(() => {})
-    console.error('Withdrawal failed after commission was reserved (refunded):', error)
+    const refunded = await db.prepare('UPDATE users SET commission_balance = ROUND(commission_balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(normalizedAmount, userId).run().catch(() => null)
+    if (!refunded) {
+      // 双重失败：佣金已经被预留扣走，连补偿回滚都没成功——客户的佣金余额就这样
+      // 凭空消失了。这个失败级别必须是 CRITICAL，不能只靠 console.error 隐没掉。
+      await logError(c, 'CRITICAL', 'Withdrawal compensation rollback failed — commission balance may be permanently lost', error instanceof Error ? error : undefined, { userId, amount: normalizedAmount })
+    } else {
+      await logError(c, 'ERROR', 'Withdrawal failed after commission was reserved (refunded)', error instanceof Error ? error : undefined, { userId, amount: normalizedAmount })
+    }
     return { success: false, message: '提现失败，请稍后重试' }
   }
 }

@@ -624,7 +624,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
         if (!noPayment && paymentMethod === 'balance') {
           await ensureOrderNumber(c, contract.rentalId)
-          await issueInvoice(c, contract.rentalId)
+          // 开票失败不能中断签约完成流程（下面还要继续更新合同状态），也不能只靠
+          // console.error 消失不见——同类教训见 8f746d9。
+          await issueInvoice(c, contract.rentalId).catch(error => logError(c, 'CRITICAL', 'issueInvoice failed after balance payment during contract signing', error, { orderId: contract.rentalId }))
           await enqueueRentalUserCreation(c, await getOrderById(c, contract.rentalId))
         }
         await logError(c, 'INFO', `Order updated with user and payment method`, undefined, {

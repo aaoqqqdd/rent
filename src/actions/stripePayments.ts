@@ -1109,14 +1109,14 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
         await enqueueRentalUserCreation(c, authorizedOrder)
       }
     } catch (error: any) {
-      console.error('Stripe authorization post-processing failed:', error?.message || error)
+      await logError(c, 'ERROR', 'Stripe authorization post-processing failed', error, { orderId: authorizedOrderId, eventId: event.id, eventType: event.type })
     }
   }
   if (disputedOrderId) {
     try {
       await revokeReferralRewardForOrder(c, disputedOrderId, 'Stripe 拒付争议')
     } catch (error: any) {
-      console.error('Stripe webhook dispute post-processing failed:', error?.message || error)
+      await logError(c, 'ERROR', 'Stripe webhook dispute post-processing failed', error, { orderId: disputedOrderId, eventId: event.id, eventType: event.type })
     }
   }
   if (disputedCustomerId && disputedStripeId) {
@@ -1131,7 +1131,8 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       }
       await c.env.RENT.prepare('UPDATE payment_disputes SET risk_flag_id = ? WHERE stripe_dispute_id = ? AND risk_flag_id IS NULL').bind(flagId, disputedStripeId).run()
     } catch (error: any) {
-      console.error('Stripe webhook chargeback risk-flag failed:', error?.message || error)
+      // 拒付风控标记打不上，客户还能继续自助下单——这个失败必须能被看见才能人工补标。
+      await logError(c, 'CRITICAL', 'Stripe webhook chargeback risk-flag failed', error, { customerId: disputedCustomerId, stripeDisputeId: disputedStripeId, eventId: event.id })
     }
   }
 
