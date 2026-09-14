@@ -75,6 +75,7 @@ import {
   CONTRACT_OPERATIONAL_FIELDS,
   CONTRACT_SIGNED_FIELDS,
   issueInvoice,
+  recordBalanceTransaction,
   updateContractStatusInDB,
   getContractVariableData,
   generateContractNumber,
@@ -122,8 +123,8 @@ import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteK
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createSquareDepositPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
-import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
+import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
@@ -1153,6 +1154,15 @@ app.post('/customer/balance/top-up/:id/square/payment', async (c) => {
   } catch (error: any) {
     return c.json({ error: error?.message || '无法创建礼品卡充值' }, 400)
   }
+})
+
+app.post('/customer/balance/top-up/:id/select-transfer', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.html(renderForbidden(), 403)
+  const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND payment_method = 'square' AND status = 'pending'").bind(c.req.param('id'), user.id).first() as any
+  if (!topup || Number(topup.square_paid_amount || 0) <= 0) return c.text('请先使用礼品卡扣除充值金额', 409)
+  await c.env.RENT.prepare("UPDATE balance_topups SET payment_method = 'bank_transfer', status = 'awaiting_transfer', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND status = 'pending'").bind(topup.id, user.id).run()
+  return c.redirect('/customer/balance/top-up')
 })
 
 app.post('/customer/balance/top-up/transfer', async (c) => {
@@ -2683,18 +2693,6 @@ app.post('/customer/orders/:id/stripe/intent', async (c) => {
   }
 })
 
-app.post('/customer/orders/:id/stripe/deposit-intent', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
-  try {
-    const result = await createSquareDepositPaymentIntent(c, user, c.req.param('id'))
-    if (result.alreadyPaid) return c.json({ alreadyPaid: true })
-    return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
-  } catch (error: any) {
-    return c.json({ error: error?.message || '无法创建 Stripe 押金付款' }, 400)
-  }
-})
-
 app.get('/customer/orders/:id/square/config', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
@@ -2759,25 +2757,49 @@ app.post('/customer/orders/:id/switch-payment-method', async (c) => {
   if (!order || order.userId !== user.id || order.status !== 'pending_payment') return c.text('订单当前不能切换支付方式', 409)
   const form = await c.req.parseBody()
   const targetMethod = String(form.paymentMethod || '')
-  if (!['square', 'bank_transfer', 'alipay', 'wechat'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
+  if (!['square', 'bank_transfer', 'alipay', 'wechat', 'balance'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
   await loadSystemSettingsFromDB(c)
   const settings = getSystemSettings()
-  const enabled = targetMethod === 'square' ? settings.paymentMethods.square
+  const enabled = targetMethod === 'balance' ? true : targetMethod === 'square' ? settings.paymentMethods.square
     : targetMethod === 'bank_transfer' ? settings.paymentMethods.bankTransfer
     : targetMethod === 'alipay' ? (settings.paymentMethods.alipay && settings.rmbPayment.alipayQrUrl)
     : (settings.paymentMethods.wechat && settings.rmbPayment.wechatQrUrl)
   if (!enabled) return c.text('该支付方式当前未启用', 409)
   if (String(order.paymentMethod) === targetMethod) return c.redirect(`/customer/orders/${order.id}`)
-  const paymentTotal = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
+  const squarePayment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND payment_provider = 'square' AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  const squarePaidCents = Math.max(0, Math.round(Number(squarePayment?.square_paid_amount || 0) * 100))
+  const squareTargetCents = squarePayment ? Math.max(0, Math.round(Number(squarePayment.amount || 0) * 100)) : 0
+  const hasSquareRemainder = String(order.paymentProvider || order.payment_provider || '') === 'square' && squarePayment && squarePaidCents > 0 && squareTargetCents > 0
+  if (targetMethod === 'balance' && !hasSquareRemainder) return c.text('请先使用礼品卡扣除金额，再选择账户余额支付剩余金额', 409)
+  const remainingRentalCents = hasSquareRemainder ? Math.max(0, squareTargetCents - squarePaidCents) : Math.max(0, Math.round((Number(order.totalAmount || 0) - Number(order.depositAmount || 0)) * 100))
+  const depositCents = hasSquareRemainder && String(order.deposit_status || '').toUpperCase() === 'PENDING' ? Math.max(0, Math.round(Number(order.depositAmount || 0) * 100)) : 0
+  const paymentTotal = (remainingRentalCents + depositCents) / 100
+  if (hasSquareRemainder && paymentTotal <= 0) return c.text('订单没有待支付的剩余金额', 409)
   const storedPaymentMethod = targetMethod === 'square' ? 'card' : targetMethod
   const provider = targetMethod === 'square' ? 'square' : 'internal'
   if (targetMethod === 'square') await getSquareConfigSummary(c).then(summary => { if (!summary.configured) throw new Error('Square 尚未配置') })
+  if (targetMethod === 'balance' && hasSquareRemainder) {
+    await completeSquareGiftCardPayment(c, String(squarePayment.square_payment_id || squarePayment.transaction_id || ''), squareTargetCents)
+    const debited = await c.env.RENT.prepare("UPDATE users SET balance = ROUND(balance - ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND balance >= ?").bind(paymentTotal, user.id, paymentTotal).run()
+    if (!debited.meta?.changes) return c.text('账户余额不足，请先充值或选择其他支付方式', 409)
+    const nextBalance = Number((Number((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first() as any)?.balance || 0)).toFixed(2))
+    const paymentId = `p-${nanoid(12)}`
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending','paid')").bind(squarePayment.id),
+      c.env.RENT.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, processing_fee, currency, status, transaction_id, paid_at) VALUES (?, ?, ?, 'balance', 'internal', ?, ?, ?, 0, 'AUD', 'paid', ?, CURRENT_TIMESTAMP)").bind(paymentId, order.id, user.id, paymentTotal, depositCents / 100, remainingRentalCents / 100, generateReferenceNumber('TXN')),
+      c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'balance', payment_provider = 'internal', deposit_status = CASE WHEN ? > 0 THEN 'PAID' ELSE deposit_status END, deposit_paid_at = CASE WHEN ? > 0 THEN COALESCE(deposit_paid_at, CURRENT_TIMESTAMP) ELSE deposit_paid_at END, deposit_held_amount = CASE WHEN ? > 0 THEN ? ELSE deposit_held_amount END, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(depositCents, depositCents, depositCents, depositCents / 100, order.id),
+    ])
+    await recordBalanceTransaction(c, user.id, -paymentTotal, 'rental_payment', `订单 ${order.orderNo || order.id} 礼品卡差额及押金`, null, nextBalance)
+    await ensureOrderNumber(c, order.id).catch(() => {})
+    await issueInvoice(c, order.id).catch(() => {})
+    return c.redirect(`/customer/orders/${order.id}`)
+  }
   const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND payment_provider = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, storedPaymentMethod, provider).first() as any
   if (!existing) {
     await c.env.RENT.prepare(`
       INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, currency, status)
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'AUD', 'pending')
-    `).bind(`p-${nanoid(12)}`, order.id, user.id, storedPaymentMethod, provider, paymentTotal, paymentTotal).run()
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'AUD', 'pending')
+    `).bind(`p-${nanoid(12)}`, order.id, user.id, storedPaymentMethod, provider, paymentTotal, depositCents / 100, remainingRentalCents / 100).run()
   }
   await c.env.RENT.prepare("UPDATE orders SET paymentMethod = ?, payment_provider = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(storedPaymentMethod, provider, order.id).run()
   return c.redirect(`/customer/orders/${order.id}`)
@@ -3697,7 +3719,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
   if (!order) return c.text('订单状态不允许审核', 409)
-  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, p.payment_method AS proof_payment_method, p.deposit_amount AS proof_deposit_amount, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
+  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, p.payment_method AS proof_payment_method, p.amount AS proof_amount, p.deposit_amount AS proof_deposit_amount, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
   if (!proof) return c.text('没有待审核的转账信息', 409)
   const isSquareDepositProof = !proof.adjustment_id && String(order.paymentProvider || order.payment_provider || '') === 'square' && proof.proof_payment_method === 'bank_transfer' && Number(proof.proof_deposit_amount || 0) > 0
   if (isSquareDepositProof) {
@@ -3724,6 +3746,26 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
     await settleBalancePriceAdjustment(c, order.id, proof.adjustment_id)
     await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title: '差价付款审核已通过', message: `您的订单 ${order.orderNo || order.id} 差价付款凭证已审核通过，补交 ${Number(proof.adjustment_amount || 0).toFixed(2)} AUD。`, orderId: order.id })
     await createAuditLog(c, { actor: user, action: 'PRICE_ADJUSTMENT_PAYMENT_APPROVED', targetType: 'ORDER_PRICE_ADJUSTMENT', targetId: proof.adjustment_id, after: { orderId: order.id, reference: proof.reference_number } })
+    return c.redirect('/admin/exceptions')
+  }
+  const squareGiftPayment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND payment_provider = 'square' AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  const squareResidualTransfer = squareGiftPayment && Number(squareGiftPayment.square_paid_amount || 0) > 0 && Number(proof.proof_amount || 0) > 0 && String(proof.proof_payment_method) === 'bank_transfer'
+  if (squareResidualTransfer) {
+    const targetCents = Math.round(Number(squareGiftPayment.amount || 0) * 100)
+    const paidCents = Math.round(Number(squareGiftPayment.square_paid_amount || 0) * 100)
+    const expectedRentalCents = Math.max(0, targetCents - paidCents)
+    const expectedDepositCents = String(order.deposit_status || '').toUpperCase() === 'PENDING' ? Math.round(Number(order.depositAmount || order.deposit_amount || 0) * 100) : 0
+    if (Math.round(Number(proof.proof_amount || 0) * 100) !== expectedRentalCents + expectedDepositCents) return c.text('剩余付款凭证金额与订单不一致', 409)
+    await completeSquareGiftCardPayment(c, String(squareGiftPayment.square_payment_id || squareGiftPayment.transaction_id || ''), targetCents)
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
+      c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id IN (?, ?) AND status IN ('pending','paid')").bind(generateReferenceNumber('TXN'), squareGiftPayment.id, proof.payment_id),
+      c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'bank_transfer', payment_provider = 'internal', deposit_status = CASE WHEN ? > 0 THEN 'PAID' ELSE deposit_status END, deposit_paid_at = CASE WHEN ? > 0 THEN COALESCE(deposit_paid_at, CURRENT_TIMESTAMP) ELSE deposit_paid_at END, deposit_held_amount = CASE WHEN ? > 0 THEN ? ELSE deposit_held_amount END, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(expectedDepositCents, expectedDepositCents, expectedDepositCents, expectedDepositCents / 100, order.id),
+    ])
+    await ensureContractForOrder(c, order, user.id)
+    await recordDeviceLifecycle(c, order.deviceId, 'RESERVED', { orderId: order.id, reason: '礼品卡差额及押金转账审核通过', changedBy: user.id })
+    await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
+    await issueInvoice(c, order.id)
     return c.redirect('/admin/exceptions')
   }
   const riskCustomer = await getUserById(c, order.userId)

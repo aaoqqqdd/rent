@@ -93,8 +93,11 @@ export async function createBalanceTopUpIntent(c: Context, user: any, topUpId: s
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND status = 'pending'").bind(topUpId, user.id).first() as any
   if (!topup) throw new Error('充值记录不存在或已处理')
   const baseCents = cents(Number(topup.amount))
-  const feeCents = Math.round(baseCents * getStripeProcessingFeeRate())
-  const chargedCents = baseCents + feeCents
+  const squareTargetCents = baseCents + Math.round(baseCents * Number(getSystemSettings().paymentMethods.squareProcessingFeeRate ?? 0.022))
+  const squarePaidCents = Math.max(0, cents(Number(topup.square_paid_amount || 0)))
+  const isSquareRemainder = String(topup.payment_method) === 'square' && squarePaidCents > 0
+  const feeCents = isSquareRemainder ? 0 : Math.round(baseCents * getStripeProcessingFeeRate())
+  const chargedCents = isSquareRemainder ? Math.max(0, squareTargetCents - squarePaidCents) : baseCents + feeCents
   if (!Number.isInteger(chargedCents) || chargedCents <= 0) throw new Error('充值金额无效')
 
   const intent = await upsertPaymentIntent(c, {
@@ -105,9 +108,10 @@ export async function createBalanceTopUpIntent(c: Context, user: any, topUpId: s
       topup_id: topUpId,
       customer_id: String(user.id),
       processing_fee: String(feeCents),
+      ...(isSquareRemainder ? { type: 'square_residual_topup', square_payment_id: String(topup.transaction_id || ''), target_amount: String(squareTargetCents), square_approved_amount: String(squarePaidCents), remainder_amount: String(chargedCents) } : {}),
     },
-    idempotencyKey: `topup-pi-${topUpId}`,
-    description: `账户余额充值｜${topUpId}`,
+    idempotencyKey: `${isSquareRemainder ? 'square-residual-topup' : 'topup-pi'}-${topUpId}`,
+    description: isSquareRemainder ? `账户余额充值｜礼品卡差额｜${topUpId}` : `账户余额充值｜${topUpId}`,
   })
   await c.env.RENT.prepare("UPDATE balance_topups SET stripe_payment_intent_id = ?, processing_fee = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .bind(intent.id, feeCents / 100, topUpId).run()
@@ -377,15 +381,35 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
   if (order.status === 'paid') return { clientSecret: '', publishableKey: '', amountCents: 0, alreadyPaid: true }
   if (order.status !== 'pending_payment') throw new Error('该订单当前不能支付')
 
-  // Square 礼品卡部分扣款后，复用同一笔订单的 Stripe 差额 PaymentIntent，
-  // 避免普通 Stripe 卡片把已经由礼品卡支付的金额再次收取。
+  // Square 礼品卡先扣租金及服务费；之后只为“礼品卡差额 + 押金”建立
+  // 一笔 Stripe PaymentIntent，避免重复收取已经由礼品卡支付的金额。
   if (String(order.paymentProvider || order.payment_provider || '') === 'square') {
-    const squarePayment = await c.env.RENT.prepare("SELECT stripe_payment_intent_id FROM payments WHERE rental_id = ? AND payment_provider = 'square' AND payment_method = 'card' AND status = 'pending' AND stripe_payment_intent_id IS NOT NULL ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-    const splitIntentId = String(squarePayment?.stripe_payment_intent_id || '')
-    if (splitIntentId) {
-      const splitIntent = await stripeRequest(c, `payment_intents/${encodeURIComponent(splitIntentId)}`).catch(() => null)
-      if (splitIntent?.status === 'succeeded') return { clientSecret: '', publishableKey: '', amountCents: 0, alreadyPaid: true }
-      if (splitIntent?.client_secret) return { clientSecret: splitIntent.client_secret, publishableKey: await getStripePublishableKey(c), amountCents: Number(splitIntent.amount || 0) }
+    const squarePayment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND payment_provider = 'square' AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+    const squarePaidCents = Math.max(0, cents(Number(squarePayment?.square_paid_amount || 0)))
+    const squareTargetCents = squarePayment ? Math.max(0, cents(Number(squarePayment.amount || 0))) : 0
+    if (squarePayment && squarePaidCents > 0 && squareTargetCents > 0) {
+      const remainingRentalCents = Math.max(0, squareTargetCents - squarePaidCents)
+      const depositCents = String((order as any).deposit_status || '').toUpperCase() === 'PENDING' ? cents(orderDeposit(order)) : 0
+      const remainderCents = remainingRentalCents + depositCents
+      if (remainderCents <= 0) return { clientSecret: '', publishableKey: '', amountCents: 0, alreadyPaid: true }
+      const existing = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND payment_provider = 'stripe' AND payment_method = 'card' AND status = 'pending' AND deposit_amount = ? AND rental_amount = ? ORDER BY created_at DESC LIMIT 1").bind(order.id, depositCents / 100, remainingRentalCents / 100).first() as any
+      const intent = await upsertPaymentIntent(c, {
+        existingIntentId: existing?.stripe_payment_intent_id ? String(existing.stripe_payment_intent_id) : '',
+        amountCents: remainderCents,
+        receiptEmail: user.email,
+        metadata: { order_id: String(order.id), customer_id: String(user.id), type: 'square_residual_order', square_payment_id: String(squarePayment.square_payment_id || squarePayment.transaction_id || ''), target_amount: String(squareTargetCents), square_approved_amount: String(squarePaidCents), remainder_amount: String(remainderCents), deposit_amount: String(depositCents) },
+        idempotencyKey: `square-residual-order-${order.id}`,
+        description: `${orderPaymentLabel(order)}｜礼品卡差额及押金`,
+      })
+      const paymentId = String(existing?.id || `p-${nanoid(12)}`)
+      const paymentStatus = intent.status === 'succeeded' ? 'paid' : 'pending'
+      if (existing) {
+        await c.env.RENT.prepare("UPDATE payments SET stripe_payment_intent_id = ?, amount = ?, deposit_amount = ?, rental_amount = ?, processing_fee = 0, status = ?, paid_at = CASE WHEN ? = 'paid' THEN COALESCE(paid_at, CURRENT_TIMESTAMP) ELSE paid_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(intent.id, remainderCents / 100, depositCents / 100, remainingRentalCents / 100, paymentStatus, paymentStatus, paymentId).run()
+      } else {
+        await c.env.RENT.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, processing_fee, currency, status, paid_at, stripe_payment_intent_id, square_payment_id) VALUES (?, ?, ?, 'card', 'stripe', ?, ?, ?, 0, 'AUD', ?, CASE WHEN ? = 'paid' THEN CURRENT_TIMESTAMP ELSE NULL END, ?, ?)").bind(paymentId, order.id, user.id, remainderCents / 100, depositCents / 100, remainingRentalCents / 100, paymentStatus, paymentStatus, intent.id, String(squarePayment.square_payment_id || squarePayment.transaction_id || '')).run()
+      }
+      if (paymentStatus === 'paid') return { clientSecret: '', publishableKey: '', amountCents: remainderCents, alreadyPaid: true }
+      return { clientSecret: intent.client_secret as string, publishableKey: await getStripePublishableKey(c), amountCents: remainderCents }
     }
   }
 
@@ -905,7 +929,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       )
       paidOrderId = ''
     } else {
-      const authorization = await c.env.RENT.prepare('SELECT id, rental_id, customer_id FROM payments WHERE stripe_payment_intent_id = ? AND rental_amount = 0 AND deposit_amount > 0').bind(session.id).first() as any
+      const authorization = await c.env.RENT.prepare("SELECT id, rental_id, customer_id FROM payments WHERE stripe_payment_intent_id = ? AND rental_amount = 0 AND deposit_amount > 0 AND (square_payment_id IS NULL OR square_payment_id = '')").bind(session.id).first() as any
       if (authorization) {
       const order = await getOrderById(c, authorization.rental_id)
       if (!order || authorization.customer_id !== String(order.userId) || paidCents <= 0 || paidCents > cents(orderDeposit(order))) return c.text('Stripe 押金预授权数据不匹配', 400)
@@ -919,7 +943,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       } else if (topupId) {
       const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND stripe_payment_intent_id = ? AND status = 'pending'").bind(topupId, session.id).first() as any
       const customerId = String(session?.metadata?.customer_id || '')
-      const isSquareSplit = String(session?.metadata?.type || '') === 'square_split_topup'
+      const isSquareSplit = ['square_split_topup', 'square_residual_topup'].includes(String(session?.metadata?.type || ''))
       const expected = isSquareSplit ? Number(session?.metadata?.remainder_amount || 0) : (topup ? cents(topup.amount) + Math.round(cents(topup.amount) * getStripeProcessingFeeRate()) : 0)
       if (!topup || topup.user_id !== customerId || paidCents !== expected) return c.text('Stripe 充值数据不匹配', 400)
       if (isSquareSplit) await completeSplitSquarePayment(c, String(session?.metadata?.square_payment_id || topup.transaction_id || ''), Number(session?.metadata?.target_amount || 0))
@@ -941,8 +965,21 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       if (!payment) { paidOrderId = ''; return c.json({ received: true, ignored: true }) }
       const isFullAuthorization = Number(payment?.deposit_amount || 0) > 0 && String(session?.metadata?.type || '') === 'rental_authorization'
       if (!order || !payment || payment.rental_id !== order.id || payment.customer_id !== customerId || String(session?.metadata?.customer_id || '') !== String(order.userId)) return c.text('Stripe 支付数据不匹配', 400)
-      const isSquareSplit = String(session?.metadata?.type || '') === 'square_split_order'
-      if (isSquareSplit) {
+      const paymentType = String(session?.metadata?.type || '')
+      const isSquareSplit = paymentType === 'square_split_order'
+      const isSquareResidual = paymentType === 'square_residual_order'
+      if (isSquareResidual) {
+        const expectedRemainder = Number(session?.metadata?.remainder_amount || 0)
+        const targetAmount = Number(session?.metadata?.target_amount || 0)
+        const depositAmount = Number(session?.metadata?.deposit_amount || 0)
+        const expectedRental = Math.max(0, targetAmount - Number(session?.metadata?.square_approved_amount || 0))
+        if (!expectedRemainder || !targetAmount || paidCents !== expectedRemainder || cents(payment.amount) !== expectedRemainder || cents(payment.rental_amount) !== expectedRental || cents(payment.deposit_amount) !== depositAmount || !payment.square_payment_id) return c.text('Stripe 礼品卡剩余付款数据不匹配', 400)
+        await completeSplitSquarePayment(c, String(payment.square_payment_id), targetAmount)
+        statements.push(
+          c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE stripe_payment_intent_id = ? AND status != 'paid'").bind(generateReferenceNumber('TXN'), session.id),
+          c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'card', payment_provider = 'square', deposit_status = CASE WHEN ? > 0 THEN 'PAID' ELSE deposit_status END, deposit_paid_at = CASE WHEN ? > 0 THEN COALESCE(deposit_paid_at, CURRENT_TIMESTAMP) ELSE deposit_paid_at END, deposit_held_amount = CASE WHEN ? > 0 THEN ? ELSE deposit_held_amount END, stripe_payment_method_id = COALESCE(NULLIF(?, ''), stripe_payment_method_id), updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(depositAmount, depositAmount, depositAmount, depositAmount / 100, String(session.payment_method || ''), order.id),
+        )
+      } else if (isSquareSplit) {
         const expectedRemainder = Number(session?.metadata?.remainder_amount || 0)
         const targetAmount = Number(session?.metadata?.target_amount || 0)
         if (!expectedRemainder || !targetAmount || paidCents !== expectedRemainder || cents(payment.amount) !== targetAmount || !payment.square_payment_id) return c.text('Stripe 礼品卡差额支付数据不匹配', 400)

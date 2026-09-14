@@ -29,6 +29,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
   const depositMode = depositPaymentModeForOrder(order)
   const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, depositMode === 'PAID' ? 'bank_transfer' : 'card_hold')
+  const squarePaymentSelected = String(order.paymentProvider || order.payment_provider || '') === 'square'
   const deposit = Number(order.depositAmount || 0)
   const serviceFee = Number(order.serviceFee || order.service_fee || 0)
   const immediatelyPaidAmount = Math.max(0, Number(order.totalAmount) - deposit)
@@ -40,12 +41,16 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const squareTotal = Number((immediatelyPaidAmount + squareFee).toFixed(2))
   const squarePaidAmount = Number(paymentSources.filter((payment: any) => payment.payment_provider === 'square').reduce((sum: number, payment: any) => sum + Number(payment.square_paid_amount || 0), 0).toFixed(2))
   const squareRemainingAmount = Math.max(0, Number((squareTotal - squarePaidAmount).toFixed(2)))
+  const squareDepositDue = squarePaymentSelected && squarePaidAmount > 0 && String((order as any).deposit_status || '').toUpperCase() === 'PENDING' ? deposit : 0
+  const squareResidualTotal = Number((squareRemainingAmount + squareDepositDue).toFixed(2))
+  const pendingOrderPayment = paymentSources.find((payment: any) => payment.status === 'pending' && payment.payment_provider === 'internal' && payment.payment_method === order.paymentMethod)
+  const orderPaymentDue = squarePaymentSelected && squarePaidAmount > 0 ? squareResidualTotal : Number(pendingOrderPayment?.amount || order.totalAmount)
+  const stripeDisplayAmount = squarePaymentSelected && squarePaidAmount > 0 ? squareResidualTotal : stripeTotal
   const squareAdjustmentFee = Math.round(Number(priceAdjustmentSummary.amountDue) * 100 * squareFeeRate) / 100
   const squareAdjustmentTotal = Number((Number(priceAdjustmentSummary.amountDue) + squareAdjustmentFee).toFixed(2))
   const transferPayment = ['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))
-  const squarePaymentSelected = String(order.paymentProvider || '') === 'square'
   const squareDepositStatus = String((order as any).deposit_status || '').toUpperCase()
-  const squareDepositPending = squarePaymentSelected && deposit > 0 && ['pending_payment', 'paid', 'pending_pickup'].includes(String(order.status)) && squareDepositStatus === 'PENDING'
+  const squareDepositPending = false
   const currentBalance = Number(account?.balance ?? user.balance ?? 0)
   let preSnapshot: any = {}; let returnData: any = {}
   try { preSnapshot = JSON.parse(preInspection?.snapshot_json || '{}') } catch (_) {}
@@ -91,6 +96,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
 
   const body = `
     <div class="panel order-detail-shell customer-order-detail">
+      <script>(function(){window.addEventListener('square-payment-updated',function(event){var detail=event.detail||{};if(Number(detail.squarePaidAmountCents||0)>0&&Number(detail.remainingAmountCents||0)>=0){window.setTimeout(function(){window.location.reload()},250)}})})();</script>
       <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '订单详情'}</h2><span class="section-note">${order.orderNo ? '查看订单状态、设备信息、租金明细及合同。' : '订单编号将在付款确认后生成。'}</span></div>
       ${alertMessage}
       <div class="order-detail-grid">
@@ -105,6 +111,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           <p><strong>押金:</strong> ${formatCurrency(deposit)}（${securityDepositMethodLabel(depositMethod)}；${depositMode === 'PREAUTH' ? '预授权' : depositMode === 'SETUP_INTENT' ? 'SetupIntent 保存卡片，不预扣' : '单独处理'}）</p>
           <p><strong>订单合计:</strong> ${formatCurrency(order.totalAmount)}</p>
           <p id="square-payment-summary"${squarePaidAmount > 0 ? '' : ' hidden'}><strong>礼品卡已扣:</strong> ${formatCurrency(squarePaidAmount)}${squareRemainingAmount > 0 ? `；Stripe 剩余 ${formatCurrency(squareRemainingAmount)}` : ''}</p>
+          ${squarePaymentSelected && squarePaidAmount > 0 ? `<p><strong>礼品卡扣减后待支付:</strong> ${formatCurrency(squareRemainingAmount)}</p>` : ''}
           ${refundLabel ? `<p><strong>退款状态:</strong> ${esc(refundLabel)}</p>` : ''}
         </div>
         <div class="order-info-card">
@@ -129,7 +136,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
       }).join('')}</section>` : ''}
 
       ${(paymentSources.length || refundRows.length) ? `<section class="panel" style="margin-top:20px"><h3>付款与退款明细</h3>
-        ${paymentSources.length ? `<h4 style="margin:12px 0 6px">付款 / 预授权</h4><dl class="data-list">${paymentSources.map((p: any) => `<div><dt>${esc(p.payment_provider === 'square' ? '礼品卡' : PAYMENT_METHOD_LABELS[String(p.payment_method)] || p.payment_method)}${p.status === 'pending' ? '（待结算）' : ''}</dt><dd>${formatCurrency(p.amount)}</dd></div>`).join('')}</dl>` : ''}
+        ${paymentSources.length ? `<h4 style="margin:12px 0 6px">付款 / 预授权</h4><dl class="data-list">${paymentSources.map((p: any) => { const displayAmount = p.payment_provider === 'square' && Number(p.square_paid_amount || 0) > 0 ? p.square_paid_amount : p.amount; return `<div><dt>${esc(p.payment_provider === 'square' ? '礼品卡' : PAYMENT_METHOD_LABELS[String(p.payment_method)] || p.payment_method)}${p.payment_provider === 'square' && Number(p.square_paid_amount || 0) > 0 ? '（已扣）' : p.status === 'pending' ? '（待结算）' : ''}</dt><dd>${formatCurrency(displayAmount)}</dd></div>` }).join('')}</dl>` : ''}
         ${refundRows.length ? `<h4 style="margin:16px 0 6px">已退款</h4><dl class="data-list">${refundRows.map((r: any) => `<div><dt>${esc(REFUND_TYPE_LABELS[String(r.type)] || r.type)}${r.refund_method ? ` · ${esc(PAYMENT_METHOD_LABELS[String(r.refund_method)] || r.refund_method)}` : ''}<br><span class="form-text">${melbourneTime(r.created_at)}</span></dt><dd>${formatCurrency(r.refund_amount)}</dd></div>`).join('')}</dl>` : ''}
         <p class="form-text" style="margin-top:12px">如对付款或退款金额有疑问，请联系您的专属客服。</p>
       </section>` : ''}
@@ -165,7 +172,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
             <p><strong>银行名称:</strong> ${systemSettings.bankDetails.bankName || '—'}</p>
             <p><strong>BSB:</strong> ${systemSettings.bankDetails.bsb}</p>
             <p><strong>账号:</strong> ${systemSettings.bankDetails.account}</p>
-            <p>请转账 ${formatCurrency(order.totalAmount)} 到以上账户，并在备注中填写合同编号 ${contract?.contractNumber || order.contractId}。</p>
+            <p>请转账 ${formatCurrency(orderPaymentDue)} 到以上账户，并在备注中填写合同编号 ${contract?.contractNumber || order.contractId}。</p>
             ${transferProof?.status === 'submitted' ? '<div class="payment-waiting-note"><span>转账信息已提交，正在等待管理员审核</span></div>' : `<form method="post" action="/customer/orders/${order.id}/bank-transfer-proof">
               <label class="form-label" for="referenceNumber">银行 Reference</label>
               <input class="form-control" id="referenceNumber" name="referenceNumber" maxlength="100" required>
@@ -177,19 +184,19 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
               <button class="button" type="submit" style="margin-top:12px">提交转账信息</button>
             </form>`}
           </div>` : ''}
-          ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p id="rmb-order-summary">提交付款凭证前获取实时汇率并计算人民币金额。</p><img src="${order.paymentMethod === 'alipay' ? systemSettings.rmbPayment.alipayQrUrl : systemSettings.rmbPayment.wechatQrUrl}" alt="${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}收款码" loading="lazy" style="max-width:240px;display:block;margin:12px 0"><form method="POST" action="/customer/orders/${order.id}/bank-transfer-proof"><label class="form-label">付款 Reference</label><input class="form-control" name="referenceNumber" maxlength="100" required><label class="form-label">付款凭证图片链接</label><input class="form-control" type="url" name="imageUrl" placeholder="https://..." required><label class="form-label">备注（选填）</label><textarea class="form-control" name="note" maxlength="500"></textarea><button class="button" type="submit" style="margin-top:12px">提交付款凭证</button></form><script>(()=>{const s=document.getElementById('rmb-order-summary');fetch('/api/payment/aud-cny?amount=${encodeURIComponent(String(order.totalAmount))}').then(r=>r.ok?r.json():Promise.reject()).then(d=>{s.innerHTML='请支付 <strong>CNY '+Number(d.cnyAmount).toFixed(2)+'</strong>，1 AUD = '+Number(d.rate).toFixed(6)+' CNY，金额按两位小数上舍入。'}).catch(()=>{s.textContent='暂时无法获取实时汇率，请稍后重试。'})})()</script></div>` : ''}
+          ${['alipay', 'wechat'].includes(String(order.paymentMethod)) ? `<div class="payment-card"><h4>${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}（人民币）</h4><p id="rmb-order-summary">提交付款凭证前获取实时汇率并计算人民币金额。</p><img src="${order.paymentMethod === 'alipay' ? systemSettings.rmbPayment.alipayQrUrl : systemSettings.rmbPayment.wechatQrUrl}" alt="${order.paymentMethod === 'alipay' ? '支付宝' : '微信'}收款码" loading="lazy" style="max-width:240px;display:block;margin:12px 0"><form method="POST" action="/customer/orders/${order.id}/bank-transfer-proof"><label class="form-label">付款 Reference</label><input class="form-control" name="referenceNumber" maxlength="100" required><label class="form-label">付款凭证图片链接</label><input class="form-control" type="url" name="imageUrl" placeholder="https://..." required><label class="form-label">备注（选填）</label><textarea class="form-control" name="note" maxlength="500"></textarea><button class="button" type="submit" style="margin-top:12px">提交付款凭证</button></form><script>(()=>{const s=document.getElementById('rmb-order-summary');fetch('/api/payment/aud-cny?amount=${encodeURIComponent(String(orderPaymentDue))}').then(r=>r.ok?r.json():Promise.reject()).then(d=>{s.innerHTML='请支付 <strong>CNY '+Number(d.cnyAmount).toFixed(2)+'</strong>，1 AUD = '+Number(d.rate).toFixed(6)+' CNY，金额按两位小数上舍入。'}).catch(()=>{s.textContent='暂时无法获取实时汇率，请稍后重试。'})})()</script></div>` : ''}
           ${squarePaymentSelected && systemSettings.paymentMethods.square ? `<div class="payment-card">
             <h4>礼品卡支付</h4>
-            <p>租金及服务费 ${formatCurrency(immediatelyPaidAmount)}；礼品卡手续费（${(squareFeeRate * 100).toFixed(2)}%）${formatCurrency(squareFee)}；付款合计 ${formatCurrency(squareTotal)}。押金按订单约定单独处理。</p>
-            ${renderSquareGiftCardPaymentBox({ configUrl: `/customer/orders/${order.id}/square/config`, paymentUrl: `/customer/orders/${order.id}/square/payment`, returnUrl: `/payment/result?orderId=${encodeURIComponent(order.id)}`, buttonLabel: `使用礼品卡支付 ${formatCurrency(squareTotal)}`, domId: 'order-square-gift-card-pay', stored: Boolean((order as any).square_gift_card_id || (order as any).squareGiftCardId), showStripeRemainder: false })}
+            ${squarePaidAmount > 0 ? `<p>礼品卡已扣除 ${formatCurrency(squarePaidAmount)}（含礼品卡手续费），礼品卡卡片付款已完成。</p>` : `<p>先使用礼品卡扣除租金及服务费，礼品卡余额不足时，剩余差价和押金再选择其他支付方式。</p>${renderSquareGiftCardPaymentBox({ configUrl: `/customer/orders/${order.id}/square/config`, paymentUrl: `/customer/orders/${order.id}/square/payment`, returnUrl: `/customer/orders/${order.id}`, buttonLabel: `使用礼品卡支付 ${formatCurrency(squareTotal)}`, domId: 'order-square-gift-card-pay', stored: Boolean((order as any).square_gift_card_id || (order as any).squareGiftCardId), showStripeRemainder: false })}`}
           </div>` : ''}
-          ${systemSettings.paymentMethods.stripe ? `<div class="payment-card">
+          ${systemSettings.paymentMethods.stripe && (!squarePaymentSelected || squarePaidAmount > 0) ? `<div class="payment-card">
             <h4>信用卡支付（Stripe）</h4>
-            <p>${squarePaymentSelected ? '礼品卡先扣款后，剩余租金及服务费使用 Stripe 支付；' : ''}在本页安全填写卡信息完成支付，卡号由 Stripe 处理，本站不保存卡号、有效期或安全码。</p>
-            ${depositMode === 'PREAUTH' ? `<dl class="data-list" style="margin:8px 0"><div><dt><strong>信用卡预授权总额</strong></dt><dd><strong>${formatCurrency(stripeTotal)}</strong></dd></div></dl><p class="form-text">包含租金及服务费、押金和手续费。</p><p class="form-text" style="margin-top:4px">归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。</p>` : `<dl class="data-list" style="margin:8px 0"><div><dt>租金及服务费</dt><dd>${formatCurrency(Number(order.totalAmount) - deposit)}</dd></div><div><dt>Stripe 租金及服务费支付手续费（2.5%）</dt><dd>${formatCurrency(stripeFee)}</dd></div><div><dt><strong>信用卡最终扣款</strong></dt><dd><strong>${formatCurrency(stripeTotal)}</strong></dd></div></dl><p class="form-text">${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 使用 SetupIntent 保存卡片，不预扣，仅在损坏或逾期时按实际费用扣款。` : '押金按订单约定处理。'}</p><p class="form-text" style="margin-top:4px">手续费不计入押金。</p>`}
-            ${renderStripePaymentBox({ intentUrl: `/customer/orders/${order.id}/stripe/intent`, returnUrl: `/payment/result?orderId=${encodeURIComponent(order.id)}`, buttonLabel: `${depositMode === 'PREAUTH' ? '预授权' : '支付'} ${formatCurrency(stripeTotal)}`, domId: 'order-stripe-pay' })}
+            <p>${squarePaymentSelected ? '礼品卡先扣款，礼品卡实际扣减额会显示在订单金额中；剩余租金及服务费使用 Stripe 支付。' : ''}在本页安全填写卡信息完成支付，卡号由 Stripe 处理，本站不保存卡号、有效期或安全码。</p>
+            ${depositMode === 'PREAUTH' && !(squarePaymentSelected && squarePaidAmount > 0) ? `<dl class="data-list" style="margin:8px 0"><div><dt><strong>信用卡预授权总额</strong></dt><dd><strong>${formatCurrency(stripeDisplayAmount)}</strong></dd></div></dl><p class="form-text">包含租金及服务费、押金和手续费。</p><p class="form-text" style="margin-top:4px">归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。</p>` : `<dl class="data-list" style="margin:8px 0"><div><dt>${squarePaymentSelected && squarePaidAmount > 0 ? '礼品卡扣减后 Stripe 剩余（含礼品卡手续费）' : '租金及服务费'}</dt><dd>${formatCurrency(squarePaymentSelected && squarePaidAmount > 0 ? stripeDisplayAmount : Number(order.totalAmount) - deposit)}</dd></div>${squarePaymentSelected && squarePaidAmount > 0 ? '' : `<div><dt>Stripe 租金及服务费支付手续费（2.5%）</dt><dd>${formatCurrency(stripeFee)}</dd></div>`}<div><dt><strong>${squarePaymentSelected && squarePaidAmount > 0 ? 'Stripe 待支付金额' : '信用卡最终扣款'}</strong></dt><dd><strong>${formatCurrency(stripeDisplayAmount)}</strong></dd></div></dl><p class="form-text">${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 使用 SetupIntent 保存卡片，不预扣，仅在损坏或逾期时按实际费用扣款。` : '押金按订单约定处理。'}</p><p class="form-text" style="margin-top:4px">手续费不计入押金。</p>`}
+            ${renderStripePaymentBox({ intentUrl: `/customer/orders/${order.id}/stripe/intent`, returnUrl: `/payment/result?orderId=${encodeURIComponent(order.id)}`, buttonLabel: `${depositMode === 'PREAUTH' && !(squarePaymentSelected && squarePaidAmount > 0) ? '预授权' : '支付'} ${formatCurrency(stripeDisplayAmount)}`, domId: 'order-stripe-pay' })}
           </div>` : ''}
         </div>
+        ${squarePaymentSelected && squarePaidAmount > 0 ? `<div class="payment-card" style="margin-top:16px"><h4>剩余应付金额</h4><p>礼品卡扣款后，剩余差价 ${formatCurrency(squareRemainingAmount)}${squareDepositDue > 0 ? `＋押金 ${formatCurrency(squareDepositDue)}` : ''}，合计 <strong>${formatCurrency(squareResidualTotal)}</strong>。请选择一种方式完成支付。</p>${systemSettings.paymentMethods.bankTransfer ? `<form method="post" action="/customer/orders/${order.id}/switch-payment-method" style="display:inline-block;margin-right:8px"><input type="hidden" name="paymentMethod" value="bank_transfer"><button class="button button-secondary" type="submit">选择银行转账</button></form>` : ''}<form method="post" action="/customer/orders/${order.id}/switch-payment-method" style="display:inline-block"><input type="hidden" name="paymentMethod" value="balance"><button class="button button-secondary" type="submit">使用账户余额</button></form></div>` : ''}
         ${!squarePaymentSelected && ['card', 'stripe'].includes(String(order.paymentMethod)) ? (() => {
           const alternatives: Array<{ value: string; label: string }> = []
           if (systemSettings.paymentMethods.square && !squarePaymentSelected) alternatives.push({ value: 'square', label: '礼品卡' })

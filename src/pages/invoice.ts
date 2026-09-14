@@ -8,6 +8,20 @@ import { buildLayout, formatCurrency, generateReferenceNumber, getContractByOrde
 
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c))
 
+const paymentMethodLabel = (payment: any): string => {
+  if (payment?.payment_provider === 'square') return 'Square 礼品卡'
+  if (payment?.payment_method === 'card') return '信用卡'
+  if (payment?.payment_method === 'balance') return '账户余额'
+  if (payment?.payment_method === 'bank_transfer') return '银行转账'
+  if (payment?.payment_method === 'alipay') return '支付宝'
+  if (payment?.payment_method === 'wechat') return '微信支付'
+  return String(payment?.payment_method || '—')
+}
+
+export function formatInvoicePaymentMethods(payments: any[]): string {
+  return Array.from(new Set(payments.map(paymentMethodLabel))).join(' + ') || '—'
+}
+
 export async function renderInvoice(c: Context, user: any, orderId: string, printMode = false) {
   const order = await getOrderById(c, orderId)
   if (!order || (user.role === 'CUSTOMER' && order.userId !== user.id)) return buildLayout('发票未找到', '<div class="panel"><h2>发票不存在或无权查看</h2></div>', user)
@@ -24,7 +38,8 @@ export async function renderInvoice(c: Context, user: any, orderId: string, prin
   if (!invoices.length) return buildLayout('发票尚未开具', '<div class="panel"><h2>付款完成后系统将自动开具发票</h2></div>', user)
   const customer = await getUserById(c, order.userId)
   const company = getSystemSettings().companyDetails
-  const payment = await c.env.RENT.prepare('SELECT payment_method, payment_provider, paid_at, transaction_id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = \'paid\' ORDER BY paid_at DESC LIMIT 1').bind(order.id).first() as any
+  const paidPayments = (await c.env.RENT.prepare('SELECT payment_method, payment_provider, paid_at, transaction_id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = \'paid\' ORDER BY paid_at DESC').bind(order.id).all()).results as any[]
+  const payment = paidPayments[0]
   const refunds = (await c.env.RENT.prepare("SELECT type, refund_number, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, refund_method, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at").bind(order.id).all()).results as any[]
   const refundTotal = refunds.reduce((sum, refund) => sum + Number(refund.refund_amount || 0), 0)
   // 退款凭证（credit note）只在确有成功退款时展示。历史遗留、或退款后来被撤销 /
@@ -46,11 +61,11 @@ export async function renderInvoice(c: Context, user: any, orderId: string, prin
     const formalTaxInvoice = Boolean(company.abn)
     const documentNumberLabel = isCreditNote ? '退款凭证号' : '收据号'
     const documentNumber = isCreditNote ? invoice.invoice_number : invoice.receipt_number || invoice.invoice_number
-    const paymentLabel = payment?.payment_provider === 'square' ? 'Square 礼品卡' : payment?.payment_method === 'card' ? '信用卡（Stripe）' : payment?.payment_method === 'balance' ? '账户余额' : payment?.payment_method === 'bank_transfer' ? '银行转账' : '—'
+    const paymentLabel = formatInvoicePaymentMethods(paidPayments)
     return `<article class="official-document">
       <header class="official-document__header official-document__archive"><div><p class="official-document__eyebrow">${isCreditNote ? 'CREDIT NOTE / ARCHIVE' : formalTaxInvoice ? 'TAX INVOICE / ARCHIVE' : ''}</p><h1>${isCreditNote ? '退款凭证' : formalTaxInvoice ? '税务发票' : '付款收据'}</h1><p class="official-document__company">${escape(company.name || 'PC Rental')}</p><p class="official-document__number">${documentNumberLabel} ${escape(documentNumber || '—')}</p></div><div class="official-document__title"><span class="official-document__status">${invoice.status === 'issued' ? '已开具' : escape(invoice.status)}</span><p>开具日期：${escape(invoice.issued_at)}</p></div></header>
       <div class="official-document__rule"></div>
-      <section class="official-document__meta"><div><span>BILL TO / 客户</span><strong>${escape(customer?.name || '—')}</strong><p>${escape(customer?.email || '')}</p><p>${escape(customer?.phone || '')}</p></div><div><span>RENTAL ORDER / 订单</span><strong>${escape(order.orderNo || order.id)}</strong><p>合同号：${escape(contract?.contractNumber || '—')}</p><p>发票号：${escape(invoice.invoice_number || '—')}</p><p>收据号：${escape(invoice.receipt_number || '—')}</p><p>租期：${escape(order.startDate)} 至 ${escape(order.endDate)}</p></div><div><span>PAYMENT / 付款</span><strong>${escape(invoice.status === 'issued' ? '已付款' : invoice.status)}</strong><p>付款日期：${escape(payment?.paid_at || invoice.issued_at)}</p><p>付款方式：${paymentLabel}</p><p>交易号：${escape(payment?.transaction_id || '—')}</p>${payment?.stripe_payment_intent_id ? `<p class="official-document__stripe-id">Stripe 交易号：${escape(payment.stripe_payment_intent_id)}</p>` : ''}</div></section>
+      <section class="official-document__meta"><div><span>BILL TO / 客户</span><strong>${escape(customer?.name || '—')}</strong><p>${escape(customer?.email || '')}</p><p>${escape(customer?.phone || '')}</p></div><div><span>RENTAL ORDER / 订单</span><strong>${escape(order.orderNo || order.id)}</strong><p>合同号：${escape(contract?.contractNumber || '—')}</p><p>发票号：${escape(invoice.invoice_number || '—')}</p><p>收据号：${escape(invoice.receipt_number || '—')}</p><p>租期：${escape(order.startDate)} 至 ${escape(order.endDate)}</p></div><div><span>PAYMENT / 付款</span><strong>${escape(invoice.status === 'issued' ? '已付款' : invoice.status)}</strong><p>付款日期：${escape(payment?.paid_at || invoice.issued_at)}</p><p>付款方式：${escape(paymentLabel)}</p><p>交易号：${escape(payment?.transaction_id || '—')}</p>${payment?.stripe_payment_intent_id ? `<p class="official-document__stripe-id">Stripe 交易号：${escape(payment.stripe_payment_intent_id)}</p>` : ''}</div></section>
       <table class="official-document__table"><thead><tr><th>项目 / Description</th><th>数量</th><th>金额（AUD）</th></tr></thead><tbody><tr><td><strong>${escape(isCreditNote ? refundLabel : order.deviceName || '设备租赁')}</strong><small>${escape(isCreditNote ? '备注：按管理员选择的退款项目开具' : `${order.startDate} 至 ${order.endDate} · ${Number(order.rentalPeriod || 0)} 天`)}</small></td><td>1</td><td>${formatCurrency(invoice.subtotal)}</td></tr>${Number(invoice.deposit_amount) ? `<tr><td>可退还设备押金</td><td>1</td><td>${formatCurrency(invoice.deposit_amount)}</td></tr>` : ''}${Number(invoice.processing_fee || 0) ? `<tr><td>${isCreditNote ? '退还的支付手续费' : '支付处理手续费'}</td><td>1</td><td>${formatCurrency(invoice.processing_fee)}</td></tr>` : ''}${!isCreditNote && Number((order as any).discountAmount || (order as any).discount_amount || 0) > 0 ? `<tr><td>优惠码折扣 <small>${escape((order as any).couponCode || (order as any).coupon_code || '')}</small></td><td>1</td><td>-${formatCurrency((order as any).discountAmount || (order as any).discount_amount)}</td></tr>` : ''}</tbody></table>
       <section class="official-document__totals"><div><p>${isCreditNote ? `本凭证记录：${refundLabel}。` : formalTaxInvoice ? 'GST 已包含在适用项目中。' : '本文件为已付款项的正式付款记录，不替代税务发票。'}</p><p>合同编号：${escape(contract?.contractNumber || '—')}</p>${!isCreditNote && ((order as any).couponCode || (order as any).coupon_code) ? `<p>优惠码：<strong>${escape((order as any).couponCode || (order as any).coupon_code)}</strong>，优惠 ${formatCurrency((order as any).discountAmount || (order as any).discount_amount || 0)}</p>` : ''}</div><dl><div><dt>小计</dt><dd>${formatCurrency(invoice.subtotal)}</dd></div><div><dt>GST</dt><dd>${formatCurrency(invoice.gst_amount)}</dd></div><div class="official-document__grand-total"><dt>Total / 合计</dt><dd>${formatCurrency(invoice.total_amount)}</dd></div>${shownRefundTotal ? `<div class="official-document__refund-total"><dt>已退款</dt><dd>-${formatCurrency(shownRefundTotal)}</dd></div><div><dt>退款后净额</dt><dd>${formatCurrency(Number(invoice.total_amount) - shownRefundTotal)}</dd></div>` : ''}</dl></section>
       ${!isCreditNote && refunds.length ? `<section class="official-document__refunds"><h3>退款记录</h3>${refunds.map(refund => `<div class="official-document__refund"><div><strong>${refund.type === 'deposit' ? '押金退款' : refund.type === 'full_cancel' || refund.type === 'cancellation' ? '取消订单退款' : '订单退款'}</strong><p>${refund.refund_number ? `退款号：${escape(refund.refund_number)} · ` : ''}${escape(refund.created_at || '')}${refund.deduction_amount ? ` · 扣除 ${formatCurrency(refund.deduction_amount)}${refund.deduction_reason ? `（${escape(refund.deduction_reason)}）` : ''}` : ''}</p></div><div><strong>-${formatCurrency(refund.refund_amount)}</strong><p>${refund.refund_method === 'stripe' ? 'Stripe 原路退回' : refund.refund_method === 'bank_transfer' ? '银行转账' : refund.refund_method === 'balance' ? '账户余额' : '退款'}</p></div></div>`).join('')}</section>` : ''}
