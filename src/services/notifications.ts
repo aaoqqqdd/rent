@@ -10,13 +10,12 @@ import type { Context } from 'hono'
 import { renderEmailNotificationHtml, sanitizePlainText } from '../lib/html'
 import { safeJsonParse } from '../lib/json'
 import { getSystemSettings } from '../settings/systemSettings'
-import { resolveResendCredentials, dispatchChannelAlert } from '../notifyChannels'
+import { resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from '../notifyChannels'
 
 const STAFF_ROLES = new Set(['ADMIN', 'MANAGER', 'STAFF'])
 
 // 判断某个收件人是不是员工/管理员（结果按请求缓存）。用于决定这条通知
-// 是否要同时广播到 Telegram / Server酱 / Webhook 等推送渠道——客户的站内信
-// 不会往管理员的推送渠道里灌。
+// 是否要同时广播到已启用的推送 Webhook——客户的站内信不会往管理员的推送渠道里灌。
 async function isStaffRecipient(c: Context, recipientId: string): Promise<boolean> {
   const cache: Map<string, boolean> = (c as any).__recipientRoleCache ||= new Map()
   if (cache.has(recipientId)) return cache.get(recipientId)!
@@ -256,7 +255,7 @@ export async function createDueDateNotifications(c: Context): Promise<number> {
 // 由 cron 触发，每次只处理一小批，避免一次调用里对外发起过多子请求；
 // 失败的行会在下一次 tick 自动重试，直到 max_attempts。
 export async function deliverPendingAgreementEmails(c: Context): Promise<number> {
-  const { apiKey, from } = await resolveResendCredentials(c)
+  const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) return 0
   const rows = (((await c.env.RENT.prepare(
     "SELECT id, recipient, subject, text_body, html_body FROM email_events WHERE event_type = 'AGREEMENT_UPDATE' AND template_id = 'agreement_update_batch' AND ((status IN ('PENDING', 'FAILED') AND retry_count < max_attempts) OR (status = 'SENDING' AND retry_count < max_attempts AND last_attempt_at <= datetime('now', '-15 minutes'))) ORDER BY created_at LIMIT 90"
@@ -271,22 +270,11 @@ export async function deliverPendingAgreementEmails(c: Context): Promise<number>
     ).bind(row.id).run() as any
     const claimChanges = Number(claimed.meta?.changes ?? claimed.changes ?? 0)
     if (claimChanges !== 1) continue
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, to: [row.recipient], subject: row.subject, text: row.text_body, html: row.html_body || undefined }),
-      })
-      const result = await response.json().catch(() => ({})) as any
-      await c.env.RENT.prepare(
-        "UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ? AND status = 'SENDING'"
-      ).bind(response.ok ? 'SENT' : 'FAILED', result.id || null, response.ok ? null : String(result.message || response.status).slice(0, 500), response.ok ? 1 : 0, row.id).run()
-      if (response.ok) sent += 1
-    } catch (error: any) {
-      await c.env.RENT.prepare(
-        "UPDATE email_events SET status = 'FAILED', error_message = ? WHERE id = ? AND status = 'SENDING'"
-      ).bind(String(error?.message || error).slice(0, 500), row.id).run()
-    }
+    const result = await sendTransactionalEmail(c, { to: row.recipient, subject: row.subject, text: row.text_body, html: row.html_body || undefined })
+    await c.env.RENT.prepare(
+      "UPDATE email_events SET status = ?, provider_message_id = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ? AND status = 'SENDING'"
+    ).bind(result.ok ? 'SENT' : 'FAILED', result.id, result.error?.slice(0, 500) ?? null, result.ok ? 1 : 0, row.id).run()
+    if (result.ok) sent += 1
   }
   return sent
 }
@@ -320,7 +308,7 @@ export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
   if (!(proofs.results || []).length) return 0
   const admins = (await c.env.RENT.prepare("SELECT id, email, name FROM users WHERE role = 'ADMIN' AND status = 'active'").all() as any).results || []
   if (!admins.length) return 0
-  const { apiKey, from } = await resolveResendCredentials(c)
+  const { apiKey, from } = await resolveEmailCredentials(c)
   let notified = 0
   for (const proof of proofs.results as any[]) {
     const method = proof.payment_method === 'alipay' ? '支付宝' : proof.payment_method === 'wechat' ? '微信' : '银行转账'
@@ -330,7 +318,8 @@ export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
     await Promise.all(admins.map((admin: any) => createNotification(c, { recipientId: admin.id, type: 'payment_review_overdue', title, message, orderId: proof.order_id })))
     if (apiKey && from) {
       const html = renderEmailNotificationHtml(title, `<p>${message}</p><p><a href="${new URL(`/admin/orders/${proof.order_id}`, c.req.url).toString()}">打开订单审核</a></p>`, getSystemSettings().companyDetails.name)
-      await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: admins.map((admin: any) => admin.email).filter((email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)), subject: title, text: message, html }) })
+      const recipients = admins.map((admin: any) => admin.email).filter((email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      if (recipients.length) await sendTransactionalEmail(c, { to: recipients, subject: title, text: message, html })
     }
     await c.env.RENT.prepare('UPDATE payment_proofs SET admin_notified_at = CURRENT_TIMESTAMP WHERE id = ? AND admin_notified_at IS NULL').bind(proof.id).run()
     notified += 1

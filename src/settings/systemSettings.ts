@@ -213,9 +213,11 @@ export const systemSettings = {
   priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
   paymentMethods: {
     stripe: true,
+    square: false,
     bankTransfer: true,
     balancePayment: true,
     processingFeeRate: 0.025,
+    squareProcessingFeeRate: 0.022,
     alipay: false,
     wechat: false,
   },

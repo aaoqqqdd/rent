@@ -57,6 +57,7 @@ export function getCustomerSigningUser(user: User | null | undefined): User | nu
   return user?.role === 'CUSTOMER' ? user : null
 }
 
+// 风险分每次操作前从历史数据和当前有效标记重新计算，不落库，避免标记解除后仍保留旧分数。
 // ---------------------------------------------------------------------------
 // 纯业务逻辑 / 状态机已拆分到 src/domain/*（均有独立单元测试）。同样 import
 // 供本文件使用并统一 re-export。
@@ -83,10 +84,11 @@ import {
 import type { PaymentDisputeState } from './domain/paymentDispute'
 import {
   RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
-  isRiskFlagCurrentlyActive, findBlockingRiskFlag,
+  isRiskFlagCurrentlyActive, findBlockingRiskFlag, calculateCustomerRiskAssessment, calculateReferralRiskAssessment,
+  RISK_SCORE_BLOCK_THRESHOLD,
 } from './domain/riskFlags'
-import type { RiskFlagType, RiskFlagLike } from './domain/riskFlags'
-import { deviceUtilisationRate, paymentMethodBreakdown } from './domain/operationsReport'
+import type { RiskFlagType, RiskFlagLike, CustomerRiskFacts, CustomerRiskAssessment, ReferralRiskFacts, ReferralRiskAssessment } from './domain/riskFlags'
+import { deviceUtilisationRate, paymentMethodBreakdown, rentalRefundAmount } from './domain/operationsReport'
 import type { PaymentMethodRow, PaymentMethodShare } from './domain/operationsReport'
 import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
@@ -111,8 +113,9 @@ export {
   PAYMENT_DISPUTE_STATES, PAYMENT_DISPUTE_OPEN_STATES, PAYMENT_DISPUTE_TERMINAL_STATES,
   canTransitionPaymentDispute, isPaymentDisputeOpen, paymentsBlockedByDispute, mapStripeDisputeStatus,
   RISK_FLAG_TYPES, RISK_FLAG_SEVERITIES, ORDER_BLOCKING_RISK_FLAG_TYPES,
-  isRiskFlagCurrentlyActive, findBlockingRiskFlag,
-  deviceUtilisationRate, paymentMethodBreakdown,
+  isRiskFlagCurrentlyActive, findBlockingRiskFlag, calculateCustomerRiskAssessment, calculateReferralRiskAssessment,
+  RISK_SCORE_BLOCK_THRESHOLD,
+  deviceUtilisationRate, paymentMethodBreakdown, rentalRefundAmount,
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
   rateHealth, countHealth, worstHealthLevel, summarizeMetricHistory, staleMonitoringAlertIds,
   agentCommission,
@@ -120,7 +123,7 @@ export {
 }
 export type {
   OrderChangeType, OrderChangePlan, DeviceCommandState, PaymentDisputeState,
-  RiskFlagType, RiskFlagLike, PaymentMethodRow, PaymentMethodShare,
+  RiskFlagType, RiskFlagLike, CustomerRiskFacts, CustomerRiskAssessment, ReferralRiskFacts, ReferralRiskAssessment, PaymentMethodRow, PaymentMethodShare,
   RetentionAction, RetentionPolicyLike, HealthLevel, MonitorMetric, MonitorMetricKind, MetricHistoryPoint, MetricHistorySummary,
   RefundSource, RefundAllocationLine, ReconInput, ReconIssue, ReconResult,
 }
@@ -198,6 +201,7 @@ import {
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
 } from './services/referral'
+import { getCustomerRiskAssessment, getReferralRiskAssessment } from './services/risk'
 import {
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
 } from './services/rentalProvisioning'
@@ -214,6 +218,7 @@ export {
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
+  getCustomerRiskAssessment, getReferralRiskAssessment,
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
   issueInvoice, issueCreditNote,
   planWithdrawalConsumption, createWithdrawalRequest,
@@ -411,6 +416,14 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
   let found = 0
   for (const check of checks) {
     const rows = (await c.env.RENT.prepare(check.sql).all()).results || []
+    // Auto-close previously recorded issues of this type whose entity no longer
+    // trips the invariant (data since fixed by staff or a later code change).
+    // Without this, resolved problems sit in the queue forever and keep
+    // open_exception_backlog pinned to CRITICAL.
+    const stillOffending = (rows as any[]).map(r => String(r.id))
+    const notInClause = stillOffending.length ? ` AND entity_id NOT IN (${stillOffending.map(() => '?').join(',')})` : ''
+    await c.env.RENT.prepare(`UPDATE data_consistency_issues SET resolved_at = CURRENT_TIMESTAMP WHERE issue_type = ? AND resolved_at IS NULL${notInClause}`)
+      .bind(check.issueType, ...stillOffending).run()
     for (const row of rows as any[]) {
       const result = await c.env.RENT.prepare('INSERT OR IGNORE INTO data_consistency_issues (id, issue_type, entity_type, entity_id, details_json) VALUES (?, ?, ?, ?, ?)')
         .bind(`dci-${nanoid(12)}`, check.issueType, check.entityType, row.id, JSON.stringify(row)).run() as any
@@ -537,7 +550,6 @@ export async function getMonitoringHistory(c: Context, windowHours = 168): Promi
 // 指标恢复后自动关闭历史 MONITORING_ALERT 行，让告警可以自愈而不是永久堆积。
 export async function runMonitoringSweep(c: Context): Promise<{ metrics: number; alerts: number; resolved: number }> {
   const metrics = await collectMonitoringMetrics(c)
-
   try {
     for (const m of metrics) {
       // count 型没有比率，用条数作为可绘制的量级存进 rate 列（level 列仍是权威分级）。
@@ -580,7 +592,7 @@ export async function runMonitoringSweep(c: Context): Promise<{ metrics: number;
   return { metrics: metrics.length, alerts, resolved }
 }
 
-export async function updateOrderStatus(c: Context, orderId: string, status: string): Promise<void> {
+export async function updateOrderStatus(c: Context, orderId: string, status: string, options?: { reason?: string; triggeredBy?: string }): Promise<void> {
   const db = getDB(c);
   const mapping: Record<string, { order: string, payment: string, rental: string }> = {
     pending_approval: { order: 'PENDING', payment: 'UNPAID', rental: 'PENDING' },
@@ -602,10 +614,22 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount, deposit_payment_mode FROM orders WHERE id = ?').bind(orderId).first() as any
   await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
   if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && String(previous?.deposit_payment_mode || 'PAID') === 'PAID' && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
+  // Any path that lands the order on RETURNED/COMPLETED must stamp return_received_at,
+  // otherwise the RETURNED_ORDER_WITHOUT_RETURN_RECORD consistency check flags it. The
+  // staff verification flow already does this; do it here too for admin force-complete
+  // and auto-transitions that come through updateOrderStatus.
+  if (status === 'returned' || status === 'completed') {
+    await db.prepare("UPDATE orders SET return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP) WHERE id = ?").bind(orderId).run()
+  }
     await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
   }
   if (previous && previous.rental_status !== next.rental) {
-    await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'SYSTEM', '订单状态同步').run()
+    const reason = options?.reason?.trim()
+    if (reason && options?.triggeredBy) {
+      await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'MANUAL', options.triggeredBy, reason).run()
+    } else {
+      await db.prepare('INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(`rsh-${nanoid(16)}`, orderId, previous.rental_status || null, next.rental, 'SYSTEM', reason || '订单状态同步').run()
+    }
   }
   const lifecycleByOrderStatus: Partial<Record<string, DeviceLifecycleStatus>> = { paid: 'RESERVED', pending_pickup: 'RESERVED', active: 'RENTED', extended: 'RENTED', overdue: 'RENTED', suspended: 'RENTED', pending_return: 'INSPECTION' }
   const lifecycleStatus = lifecycleByOrderStatus[status]
@@ -839,12 +863,14 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
 
   if (parsedPaymentMethods) {
     systemSettings.paymentMethods = {
-      stripe: Boolean((parsedPaymentMethods as any).stripe ?? (parsedPaymentMethods as any).square),
+      stripe: Boolean((parsedPaymentMethods as any).stripe),
+      square: Boolean((parsedPaymentMethods as any).square),
       bankTransfer: Boolean((parsedPaymentMethods as any).bankTransfer),
       balancePayment: (parsedPaymentMethods as any).balancePayment === undefined
         ? systemSettings.paymentMethods.balancePayment
         : Boolean((parsedPaymentMethods as any).balancePayment),
       processingFeeRate: Math.min(1, Math.max(0, Number((parsedPaymentMethods as any).processingFeeRate ?? systemSettings.paymentMethods.processingFeeRate ?? 0.025))),
+      squareProcessingFeeRate: Math.min(1, Math.max(0, Number((parsedPaymentMethods as any).squareProcessingFeeRate ?? systemSettings.paymentMethods.squareProcessingFeeRate ?? 0.022))),
       alipay: Boolean((parsedPaymentMethods as any).alipay),
       wechat: Boolean((parsedPaymentMethods as any).wechat),
     }
@@ -1681,11 +1707,11 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/admin/dashboard', '控制台')}
             ${renderNavGroup('通知管理', [['/admin/notifications', '通知中心'], ['/notifications', '发布通知']])}
             ${renderNavGroup('用户管理', [['/admin/users', '用户管理']])}
-            ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
+            ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/orders/balance-topups', '充值订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/exceptions', '异常任务中心'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
-            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">

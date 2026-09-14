@@ -19,6 +19,7 @@ import { sanitizePlainText } from '../lib/html'
 import { generateReferenceNumber } from '../lib/reference'
 import { generateUserId } from '../lib/userId'
 import { hashPassword, verifyPassword } from '../lib/password'
+import { syncSquareCatalogItem, syncSquareCustomerProfile } from '../square'
 
 // ---------------------------------------------------------------------------
 // 私有：设备生命周期映射 + 行归一化
@@ -60,6 +61,7 @@ export function normalizeUserRow(row: any): User {
   const deletionScheduledAt = row.deletionScheduledAt ?? row.deletion_scheduled_at ?? null
   const identityStatus = row.identityStatus ?? row.identity_status ?? null
   const stripeCustomerId = row.stripeCustomerId ?? row.stripe_customer_id ?? null
+  const squareCustomerId = row.squareCustomerId ?? row.square_customer_id ?? null
 
   return {
     ...row,
@@ -67,6 +69,8 @@ export function normalizeUserRow(row: any): User {
     identity_status: identityStatus,
     stripeCustomerId,
     stripe_customer_id: stripeCustomerId,
+    squareCustomerId,
+    square_customer_id: squareCustomerId,
     account_number,
     accountNumber,
     commissionBalance,
@@ -118,6 +122,8 @@ function normalizeOrderRow(orderRow: any): Order {
   const signedAt = orderRow.signedAt ?? orderRow.signed_at
   const depositMethod = orderRow.deposit_method ?? orderRow.depositMethod
   const depositPaymentMode = orderRow.deposit_payment_mode ?? orderRow.depositPaymentMode
+  const paymentMethod = orderRow.paymentMethod ?? orderRow.payment_method
+  const paymentProvider = orderRow.payment_provider ?? (paymentMethod === 'card' ? 'stripe' : 'internal')
 
   return {
     ...orderRow,
@@ -147,6 +153,10 @@ function normalizeOrderRow(orderRow: any): Order {
     deposit_method: depositMethod,
     depositPaymentMode,
     deposit_payment_mode: depositPaymentMode,
+    paymentMethod,
+    payment_method: paymentMethod,
+    paymentProvider,
+    payment_provider: paymentProvider,
     refundAccountNumber,
     refundAccountName,
     status: orderRow.status ?? orderRow.order_status
@@ -459,6 +469,9 @@ export async function insertUser(c: Context, user: any): Promise<User> {
   delete (inserted as any).password_hash
   delete (inserted as any).password_salt
   delete (inserted as any).password
+  if (inserted.role === 'CUSTOMER') {
+    await syncSquareCustomerProfile(c, inserted).catch(error => console.error(JSON.stringify({ message: 'Square customer sync skipped', error: error instanceof Error ? error.message : String(error), userId: inserted.id })))
+  }
   return inserted as User
 }
 
@@ -491,6 +504,7 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     deletedAt: 'deleted_at',
     deletionRequestedAt: 'deletion_requested_at',
     deletionScheduledAt: 'deletion_scheduled_at',
+    squareCustomerId: 'square_customer_id',
     accountNumber: 'account_number'
     , accessLevel: 'access_level'
   }
@@ -500,6 +514,7 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
     'referralCode', 'referrerId', 'passwordHash', 'passwordSalt', 'commissionBalance',
     'createdAt', 'updatedAt', 'commissionRate', 'staffId', 'accountType', 'accountStatus',
     'guestOrderId', 'guestExpiresAt', 'deletedAt', 'deletionRequestedAt', 'deletionScheduledAt', 'accessLevel',
+    'squareCustomerId',
   ])
   for (const key of Object.keys(fields)) {
     if (!allowedFields.has(key)) delete fields[key]
@@ -534,6 +549,9 @@ export async function updateUser(c: Context, userId: string, data: Partial<User>
   delete (normalized as any).passwordHash
   delete (normalized as any).passwordSalt
   delete (normalized as any).password
+  if (normalized.role === 'CUSTOMER' && ['name', 'email', 'phone'].some(key => data[key as keyof User] !== undefined)) {
+    await syncSquareCustomerProfile(c, normalized).catch(error => console.error(JSON.stringify({ message: 'Square customer update skipped', error: error instanceof Error ? error.message : String(error), userId })))
+  }
   return normalized
 }
 
@@ -699,6 +717,7 @@ export async function updateOrderInDB(c: Context, orderId: string, data: Partial
     ['endDate', data.endDate],
     ['status', data.status],
     ['paymentMethod', data.paymentMethod],
+    ['payment_provider', data.paymentProvider ?? data.payment_provider],
     ['totalAmount', data.totalAmount],
     ['depositAmount', data.depositAmount],
     ['contractId', data.contractId],
@@ -929,6 +948,7 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
 
   await db.prepare(sql).bind(...insertValues).run()
   const inserted = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
+  await syncSquareCatalogItem(c, inserted).catch(error => console.error(JSON.stringify({ message: 'Square catalog sync skipped', error: error instanceof Error ? error.message : String(error), deviceId })))
   return inserted
 }
 
@@ -976,7 +996,9 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   const values = setEntries.map(([, v]) => v)
 
   await db.prepare(`UPDATE devices SET ${setClause} WHERE id = ?`).bind(...values, deviceId).run()
-  return db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
+  const updated = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
+  await syncSquareCatalogItem(c, updated).catch(error => console.error(JSON.stringify({ message: 'Square catalog update skipped', error: error instanceof Error ? error.message : String(error), deviceId })))
+  return updated
 }
 
 export async function deleteDevice(c: Context, deviceId: string): Promise<boolean> {

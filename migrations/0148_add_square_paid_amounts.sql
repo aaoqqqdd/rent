@@ -3,9 +3,5 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-export * from './staff/createContract';
-export * from './public/signContract';
-export * from './admin/saveSettings';
-export * from './staff/cancelContract';
-export * from './coupons';
-export * from './squarePayments';
+ALTER TABLE payments ADD COLUMN square_paid_amount REAL NOT NULL DEFAULT 0;
+ALTER TABLE balance_topups ADD COLUMN square_paid_amount REAL NOT NULL DEFAULT 0;

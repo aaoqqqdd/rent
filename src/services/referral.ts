@@ -11,8 +11,27 @@ import { generateReferenceNumber } from '../lib/reference'
 import { getSystemSettings } from '../settings/systemSettings'
 import { logError } from './audit'
 import { recordFinancialLedgerEntry } from './ledger'
+import { createNotification, ensureNotificationsTable } from './notifications'
+import { getReferralRiskAssessment } from './risk'
 
 import { nanoid } from 'nanoid'
+
+async function notifyReferralRiskReview(c: Context, referralId: string, rewardId: string, message: string): Promise<void> {
+  await ensureNotificationsTable(c)
+  const admins = ((await c.env.RENT.prepare("SELECT id FROM users WHERE role = 'ADMIN' AND status = 'active'").all()) as any).results || []
+  await Promise.all((admins as any[]).map(async (admin) => {
+    const dedupeKey = `referral_risk_review:${rewardId}`
+    const exists = await c.env.RENT.prepare('SELECT id FROM notifications WHERE recipient_id = ? AND dedupe_key = ?').bind(admin.id, dedupeKey).first()
+    if (exists) return
+    await createNotification(c, {
+      recipientId: admin.id,
+      type: 'referral_risk_review',
+      title: '推荐奖励待风险审核',
+      message: `${message}（推荐关系 ${referralId}，请前往异常任务中心处理。）`,
+      dedupeKey,
+    })
+  }))
+}
 
 export async function ensureReferralProgram(c: Context): Promise<void> {
   await c.env.RENT.batch([
@@ -72,7 +91,7 @@ export async function syncReferralOrderState(c: Context, orderId: string, rental
   await ensureReferralProgram(c)
   const order = await c.env.RENT.prepare('SELECT id, userId, payment_status, totalAmount, depositAmount FROM orders WHERE id = ?').bind(orderId).first() as any
   if (!order) return
-  const referral = await c.env.RENT.prepare("SELECT id FROM referrals WHERE referee_customer_id = ? AND status IN ('REGISTERED','QUALIFYING','QUALIFIED')").bind(order.userId).first() as any
+  const referral = await c.env.RENT.prepare("SELECT id, referrer_customer_id, referee_customer_id FROM referrals WHERE referee_customer_id = ? AND status IN ('REGISTERED','QUALIFYING','QUALIFIED')").bind(order.userId).first() as any
   if (!referral) return
   if (rentalStatus === 'CANCELLED') {
     await c.env.RENT.prepare("UPDATE referrals SET status = 'CANCELLED', invalid_reason = 'ORDER_CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(referral.id).run()
@@ -83,24 +102,37 @@ export async function syncReferralOrderState(c: Context, orderId: string, rental
     const rentAmount = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
     const rate = Math.min(100, Math.max(0, Number(getSystemSettings().referralSettings.defaultRate || 0))) / 100
     const rewardAmount = Number((rentAmount * rate).toFixed(2))
-    await c.env.RENT.batch([
-      c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFIED', qualifying_order_id = ?, qualified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id),
-      c.env.RENT.prepare("INSERT OR IGNORE INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_amount, status, reason) SELECT ?, ?, r.id, r.referrer_customer_id, ?, ?, 'PENDING', '订单已完成，等待结算期满后发放' FROM referrals r WHERE r.id = ?").bind(`rrw-${nanoid(16)}`, generateReferenceNumber('RFD').replace(/^RFD-/, 'RRW-'), orderId, rewardAmount, referral.id),
+    const [referrerRisk, refereeRisk] = await Promise.all([
+      getReferralRiskAssessment(c, String(referral.referrer_customer_id)),
+      getReferralRiskAssessment(c, String(referral.referee_customer_id)),
     ])
+    const requiresReview = referrerRisk.requiresReview || refereeRisk.requiresReview
+    const rewardStatus = requiresReview ? 'PENDING_REVIEW' : 'PENDING'
+    const rewardReason = requiresReview
+      ? `风险审核：推荐人 ${referrerRisk.score} 分，被推荐人 ${refereeRisk.score} 分，需管理员审核后发放`
+      : '订单已完成，等待结算期满后发放'
+    const rewardId = `rrw-${nanoid(16)}`
+    const batchResults = await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFIED', qualifying_order_id = ?, qualified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id),
+      c.env.RENT.prepare("INSERT OR IGNORE INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_amount, status, reason) SELECT ?, ?, r.id, r.referrer_customer_id, ?, ?, ?, ? FROM referrals r WHERE r.id = ?").bind(rewardId, generateReferenceNumber('RFD').replace(/^RFD-/, 'RRW-'), orderId, rewardAmount, rewardStatus, rewardReason, referral.id),
+      ...(requiresReview ? [c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, reason, metadata) VALUES (?, ?, 'RISK_REVIEW_REQUIRED', ?, ?)").bind(`rfa-${nanoid(16)}`, referral.id, rewardReason, JSON.stringify({ rewardId, referrerScore: referrerRisk.score, refereeScore: refereeRisk.score }))] : []),
+    ])
+    if (requiresReview && Number((batchResults as any[])?.[1]?.meta?.changes ?? (batchResults as any[])?.[1]?.changes ?? 0)) {
+      await notifyReferralRiskReview(c, referral.id, rewardId, rewardReason)
+    }
   }
 }
 
 // Reverses a reward that hasn't been paid out yet (PENDING) or claws back one
 // that already was (AVAILABLE, credited to commission_balance). Safe to call
 // on orders with no reward at all (no-op). Idempotent: a second call finds
-// the reward already CANCELLED and does nothing further. Uses 'CANCELLED'
-// (not e.g. 'REVOKED') to match the status values allowed by the CHECK
-// constraint in migrations/0079_referral_program.sql.
+// the reward already CANCELLED and does nothing further. PENDING_REVIEW is
+// included so a reward waiting for risk review can still be cancelled.
 export async function revokeReferralRewardForOrder(c: Context, orderId: string, reason: string): Promise<void> {
-  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, status, referral_id FROM referral_rewards WHERE order_id = ? AND status IN ('PENDING','AVAILABLE')").bind(orderId).first() as any
+  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, status, referral_id FROM referral_rewards WHERE order_id = ? AND status IN ('PENDING','PENDING_REVIEW','AVAILABLE')").bind(orderId).first() as any
   if (!reward) return
   const wasAvailable = reward.status === 'AVAILABLE'
-  const result = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP, reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING','AVAILABLE')").bind(reason, reward.id).run() as any
+  const result = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'CANCELLED', cancelled_at = CURRENT_TIMESTAMP, reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING','PENDING_REVIEW','AVAILABLE')").bind(reason, reward.id).run() as any
   if (!Number(result.meta?.changes ?? result.changes ?? 0)) return
   if (wasAvailable) {
     await c.env.RENT.prepare('UPDATE users SET commission_balance = MAX(0, commission_balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(reward.reward_amount, reward.customer_id).run()
@@ -112,11 +144,11 @@ export async function revokeReferralRewardForOrder(c: Context, orderId: string, 
 // Moves rewards from PENDING to AVAILABLE once the qualifying order has
 // cleared the settlement/chargeback window (referralSettings.settlementPeriod
 // days past qualification), skipping any order with an open Stripe dispute.
-// Flips one PENDING reward to AVAILABLE and credits the referrer's commission
+// Flips one pending reward to AVAILABLE and credits the referrer's commission
 // balance. Shared by the scheduled settlement job and the admin "release now"
-// override. Returns false if the reward wasn't PENDING (already handled).
+// override. Returns false if the reward was already handled.
 async function markReferralRewardAvailable(c: Context, reward: { id: string; customer_id: string; reward_amount: number; referral_id: string }, actorId?: string | null): Promise<boolean> {
-  const claimed = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'AVAILABLE', available_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'PENDING'").bind(reward.id).run() as any
+  const claimed = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'AVAILABLE', available_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING','PENDING_REVIEW')").bind(reward.id).run() as any
   if (!Number(claimed.meta?.changes ?? claimed.changes ?? 0)) return false
   await c.env.RENT.prepare('UPDATE users SET commission_balance = commission_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(reward.reward_amount, reward.customer_id).run()
   await recordFinancialLedgerEntry(c, { entryType: 'REFERRAL_REWARD', amount: Number(reward.reward_amount), customerId: reward.customer_id, sourceType: 'REFERRAL_REWARD', sourceId: reward.id, description: '推荐奖励结算到账', createdBy: actorId || null })
@@ -127,7 +159,7 @@ async function markReferralRewardAvailable(c: Context, reward: { id: string; cus
 export async function releaseQualifiedReferralRewards(c: Context): Promise<number> {
   const settlementDays = Math.max(1, Math.floor(Number(getSystemSettings().referralSettings.settlementPeriod || 30)))
   const rows = (await c.env.RENT.prepare(`
-    SELECT rw.id, rw.customer_id, rw.reward_amount, rw.referral_id
+    SELECT rw.id, rw.customer_id, rw.reward_amount, rw.referral_id, r.referee_customer_id
     FROM referral_rewards rw
     JOIN referrals r ON r.id = rw.referral_id
     WHERE rw.status = 'PENDING'
@@ -142,6 +174,21 @@ export async function releaseQualifiedReferralRewards(c: Context): Promise<numbe
   `).bind(`-${settlementDays} days`).all()).results || []
   let released = 0
   for (const row of rows as any[]) {
+    const [referrerRisk, refereeRisk] = await Promise.all([
+      getReferralRiskAssessment(c, String(row.customer_id)),
+      getReferralRiskAssessment(c, String(row.referee_customer_id)),
+    ])
+    if (referrerRisk.requiresReview || refereeRisk.requiresReview) {
+      const reviewReason = `风险审核：推荐人 ${referrerRisk.score} 分，被推荐人 ${refereeRisk.score} 分，需管理员审核后发放`
+      const reviewResult = await c.env.RENT.prepare("UPDATE referral_rewards SET status = 'PENDING_REVIEW', reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'PENDING'")
+        .bind(reviewReason, row.id).run() as any
+      if (Number(reviewResult.meta?.changes ?? reviewResult.changes ?? 0)) {
+        await c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, reason, metadata) VALUES (?, ?, 'RISK_REVIEW_REQUIRED', ?, ?)")
+          .bind(`rfa-${nanoid(16)}`, row.referral_id, reviewReason, JSON.stringify({ rewardId: row.id, referrerScore: referrerRisk.score, refereeScore: refereeRisk.score })).run()
+        await notifyReferralRiskReview(c, String(row.referral_id), String(row.id), reviewReason)
+      }
+      continue
+    }
     if (await markReferralRewardAvailable(c, row)) released++
   }
   return released
@@ -151,7 +198,7 @@ export async function releaseQualifiedReferralRewards(c: Context): Promise<numbe
 // settlement-period wait (but not the open-dispute rule, callers should check
 // separately if they want to warn the admin about that).
 export async function releaseReferralRewardNow(c: Context, rewardId: string, actorId: string): Promise<boolean> {
-  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, referral_id FROM referral_rewards WHERE id = ? AND status = 'PENDING'").bind(rewardId).first() as any
+  const reward = await c.env.RENT.prepare("SELECT id, customer_id, reward_amount, referral_id FROM referral_rewards WHERE id = ? AND status IN ('PENDING','PENDING_REVIEW')").bind(rewardId).first() as any
   if (!reward) return false
   return markReferralRewardAvailable(c, reward, actorId)
 }

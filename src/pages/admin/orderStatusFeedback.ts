@@ -28,6 +28,16 @@ export function renderOrderStatusFeedback(): string {
               window.siteConfirm('确定要跳过归还验机并强制将此订单标记为已完成吗？此操作会释放设备，且不能撤销。', () => form.requestSubmit());
               return;
             }
+            const statusField = form.querySelector('[name="status"]');
+            if (statusField && ['suspended', 'cancelled'].includes(statusField.value) && !form.querySelector('[name="reason"]')) {
+              const reason = window.prompt('请填写暂停/取消原因（将随通知发送给客户）：');
+              if (!reason || !reason.trim()) return;
+              const hidden = document.createElement('input');
+              hidden.type = 'hidden';
+              hidden.name = 'reason';
+              hidden.value = reason.trim().slice(0, 300);
+              form.appendChild(hidden);
+            }
             const button = form.querySelector('button[type="submit"]');
             button.disabled = true;
             button.setAttribute('aria-busy', 'true');

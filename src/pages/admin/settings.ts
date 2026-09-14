@@ -5,12 +5,20 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = []) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
+  const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+  const ts = {
+    configured: Boolean(turnstile.configured),
+    usingEnvFallback: Boolean(turnstile.usingEnvFallback),
+    siteKey: turnstile.siteKey || '',
+    secretKeyMasked: turnstile.secretKeyMasked || '',
+  };
   const nc = {
+    emailProvider: notify.emailProvider || 'resend',
     resend: notify.resend || { from: '', apiKeyMasked: '', configured: false, usingEnvFallback: false },
-    telegram: notify.telegram || { enabled: false, chatId: '', botTokenMasked: '', configured: false },
-    serverChan: notify.serverChan || { enabled: false, sendKeyMasked: '', configured: false },
+    brevo: notify.brevo || { from: '', apiKeyMasked: '', configured: false },
+    mailersend: notify.mailersend || { from: '', apiKeyMasked: '', configured: false },
     webhook: notify.webhook || { enabled: false, urlMasked: '', configured: false },
   };
 
@@ -47,7 +55,25 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">PUSH</span><div><h3>通知渠道</h3><p>Resend 用于发送所有系统邮件（验证、收据、合同、退款、协议更新等）。Telegram / Server酱 / Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。</p></div></div>
+          <div class="form-section-title"><span class="mono">BOT</span><div><h3>Cloudflare Turnstile 人机验证</h3><p>当前状态：${ts.configured ? (ts.usingEnvFallback ? '已配置（使用环境变量 TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY）' : '已配置') : '未配置'}。用于注册页拦截机器人。在 Cloudflare 控制台「Turnstile」中创建站点获取密钥。Secret Key 加密保存，留空表示保留原值。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="turnstileSiteKey">Site Key</label><input class="form-control" id="turnstileSiteKey" name="turnstileSiteKey" value="${ts.siteKey}" placeholder="0x4AAAAAAA..."></div>
+            <div class="form-group"><label class="form-label" for="turnstileSecretKey">Secret Key</label><input class="form-control" type="password" id="turnstileSecretKey" name="turnstileSecretKey" placeholder="${ts.secretKeyMasked || '0x4AAAAAAA...'}" autocomplete="new-password"></div>
+          </div>
+          <div class="checkbox-group"><input type="checkbox" id="clearTurnstileConfig" name="clearTurnstileConfig"><label for="clearTurnstileConfig">清除已保存的 Turnstile 配置（改回使用环境变量）</label></div>
+        </section>
+
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">PUSH</span><div><h3>通知渠道</h3><p>邮件服务商用于发送所有系统邮件（验证、收据、合同、退款、协议更新等），Resend / Brevo / MailerSend 三选一，都提供免费额度。通用 Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。</p></div></div>
+          <div class="form-group">
+            <label class="form-label" for="emailProvider">当前生效的邮件服务商</label>
+            <select class="form-control" id="emailProvider">
+              <option value="resend" ${nc.emailProvider === 'resend' ? 'selected' : ''}>Resend（每月 3000 封 / 每天 100 封免费）</option>
+              <option value="brevo" ${nc.emailProvider === 'brevo' ? 'selected' : ''}>Brevo（每天 300 封免费）</option>
+              <option value="mailersend" ${nc.emailProvider === 'mailersend' ? 'selected' : ''}>MailerSend（每月 3000 封免费）</option>
+            </select>
+            <small class="form-text">下面三组凭据可以都填写，实际发信只会使用这里选中的服务商。</small>
+          </div>
 
           <h4 class="form-subheading">Resend 邮件 API</h4>
           <p class="form-text">当前状态：${nc.resend.configured ? (nc.resend.usingEnvFallback ? '已配置（使用环境变量 RESEND_API_KEY）' : '已配置') : '未配置'}</p>
@@ -57,20 +83,21 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           </div>
           <div class="checkbox-group"><input type="checkbox" id="resendClear"><label for="resendClear">清除已保存的 Resend API Key</label></div>
 
-          <h4 class="form-subheading">Telegram 推送</h4>
-          <div class="checkbox-group"><input type="checkbox" id="telegramEnabled" ${nc.telegram.enabled ? 'checked' : ''}><label for="telegramEnabled">启用 Telegram 推送</label></div>
-          <p class="form-text">当前状态：${nc.telegram.configured ? '已配置' : '未配置'}。用 @BotFather 创建 Bot，Chat ID 可向 @userinfobot 或群组获取。</p>
+          <h4 class="form-subheading">Brevo 邮件 API</h4>
+          <p class="form-text">当前状态：${nc.brevo.configured ? '已配置' : '未配置'}。在 Brevo 后台「SMTP & API」页面创建 API Key。</p>
           <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="telegramBotToken">Bot Token</label><input class="form-control" type="password" id="telegramBotToken" placeholder="${nc.telegram.botTokenMasked || '123456:ABC-DEF...'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="telegramChatId">Chat ID</label><input class="form-control" type="text" id="telegramChatId" value="${nc.telegram.chatId || ''}" placeholder="-1001234567890"></div>
+            <div class="form-group"><label class="form-label" for="brevoApiKey">Brevo API Key</label><input class="form-control" type="password" id="brevoApiKey" placeholder="${nc.brevo.apiKeyMasked || 'xkeysib-...'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="brevoFrom">发件邮箱</label><input class="form-control" type="text" id="brevoFrom" value="${nc.brevo.from || ''}" placeholder="PC Rental &lt;noreply@example.com&gt;"></div>
           </div>
-          <div class="checkbox-group"><input type="checkbox" id="telegramClear"><label for="telegramClear">清除 Telegram 配置</label></div>
+          <div class="checkbox-group"><input type="checkbox" id="brevoClear"><label for="brevoClear">清除已保存的 Brevo API Key</label></div>
 
-          <h4 class="form-subheading">Server酱 / PushPlus</h4>
-          <div class="checkbox-group"><input type="checkbox" id="serverChanEnabled" ${nc.serverChan.enabled ? 'checked' : ''}><label for="serverChanEnabled">启用 Server酱 / PushPlus</label></div>
-          <p class="form-text">当前状态：${nc.serverChan.configured ? '已配置' : '未配置'}。填 Server酱 SendKey（SCT 开头）或 PushPlus token（32 位）。</p>
-          <div class="form-group"><label class="form-label" for="serverChanSendKey">SendKey / token</label><input class="form-control" type="password" id="serverChanSendKey" placeholder="${nc.serverChan.sendKeyMasked || 'SCTxxxxx 或 pushplus token'}" autocomplete="new-password"></div>
-          <div class="checkbox-group"><input type="checkbox" id="serverChanClear"><label for="serverChanClear">清除 Server酱 / PushPlus 配置</label></div>
+          <h4 class="form-subheading">MailerSend 邮件 API</h4>
+          <p class="form-text">当前状态：${nc.mailersend.configured ? '已配置' : '未配置'}。发件邮箱需先在 MailerSend 完成域名验证。</p>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="mailersendApiKey">MailerSend API Key</label><input class="form-control" type="password" id="mailersendApiKey" placeholder="${nc.mailersend.apiKeyMasked || 'mlsn....'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="mailersendFrom">发件邮箱</label><input class="form-control" type="text" id="mailersendFrom" value="${nc.mailersend.from || ''}" placeholder="PC Rental &lt;noreply@example.com&gt;"></div>
+          </div>
+          <div class="checkbox-group"><input type="checkbox" id="mailersendClear"><label for="mailersendClear">清除已保存的 MailerSend API Key</label></div>
 
           <h4 class="form-subheading">通用 Webhook</h4>
           <div class="checkbox-group"><input type="checkbox" id="webhookEnabled" ${nc.webhook.enabled ? 'checked' : ''}><label for="webhookEnabled">启用通用 Webhook</label></div>
@@ -82,7 +109,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <button type="button" class="button button-secondary" id="notifyChannelsTest">发送测试推送</button>
             <span class="form-text" id="notifyChannelsTestResult"></span>
           </div>
-          <p class="form-text">测试推送只发到 Telegram / Server酱 / Webhook，不发邮件。请先保存配置再测试。</p>
+          <p class="form-text">请先保存配置再测试。</p>
         </section>
 
         <section class="form-section">
@@ -91,13 +118,19 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">PAY</span><div><h3>支付方式配置</h3><p>启用或停用面向客户的支付渠道，并设置信用卡手续费。</p></div></div>
+          <div class="form-section-title"><span class="mono">PAY</span><div><h3>支付方式配置</h3><p>启用或停用面向客户的支付渠道，并设置支付手续费。</p></div></div>
           <div class="form-group">
             <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
             <input class="form-control" id="processingFeeRate" name="processingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.processingFeeRate ?? 0.025) * 100).toFixed(2)}">
             <small class="form-text">Stripe 手续费按租金及立即支付的时段服务费（不含押金）计算；押金预授权、释放和长期押金扣款不加手续费。</small>
           </div>
+          <div class="form-group">
+            <label class="form-label" for="squareProcessingFeeRate">Square 礼品卡手续费比例（%）</label>
+            <input class="form-control" id="squareProcessingFeeRate" name="squareProcessingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.squareProcessingFeeRate ?? 0.022) * 100).toFixed(2)}">
+            <small class="form-text">Square 礼品卡手续费按租金及服务费（不含押金）计算；审核通过后实际提交 Square 时按此比例收取。</small>
+          </div>
           <div class="checkbox-group"><input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}><label for="enableStripe">启用 Stripe 信用卡支付</label></div>
+          <div class="checkbox-group"><input type="checkbox" id="enableSquare" name="enableSquare" ${settings.paymentMethods.square ? 'checked' : ''}><label for="enableSquare">启用 Square 礼品卡支付</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableBankTransfer" name="enableBankTransfer" ${settings.paymentMethods.bankTransfer ? 'checked' : ''}><label for="enableBankTransfer">启用银行转账</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableBalancePayment" name="enableBalancePayment" ${settings.paymentMethods.balancePayment ? 'checked' : ''}><label for="enableBalancePayment">启用余额支付</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableAlipay" name="enableAlipay" ${settings.paymentMethods.alipay ? 'checked' : ''}><label for="enableAlipay">启用支付宝人民币付款</label></div>
@@ -112,6 +145,20 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <div class="form-group"><label class="form-label" for="stripeWebhookSecret">Webhook Signing Secret</label><input class="form-control" type="password" id="stripeWebhookSecret" name="stripeWebhookSecret" placeholder="${stripe.webhookSecretMasked || 'whsec_...'}" autocomplete="new-password"></div>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="clearStripeConfig" name="clearStripeConfig"><label for="clearStripeConfig">清除已保存的 Stripe 配置</label></div>
+        </section>
+
+        <section class="form-section">
+          <div class="form-section-title"><span class="mono">SQUARE</span><div><h3>Square API 配置</h3><p>当前状态：${square.configured ? `已配置（${square.environment === 'production' ? '正式环境' : '沙盒环境'}）` : '未配置'}。用于 Square 礼品卡付款、客户资料和设备商品同步。Webhook 地址：<code>/webhooks/square</code>。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="squareApplicationId">Application ID</label><input class="form-control" id="squareApplicationId" value="${escAttr(square.applicationId)}" placeholder="sq0idp-..."></div>
+            <div class="form-group"><label class="form-label" for="squareLocationId">Location ID</label><input class="form-control" id="squareLocationId" value="${escAttr(square.locationId)}" placeholder="L..."></div>
+            <div class="form-group"><label class="form-label" for="squareAccessToken">Access Token</label><input class="form-control" type="password" id="squareAccessToken" placeholder="${square.accessTokenMasked || '留空保留现有值'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="squareEnvironment">环境</label><select class="form-control" id="squareEnvironment"><option value="sandbox" ${square.environment !== 'production' ? 'selected' : ''}>Sandbox 沙盒</option><option value="production" ${square.environment === 'production' ? 'selected' : ''}>Production 正式</option></select></div>
+            <div class="form-group"><label class="form-label" for="squareWebhookUrl">Webhook URL</label><div style="display:flex;gap:8px;align-items:center"><input class="form-control" type="url" id="squareWebhookUrl" value="${escAttr(square.webhookUrl)}" readonly aria-describedby="squareWebhookUrlHelp"><button type="button" class="button button-secondary" id="copySquareWebhookUrl">复制</button></div><small class="form-text" id="squareWebhookUrlHelp">系统已自动生成，点击“复制”后粘贴到 Square Developer Console 的 Webhooks 设置。</small></div>
+            <div class="form-group"><label class="form-label" for="squareWebhookSignatureKey">Webhook Signature Key（可选）</label><input class="form-control" type="password" id="squareWebhookSignatureKey" placeholder="${square.webhookSignatureKeyMasked || '留空保留现有值'}" autocomplete="new-password"></div>
+          </div>
+          <p class="form-text">Square Web Payments SDK 只会把礼品卡令牌发送到本站；Access Token 和 Webhook Signature Key 会加密保存。</p>
+          <div class="checkbox-group"><input type="checkbox" id="clearSquareConfig"><label for="clearSquareConfig">清除已保存的 Square 配置</label></div>
         </section>
 
         <section class="form-section">
@@ -161,17 +208,33 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           priceStrategy: formData.get('priceStrategy'),
           paymentMethods: {
             stripe: formData.has('enableStripe'),
+            square: formData.has('enableSquare'),
             bankTransfer: formData.has('enableBankTransfer'),
             balancePayment: formData.has('enableBalancePayment'),
             alipay: formData.has('enableAlipay'),
             wechat: formData.has('enableWechat'),
             processingFeeRate: Number(formData.get('processingFeeRate') || 0) / 100,
+            squareProcessingFeeRate: Number(formData.get('squareProcessingFeeRate') || 0) / 100,
           },
           stripeConfig: {
             publishableKey: formData.get('stripePublishableKey'),
             secretKey: formData.get('stripeSecretKey'),
             webhookSecret: formData.get('stripeWebhookSecret'),
             clear: formData.has('clearStripeConfig'),
+          },
+          squareConfig: {
+            applicationId: inputValue('squareApplicationId'),
+            locationId: inputValue('squareLocationId'),
+            accessToken: inputValue('squareAccessToken'),
+            environment: inputValue('squareEnvironment') || 'sandbox',
+            webhookUrl: inputValue('squareWebhookUrl'),
+            webhookSignatureKey: inputValue('squareWebhookSignatureKey'),
+            clear: document.getElementById('clearSquareConfig')?.checked || false,
+          },
+          turnstileConfig: {
+            siteKey: formData.get('turnstileSiteKey'),
+            secretKey: formData.get('turnstileSecretKey'),
+            clear: formData.has('clearTurnstileConfig'),
           },
           emailTransport: {
             host: inputValue('smtpHost'),
@@ -183,16 +246,16 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             clear: document.getElementById('clearEmailTransport')?.checked || false,
           },
           notifyChannels: {
+            emailProvider: document.getElementById('emailProvider').value,
             resendApiKey: document.getElementById('resendApiKey').value,
             resendFrom: document.getElementById('resendFrom').value,
             resendClear: document.getElementById('resendClear').checked,
-            telegramEnabled: document.getElementById('telegramEnabled').checked,
-            telegramBotToken: document.getElementById('telegramBotToken').value,
-            telegramChatId: document.getElementById('telegramChatId').value,
-            telegramClear: document.getElementById('telegramClear').checked,
-            serverChanEnabled: document.getElementById('serverChanEnabled').checked,
-            serverChanSendKey: document.getElementById('serverChanSendKey').value,
-            serverChanClear: document.getElementById('serverChanClear').checked,
+            brevoApiKey: document.getElementById('brevoApiKey').value,
+            brevoFrom: document.getElementById('brevoFrom').value,
+            brevoClear: document.getElementById('brevoClear').checked,
+            mailersendApiKey: document.getElementById('mailersendApiKey').value,
+            mailersendFrom: document.getElementById('mailersendFrom').value,
+            mailersendClear: document.getElementById('mailersendClear').checked,
             webhookEnabled: document.getElementById('webhookEnabled').checked,
             webhookUrl: document.getElementById('webhookUrl').value,
             webhookClear: document.getElementById('webhookClear').checked,
@@ -268,6 +331,26 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           console.error('Error saving settings:', error);
           alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。'));
         });
+        });
+      })();
+    </script>
+    <script>
+      (function() {
+        const input = document.getElementById('squareWebhookUrl');
+        const button = document.getElementById('copySquareWebhookUrl');
+        if (!input || !button || button.dataset.ready === 'true') return;
+        button.dataset.ready = 'true';
+        button.addEventListener('click', async function() {
+          try {
+            await navigator.clipboard.writeText(input.value);
+          } catch (_) {
+            input.focus();
+            input.select();
+            document.execCommand('copy');
+          }
+          const original = button.textContent;
+          button.textContent = '已复制';
+          window.setTimeout(() => { button.textContent = original || '复制'; }, 1500);
         });
       })();
     </script>

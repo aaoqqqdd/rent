@@ -3,23 +3,27 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 通知渠道配置：Resend 邮件 API Key + 若干推送渠道（Telegram / Server酱·PushPlus /
-// 通用 Webhook）。密钥用 SETTINGS_ENCRYPTION_KEY 加密后存 systemSettings 表，
-// 与 stripe.ts / emailConfig.ts 完全同一套做法。运行期通过 resolveResendCredentials
-// 取邮件凭据（后台配置优先，回落到 env），dispatchChannelAlert 把一条告警广播到
-// 所有已启用的推送渠道，尽力而为、绝不抛错。
+// 通知渠道配置：邮件发送（Resend / Brevo / MailerSend 三选一）+ 通用推送 Webhook。
+// 密钥用 SETTINGS_ENCRYPTION_KEY 加密后存 systemSettings 表，
+// 与 stripe.ts / emailConfig.ts 完全同一套做法。运行期通过 resolveEmailCredentials
+// 取当前生效的邮件服务商凭据（后台配置优先，回落到 env），sendTransactionalEmail
+// 统一发信入口，dispatchChannelAlert 把一条告警广播到已启用的推送渠道，
+// 尽力而为、绝不抛错。
 
 import type { Context } from 'hono'
 import { getSystemSettings } from './settings/systemSettings'
 
+export type EmailProvider = 'resend' | 'brevo' | 'mailersend'
+const EMAIL_PROVIDERS: EmailProvider[] = ['resend', 'brevo', 'mailersend']
+
 type StoredChannelConfig = {
+  emailProvider?: EmailProvider
   resendApiKey?: string
   resendFrom?: string
-  telegramEnabled?: boolean
-  telegramBotToken?: string
-  telegramChatId?: string
-  serverChanEnabled?: boolean
-  serverChanSendKey?: string
+  brevoApiKey?: string
+  brevoFrom?: string
+  mailersendApiKey?: string
+  mailersendFrom?: string
   webhookEnabled?: boolean
   webhookUrl?: string
 }
@@ -72,30 +76,31 @@ const maskUrl = (value: string) => {
 
 export async function getNotifyChannelsSummary(c: Context) {
   const stored = await readStored(c)
-  const [resendApiKey, telegramBotToken, serverChanSendKey, webhookUrl] = await Promise.all([
+  const [resendApiKey, brevoApiKey, mailersendApiKey, webhookUrl] = await Promise.all([
     safeDecrypt(c, stored.resendApiKey),
-    safeDecrypt(c, stored.telegramBotToken),
-    safeDecrypt(c, stored.serverChanSendKey),
+    safeDecrypt(c, stored.brevoApiKey),
+    safeDecrypt(c, stored.mailersendApiKey),
     safeDecrypt(c, stored.webhookUrl),
   ])
   const envResend = String((c.env as any).RESEND_API_KEY || '').trim()
+  const activeProvider = stored.emailProvider || 'resend'
   return {
+    emailProvider: activeProvider,
     resend: {
       from: stored.resendFrom || '',
       apiKeyMasked: mask(resendApiKey),
       configured: Boolean(resendApiKey || envResend),
       usingEnvFallback: !resendApiKey && Boolean(envResend),
     },
-    telegram: {
-      enabled: Boolean(stored.telegramEnabled),
-      chatId: stored.telegramChatId || '',
-      botTokenMasked: mask(telegramBotToken),
-      configured: Boolean(telegramBotToken && stored.telegramChatId),
+    brevo: {
+      from: stored.brevoFrom || '',
+      apiKeyMasked: mask(brevoApiKey),
+      configured: Boolean(brevoApiKey),
     },
-    serverChan: {
-      enabled: Boolean(stored.serverChanEnabled),
-      sendKeyMasked: mask(serverChanSendKey),
-      configured: Boolean(serverChanSendKey),
+    mailersend: {
+      from: stored.mailersendFrom || '',
+      apiKeyMasked: mask(mailersendApiKey),
+      configured: Boolean(mailersendApiKey),
     },
     webhook: {
       enabled: Boolean(stored.webhookEnabled),
@@ -114,7 +119,14 @@ export async function saveNotifyChannels(c: Context, input: Record<string, any>)
   const current = await readStored(c)
   const next: StoredChannelConfig = { ...current }
 
-  // Resend 邮件 API
+  // 邮件服务商选择
+  if (input.emailProvider !== undefined) {
+    const provider = String(input.emailProvider || '').trim() as EmailProvider
+    if (provider && !EMAIL_PROVIDERS.includes(provider)) throw new Error('未知的邮件服务商')
+    next.emailProvider = provider || undefined
+  }
+
+  // Resend
   const resendKeyPlain = String(input.resendApiKey || '').trim()
   if (resendKeyPlain) next.resendApiKey = await encrypt(c, resendKeyPlain)
   if (input.resendClear === true) next.resendApiKey = undefined
@@ -124,23 +136,25 @@ export async function saveNotifyChannels(c: Context, input: Record<string, any>)
     next.resendFrom = from || undefined
   }
 
-  // Telegram
-  next.telegramEnabled = Boolean(input.telegramEnabled)
-  const tgTokenPlain = String(input.telegramBotToken || '').trim()
-  if (tgTokenPlain) {
-    if (!/^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(tgTokenPlain)) throw new Error('Telegram Bot Token 格式不正确')
-    next.telegramBotToken = await encrypt(c, tgTokenPlain)
+  // Brevo（原 Sendinblue）
+  const brevoKeyPlain = String(input.brevoApiKey || '').trim()
+  if (brevoKeyPlain) next.brevoApiKey = await encrypt(c, brevoKeyPlain)
+  if (input.brevoClear === true) next.brevoApiKey = undefined
+  if (input.brevoFrom !== undefined) {
+    const from = String(input.brevoFrom || '').trim().slice(0, 200)
+    if (from && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from) && !/<[^\s@]+@[^\s@]+\.[^\s@]+>/.test(from)) throw new Error('Brevo 发件邮箱格式不正确')
+    next.brevoFrom = from || undefined
   }
-  if (input.telegramChatId !== undefined) next.telegramChatId = String(input.telegramChatId || '').trim().slice(0, 64) || undefined
-  if (input.telegramClear === true) { next.telegramBotToken = undefined; next.telegramChatId = undefined; next.telegramEnabled = false }
-  if (next.telegramEnabled && !(next.telegramBotToken && next.telegramChatId)) throw new Error('启用 Telegram 前请填写 Bot Token 和 Chat ID')
 
-  // Server酱 / PushPlus
-  next.serverChanEnabled = Boolean(input.serverChanEnabled)
-  const scKeyPlain = String(input.serverChanSendKey || '').trim()
-  if (scKeyPlain) next.serverChanSendKey = await encrypt(c, scKeyPlain)
-  if (input.serverChanClear === true) { next.serverChanSendKey = undefined; next.serverChanEnabled = false }
-  if (next.serverChanEnabled && !next.serverChanSendKey) throw new Error('启用 Server酱 / PushPlus 前请填写 SendKey / token')
+  // MailerSend
+  const mailersendKeyPlain = String(input.mailersendApiKey || '').trim()
+  if (mailersendKeyPlain) next.mailersendApiKey = await encrypt(c, mailersendKeyPlain)
+  if (input.mailersendClear === true) next.mailersendApiKey = undefined
+  if (input.mailersendFrom !== undefined) {
+    const from = String(input.mailersendFrom || '').trim().slice(0, 200)
+    if (from && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from) && !/<[^\s@]+@[^\s@]+\.[^\s@]+>/.test(from)) throw new Error('MailerSend 发件邮箱格式不正确')
+    next.mailersendFrom = from || undefined
+  }
 
   // 通用 Webhook
   next.webhookEnabled = Boolean(input.webhookEnabled)
@@ -158,20 +172,100 @@ export async function saveNotifyChannels(c: Context, input: Record<string, any>)
   ;(c as any).__notifyChannelConfig = next
 }
 
-// 邮件凭据：后台配置优先，回落到 env（RESEND_API_KEY / EMAIL_FROM），
-// 发件人再回落到公司邮箱。任何一步失败都不抛错，只当作未配置处理。
-export async function resolveResendCredentials(c: Context): Promise<{ apiKey: string; from: string }> {
-  let apiKey = ''
-  let from = ''
+// 邮件凭据：后台已配置的服务商优先（未显式选择时按 resend → brevo → mailersend
+// 顺序取第一个已配置的），resend 再回落到 env（RESEND_API_KEY / EMAIL_FROM），
+// 发件人最后回落到公司邮箱。任何一步失败都不抛错，只当作未配置处理。
+export async function resolveEmailCredentials(c: Context): Promise<{ provider: EmailProvider; apiKey: string; from: string }> {
+  let stored: StoredChannelConfig = {}
+  try { stored = await readStored(c) } catch { /* fall through to env */ }
+
+  // A provider selected in the admin UI is authoritative.  Do not silently
+  // send through an unrelated Resend environment variable when, for example,
+  // Brevo was selected but its key is missing or cannot be decrypted.
+  const selectedProvider = stored.emailProvider
+  const candidates: EmailProvider[] = selectedProvider ? [selectedProvider] : EMAIL_PROVIDERS
+  for (const provider of candidates) {
+    if (provider === 'resend') {
+      const apiKey = await safeDecrypt(c, stored.resendApiKey)
+      if (apiKey) return { provider, apiKey, from: await resolveFrom(c, stored.resendFrom) }
+    } else if (provider === 'brevo') {
+      const apiKey = await safeDecrypt(c, stored.brevoApiKey)
+      if (apiKey) return { provider, apiKey, from: await resolveFrom(c, stored.brevoFrom) }
+    } else if (provider === 'mailersend') {
+      const apiKey = await safeDecrypt(c, stored.mailersendApiKey)
+      if (apiKey) return { provider, apiKey, from: await resolveFrom(c, stored.mailersendFrom) }
+    }
+  }
+
+  // 未保存任何后台凭据：回落到 env（仅 Resend 支持这种部署方式）。
+  if (selectedProvider) return { provider: selectedProvider, apiKey: '', from: await resolveFrom(c, '') }
+  const envApiKey = String((c.env as any).RESEND_API_KEY || '').trim()
+  if (envApiKey) return { provider: 'resend', apiKey: envApiKey, from: await resolveFrom(c, String((c.env as any).EMAIL_FROM || '').trim()) }
+
+  return { provider: stored.emailProvider || 'resend', apiKey: '', from: await resolveFrom(c, '') }
+}
+
+async function resolveFrom(c: Context, configured: string | undefined): Promise<string> {
+  if (configured) return configured
+  const envFrom = String((c.env as any).EMAIL_FROM || '').trim()
+  if (envFrom) return envFrom
+  try { return String(getSystemSettings().companyDetails.email || '').trim() } catch { return '' }
+}
+
+export interface OutgoingEmail { to: string | string[]; subject: string; text: string; html?: string }
+export interface EmailSendResult { ok: boolean; id: string | null; error: string | null }
+
+// 统一发信入口：按当前生效的邮件服务商拼装请求并发送，返回值统一归一化为
+// { ok, id, error }，调用方不需要关心具体服务商的响应格式。
+export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): Promise<EmailSendResult> {
+  const { provider, apiKey, from } = await resolveEmailCredentials(c)
+  if (!apiKey || !from) return { ok: false, id: null, error: 'Email transport is not configured' }
+  const recipients = Array.isArray(email.to) ? email.to : [email.to]
+
   try {
-    const stored = await readStored(c)
-    apiKey = await safeDecrypt(c, stored.resendApiKey)
-    from = String(stored.resendFrom || '').trim()
-  } catch { /* fall through to env */ }
-  if (!apiKey) apiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  if (!from) from = String((c.env as any).EMAIL_FROM || '').trim()
-  if (!from) { try { from = String(getSystemSettings().companyDetails.email || '').trim() } catch { /* ignore */ } }
-  return { apiKey, from }
+    if (provider === 'brevo') {
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ sender: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, textContent: email.text, htmlContent: email.html || undefined }),
+      })
+      const result = await response.json().catch(() => ({})) as any
+      return { ok: response.ok, id: result?.messageId || null, error: response.ok ? null : String(result?.message || response.status) }
+    }
+    if (provider === 'mailersend') {
+      const response = await fetch('https://api.mailersend.com/v1/email', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ from: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, text: email.text, html: email.html || undefined }),
+      })
+      const messageId = response.headers.get('x-message-id')
+      const ok = response.status === 202 || response.ok
+      let error: string | null = null
+      if (!ok) { const result = await response.json().catch(() => ({})) as any; error = String(result?.message || response.status) }
+      return { ok, id: messageId, error }
+    }
+    // 默认 Resend
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to: recipients, subject: email.subject, text: email.text, html: email.html || undefined }),
+    })
+    const result = await response.json().catch(() => ({})) as any
+    return { ok: response.ok, id: result?.id || null, error: response.ok ? null : String(result?.message || response.status) }
+  } catch (error: any) {
+    return { ok: false, id: null, error: String(error?.message || error).slice(0, 500) }
+  }
+}
+
+// Brevo / MailerSend 的 sender/from 字段需要 { email, name? } 结构；
+// 我们的配置沿用 Resend 惯用的 "Name <email>" 或纯邮箱写法，这里统一拆解。
+function parseFromAddress(from: string): { email: string; name?: string } {
+  const match = from.match(/^(.*?)<([^<>]+)>$/)
+  if (match) {
+    const name = match[1].trim().replace(/^"|"$/g, '')
+    return name ? { email: match[2].trim(), name } : { email: match[2].trim() }
+  }
+  return { email: from.trim() }
 }
 
 export interface ChannelAlert { title: string; message: string; url?: string }
@@ -205,51 +299,18 @@ async function withTimeout(input: string, init: RequestInit, ms = 8000): Promise
 // 这样「给每个管理员各发一条站内信」的循环只会触发一次外呼。
 export async function dispatchChannelAlert(c: Context, alert: ChannelAlert, options: { force?: boolean } = {}): Promise<ChannelDeliveryResult[]> {
   const stored = await readStored(c)
-  const anyEnabled = stored.telegramEnabled || stored.serverChanEnabled || stored.webhookEnabled
+  const anyEnabled = stored.webhookEnabled
   if (!anyEnabled && !options.force) return []
 
   if (!options.force) {
     const sent: Set<string> = (c as any).__channelAlertSent ||= new Set()
-    const dedupeKey = `${alert.title} ${alert.message}`
+    const dedupeKey = `${alert.title} ${alert.message}`
     if (sent.has(dedupeKey)) return []
     sent.add(dedupeKey)
   }
 
   const results: ChannelDeliveryResult[] = []
   const tasks: Promise<void>[] = []
-
-  if (stored.telegramEnabled || options.force) {
-    tasks.push((async () => {
-      try {
-        const token = await safeDecrypt(c, stored.telegramBotToken)
-        const chatId = stored.telegramChatId || ''
-        if (!token || !chatId) { results.push({ channel: 'telegram', ok: false, detail: '未配置 Bot Token / Chat ID' }); return }
-        const body = alert.url ? `${alert.title}\n${alert.message}\n${alert.url}` : `${alert.title}\n${alert.message}`
-        const response = await withTimeout(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text: body, disable_web_page_preview: true }),
-        })
-        results.push({ channel: 'telegram', ok: response.ok, detail: response.ok ? '已发送' : `HTTP ${response.status}` })
-      } catch (error: any) { results.push({ channel: 'telegram', ok: false, detail: String(error?.message || error).slice(0, 160) }) }
-    })())
-  }
-
-  if (stored.serverChanEnabled || options.force) {
-    tasks.push((async () => {
-      try {
-        const sendKey = await safeDecrypt(c, stored.serverChanSendKey)
-        if (!sendKey) { results.push({ channel: 'serverChan', ok: false, detail: '未配置 SendKey' }); return }
-        const desp = alert.url ? `${alert.message}\n\n${alert.url}` : alert.message
-        const isPushPlus = /^[0-9a-f]{32}$/i.test(sendKey)
-        const response = isPushPlus
-          ? await withTimeout('https://www.pushplus.plus/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: sendKey, title: alert.title, content: desp }) })
-          : await withTimeout(`https://sctapi.ftqq.com/${encodeURIComponent(sendKey)}.send`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ title: alert.title, desp }).toString() })
-        const data = await response.json().catch(() => ({})) as any
-        const ok = response.ok && (data?.code === 0 || data?.code === '0' || data?.data || data?.errno === 0 || typeof data?.code === 'undefined')
-        results.push({ channel: 'serverChan', ok, detail: ok ? '已发送' : String(data?.message || data?.msg || `HTTP ${response.status}`).slice(0, 160) })
-      } catch (error: any) { results.push({ channel: 'serverChan', ok: false, detail: String(error?.message || error).slice(0, 160) }) }
-    })())
-  }
 
   if (stored.webhookEnabled || options.force) {
     tasks.push((async () => {
