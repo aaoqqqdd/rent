@@ -59,16 +59,21 @@ function mask(value: string, start = 6, end = 4): string {
   return `${value.slice(0, start)}••••${value.slice(-end)}`
 }
 
+function defaultWebhookUrl(c: Context): string {
+  const publicOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || new URL(c.req.url).origin).replace(/\/$/, '')
+  return `${publicOrigin}/webhooks/square`
+}
+
 export async function getSquareConfigSummary(c: Context) {
   const stored = await readStoredConfig(c)
-  if (!stored) return { configured: false, applicationId: '', locationId: '', accessTokenMasked: '', webhookSignatureKeyMasked: '', environment: 'sandbox', webhookUrl: '' }
+  if (!stored) return { configured: false, applicationId: '', locationId: '', accessTokenMasked: '', webhookSignatureKeyMasked: '', environment: 'sandbox', webhookUrl: defaultWebhookUrl(c) }
   let accessToken = ''
   let webhookSignatureKey = ''
   try {
     accessToken = await decrypt(c, stored.accessToken)
     webhookSignatureKey = stored.webhookSignatureKey ? await decrypt(c, stored.webhookSignatureKey) : ''
   } catch {
-    return { configured: false, applicationId: stored.applicationId || '', locationId: stored.locationId || '', accessTokenMasked: '', webhookSignatureKeyMasked: '', environment: stored.environment || 'sandbox', webhookUrl: stored.webhookUrl || '' }
+    return { configured: false, applicationId: stored.applicationId || '', locationId: stored.locationId || '', accessTokenMasked: '', webhookSignatureKeyMasked: '', environment: stored.environment || 'sandbox', webhookUrl: stored.webhookUrl || defaultWebhookUrl(c) }
   }
   return {
     configured: Boolean(stored.applicationId && stored.locationId && accessToken),
@@ -77,7 +82,7 @@ export async function getSquareConfigSummary(c: Context) {
     accessTokenMasked: mask(accessToken, 8, 4),
     webhookSignatureKeyMasked: mask(webhookSignatureKey, 6, 4),
     environment: stored.environment || 'sandbox',
-    webhookUrl: stored.webhookUrl || '',
+    webhookUrl: stored.webhookUrl || defaultWebhookUrl(c),
   }
 }
 
@@ -110,13 +115,12 @@ export async function saveSquareConfig(c: Context, input: Record<string, any>): 
 export async function getSquareRuntimeConfig(c: Context) {
   const stored = await readStoredConfig(c)
   if (!stored) throw new Error('管理员尚未配置 Square')
-  const publicOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || new URL(c.req.url).origin).replace(/\/$/, '')
   return {
     applicationId: stored.applicationId,
     locationId: stored.locationId,
     accessToken: await decrypt(c, stored.accessToken),
     webhookSignatureKey: stored.webhookSignatureKey ? await decrypt(c, stored.webhookSignatureKey) : '',
-    webhookUrl: stored.webhookUrl || `${publicOrigin}/webhooks/square`,
+    webhookUrl: stored.webhookUrl || defaultWebhookUrl(c),
     environment: stored.environment === 'production' ? 'production' as const : 'sandbox' as const,
   }
 }

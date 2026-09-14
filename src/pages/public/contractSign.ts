@@ -404,7 +404,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.square ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="square" required />
-                <span><strong>Square 礼品卡</strong><small>在订单页面使用 Square Gift Card 支付租金及服务费；押金不通过礼品卡扣收。</small></span>
+                <span><strong>Square 礼品卡</strong><small>在订单页面使用 Square Gift Card 支付租金及服务费。</small></span>
               </label>
               ` : ''}
               ${systemSettings.paymentMethods.balancePayment && canUseBalance ? `

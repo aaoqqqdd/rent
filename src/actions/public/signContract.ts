@@ -322,10 +322,13 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         const noPayment = isWebsiteOrderContract
         const paymentMethod = String(body.paymentMethod || (order as any).paymentMethod || (order as any).payment_method || 'card')
-        const stripePaymentSelected = paymentMethod === 'stripe' || paymentMethod === 'card'
-        const squarePaymentSelected = paymentMethod === 'square'
+        const storedPaymentProvider = String((order as any).paymentProvider || (order as any).payment_provider || '').toLowerCase()
+        const squarePaymentSelected = paymentMethod === 'square' || storedPaymentProvider === 'square'
+        const stripePaymentSelected = !squarePaymentSelected && (paymentMethod === 'stripe' || paymentMethod === 'card')
+        const depositCardSelected = stripePaymentSelected || Boolean((order as any).stripe_payment_method_id || (order as any).stripe_deposit_payment_intent_id)
         // 押金处理方式不再由客户手选：跟着支付方式自动走——信用卡预授权 / SetupIntent，否则银行转账。
-        const depositMethod = normalizeSecurityDepositMethod(stripePaymentSelected ? 'card_hold' : 'bank_transfer')
+        // 礼品卡支付租金时，如果官网申请已经验证了押金信用卡，也沿用该卡处理押金。
+        const depositMethod = normalizeSecurityDepositMethod(depositCardSelected ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
         const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
@@ -344,7 +347,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             ; (order as any).serviceFee = serviceFee
         }
         const canUseBalance = canUseAccountBalance(currentUser)
-        const refundMethod = squarePaymentSelected ? 'balance' : (order as any).refundMethod === 'balance' ? 'balance' : (canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original')
+        const refundMethod = squarePaymentSelected && !depositCardSelected ? 'balance' : (order as any).refundMethod === 'balance' ? 'balance' : (canUseBalance && body.refundMethod !== 'original' ? 'balance' : 'original')
         const refundBsb = String(body.refundBsb || '').trim()
         const refundAccountNumber = String(body.refundAccountNumber || '').replace(/\s/g, '')
         const refundAccountName = String(body.refundAccountName || '').trim()
@@ -377,8 +380,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
         }
 
-        if (depositMethod === 'card_hold' && !stripePaymentSelected) throw new Error('信用卡预授权押金需要同时使用 Stripe 信用卡支付租金')
-        const selectedDepositMode = depositMethod === 'card_hold' && stripePaymentSelected
+        if (depositMethod === 'card_hold' && !depositCardSelected) throw new Error('信用卡预授权押金需要先验证信用卡')
+        const selectedDepositMode = depositMethod === 'card_hold' && depositCardSelected
           ? await resolveDepositPaymentMode(c, order)
           : 'PAID'
         await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ?, deposit_status = CASE WHEN depositAmount > 0 THEN ? ELSE \'NOT_REQUIRED\' END WHERE id = ?')
@@ -560,7 +563,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         await updateOrderInDB(c, contract.rentalId, {
           userId: userId,
           paymentMethod: (stripePaymentSelected || squarePaymentSelected ? 'card' : paymentMethod) as Order['paymentMethod'],
-          paymentProvider: stripePaymentSelected ? 'stripe' : squarePaymentSelected ? 'square' : 'internal',
+          paymentProvider: squarePaymentSelected ? 'square' : stripePaymentSelected ? 'stripe' : 'internal',
           status: orderStatus,
           // 合同已经通过 contracts.orderId 关联订单；不要在签署时写入可选的反向外键，
           // 兼容旧数据库中 contractId 外键定义不一致的订单表。

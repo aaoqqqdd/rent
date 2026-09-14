@@ -118,11 +118,16 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">PAY</span><div><h3>支付方式配置</h3><p>启用或停用面向客户的支付渠道，并设置信用卡手续费。</p></div></div>
+          <div class="form-section-title"><span class="mono">PAY</span><div><h3>支付方式配置</h3><p>启用或停用面向客户的支付渠道，并设置支付手续费。</p></div></div>
           <div class="form-group">
             <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
             <input class="form-control" id="processingFeeRate" name="processingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.processingFeeRate ?? 0.025) * 100).toFixed(2)}">
             <small class="form-text">Stripe 手续费按租金及立即支付的时段服务费（不含押金）计算；押金预授权、释放和长期押金扣款不加手续费。</small>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="squareProcessingFeeRate">Square 礼品卡手续费比例（%）</label>
+            <input class="form-control" id="squareProcessingFeeRate" name="squareProcessingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.squareProcessingFeeRate ?? 0.022) * 100).toFixed(2)}">
+            <small class="form-text">Square 礼品卡手续费按租金及服务费（不含押金）计算；审核通过后实际提交 Square 时按此比例收取。</small>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}><label for="enableStripe">启用 Stripe 信用卡支付</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableSquare" name="enableSquare" ${settings.paymentMethods.square ? 'checked' : ''}><label for="enableSquare">启用 Square 礼品卡支付</label></div>
@@ -149,7 +154,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <div class="form-group"><label class="form-label" for="squareLocationId">Location ID</label><input class="form-control" id="squareLocationId" value="${escAttr(square.locationId)}" placeholder="L..."></div>
             <div class="form-group"><label class="form-label" for="squareAccessToken">Access Token</label><input class="form-control" type="password" id="squareAccessToken" placeholder="${square.accessTokenMasked || '留空保留现有值'}" autocomplete="new-password"></div>
             <div class="form-group"><label class="form-label" for="squareEnvironment">环境</label><select class="form-control" id="squareEnvironment"><option value="sandbox" ${square.environment !== 'production' ? 'selected' : ''}>Sandbox 沙盒</option><option value="production" ${square.environment === 'production' ? 'selected' : ''}>Production 正式</option></select></div>
-            <div class="form-group"><label class="form-label" for="squareWebhookUrl">Webhook URL（可选）</label><input class="form-control" type="url" id="squareWebhookUrl" value="${escAttr(square.webhookUrl)}" placeholder="https://你的域名/webhooks/square"></div>
+            <div class="form-group"><label class="form-label" for="squareWebhookUrl">Webhook URL</label><div style="display:flex;gap:8px;align-items:center"><input class="form-control" type="url" id="squareWebhookUrl" value="${escAttr(square.webhookUrl)}" readonly aria-describedby="squareWebhookUrlHelp"><button type="button" class="button button-secondary" id="copySquareWebhookUrl">复制</button></div><small class="form-text" id="squareWebhookUrlHelp">系统已自动生成，点击“复制”后粘贴到 Square Developer Console 的 Webhooks 设置。</small></div>
             <div class="form-group"><label class="form-label" for="squareWebhookSignatureKey">Webhook Signature Key（可选）</label><input class="form-control" type="password" id="squareWebhookSignatureKey" placeholder="${square.webhookSignatureKeyMasked || '留空保留现有值'}" autocomplete="new-password"></div>
           </div>
           <p class="form-text">Square Web Payments SDK 只会把礼品卡令牌发送到本站；Access Token 和 Webhook Signature Key 会加密保存。</p>
@@ -209,6 +214,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             alipay: formData.has('enableAlipay'),
             wechat: formData.has('enableWechat'),
             processingFeeRate: Number(formData.get('processingFeeRate') || 0) / 100,
+            squareProcessingFeeRate: Number(formData.get('squareProcessingFeeRate') || 0) / 100,
           },
           stripeConfig: {
             publishableKey: formData.get('stripePublishableKey'),
@@ -325,6 +331,26 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           console.error('Error saving settings:', error);
           alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。'));
         });
+        });
+      })();
+    </script>
+    <script>
+      (function() {
+        const input = document.getElementById('squareWebhookUrl');
+        const button = document.getElementById('copySquareWebhookUrl');
+        if (!input || !button || button.dataset.ready === 'true') return;
+        button.dataset.ready = 'true';
+        button.addEventListener('click', async function() {
+          try {
+            await navigator.clipboard.writeText(input.value);
+          } catch (_) {
+            input.focus();
+            input.select();
+            document.execCommand('copy');
+          }
+          const original = button.textContent;
+          button.textContent = '已复制';
+          window.setTimeout(() => { button.textContent = original || '复制'; }, 1500);
         });
       })();
     </script>
