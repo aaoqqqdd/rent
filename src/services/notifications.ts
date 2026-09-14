@@ -326,3 +326,40 @@ export async function notifyOverduePaymentProofs(c: Context): Promise<number> {
   }
   return notified
 }
+
+export async function notifyOverdueBankTransferRefunds(c: Context): Promise<number> {
+  await c.env.RENT.prepare('ALTER TABLE payment_refunds ADD COLUMN admin_notified_at TEXT').run().catch(() => undefined)
+  await ensureNotificationsTable(c)
+  const refunds = await c.env.RENT.prepare(`
+    SELECT pr.id, pr.type, pr.refund_amount, pr.refunded_processing_fee, pr.created_at, o.id AS order_id, o.orderNo
+    FROM payment_refunds pr
+    JOIN orders o ON o.id = pr.order_id
+    WHERE pr.status = 'pending'
+      AND pr.refund_method = 'bank_transfer'
+      AND pr.admin_notified_at IS NULL
+      AND pr.created_at <= datetime('now', '-1 day')
+    ORDER BY pr.created_at ASC
+    LIMIT 100
+  `).all() as any
+  if (!(refunds.results || []).length) return 0
+  const admins = (await c.env.RENT.prepare("SELECT id, email, name FROM users WHERE role = 'ADMIN' AND status = 'active'").all() as any).results || []
+  if (!admins.length) return 0
+  const { apiKey, from } = await resolveEmailCredentials(c)
+  const typeLabel: Record<string, string> = { deposit: '押金', cancellation: '取消订单', early_return: '提前归还' }
+  let notified = 0
+  for (const refund of refunds.results as any[]) {
+    const amount = Number(refund.refund_amount || 0) + Number(refund.refunded_processing_fee || 0)
+    const orderLabel = refund.orderNo || refund.order_id
+    const title = '银行转账退款超过 1 天未完成'
+    const message = `订单 ${orderLabel} 的${typeLabel[refund.type] || refund.type}退款 AUD ${amount.toFixed(2)} 已提交银行转账退款超过 1 天仍未完成，请尽快转账并在后台点击"确认已转账"。`
+    await Promise.all(admins.map((admin: any) => createNotification(c, { recipientId: admin.id, type: 'refund_bank_transfer_overdue', title, message, orderId: refund.order_id })))
+    if (apiKey && from) {
+      const html = renderEmailNotificationHtml(title, `<p>${message}</p><p><a href="${new URL(`/admin/orders/${refund.order_id}`, c.req.url).toString()}">打开订单处理</a></p>`, getSystemSettings().companyDetails.name)
+      const recipients = admins.map((admin: any) => admin.email).filter((email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      if (recipients.length) await sendTransactionalEmail(c, { to: recipients, subject: title, text: message, html })
+    }
+    await c.env.RENT.prepare('UPDATE payment_refunds SET admin_notified_at = CURRENT_TIMESTAMP WHERE id = ? AND admin_notified_at IS NULL').bind(refund.id).run()
+    notified += 1
+  }
+  return notified
+}
