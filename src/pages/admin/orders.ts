@@ -327,6 +327,9 @@ export async function renderAdminOrders(c: Context, user: any) {
           <tbody>
             ${pageOrders.map((order: any) => {
     const status = adminOrderStatusMap[order.status] || { text: order.status, class: 'badge-info' };
+    // “已完成”只代表设备已归还，押金没结清时不能看起来像什么都办完了——
+    // 单独加一个徽章而不是把它塞进 status 本身，避免影响其它按 status 过滤/统计的逻辑。
+    const settlementPending = order.status === 'completed' && order.settlement_status === 'PENDING';
     const totalAmount = order.total_amount || order.totalAmount || 0;
     const startDate = order.start_date || order.startDate || '-';
     const endDate = order.end_date || order.endDate || '-';
@@ -341,7 +344,7 @@ export async function renderAdminOrders(c: Context, user: any) {
                   </td>
                   <td>${order.device?.name || '未知设备'}</td>
                   <td><strong>${formatCurrency(totalAmount)}</strong></td>
-                  <td><span class="badge ${status.class}">${status.text}</span></td>
+                  <td><span class="badge ${status.class}">${status.text}</span>${settlementPending ? ' <span class="badge badge-warning" title="押金尚未结清，不能视为完全办结">押金待结算</span>' : ''}</td>
                   <td>${startDate} ~ ${endDate}</td>
                   <td>${createdAt ? formatMelbourneDate(createdAt) : '-'}</td>
                   <td>

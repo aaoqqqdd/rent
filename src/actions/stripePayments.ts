@@ -11,6 +11,7 @@ import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../
 import { squareRequest } from '../square'
 import { releaseCouponForOrder } from './coupons'
 import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
+import { computeOrderSettlementStatus } from '../domain/orderSettlement'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
@@ -1229,7 +1230,7 @@ async function settlePreauthorizedDeposit(c: Context, admin: any, order: any, fo
   const nextStatus = deductionAmount >= depositAmount ? 'FORFEITED' : deductionAmount > 0 ? 'PARTIALLY_DEDUCTED' : 'REFUNDED'
   const statements: any[] = [
     c.env.RENT.prepare('UPDATE orders SET refundMethod = ? WHERE id = ?').bind(selectedRefundMethod, order.id),
-    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(nextStatus, deductionAmount, selectedRefundMethod === 'balance' ? totalReleased : 0, order.id),
+    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP, settlement_status = ? WHERE id = ?").bind(nextStatus, deductionAmount, selectedRefundMethod === 'balance' ? totalReleased : 0, computeOrderSettlementStatus({ status: order.status, deposit_status: nextStatus }), order.id),
     c.env.RENT.prepare('UPDATE devices SET status = \'available\' WHERE id = ?').bind(order.deviceId),
   ]
   if (deductionAmount > 0 || (selectedRefundMethod === 'balance' && refundAmount > 0)) {
@@ -1254,7 +1255,7 @@ async function settleSetupIntentDeposit(c: Context, admin: any, order: any, form
   const deduction = validateDepositDeduction(form, depositAmount, deductionAmount)
   if (deduction instanceof Response) return deduction
   if (deductionAmount === 0) {
-    await c.env.RENT.prepare("UPDATE orders SET deposit_status = 'NOT_REQUIRED', deposit_deduction_amount = 0, deposit_refund_amount = 0, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id).run()
+    await c.env.RENT.prepare("UPDATE orders SET deposit_status = 'NOT_REQUIRED', deposit_deduction_amount = 0, deposit_refund_amount = 0, deposit_refund_at = CURRENT_TIMESTAMP, settlement_status = ? WHERE id = ?").bind(computeOrderSettlementStatus({ status: order.status, deposit_status: 'NOT_REQUIRED' }), order.id).run()
     return c.redirect(`/admin/orders/${order.id}`, 303)
   }
   const paymentMethodId = String((order as any).stripe_payment_method_id || '')
@@ -1276,8 +1277,8 @@ async function settleSetupIntentDeposit(c: Context, admin: any, order: any, form
     c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, status, processed_by, refund_method)
       VALUES (?, ?, ?, ?, 'deposit', 0, 0, 0, ?, ?, ?, 'succeeded', ?, 'stripe')`)
       .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, paymentId, deductionAmount, deduction.category, deduction.reason, admin.id),
-    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = 0, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .bind(deductionAmount >= depositAmount ? 'FORFEITED' : 'PARTIALLY_DEDUCTED', deductionAmount, order.id),
+    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = 0, deposit_refund_at = CURRENT_TIMESTAMP, settlement_status = ? WHERE id = ?")
+      .bind(deductionAmount >= depositAmount ? 'FORFEITED' : 'PARTIALLY_DEDUCTED', deductionAmount, computeOrderSettlementStatus({ status: order.status, deposit_status: deductionAmount >= depositAmount ? 'FORFEITED' : 'PARTIALLY_DEDUCTED' }), order.id),
   ])
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
@@ -1353,12 +1354,13 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   }
 
   const isBankTransfer = channel === 'bank_transfer'
+  const nextDepositStatus = isBankTransfer ? 'REFUND_PENDING' : totalRefunded >= depositAmount ? 'REFUNDED' : totalRefunded <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED'
   await c.env.RENT.batch([
     c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, remainingRefundable, depositRefundAmount, refundedProcessingFee, deductionAmount, deductionAmount > 0 ? deductionCategory : null, recordedReason, stripeRefundId, isBankTransfer ? 'pending' : 'succeeded', admin.id, channel, isBankTransfer ? order.refundBsb : null, isBankTransfer ? order.refundAccountNumber : null, isBankTransfer ? order.refundAccountName : null),
     ...(priceRefundAmount > 0 ? [c.env.RENT.prepare("UPDATE order_price_adjustments SET deposit_refunded = 1, updated_at = CURRENT_TIMESTAMP WHERE order_id = ? AND direction = 'decrease' AND status = 'succeeded' AND refund_method = 'pending_deposit' AND deposit_refunded = 0").bind(order.id)] : []),
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
-    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(isBankTransfer ? 'REFUND_PENDING' : totalRefunded >= depositAmount ? 'REFUNDED' : totalRefunded <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED', deductionAmount, totalRefunded, order.id),
+    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP, settlement_status = ? WHERE id = ?").bind(nextDepositStatus, deductionAmount, totalRefunded, computeOrderSettlementStatus({ status: order.status, deposit_status: nextDepositStatus }), order.id),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
   if (totalRefundAmount > 0 && channel === 'balance') await recordBalanceTransaction(c, order.userId, totalRefundAmount, 'refund_credit', `${refundItemLabel}退回账户余额`, admin.id)
