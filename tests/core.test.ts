@@ -36,12 +36,22 @@ import { renderGuestAccount } from '../src/pages/customer/guestAccount'
 import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
 import { extractInlineScripts } from './helpers'
 import { couponApplicableComponents, couponDiscountableBase } from '../src/actions/coupons'
+import { formatInvoicePaymentMethods } from '../src/pages/invoice'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = extractInlineScripts(html).map(script => script.trim()).filter(Boolean)
   assert.ok(scripts.length > 0)
   for (const script of scripts) assert.doesNotThrow(() => new Function(script))
 }
+
+test('receipt payment summary includes every paid payment method', () => {
+  assert.equal(formatInvoicePaymentMethods([
+    { payment_method: 'card', payment_provider: 'stripe' },
+    { payment_method: 'balance' },
+    { payment_method: 'card', payment_provider: 'stripe' },
+  ]), '信用卡（Stripe） + 账户余额')
+  assert.equal(formatInvoicePaymentMethods([{ payment_method: 'wechat' }]), '微信支付')
+})
 
 test('coupon fee components default to rental and support delivery/deposit selections', () => {
   assert.deepEqual([...couponApplicableComponents({ applicable_components: '' })], ['RENTAL_FEE'])
