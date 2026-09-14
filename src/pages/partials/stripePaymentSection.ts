@@ -135,6 +135,15 @@ export function renderStripePaymentBox(opts: {
             submitBtn.textContent = idleLabel;
           });
         });
+        window.addEventListener('square-payment-updated', function(){
+          if (handle) {
+            elementNode.innerHTML = '';
+            handle = null;
+            submitBtn.disabled = true;
+            submitBtn.textContent = idleLabel;
+            boot();
+          }
+        });
         boot();
       })();
     </script>

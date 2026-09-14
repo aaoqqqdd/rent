@@ -70,6 +70,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       alipay: Boolean(payload.paymentMethods?.alipay),
       wechat: Boolean(payload.paymentMethods?.wechat),
       processingFeeRate: Math.min(1, Math.max(0, Number(payload.paymentMethods?.processingFeeRate ?? getSystemSettings().paymentMethods.processingFeeRate ?? 0.025))),
+      squareProcessingFeeRate: Math.min(1, Math.max(0, Number(payload.paymentMethods?.squareProcessingFeeRate ?? getSystemSettings().paymentMethods.squareProcessingFeeRate ?? 0.022))),
     },
     bankDetails: {
       bankName: String(payload.bankDetails?.bankName ?? getSystemSettings().bankDetails.bankName).trim().slice(0, 120),

@@ -870,6 +870,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
         ? systemSettings.paymentMethods.balancePayment
         : Boolean((parsedPaymentMethods as any).balancePayment),
       processingFeeRate: Math.min(1, Math.max(0, Number((parsedPaymentMethods as any).processingFeeRate ?? systemSettings.paymentMethods.processingFeeRate ?? 0.025))),
+      squareProcessingFeeRate: Math.min(1, Math.max(0, Number((parsedPaymentMethods as any).squareProcessingFeeRate ?? systemSettings.paymentMethods.squareProcessingFeeRate ?? 0.022))),
       alipay: Boolean((parsedPaymentMethods as any).alipay),
       wechat: Boolean((parsedPaymentMethods as any).wechat),
     }

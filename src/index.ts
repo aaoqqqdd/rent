@@ -122,8 +122,8 @@ import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteK
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
-import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, handleSquareWebhook } from './actions/squarePayments'
+import { createOrderPaymentIntent, createSquareDepositPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
+import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
@@ -1087,7 +1087,7 @@ app.get('/customer/balance/top-up', async (c) => {
   await loadSystemSettingsFromDB(c)
   const pending = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE user_id = ? AND status = 'awaiting_transfer' ORDER BY created_at DESC LIMIT 1").bind(user.id).first()
   const payId = String(c.req.query('pay') || '').trim()
-  const payTopup = payId ? await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND payment_method = 'card' AND status = 'pending'").bind(payId, user.id).first() : null
+  const payTopup = payId ? await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND payment_method IN ('card', 'square') AND status = 'pending'").bind(payId, user.id).first() : null
   return c.html(pages.renderCustomerBalanceTopUp(c, user, '', pending, payTopup, c.req.query('success') === '1'))
 })
 
@@ -1106,8 +1106,9 @@ app.post('/customer/balance/top-up', async (c) => {
   const amount = Number(amountText)
   const method = String(form.method || 'card')
   if (!/^\d+(?:\.\d{1,2})?$/.test(amountText) || !Number.isFinite(amount) || amount < 1 || amount > 10000) return c.html(pages.renderCustomerBalanceTopUp(c, user, '请输入 1 至 10,000 AUD 的有效充值金额。'), 400)
-  if (!['card', 'bank_transfer', 'alipay', 'wechat'].includes(method)) return c.html(pages.renderCustomerBalanceTopUp(c, user, '请选择有效的充值方式。'), 400)
+  if (!['card', 'square', 'bank_transfer', 'alipay', 'wechat'].includes(method)) return c.html(pages.renderCustomerBalanceTopUp(c, user, '请选择有效的充值方式。'), 400)
   if (method === 'card' && !getSystemSettings().paymentMethods.stripe) return c.html(pages.renderCustomerBalanceTopUp(c, user, '信用卡充值当前未启用。'), 400)
+  if (method === 'square' && !getSystemSettings().paymentMethods.square) return c.html(pages.renderCustomerBalanceTopUp(c, user, '礼品卡支付当前未启用。'), 400)
   if (['alipay', 'wechat'].includes(method) && (!(getSystemSettings().paymentMethods as any)[method] || !getSystemSettings().rmbPayment[`${method}QrUrl`])) return c.text('该人民币支付方式当前未启用', 400)
   const rmbRate = ['alipay', 'wechat'].includes(method) ? await getAudCnyRate().catch(() => null) : null
   if (['alipay', 'wechat'].includes(method) && !rmbRate) return c.text('暂时无法获取实时汇率，请稍后重试', 503)
@@ -1117,7 +1118,7 @@ app.post('/customer/balance/top-up', async (c) => {
     await c.env.RENT.prepare("UPDATE balance_topups SET status = 'awaiting_transfer' WHERE id = ?").bind(id).run()
     return c.redirect('/customer/balance/top-up')
   }
-  // 信用卡充值：站内 Payment Element。先落一条 pending 记录，再跳到带 pay 参数的
+  // 信用卡 / 礼品卡充值：先落一条 pending 记录，再跳到带 pay 参数的
   // 充值页，由页面拉取 client_secret 就地收款。
   return c.redirect(`/customer/balance/top-up?pay=${encodeURIComponent(id)}`)
 })
@@ -1130,6 +1131,27 @@ app.post('/customer/balance/top-up/:id/intent', async (c) => {
     return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
   } catch (error: any) {
     return c.json({ error: error?.message || '无法创建信用卡支付' }, 400)
+  }
+})
+
+app.get('/customer/balance/top-up/:id/square/config', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    return c.json(await getSquareGiftCardConfigForBalanceTopUp(c, user, c.req.param('id')), 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法读取 Square 配置' }, 400)
+  }
+})
+
+app.post('/customer/balance/top-up/:id/square/payment', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    const body = await c.req.json() as any
+    return c.json(await createSquareGiftCardBalanceTopUp(c, user, c.req.param('id'), body?.sourceId))
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法创建礼品卡充值' }, 400)
   }
 })
 
@@ -2001,7 +2023,8 @@ app.get('/staff/orders/:orderId/handover', async (c) => {
   const order = await getOrderById(c, c.req.param('orderId'))
   const customer = order ? await getUserById(c, order.userId) : null
   const handoverContract = order ? await getContractByOrderId(c, order.id) : null
-  if (!order || !(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && handoverContract?.status === 'signed')) || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
+  const squareDepositUnconfirmed = String(order?.paymentProvider || order?.payment_provider || '') === 'square' && Number(order?.depositAmount || order?.deposit_amount || 0) > 0 && String(order?.deposit_status || '').toUpperCase() !== 'PAID'
+  if (!order || squareDepositUnconfirmed || !(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && handoverContract?.status === 'signed')) || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, order.deviceId)
   const body = `<div class="page-header"><div><p class="section-code">HANDOVER RECORD</p><h2>交付设备</h2><p>确认设备、配件和客户确认后，订单才会进入租赁中。</p></div><a class="button button-secondary" href="${staffOrderPath(order)}">返回订单</a></div><form class="panel" method="post" action="/staff/orders/${encodeURIComponent(order.id)}/pickup" data-site-confirm="确认交付记录无误并开始租赁？"><div class="grid grid-2"><div><label class="form-label">设备</label><input class="form-control" value="${sanitizePlainText(device?.name || order.deviceId, 160)}" readonly></div><div><label class="form-label" for="deviceSerialNumber">设备序列号</label><input class="form-control" id="deviceSerialNumber" name="deviceSerialNumber" value="${sanitizePlainText(device?.serialNumber || '', 160)}" required></div></div><div class="form-group"><label class="form-label" for="accessories">交付配件</label><textarea class="form-control" id="accessories" name="accessories" maxlength="1000" required placeholder="例如：电源适配器、充电线、电脑包"></textarea></div><div class="form-group"><label class="form-label" for="conditionNotes">设备状态与备注</label><textarea class="form-control" id="conditionNotes" name="conditionNotes" maxlength="2000" required placeholder="例如：外观正常，屏幕无划痕，电池状态正常"></textarea></div><label class="form-check"><input type="checkbox" name="customerConfirmed" value="1" required> 客户已当场确认设备序列号、配件及状态</label><div class="form-group"><label class="form-label" for="customerConfirmationName">客户确认姓名</label><input class="form-control" id="customerConfirmationName" name="customerConfirmationName" maxlength="120" value="${sanitizePlainText(customer?.name || '', 120)}" required></div><button class="button button-primary" type="submit">保存交付记录并开始租赁</button></form>`
   return c.html(buildLayout('交付设备 - 电脑租赁管理系统', body, user))
@@ -2015,7 +2038,8 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
   const orderId = c.req.param('orderId')
   const pickupOrder = await getOrderById(c, orderId)
   const pickupContract = pickupOrder ? await getContractByOrderId(c, pickupOrder.id) : null
-  if (!pickupOrder || !(['paid', 'pending_pickup'].includes(String(pickupOrder.status)) || (pickupOrder.status === 'approved' && pickupContract?.status === 'signed'))) return c.json({ success: false, message: '只有已签署合同的待交付订单可以确认交付' }, 409)
+  const squareDepositUnconfirmedForPickup = String(pickupOrder?.paymentProvider || pickupOrder?.payment_provider || '') === 'square' && Number(pickupOrder?.depositAmount || pickupOrder?.deposit_amount || 0) > 0 && String(pickupOrder?.deposit_status || '').toUpperCase() !== 'PAID'
+  if (!pickupOrder || squareDepositUnconfirmedForPickup || !(['paid', 'pending_pickup'].includes(String(pickupOrder.status)) || (pickupOrder.status === 'approved' && pickupContract?.status === 'signed'))) return c.json({ success: false, message: squareDepositUnconfirmedForPickup ? '礼品卡订单的押金尚未审核到账，不能交付设备' : '只有已签署合同的待交付订单可以确认交付' }, 409)
   const customer = await getUserById(c, pickupOrder.userId)
   if (user.role === 'STAFF' && customer?.staffId !== user.id) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, pickupOrder.deviceId)
@@ -2659,6 +2683,18 @@ app.post('/customer/orders/:id/stripe/intent', async (c) => {
   }
 })
 
+app.post('/customer/orders/:id/stripe/deposit-intent', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    const result = await createSquareDepositPaymentIntent(c, user, c.req.param('id'))
+    if (result.alreadyPaid) return c.json({ alreadyPaid: true })
+    return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法创建 Stripe 押金付款' }, 400)
+  }
+})
+
 app.get('/customer/orders/:id/square/config', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
@@ -2677,7 +2713,7 @@ app.post('/customer/orders/:id/square/payment', async (c) => {
     const result = await createSquareGiftCardPayment(c, user, c.req.param('id'), body?.sourceId)
     return c.json(result)
   } catch (error: any) {
-    return c.json({ error: error?.message || '无法创建 Square 礼品卡付款' }, 400)
+    return c.json({ error: error?.message || '无法创建礼品卡付款' }, 400)
   }
 })
 
@@ -2690,6 +2726,27 @@ app.post('/customer/orders/:id/price-adjustment/stripe/intent', async (c) => {
     return c.json({ clientSecret: result.clientSecret, publishableKey: result.publishableKey, amountCents: result.amountCents })
   } catch (error: any) {
     return c.json({ error: error?.message || '无法创建差价支付' }, 400)
+  }
+})
+
+app.get('/customer/orders/:id/price-adjustment/square/config', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    return c.json(await getSquareGiftCardConfigForPriceAdjustment(c, user, c.req.param('id')), 200, { 'Cache-Control': 'no-store' })
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法读取 Square 配置' }, 400)
+  }
+})
+
+app.post('/customer/orders/:id/price-adjustment/square/payment', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.json({ error: '无权访问' }, 403)
+  try {
+    const body = await c.req.json() as any
+    return c.json(await createSquareGiftCardPriceAdjustmentPayment(c, user, c.req.param('id'), body?.sourceId))
+  } catch (error: any) {
+    return c.json({ error: error?.message || '无法创建礼品卡差价付款' }, 400)
   }
 })
 
@@ -2738,20 +2795,36 @@ app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   try { proofImageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) }
   if (!reference) return c.text('请填写付款 Reference', 400)
   const isAdjustment = String(form.priceAdjustment || '') === '1'
+  const isDepositProof = String(form.depositProof || '') === '1'
   const requestedPaymentMethod = String(form.paymentMethod || order.paymentMethod || '').trim()
-  if (!isAdjustment && !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
+  if (isDepositProof && (isAdjustment || String(order.paymentProvider || order.payment_provider || '') !== 'square')) return c.text('该订单不能提交押金转账凭证', 409)
+  if (isDepositProof && String(order.deposit_status || '').toUpperCase() !== 'PENDING') return c.text('该订单当前没有待确认的押金', 409)
+  const pendingStripeDeposit = isDepositProof ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'card' AND payment_provider = 'stripe' AND rental_amount = 0 AND deposit_amount > 0 AND status = 'pending' LIMIT 1").bind(order.id).first() : null
+  if (pendingStripeDeposit) return c.text('Stripe 押金付款正在处理中，请等待结果后再提交转账凭证', 409)
+  if (!isAdjustment && !isDepositProof && !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
   if (isAdjustment && !['bank_transfer', 'alipay', 'wechat'].includes(requestedPaymentMethod)) return c.text('差价付款方式无效', 400)
   if (isAdjustment && order.status === 'pending_payment') return c.text('当前订单尚未完成首次付款', 409)
-  if (!isAdjustment && order.status !== 'pending_payment') return c.text('订单不能提交首次付款凭证', 409)
+  if (isDepositProof && !['pending_payment', 'paid', 'pending_pickup'].includes(String(order.status))) return c.text('订单当前不能提交押金凭证', 409)
+  if (!isAdjustment && !isDepositProof && order.status !== 'pending_payment') return c.text('订单不能提交首次付款凭证', 409)
   const adjustmentPayment = isAdjustment ? await createOrderPriceAdjustmentTransferPayment(c, user, order.id, requestedPaymentMethod) : null
-  const payment = adjustmentPayment
+  let payment = adjustmentPayment
     ? { id: adjustmentPayment.paymentId }
-    : await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, order.paymentMethod).first() as any
+    : isDepositProof
+      ? await c.env.RENT.prepare("SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = 'bank_transfer' AND payment_provider = 'internal' AND deposit_amount > 0 ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+      : await c.env.RENT.prepare("SELECT id, status FROM payments WHERE rental_id = ? AND payment_method = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, order.paymentMethod).first() as any
+  if (isDepositProof && payment?.status === 'paid') return c.text('押金已经审核确认，无需重复提交', 409)
+  if (isDepositProof && !payment) {
+    const depositAmount = Number(order.depositAmount || order.deposit_amount || 0)
+    if (!Number.isFinite(depositAmount) || depositAmount <= 0) return c.text('该订单没有待收取的押金', 409)
+    const paymentId = `p-${nanoid(12)}`
+    await c.env.RENT.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, currency, status) VALUES (?, ?, ?, 'bank_transfer', 'internal', ?, ?, 0, 'AUD', 'pending')").bind(paymentId, order.id, user.id, depositAmount, depositAmount).run()
+    payment = { id: paymentId, status: 'pending' }
+  }
   if (!payment) return c.text('未找到待审核的转账付款记录', 409)
   await c.env.RENT.prepare("UPDATE payment_proofs SET status = 'superseded' WHERE payment_id = ? AND status = 'submitted'").bind(payment.id).run()
   await c.env.RENT.prepare("INSERT INTO payment_proofs (id, payment_id, reference_number, note, image_url, status) VALUES (?, ?, ?, ?, ?, 'submitted')").bind(`proof-${nanoid(12)}`, payment.id, reference, note || null, proofImageUrl).run()
   const admins = (await c.env.RENT.prepare("SELECT id FROM users WHERE role = 'ADMIN' AND status = 'active'").all()).results || []
-  await Promise.all((admins as any[]).map(admin => createNotification(c, { recipientId: admin.id, type: 'payment_review_submitted', title: '新的付款凭证待审核', message: `客户已提交订单 ${order.orderNo || order.id} 的${order.paymentMethod === 'bank_transfer' ? '银行转账' : order.paymentMethod === 'alipay' ? '支付宝' : '微信'}付款凭证，请及时审核。`, orderId: order.id })))
+  await Promise.all((admins as any[]).map(admin => createNotification(c, { recipientId: admin.id, type: 'payment_review_submitted', title: isDepositProof ? '新的押金转账凭证待审核' : '新的付款凭证待审核', message: `客户已提交订单 ${order.orderNo || order.id} 的${isDepositProof ? '押金银行转账' : order.paymentMethod === 'bank_transfer' ? '银行转账' : order.paymentMethod === 'alipay' ? '支付宝' : '微信'}凭证，请及时审核。`, orderId: order.id })))
   return c.redirect(`/customer/orders/${order.id}`)
 })
 
@@ -3624,8 +3697,22 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
   if (!order) return c.text('订单状态不允许审核', 409)
-  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, p.payment_method AS proof_payment_method, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
+  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, p.payment_method AS proof_payment_method, p.deposit_amount AS proof_deposit_amount, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
   if (!proof) return c.text('没有待审核的转账信息', 409)
+  const isSquareDepositProof = !proof.adjustment_id && String(order.paymentProvider || order.payment_provider || '') === 'square' && proof.proof_payment_method === 'bank_transfer' && Number(proof.proof_deposit_amount || 0) > 0
+  if (isSquareDepositProof) {
+    const depositAmount = Number(order.depositAmount || order.deposit_amount || 0)
+    if (depositAmount <= 0 || Number(proof.proof_deposit_amount) !== depositAmount) return c.text('押金凭证金额与订单押金不一致', 409)
+    if (!['pending_payment', 'paid', 'pending_pickup'].includes(String(order.status))) return c.text('订单状态不允许审核押金', 409)
+    await c.env.RENT.batch([
+      c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
+      c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(generateReferenceNumber('TXN'), proof.payment_id),
+      c.env.RENT.prepare("UPDATE orders SET deposit_status = 'PAID', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND deposit_status = 'PENDING'").bind(depositAmount, order.id),
+    ])
+    await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title: '押金付款审核已通过', message: `您的订单 ${order.orderNo || order.id} 押金转账凭证已审核通过，押金 AUD$ ${depositAmount.toFixed(2)} 已确认到账。`, orderId: order.id })
+    await createAuditLog(c, { actor: user, action: 'DEPOSIT_PAYMENT_PROOF_APPROVED', targetType: 'PAYMENT_PROOF', targetId: proof.id, after: { orderId: order.id, reference: proof.reference_number, depositAmount } })
+    return c.redirect('/admin/exceptions')
+  }
   if (!proof.adjustment_id && !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单状态不允许审核', 409)
   if (!proof.adjustment_id && order.status !== 'pending_payment') return c.text('订单状态不允许审核首次付款', 409)
   if (proof.adjustment_id) {
