@@ -54,6 +54,12 @@ async function completeSquarePayment(c: Context, paymentId: string, expectedCent
   return payment
 }
 
+export async function completeSquareGiftCardPayment(c: Context, paymentId: string, expectedCents: number): Promise<any> {
+  await ensureSquareEnabled(c)
+  if (!paymentId || !Number.isInteger(expectedCents) || expectedCents <= 0) throw new Error('礼品卡付款参数无效')
+  return completeSquarePayment(c, paymentId, expectedCents)
+}
+
 async function createOrReuseStripeRemainder(c: Context, options: {
   existingIntentId?: string
   amountCents: number
@@ -375,7 +381,7 @@ export async function createSquareGiftCardPayment(c: Context, user: any, orderId
   if (returnedAmount <= 0 || returnedAmount > amountCents || returnedCurrency !== 'AUD') throw new Error('Square 返回的金额或币种与订单不一致')
   const status = String(squarePayment.status || '').toUpperCase()
   const squarePaidAmountCents = approvedSquareCents(squarePayment)
-  await c.env.RENT.prepare('UPDATE payments SET square_payment_id = ?, transaction_id = COALESCE(transaction_id, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(String(squarePayment.id || ''), String(squarePayment.id || ''), paymentId).run()
+  await c.env.RENT.prepare('UPDATE payments SET square_payment_id = ?, square_paid_amount = ?, transaction_id = COALESCE(transaction_id, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(String(squarePayment.id || ''), squarePaidAmountCents / 100, String(squarePayment.id || ''), paymentId).run()
   if (status === 'COMPLETED') {
     if (approvedSquareCents(squarePayment) !== amountCents) throw new Error('Square 订单付款未覆盖完整金额')
     await finalizeSquarePayment(c, order, paymentId, squarePayment)

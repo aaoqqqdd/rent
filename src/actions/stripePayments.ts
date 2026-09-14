@@ -905,7 +905,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       )
       paidOrderId = ''
     } else {
-      const authorization = await c.env.RENT.prepare('SELECT id, rental_id, customer_id FROM payments WHERE stripe_payment_intent_id = ? AND rental_amount = 0 AND deposit_amount > 0').bind(session.id).first() as any
+      const authorization = await c.env.RENT.prepare("SELECT id, rental_id, customer_id FROM payments WHERE stripe_payment_intent_id = ? AND rental_amount = 0 AND deposit_amount > 0 AND (square_payment_id IS NULL OR square_payment_id = '')").bind(session.id).first() as any
       if (authorization) {
       const order = await getOrderById(c, authorization.rental_id)
       if (!order || authorization.customer_id !== String(order.userId) || paidCents <= 0 || paidCents > cents(orderDeposit(order))) return c.text('Stripe 押金预授权数据不匹配', 400)
@@ -919,7 +919,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       } else if (topupId) {
       const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND stripe_payment_intent_id = ? AND status = 'pending'").bind(topupId, session.id).first() as any
       const customerId = String(session?.metadata?.customer_id || '')
-      const isSquareSplit = String(session?.metadata?.type || '') === 'square_split_topup'
+      const isSquareSplit = ['square_split_topup', 'square_residual_topup'].includes(String(session?.metadata?.type || ''))
       const expected = isSquareSplit ? Number(session?.metadata?.remainder_amount || 0) : (topup ? cents(topup.amount) + Math.round(cents(topup.amount) * getStripeProcessingFeeRate()) : 0)
       if (!topup || topup.user_id !== customerId || paidCents !== expected) return c.text('Stripe 充值数据不匹配', 400)
       if (isSquareSplit) await completeSplitSquarePayment(c, String(session?.metadata?.square_payment_id || topup.transaction_id || ''), Number(session?.metadata?.target_amount || 0))
@@ -941,8 +941,21 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       if (!payment) { paidOrderId = ''; return c.json({ received: true, ignored: true }) }
       const isFullAuthorization = Number(payment?.deposit_amount || 0) > 0 && String(session?.metadata?.type || '') === 'rental_authorization'
       if (!order || !payment || payment.rental_id !== order.id || payment.customer_id !== customerId || String(session?.metadata?.customer_id || '') !== String(order.userId)) return c.text('Stripe 支付数据不匹配', 400)
-      const isSquareSplit = String(session?.metadata?.type || '') === 'square_split_order'
-      if (isSquareSplit) {
+      const paymentType = String(session?.metadata?.type || '')
+      const isSquareSplit = paymentType === 'square_split_order'
+      const isSquareResidual = paymentType === 'square_residual_order'
+      if (isSquareResidual) {
+        const expectedRemainder = Number(session?.metadata?.remainder_amount || 0)
+        const targetAmount = Number(session?.metadata?.target_amount || 0)
+        const depositAmount = Number(session?.metadata?.deposit_amount || 0)
+        const expectedRental = Math.max(0, targetAmount - Number(session?.metadata?.square_approved_amount || 0))
+        if (!expectedRemainder || !targetAmount || paidCents !== expectedRemainder || cents(payment.amount) !== expectedRemainder || cents(payment.rental_amount) !== expectedRental || cents(payment.deposit_amount) !== depositAmount || !payment.square_payment_id) return c.text('Stripe 礼品卡剩余付款数据不匹配', 400)
+        await completeSplitSquarePayment(c, String(payment.square_payment_id), targetAmount)
+        statements.push(
+          c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE stripe_payment_intent_id = ? AND status != 'paid'").bind(generateReferenceNumber('TXN'), session.id),
+          c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'card', payment_provider = 'square', deposit_status = CASE WHEN ? > 0 THEN 'PAID' ELSE deposit_status END, deposit_paid_at = CASE WHEN ? > 0 THEN COALESCE(deposit_paid_at, CURRENT_TIMESTAMP) ELSE deposit_paid_at END, deposit_held_amount = CASE WHEN ? > 0 THEN ? ELSE deposit_held_amount END, stripe_payment_method_id = COALESCE(NULLIF(?, ''), stripe_payment_method_id), updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(depositAmount, depositAmount, depositAmount, depositAmount / 100, String(session.payment_method || ''), order.id),
+        )
+      } else if (isSquareSplit) {
         const expectedRemainder = Number(session?.metadata?.remainder_amount || 0)
         const targetAmount = Number(session?.metadata?.target_amount || 0)
         if (!expectedRemainder || !targetAmount || paidCents !== expectedRemainder || cents(payment.amount) !== targetAmount || !payment.square_payment_id) return c.text('Stripe 礼品卡差额支付数据不匹配', 400)
