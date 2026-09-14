@@ -265,6 +265,9 @@ app.get('/favicon.svg', (c) => {
 })
 app.get('/favicon.ico', (c) => c.redirect('/favicon.svg', 301))
 
+// 这是内部运维/租赁后台，不面向搜索引擎；营销与获客内容在独立的 rent-web 官网。
+app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'))
+
 app.get('/i18n.js', (c) => {
   c.header('Content-Type', 'text/javascript; charset=utf-8')
   const versioned = c.req.query('v') === languageScriptVersion
