@@ -5610,7 +5610,7 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob, deliverPendingAgreementUpdates } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, notifyOverdueBankTransferRefunds, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob, deliverPendingAgreementUpdates } = await import('./site')
 
     // The hourly cron ("0 * * * *") only enforces the 24h unpaid-payment
     // cancellation SLA — running the rest of the daily batch (notifications,
@@ -5712,6 +5712,7 @@ export default {
         await runScheduledJob(c, 'cancel_expired_pending_payments', () => cancelExpiredPendingPaymentOrders(c))
         await runScheduledJob(c, 'create_due_date_notifications', () => createDueDateNotifications(c))
         await runScheduledJob(c, 'notify_overdue_payment_proofs', () => notifyOverduePaymentProofs(c))
+        await runScheduledJob(c, 'notify_overdue_bank_transfer_refunds', () => notifyOverdueBankTransferRefunds(c))
         await runScheduledJob(c, 'deliver_pending_agreement_updates', () => deliverPendingAgreementUpdates(c))
         await runScheduledJob(c, 'purge_old_device_inspections', async () => {
           const result = await env.RENT.prepare("DELETE FROM device_inspections WHERE created_at < datetime('now', '-1 year')").run()

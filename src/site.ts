@@ -198,6 +198,7 @@ import {
   deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications,
   createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
+  notifyOverdueBankTransferRefunds,
 } from './services/notifications'
 import {
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
@@ -218,6 +219,7 @@ export {
   deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications,
   createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
+  notifyOverdueBankTransferRefunds,
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
   getCustomerRiskAssessment, getReferralRiskAssessment,

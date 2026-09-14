@@ -1322,18 +1322,21 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
     stripeRefundId = refund.id
   }
 
+  const isBankTransfer = channel === 'bank_transfer'
   await c.env.RENT.batch([
-    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, remainingRefundable, depositRefundAmount, refundedProcessingFee, deductionAmount, deductionAmount > 0 ? deductionCategory : null, recordedReason, stripeRefundId, admin.id, channel, channel === 'bank_transfer' ? order.refundBsb : null, channel === 'bank_transfer' ? order.refundAccountNumber : null, channel === 'bank_transfer' ? order.refundAccountName : null),
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, remainingRefundable, depositRefundAmount, refundedProcessingFee, deductionAmount, deductionAmount > 0 ? deductionCategory : null, recordedReason, stripeRefundId, isBankTransfer ? 'pending' : 'succeeded', admin.id, channel, isBankTransfer ? order.refundBsb : null, isBankTransfer ? order.refundAccountNumber : null, isBankTransfer ? order.refundAccountName : null),
     ...(priceRefundAmount > 0 ? [c.env.RENT.prepare("UPDATE order_price_adjustments SET deposit_refunded = 1, updated_at = CURRENT_TIMESTAMP WHERE order_id = ? AND direction = 'decrease' AND status = 'succeeded' AND refund_method = 'pending_deposit' AND deposit_refunded = 0").bind(order.id)] : []),
     ...(totalRefundAmount > 0 && channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(totalRefundAmount, order.userId)] : []),
-    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(totalRefunded >= depositAmount ? 'REFUNDED' : totalRefunded <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED', deductionAmount, totalRefunded, order.id),
+    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?").bind(isBankTransfer ? 'REFUND_PENDING' : totalRefunded >= depositAmount ? 'REFUNDED' : totalRefunded <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED', deductionAmount, totalRefunded, order.id),
     c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ?").bind(order.deviceId),
   ])
   if (totalRefundAmount > 0 && channel === 'balance') await recordBalanceTransaction(c, order.userId, totalRefundAmount, 'refund_credit', `${refundItemLabel}退回账户余额`, admin.id)
-  const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-  if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -totalRefundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: refundItemLabel, createdBy: admin.id, metadata: { channel, principal: refundAmount, processingFee: refundedProcessingFee } })
-  if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount, refundedProcessingFee, `deposit-${nanoid(12)}`)
+  if (!isBankTransfer) {
+    const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+    if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -totalRefundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: refundItemLabel, createdBy: admin.id, metadata: { channel, principal: refundAmount, processingFee: refundedProcessingFee } })
+    if (refundAmount > 0) await issueCreditNote(c, order.id, refundAmount, refundedProcessingFee, `deposit-${nanoid(12)}`)
+  }
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 
@@ -1463,9 +1466,23 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string, r
 }
 
 export async function completeBankTransferRefund(c: Context, admin: any, refundId: string): Promise<void> {
-  const pending = await c.env.RENT.prepare("SELECT payment_id FROM payment_refunds WHERE id = ? AND type IN ('cancellation', 'early_return') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(refundId).first() as any
+  const pending = await c.env.RENT.prepare("SELECT * FROM payment_refunds WHERE id = ? AND type IN ('cancellation', 'early_return', 'deposit') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(refundId).first() as any
   if (!pending) throw new Error('退款记录不存在或已经处理')
   if (await hasOpenPaymentDispute(c, String(pending.payment_id || ''))) throw new Error('该笔付款存在未解决的拒付争议，暂不能放款')
-  const result = await c.env.RENT.prepare("UPDATE payment_refunds SET status = 'succeeded', processed_by = ?, created_at = CURRENT_TIMESTAMP WHERE id = ? AND type IN ('cancellation', 'early_return') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(admin.id, refundId).run()
+  const result = await c.env.RENT.prepare("UPDATE payment_refunds SET status = 'succeeded', processed_by = ?, created_at = CURRENT_TIMESTAMP WHERE id = ? AND type IN ('cancellation', 'early_return', 'deposit') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(admin.id, refundId).run()
   if (!result.meta?.changes) throw new Error('退款记录不存在或已经处理')
+  if (pending.type !== 'deposit') return
+
+  const order = await getOrderById(c, pending.order_id)
+  if (!order) return
+  const payment = await c.env.RENT.prepare('SELECT deposit_amount FROM payments WHERE id = ?').bind(pending.payment_id).first() as any
+  const depositAmount = Math.max(Number(payment?.deposit_amount || 0), orderDeposit(order))
+  const totalRefunded = Number((await c.env.RENT.prepare("SELECT COALESCE(SUM(refund_amount), 0) AS amount FROM payment_refunds WHERE payment_id = ? AND type = 'deposit' AND status = 'succeeded'").bind(pending.payment_id).first() as any)?.amount || 0)
+  const totalRefundAmount = Number(pending.refund_amount || 0) + Number(pending.refunded_processing_fee || 0)
+  await c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .bind(totalRefunded >= depositAmount ? 'REFUNDED' : totalRefunded <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED', totalRefunded, order.id).run()
+  const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -totalRefundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '押金退款（银行转账）', createdBy: admin.id, metadata: { channel: 'bank_transfer', principal: Number(pending.refund_amount || 0), processingFee: Number(pending.refunded_processing_fee || 0) } })
+  if (Number(pending.refund_amount || 0) > 0) await issueCreditNote(c, order.id, Number(pending.refund_amount || 0), Number(pending.refunded_processing_fee || 0), `deposit-${nanoid(12)}`)
+  await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'deposit_refunded', title: '押金退款已完成', message: `您的订单 ${order.orderNo || order.id} 押金退款 AUD ${totalRefundAmount.toFixed(2)} 已通过银行转账完成，请注意查收。`, orderId: order.id })
 }
