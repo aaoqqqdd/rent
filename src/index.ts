@@ -1111,7 +1111,7 @@ app.post('/customer/balance/top-up', async (c) => {
   if (['alipay', 'wechat'].includes(method) && (!(getSystemSettings().paymentMethods as any)[method] || !getSystemSettings().rmbPayment[`${method}QrUrl`])) return c.text('该人民币支付方式当前未启用', 400)
   const rmbRate = ['alipay', 'wechat'].includes(method) ? await getAudCnyRate().catch(() => null) : null
   if (['alipay', 'wechat'].includes(method) && !rmbRate) return c.text('暂时无法获取实时汇率，请稍后重试', 503)
-  const id = `topup-${nanoid(12)}`
+  const id = generateReferenceNumber('TOP')
   await c.env.RENT.prepare("INSERT INTO balance_topups (id, user_id, amount, payment_method, cny_amount, status) VALUES (?, ?, ?, ?, ?, 'pending')").bind(id, user.id, Number(amount.toFixed(2)), method, rmbRate ? roundCnyUp(amount, rmbRate) : null).run()
   if (['bank_transfer', 'alipay', 'wechat'].includes(method)) {
     await c.env.RENT.prepare("UPDATE balance_topups SET status = 'awaiting_transfer' WHERE id = ?").bind(id).run()
@@ -1250,8 +1250,17 @@ app.post('/admin/users/:id/risk/:flagId/resolve', async (c) => {
   return c.redirect(`/admin/users/${encodeURIComponent(c.req.param('id'))}/risk`, 303)
 })
 
+const BALANCE_TOPUP_REDIRECT_TARGETS = ['/admin/exceptions', '/admin/orders/balance-topups']
+function resolveBalanceTopupRedirect(raw: unknown) {
+  const value = String(raw || '')
+  const path = value.split('?')[0]
+  return BALANCE_TOPUP_REDIRECT_TARGETS.includes(path) ? value : '/admin/exceptions'
+}
+
 app.post('/admin/balance-topups/:id/approve', async (c) => {
   const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const redirectTo = resolveBalanceTopupRedirect(form.redirect)
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).first() as any
   if (!topup) return c.text('充值记录不存在或已处理', 409)
   const claimed = await c.env.RENT.prepare("UPDATE balance_topups SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(topup.id).run()
@@ -1261,14 +1270,16 @@ app.post('/admin/balance-topups/:id/approve', async (c) => {
     c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) SELECT ?, ?, ?, ROUND(balance, 2), 'top_up_transfer', ?, ? FROM users WHERE id = ?").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id, topup.user_id),
   ])
   await createAuditLog(c, { actor: admin, action: 'BALANCE_TOPUP_APPROVED', targetType: 'BALANCE_TOPUP', targetId: topup.id, after: { amount: topup.amount, userId: topup.user_id } })
-  return c.redirect('/admin/exceptions')
+  return c.redirect(redirectTo)
 })
 
 app.post('/admin/balance-topups/:id/reject', async (c) => {
   const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const redirectTo = resolveBalanceTopupRedirect(form.redirect)
   const result = await c.env.RENT.prepare("UPDATE balance_topups SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).run()
   if (!result.meta?.changes) return c.text('充值记录不存在或已处理', 409)
-  return c.redirect('/admin/exceptions')
+  return c.redirect(redirectTo)
 })
 
 app.get('/customer/guest', async (c) => {
@@ -3411,6 +3422,14 @@ app.get('/admin/orders', async (c) => {
     return c.redirect('/login')
   }
   return c.html(await pages.renderAdminOrders(c, user))
+})
+
+app.get('/admin/orders/balance-topups', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.html(await pages.renderAdminBalanceTopups(c, user))
 })
 
 app.get('/admin/order-review', async (c) => {

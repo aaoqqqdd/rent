@@ -1706,7 +1706,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/admin/dashboard', '控制台')}
             ${renderNavGroup('通知管理', [['/admin/notifications', '通知中心'], ['/notifications', '发布通知']])}
             ${renderNavGroup('用户管理', [['/admin/users', '用户管理']])}
-            ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/calendar', '租赁日历']])}
+            ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/orders/balance-topups', '充值订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
