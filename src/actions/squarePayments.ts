@@ -54,6 +54,12 @@ async function completeSquarePayment(c: Context, paymentId: string, expectedCent
   return payment
 }
 
+export async function completeSquareGiftCardPayment(c: Context, paymentId: string, expectedCents: number): Promise<any> {
+  await ensureSquareEnabled(c)
+  if (!paymentId || !Number.isInteger(expectedCents) || expectedCents <= 0) throw new Error('礼品卡付款参数无效')
+  return completeSquarePayment(c, paymentId, expectedCents)
+}
+
 async function createOrReuseStripeRemainder(c: Context, options: {
   existingIntentId?: string
   amountCents: number
@@ -105,15 +111,16 @@ export async function getSquareGiftCardConfigForOrder(c: Context, user: any, ord
   if (String(order.paymentProvider || '') !== 'square') throw new Error('该订单未选择礼品卡支付')
   if (order.status !== 'pending_payment') throw new Error('该订单当前不能支付')
   const config = await getSquareRuntimeConfig(c)
-  const payment = await c.env.RENT.prepare("SELECT status FROM payments WHERE rental_id = ? AND payment_provider = 'square' AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-  return { applicationId: config.applicationId, locationId: config.locationId, environment: config.environment, amountCents: cents(squareOrderPaymentAmounts(order).total), alreadyPaid: payment?.status === 'paid' }
+  const payment = await c.env.RENT.prepare("SELECT status, square_paid_amount FROM payments WHERE rental_id = ? AND payment_provider = 'square' AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  const targetCents = cents(squareOrderPaymentAmounts(order).total)
+  return { applicationId: config.applicationId, locationId: config.locationId, environment: config.environment, amountCents: targetCents, alreadyPaid: payment?.status === 'paid' && cents(Number(payment?.square_paid_amount || 0)) >= targetCents }
 }
 
 async function finalizeSquarePayment(c: Context, order: any, paymentId: string, squarePayment: any): Promise<void> {
   const transactionId = String(squarePayment.id || squarePayment.receipt_number || `SQ-${nanoid(10)}`)
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE payments SET status = 'paid', square_payment_id = ?, transaction_id = COALESCE(transaction_id, ?), paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND payment_provider = 'square'").bind(String(squarePayment.id || ''), transactionId, paymentId),
-    c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'card', payment_provider = 'square', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id),
+    ...(Number(order.depositAmount ?? order.deposit_amount ?? 0) > 0 && String(order.deposit_status || '').toUpperCase() === 'PENDING' ? [] : [c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'card', payment_provider = 'square', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(order.id)]),
   ])
   await ensureOrderNumber(c, order.id).catch(() => { })
   await issueInvoice(c, order.id).catch(error => console.error(JSON.stringify({ message: 'Square invoice issue failed', error: error instanceof Error ? error.message : String(error), orderId: order.id })))
@@ -169,7 +176,7 @@ export async function getSquareGiftCardConfigForBalanceTopUp(c: Context, user: a
   return { applicationId: config.applicationId, locationId: config.locationId, environment: config.environment, amountCents: cents(amounts.total), alreadyPaid: false }
 }
 
-export async function createSquareGiftCardBalanceTopUp(c: Context, user: any, topUpId: string, sourceId: string): Promise<{ status: string; alreadyPaid?: boolean }> {
+export async function createSquareGiftCardBalanceTopUp(c: Context, user: any, topUpId: string, sourceId: string): Promise<{ status: string; alreadyPaid?: boolean; squarePaidAmountCents?: number; remainingAmountCents?: number }> {
   await ensureSquareEnabled(c)
   if (user?.role !== 'CUSTOMER') throw new Error('Square 付款必须使用客户资料')
   const cleanSourceId = String(sourceId || '').trim()
@@ -199,7 +206,7 @@ export async function createSquareGiftCardBalanceTopUp(c: Context, user: any, to
   if (returned.amount <= 0 || returned.amount > amountCents || returned.currency !== 'AUD') throw new Error('Square 返回的金额或币种与充值记录不一致')
   const approvedCents = approvedSquareCents(squarePayment)
   if (approvedCents <= 0 || approvedCents > amountCents) throw new Error('礼品卡授权金额无效')
-  await c.env.RENT.prepare('UPDATE balance_topups SET transaction_id = ?, processing_fee = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = \'pending\'').bind(String(squarePayment.id || topup.transaction_id || ''), amounts.fee, topup.id).run()
+  await c.env.RENT.prepare('UPDATE balance_topups SET transaction_id = ?, processing_fee = ?, square_paid_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = \'pending\'').bind(String(squarePayment.id || topup.transaction_id || ''), amounts.fee, approvedCents / 100, topup.id).run()
   const status = String(squarePayment.status || '').toUpperCase()
   if (status === 'COMPLETED') {
     if (approvedCents !== amountCents) throw new Error('Square 充值付款未覆盖完整金额')
@@ -209,31 +216,12 @@ export async function createSquareGiftCardBalanceTopUp(c: Context, user: any, to
     await c.env.RENT.prepare("UPDATE balance_topups SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(topup.id).run()
     throw new Error('礼品卡充值未完成')
   } else if (approvedCents < amountCents) {
-    const remainderCents = amountCents - approvedCents
-    const intent = await createOrReuseStripeRemainder(c, {
-      existingIntentId: topup.stripe_payment_intent_id ? String(topup.stripe_payment_intent_id) : '',
-      amountCents: remainderCents,
-      customerId: String(user.stripe_customer_id || user.stripeCustomerId || ''),
-      receiptEmail: user.email,
-      idempotencyKey: `rent-sq-topup-remainder-${String(topup.id).slice(0, 32)}`,
-      metadata: {
-        topup_id: String(topup.id),
-        customer_id: String(user.id),
-        type: 'square_split_topup',
-        square_payment_id: String(squarePayment.id || ''),
-        target_amount: String(amountCents),
-        square_approved_amount: String(approvedCents),
-        remainder_amount: String(remainderCents),
-      },
-      description: `账户余额充值｜礼品卡差额｜${topup.id}`,
-    })
-    await c.env.RENT.prepare('UPDATE balance_topups SET stripe_payment_intent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = \'pending\'').bind(String(intent.id), topup.id).run()
-    return await stripeRemainderResult(c, intent, remainderCents)
+    return { status: 'partial', squarePaidAmountCents: approvedCents, remainingAmountCents: amountCents - approvedCents }
   } else if (status === 'APPROVED') {
     const completed = await completeSquarePayment(c, String(squarePayment.id), amountCents)
     await finalizeSquareBalanceTopUp(c, topup, completed)
   }
-  return { status: status.toLowerCase() || 'pending' }
+  return { status: status.toLowerCase() || 'pending', squarePaidAmountCents: approvedCents }
 }
 
 export async function getSquareGiftCardConfigForPriceAdjustment(c: Context, user: any, orderId: string) {
@@ -329,7 +317,7 @@ export async function createSquareGiftCardPriceAdjustmentPayment(c: Context, use
   return { status: status.toLowerCase() || 'pending' }
 }
 
-export async function createSquareGiftCardPayment(c: Context, user: any, orderId: string, sourceId?: string): Promise<{ status: string; alreadyPaid?: boolean; squarePaidAmountCents?: number }> {
+export async function createSquareGiftCardPayment(c: Context, user: any, orderId: string, sourceId?: string): Promise<{ status: string; alreadyPaid?: boolean; squarePaidAmountCents?: number; remainingAmountCents?: number }> {
   await ensureSquareEnabled(c)
   if (user?.role !== 'CUSTOMER') throw new Error('Square 付款必须使用客户资料')
   const order = await getOrderById(c, orderId)
@@ -348,9 +336,9 @@ export async function createSquareGiftCardPayment(c: Context, user: any, orderId
 
   const paymentId = String(existing?.id || `p-${nanoid(12)}`)
   if (existing) {
-    await c.env.RENT.prepare("UPDATE payments SET amount = ?, rental_amount = ?, processing_fee = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(amounts.total, amounts.rentalAmount, amounts.fee, paymentId).run()
+    await c.env.RENT.prepare("UPDATE payments SET amount = ?, rental_amount = ?, processing_fee = ?, square_paid_amount = 0, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(amounts.total, amounts.rentalAmount, amounts.fee, paymentId).run()
   } else {
-    await c.env.RENT.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, processing_fee, currency, status) VALUES (?, ?, ?, 'card', 'square', ?, 0, ?, ?, 'AUD', 'pending')").bind(paymentId, order.id, user.id, amounts.total, amounts.rentalAmount, amounts.fee).run()
+    await c.env.RENT.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, processing_fee, square_paid_amount, currency, status) VALUES (?, ?, ?, 'card', 'square', ?, 0, ?, ?, 0, 'AUD', 'pending')").bind(paymentId, order.id, user.id, amounts.total, amounts.rentalAmount, amounts.fee).run()
   }
 
   let squarePayment: any = existing?.square_payment_id
@@ -375,7 +363,7 @@ export async function createSquareGiftCardPayment(c: Context, user: any, orderId
   if (returnedAmount <= 0 || returnedAmount > amountCents || returnedCurrency !== 'AUD') throw new Error('Square 返回的金额或币种与订单不一致')
   const status = String(squarePayment.status || '').toUpperCase()
   const squarePaidAmountCents = approvedSquareCents(squarePayment)
-  await c.env.RENT.prepare('UPDATE payments SET square_payment_id = ?, transaction_id = COALESCE(transaction_id, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(String(squarePayment.id || ''), String(squarePayment.id || ''), paymentId).run()
+  await c.env.RENT.prepare('UPDATE payments SET square_payment_id = ?, square_paid_amount = ?, transaction_id = COALESCE(transaction_id, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(String(squarePayment.id || ''), squarePaidAmountCents / 100, String(squarePayment.id || ''), paymentId).run()
   if (status === 'COMPLETED') {
     if (approvedSquareCents(squarePayment) !== amountCents) throw new Error('Square 订单付款未覆盖完整金额')
     await finalizeSquarePayment(c, order, paymentId, squarePayment)
@@ -385,31 +373,12 @@ export async function createSquareGiftCardPayment(c: Context, user: any, orderId
     throw new Error('礼品卡付款未完成')
   } else if (approvedSquareCents(squarePayment) < amountCents) {
     const approvedCents = approvedSquareCents(squarePayment)
-    const remainderCents = amountCents - approvedCents
-    const intent = await createOrReuseStripeRemainder(c, {
-      existingIntentId: existing?.stripe_payment_intent_id ? String(existing.stripe_payment_intent_id) : '',
-      amountCents: remainderCents,
-      customerId: String(user.stripe_customer_id || user.stripeCustomerId || ''),
-      receiptEmail: user.email,
-      idempotencyKey: `rent-sq-remainder-${String(order.id).slice(0, 32)}`,
-      metadata: {
-        type: 'square_split_order',
-        order_id: String(order.id),
-        customer_id: String(user.id),
-        square_payment_id: String(squarePayment.id || ''),
-        target_amount: String(amountCents),
-        square_approved_amount: String(approvedCents),
-        remainder_amount: String(remainderCents),
-      },
-      description: `设备租赁订单 ${order.orderNo || order.id}｜礼品卡差额`,
-    })
-    await c.env.RENT.prepare('UPDATE payments SET stripe_payment_intent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = \'pending\'').bind(String(intent.id), paymentId).run()
-    return { ...(await stripeRemainderResult(c, intent, remainderCents)), squarePaidAmountCents }
+    return { status: 'partial', squarePaidAmountCents: approvedCents, remainingAmountCents: amountCents - approvedCents }
   } else if (status === 'APPROVED') {
     const completed = await completeSquarePayment(c, String(squarePayment.id), amountCents)
     await finalizeSquarePayment(c, order, paymentId, completed)
   }
-  return { status: status.toLowerCase() || 'pending', squarePaidAmountCents }
+  return { status: status.toLowerCase() || 'pending', squarePaidAmountCents: squarePaidAmountCents }
 }
 
 export async function handleSquareWebhook(c: Context): Promise<Response> {
