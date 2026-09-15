@@ -44,7 +44,7 @@ export async function renderAdminEmailTemplates(c: any, user: any) {
   const page = Math.min(Math.max(1, Number(new URL(c.req.url).searchParams.get('page') || 1) || 1), pageCount)
   const pageRows = rows.slice((page - 1) * pageSize, page * pageSize)
   const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x] || x))
-  const variables = '{title}、{message}、{customer_name}、{customer_email}、{order_number}、{contract_number}、{device_name}、{start_date}、{end_date}、{rental_period}、{pickup_date}、{pickup_location}、{return_date}、{return_location}、{total_amount}、{deposit_amount}、{refund_amount}、{payment_due_date}、{delivery_method}、{delivery_address}、{delivery_fee}、{rental_note}、{sign_url}、{verification_url}、{reset_url}、{company_name}、{company_email}'
+  const variables = '{title}、{message}、{customer_name}、{customer_email}、{order_number}、{contract_number}、{device_name}、{start_date}、{end_date}、{rental_period}、{pickup_date}、{pickup_location}、{return_date}、{return_location}、{total_amount}、{deposit_amount}、{refund_amount}、{payment_due_date}、{delivery_method}、{delivery_address}、{delivery_fee}、{rental_note}、{order_detail_url}、{sign_url}、{verification_url}、{reset_url}、{company_name}、{company_email}'
   const variableIndex = `<details class="variable-index"><summary>可用变量（${variables.split('、').length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${variables.split('、').map(variable => `<code>${variable}</code>`).join('')}</div></section></details>`
   const isBuiltin = (id: string) => !String(id).startsWith('custom_')
   const themeOf = (row: any) => row.theme_color || (isBuiltin(row.id) ? '#f0a35b' : '#71818d')

@@ -5,7 +5,19 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createDueDateNotifications } from '../src/services/notifications'
+import { buildNotificationOrderDetailUrl, createDueDateNotifications } from '../src/services/notifications'
+
+test('notification order detail URLs follow the recipient workspace', () => {
+  assert.equal(
+    buildNotificationOrderDetailUrl('https://rent.example.test/notifications', 'order/1', 'CUSTOMER'),
+    'https://rent.example.test/customer/orders/order%2F1',
+  )
+  assert.equal(
+    buildNotificationOrderDetailUrl('https://rent.example.test/notifications', 'order-1', 'ADMIN'),
+    'https://rent.example.test/admin/orders/order-1',
+  )
+  assert.equal(buildNotificationOrderDetailUrl('https://rent.example.test/notifications', '', 'CUSTOMER'), '')
+})
 
 test('due-date notifications are inserted once per order and reminder type', async () => {
   const inserted = new Set<string>()

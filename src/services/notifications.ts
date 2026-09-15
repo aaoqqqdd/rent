@@ -39,11 +39,11 @@ async function ensureSiteNotificationEmailTemplate(c: Context): Promise<void> {
 
 // 给一条已创建的站内信补发邮件：找收件人邮箱、找兜底模板、套用变量、发信。
 // 尽力而为——任何一步失败都不影响站内信本身，调用方只需 catch 掉即可。
-async function sendNotificationEmail(c: Context, notification: { recipientId: string; type: string; title: string; message: string }): Promise<void> {
+async function sendNotificationEmail(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string }): Promise<void> {
   if (SKIP_AUTO_EMAIL_TYPES.has(notification.type)) return
   const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) return
-  const recipient = await c.env.RENT.prepare('SELECT name, email FROM users WHERE id = ?').bind(notification.recipientId).first() as any
+  const recipient = await c.env.RENT.prepare('SELECT name, email, role FROM users WHERE id = ?').bind(notification.recipientId).first() as any
   const email = String(recipient?.email || '').trim()
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith('@invalid.local')) return
 
@@ -52,11 +52,13 @@ async function sendNotificationEmail(c: Context, notification: { recipientId: st
   if (!template || template.enabled === 0) return
 
   const companyDetails = getSystemSettings().companyDetails || ({} as any)
+  const orderDetailUrl = buildNotificationOrderDetailUrl(c.req.url, notification.orderId, recipient?.role)
   const vars: Record<string, string> = {
     title: notification.title,
     message: notification.message,
     customer_name: normalizeCustomerName(recipient?.name),
     customer_email: email,
+    order_detail_url: orderDetailUrl,
     company_name: String(companyDetails.name || ''),
     company_email: String(companyDetails.email || ''),
   }
@@ -132,6 +134,13 @@ async function ensureAgreementEmailEventsTable(c: Context): Promise<void> {
 function normalizeCustomerName(value: unknown): string {
   const name = String(value || '').trim().replace(/\s+/g, ' ')
   return name.replace(/([\p{Script=Han}])\s+(?=[\p{Script=Han}])/gu, '$1')
+}
+
+export function buildNotificationOrderDetailUrl(baseUrl: string, orderId: unknown, recipientRole: unknown): string {
+  const id = String(orderId || '').trim()
+  if (!id) return ''
+  const path = STAFF_ROLES.has(String(recipientRole || '').toUpperCase()) ? '/admin/orders/' : '/customer/orders/'
+  return new URL(`${path}${encodeURIComponent(id)}`, baseUrl).toString()
 }
 
 function normalizeAgreementUpdateTemplate(value: string): string {

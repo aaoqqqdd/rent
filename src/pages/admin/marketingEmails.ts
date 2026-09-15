@@ -2,10 +2,10 @@ import { buildLayout, sanitizePlainText } from '../../site'
 
 const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x] || x))
 
-const MARKETING_VARIABLES = '{customer_name}、{customer_email}、{coupon_code}、{discount_text}、{company_name}、{company_email}'
+const MARKETING_VARIABLES = '{customer_name}、{company_name}、{company_email}、{promotion_title}、{promotion_description}、{discount_amount}、{coupon_code}、{promo_end_date}、{browse_url}、{unsubscribe_url}、{device_1_name}、{device_1_description}、{device_1_url}、{device_2_name}、{device_2_description}、{device_2_url}、{customer_email}、{discount_text}'
 
 function variableIndex(): string {
-  return `<details class="variable-index"><summary>可用变量（${MARKETING_VARIABLES.split('、').length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${MARKETING_VARIABLES.split('、').map(v => `<code>${v}</code>`).join('')}</div><ul class="variable-index-notes"><li><code>{coupon_code}</code> 和 <code>{discount_text}</code> 仅在下方选择了优惠码后才会被替换，否则会原样保留，请按需使用。</li><li>系统会在每封营销邮件末尾自动附上「取消订阅」链接。</li></ul></section></details>`
+  return `<details class="variable-index"><summary>可用变量（${MARKETING_VARIABLES.split('、').length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${MARKETING_VARIABLES.split('、').map(v => `<code>${v}</code>`).join('')}</div><ul class="variable-index-notes"><li><code>{coupon_code}</code>、<code>{discount_amount}</code>、<code>{discount_text}</code> 和 <code>{promo_end_date}</code> 仅在下方选择了优惠码后才会被替换，否则为空。</li><li><code>{unsubscribe_url}</code> 是每位收件人的专属退订地址，系统也会在邮件页脚自动附上退订链接。</li><li><code>{device_1_*}</code> 和 <code>{device_2_*}</code> 会自动填入当前设备列表中的前两台设备。</li></ul></section></details>`
 }
 
 function templateManager(templates: any[]): string {
@@ -25,6 +25,8 @@ function composeForm(templates: any[], coupons: any[], customers: any[]): string
     <div><label class="form-label">批次名称（仅后台可见）</label><input class="form-control" name="name" maxlength="120" required placeholder="例如：2026年会员专属促销"></div>
     <div><label class="form-label">使用模板</label><select class="form-control" id="marketingTemplateSelect" name="templateId">${templateOptions}</select></div>
     <div style="grid-column:1/-1"><label class="form-label">邮件主题</label><input class="form-control" id="marketingSubject" name="subject" maxlength="200" required></div>
+    <div><label class="form-label">推广标题（可选）</label><input class="form-control" name="promotionTitle" maxlength="200" placeholder="默认使用邮件主题"></div>
+    <div><label class="form-label">推广简介（可选）</label><input class="form-control" name="promotionDescription" maxlength="500" placeholder="默认使用优惠说明"></div>
     <div style="grid-column:1/-1"><label class="form-label">邮件主题色</label><input class="form-control" id="marketingThemeColor" type="color" name="theme_color" value="#f0a35b"></div>
     <div style="grid-column:1/-1"><label class="form-label">正文（支持完整 HTML：可直接粘贴带样式、图片、按钮、表格排版的邮件设计稿）</label><textarea class="form-control html-editor" id="marketingBody" name="body" rows="10" maxlength="20000" required placeholder="&lt;p&gt;您好 {customer_name}...&lt;/p&gt;"></textarea></div>
     <div style="grid-column:1/-1">${variableIndex()}</div>

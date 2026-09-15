@@ -52,9 +52,13 @@ export function renderFlexibleContent(value: unknown, format?: unknown): string 
 type EmailShellOptions = {
   title: unknown
   content: string
+  companyName?: string
+  companyEmail?: string
   themeColor?: string
   eyebrow?: string
   footer: string
+  unsubscribeUrl?: string
+  logoUrl?: string
 }
 
 function escapeHtml(value: unknown): string {
@@ -62,19 +66,40 @@ function escapeHtml(value: unknown): string {
 }
 
 function renderEmailShell(options: EmailShellOptions): string {
-  const safeTitle = sanitizePlainText(options.title, 200)
+  const safeTitle = escapeHtml(sanitizePlainText(options.title, 200))
+  const safeCompany = escapeHtml(sanitizePlainText(options.companyName || 'PC Rental', 120))
+  const companyEmail = sanitizePlainText(options.companyEmail || '', 200)
+  const safeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(companyEmail) ? escapeHtml(companyEmail) : ''
   const accent = /^#[0-9a-f]{6}$/i.test(String(options.themeColor)) ? String(options.themeColor) : '#f0a35b'
-  const eyebrow = escapeHtml(options.eyebrow || '账户服务 / ACCOUNT SERVICE')
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title><style>@media only screen and (max-width:640px){.email-frame{padding:12px 8px!important}.email-header,.email-content,.email-footer{padding-left:20px!important;padding-right:20px!important}.email-title{font-size:24px!important}}</style></head><body style="margin:0;background:#e8eeeb;color:#172331;font-family:Arial,'Noto Sans SC','Microsoft YaHei',sans-serif;"><div class="email-frame" style="padding:28px 16px;background:#e8eeeb;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #ccd8d2;"><tr><td class="email-header" style="padding:24px 32px 22px;background:#172b2a;color:#f6faf7;border-bottom:4px solid ${accent};"><table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td style="width:44px;height:44px;background:${accent};color:#172b2a;text-align:center;vertical-align:middle;font:700 16px/44px Arial,sans-serif;letter-spacing:-1px;">PR</td><td style="padding-left:14px;vertical-align:middle;"><div style="font:700 13px/1.2 Arial,sans-serif;letter-spacing:2.5px;color:#f6faf7;">PC RENTAL</div><div style="margin-top:6px;font:11px/1.2 Arial,sans-serif;letter-spacing:1.4px;color:#a9bdb6;">设备租赁 · 账户服务</div></td></tr></table></td></tr><tr><td class="email-content" style="padding:34px 32px 32px;"><div style="font:700 10px/1.2 Arial,sans-serif;letter-spacing:1.8px;color:${accent};text-transform:uppercase;">${eyebrow}</div><h1 class="email-title" style="margin:12px 0 20px;font-size:28px;line-height:1.28;font-weight:700;color:#172b2a;">${safeTitle}</h1><div style="width:44px;height:4px;background:${accent};margin-bottom:24px;"></div><div style="font-size:16px;line-height:1.8;color:#405450;">${options.content}</div></td></tr><tr><td class="email-footer" style="padding:18px 32px 20px;background:#f3f7f4;border-top:1px solid #d9e3de;color:#71817c;font-size:11px;line-height:1.75;">${options.footer}</td></tr></table></div></body></html>`
+  const eyebrow = escapeHtml(options.eyebrow || '限时优惠')
+  const safeLogoUrl = /^https?:\/\//i.test(String(options.logoUrl || '')) ? escapeHtml(String(options.logoUrl).slice(0, 1000)) : ''
+  const logo = safeLogoUrl
+    ? `<td width="80" align="right" valign="middle" style="width:80px;padding-left:16px;"><img class="brand-logo" src="${safeLogoUrl}" width="72" height="72" alt="${safeCompany} Logo" style="display:block;width:72px;height:72px;border:4px solid #f3f4f6;border-radius:50%;background-color:#ffffff;object-fit:contain;"></td>`
+    : ''
+  const unsubscribe = options.unsubscribeUrl
+    ? `<a href="${options.unsubscribeUrl}" style="color:#9ca3af;text-decoration:underline;">取消订阅</a>`
+    : ''
+  const contact = safeEmail
+    ? `<p style="margin:0 0 14px;color:#6b7280;font-size:12px;line-height:1.6;"><a href="mailto:${safeEmail}" style="color:#6b7280;text-decoration:none;">${safeEmail}</a></p>`
+    : ''
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${safeTitle}</title><style>.email-button{display:inline-block;padding:14px 30px;color:#ffffff!important;background-color:${accent};font-size:15px;font-weight:700;line-height:1.4;text-decoration:none;border-radius:7px}@media screen and (max-width:600px){.container{width:100%!important}.content{padding:26px 20px!important}.hero-title{font-size:28px!important}.product-column{display:block!important;width:100%!important;padding:0 0 16px!important}.mobile-button{width:100%!important}.email-button{display:block!important;width:100%!important;box-sizing:border-box!important;text-align:center!important}.brand-logo{width:64px!important;height:64px!important}}</style></head><body style="margin:0;padding:0;background-color:#f3f5f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',Arial,sans-serif;color:#1f2937;"><div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${safeTitle}</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f5f8;"><tr><td align="center" style="padding:30px 16px;"><table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border-radius:12px;overflow:hidden;"><tr><td style="padding:24px 32px;background-color:#111827;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle"><p style="margin:0;color:#ffffff;font-size:20px;font-weight:700;line-height:1.4;">${safeCompany}</p><p style="margin:6px 0 0;color:#d1d5db;font-size:13px;line-height:1.5;">灵活、可靠的电脑设备租赁服务</p></td>${logo}</tr></table></td></tr><tr><td style="background-color:#eef2ff;padding:42px 32px 38px;text-align:center;"><p style="margin:0 0 14px;color:${accent};font-size:14px;font-weight:700;letter-spacing:1px;">${eyebrow}</p><h1 class="hero-title" style="margin:0;color:#111827;font-size:36px;line-height:1.25;font-weight:800;">${safeTitle}</h1></td></tr><tr><td class="content" style="padding:34px 40px 38px;"><div style="font-size:15px;line-height:1.8;color:#4b5563;">${options.content}</div></td></tr><tr><td style="padding:24px 32px;background-color:#f9fafb;border-top:1px solid #f0f1f3;text-align:center;"><p style="margin:0 0 8px;color:#374151;font-size:13px;line-height:1.6;"><strong>${safeCompany}</strong></p>${contact}<p style="margin:0;color:#9ca3af;font-size:11px;line-height:1.6;">您收到这封邮件，是因为您曾使用过或订阅了我们的租赁服务。${unsubscribe ? `<br>${unsubscribe}` : ''}</p></td></tr></table><p style="margin:16px 0 0;color:#9ca3af;font-size:11px;text-align:center;">© ${safeCompany}</p></td></tr></table></body></html>`
+}
+
+function renderNotificationEmailShell(options: EmailShellOptions): string {
+  const safeTitle = sanitizePlainText(options.title, 200)
+  const safeCompany = sanitizePlainText(options.companyName || 'PC Rental', 120)
+  const accent = /^#[0-9a-f]{6}$/i.test(String(options.themeColor)) ? String(options.themeColor) : '#2563eb'
+  const preheader = escapeHtml(`${safeCompany}：${safeTitle}`)
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${safeTitle}</title><style>@media screen and (max-width:600px){.container{width:100%!important}.content{padding:24px 20px!important}.amount{font-size:30px!important}.mobile-block{display:block!important;width:100%!important}}</style></head><body style="margin:0;padding:0;background-color:#f3f5f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',Arial,sans-serif;color:#1f2937;"><div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${preheader}</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f5f8;"><tr><td align="center" style="padding:32px 16px;"><table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border-radius:12px;overflow:hidden;"><tr><td style="padding:28px 32px;background-color:#111827;"><p style="margin:0;color:#ffffff;font-size:20px;font-weight:700;line-height:1.4;">${safeCompany}</p><p style="margin:8px 0 0;color:#d1d5db;font-size:13px;line-height:1.5;">电脑设备租赁服务</p></td></tr><tr><td class="content" style="padding:36px 40px 32px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:7px 12px;background-color:#f8fafc;border:1px solid ${accent};border-radius:999px;"><span style="color:${accent};font-size:13px;font-weight:600;">✓ 账户服务通知</span></td></tr></table><h1 style="margin:20px 0 12px;color:#111827;font-size:26px;line-height:1.35;font-weight:700;">${safeTitle}</h1><div style="font-size:15px;line-height:1.8;color:#4b5563;">${options.content}</div></td></tr><tr><td style="padding:20px 40px 28px;background-color:#f9fafb;border-top:1px solid #f0f1f3;"><p style="margin:0;color:#9ca3af;font-size:12px;line-height:1.7;text-align:center;">${options.footer}</p></td></tr></table><p style="margin:16px 0 0;color:#9ca3af;font-size:11px;line-height:1.5;text-align:center;">© ${safeCompany}</p></td></tr></table></body></html>`
 }
 
 export function renderEmailNotificationHtml(title: unknown, content: unknown, companyName = 'PC Rental', themeColor = '#f0a35b'): string {
   const safeCompany = sanitizePlainText(companyName, 120)
-  return renderEmailShell({
+  return renderNotificationEmailShell({
     title,
     content: renderFlexibleContent(content),
+    companyName,
     themeColor,
-    eyebrow: `${safeCompany} / MESSAGE`,
     footer: `${safeCompany}<br>这是一封系统通知邮件，请勿直接回复。`,
   })
 }
@@ -107,14 +132,10 @@ export function sanitizeMarketingEmailHtml(value: unknown): string {
   })
 }
 
-export function renderMarketingEmailHtml(title: unknown, content: unknown, companyName = 'PC Rental', themeColor = '#f0a35b', unsubscribeUrl?: string): string {
-  const safeCompany = sanitizePlainText(companyName, 120)
+export function renderMarketingEmailHtml(title: unknown, content: unknown, companyName = 'PC Rental', themeColor = '#f0a35b', unsubscribeUrl?: string, companyEmail = '', logoUrl = ''): string {
   const messageHtml = sanitizeMarketingEmailHtml(content)
   const safeUnsubscribeUrl = unsubscribeUrl && /^https?:\/\//i.test(unsubscribeUrl) ? escapeHtml(unsubscribeUrl.slice(0, 500)) : ''
-  const footer = safeUnsubscribeUrl
-    ? `${safeCompany}<br>这是一封营销推广邮件。如不想再收到此类邮件，请<a href="${safeUnsubscribeUrl}" style="color:#71818d;text-decoration:underline;">点击取消订阅</a>。`
-    : `${safeCompany}<br>这是一封营销推广邮件。`
-  return renderEmailShell({ title, content: messageHtml, themeColor, eyebrow: `${safeCompany} / OFFER`, footer })
+  return renderEmailShell({ title, content: messageHtml, companyName, companyEmail, themeColor, eyebrow: '限时优惠', unsubscribeUrl: safeUnsubscribeUrl || undefined, logoUrl, footer: '' })
 }
 
 export function renderPlainTextEmailHtml(title: unknown, text: unknown, companyName = 'PC Rental'): string {
@@ -122,10 +143,10 @@ export function renderPlainTextEmailHtml(title: unknown, text: unknown, companyN
     .split(/\n{2,}/)
     .map(paragraph => `<p style="margin:0 0 16px;">${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
     .join('')
-  return renderEmailShell({
+  return renderNotificationEmailShell({
     title,
     content: paragraphs,
-    eyebrow: '账户服务 / ACCOUNT SERVICE',
+    companyName,
     footer: `${sanitizePlainText(companyName, 120)}<br>这是一封系统邮件，请勿直接回复。`,
   })
 }
