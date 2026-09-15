@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createTallyFeedbackToken, normalizeTallyEmbedUrl, verifyTallyFeedbackToken } from '../src/lib/tally'
-import { renderTallyForm } from '../src/pages/public/tallyForm'
+import { renderTallyForm, renderTallyInquiryForm } from '../src/pages/public/tallyForm'
 
 test('Tally integration only accepts hosted Tally embed URLs', () => {
   assert.equal(normalizeTallyEmbedUrl('https://tally.so/embed/abc123?hideTitle=1'), 'https://tally.so/embed/abc123?hideTitle=1')
@@ -20,6 +20,13 @@ test('Tally page renders the official widget embed and a safe disabled state', (
   assert.match(html, /data-tally-src="https:\/\/tally\.so\/embed\/abc123"/)
   assert.match(html, /https:\/\/tally\.so\/widgets\/embed\.js/)
   assert.match(renderTallyForm(), /反馈问卷暂未开放/)
+})
+
+test('contact page keeps its title and embeds the inquiry form', () => {
+  const html = renderTallyInquiryForm()
+  assert.match(html, /整理一封询价邮件/)
+  assert.match(html, /data-tally-src="https:\/\/tally\.so\/embed\/q498Dg\?alignLeft=1&amp;hideTitle=1&amp;transparentBackground=1&amp;formEventsForwarding=1"/)
+  assert.match(html, /title="邮件咨询表单"/)
 })
 
 test('feedback tokens identify only the signed, unexpired customer', async () => {

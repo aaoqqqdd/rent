@@ -681,7 +681,7 @@ app.get('/login', async (c) => {
 })
 
 app.get('/contact', async (c) => {
-  return c.redirect('/feedback', 302)
+  return c.html(pages.renderTallyInquiryForm())
 })
 
 app.get('/feedback', async (c) => {
