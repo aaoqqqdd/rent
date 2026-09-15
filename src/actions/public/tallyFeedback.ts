@@ -44,12 +44,24 @@ function feedbackRewardSettings() {
   return {
     ...settings,
     rewardType: ['BALANCE', 'COUPON', 'GIFT_CARD'].includes(String(settings.rewardType)) ? settings.rewardType : 'BALANCE',
-    balanceAmount: Math.min(10000, Math.max(0, Number(settings.balanceAmount) || 0)),
+    balanceAmount: Math.min(10000, Math.max(0, Number(settings.balanceAmountMin ?? settings.balanceAmount) || 0)),
+    balanceAmountMin: Math.min(10000, Math.max(0, Number(settings.balanceAmountMin ?? settings.balanceAmount) || 0)),
+    balanceAmountMax: Math.min(10000, Math.max(0, Number(settings.balanceAmountMax ?? settings.balanceAmount) || 0)),
     couponDiscountType: settings.couponDiscountType === 'percent' ? 'percent' : 'fixed',
-    couponDiscountValue: Math.min(10000, Math.max(0, Number(settings.couponDiscountValue) || 0)),
+    couponDiscountValue: Math.min(10000, Math.max(0, Number(settings.couponDiscountValueMin ?? settings.couponDiscountValue) || 0)),
+    couponDiscountValueMin: Math.min(10000, Math.max(0, Number(settings.couponDiscountValueMin ?? settings.couponDiscountValue) || 0)),
+    couponDiscountValueMax: Math.min(10000, Math.max(0, Number(settings.couponDiscountValueMax ?? settings.couponDiscountValue) || 0)),
     couponMinimumOrderAmount: Math.min(1000000, Math.max(0, Number(settings.couponMinimumOrderAmount) || 0)),
     couponExpiresDays: Math.min(365, Math.max(1, Math.floor(Number(settings.couponExpiresDays) || 30))),
   }
+}
+
+function randomRewardValue(min: number, max: number): number {
+  const lower = Math.min(min, max)
+  const upper = Math.max(min, max)
+  const random = new Uint32Array(1)
+  crypto.getRandomValues(random)
+  return Number((lower + (random[0] / 0x100000000) * (upper - lower)).toFixed(2))
 }
 
 function rewardDescription(rewardType: string, data: Record<string, unknown>): string {
@@ -77,7 +89,7 @@ async function issueCouponReward(c: Context, rewardId: string, reward: ReturnTyp
   const expiresAt = new Date(Date.now() + reward.couponExpiresDays * 86400000).toISOString().slice(0, 19).replace('T', ' ')
   await c.env.RENT.prepare(`INSERT OR IGNORE INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword, max_discount_amount, minimum_order_amount, max_uses_per_customer, new_customer_only, stackable, restore_on_cancellation, status, active, applicable_components)
     VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, ?, NULL, NULL, NULL, NULL, NULL, ?, 1, 0, 0, 1, 'ACTIVE', 1, 'RENTAL_FEE')`)
-    .bind(couponId, code, reward.couponDiscountType, reward.couponDiscountValue, expiresAt, reward.couponMinimumOrderAmount || null).run()
+    .bind(couponId, code, reward.couponDiscountType, randomRewardValue(reward.couponDiscountValueMin, reward.couponDiscountValueMax), expiresAt, reward.couponMinimumOrderAmount || null).run()
   const coupon = await c.env.RENT.prepare('SELECT id, code, discount_type, discount_value, expires_at FROM coupons WHERE id = ?').bind(couponId).first() as any
   if (!coupon) throw new Error('反馈奖励优惠码创建失败')
   return { couponId: coupon.id, code: coupon.code, discountType: coupon.discount_type, discountValue: coupon.discount_value, expiresAt: coupon.expires_at, sourceRewardId: rewardId }
@@ -107,9 +119,9 @@ async function resolveFeedbackReward(c: Context, rewardRecord: any, reward: Retu
     let rewardData: Record<string, unknown>
     if (reward.rewardType === 'BALANCE') {
       if (reward.balanceAmount <= 0) throw new Error('反馈奖励余额必须大于 0')
-      rewardData = await issueBalanceReward(c, rewardRecord.id, customerId, Number(reward.balanceAmount.toFixed(2)))
+      rewardData = await issueBalanceReward(c, rewardRecord.id, customerId, randomRewardValue(reward.balanceAmountMin, reward.balanceAmountMax))
     } else if (reward.rewardType === 'COUPON') {
-      if (reward.couponDiscountValue <= 0 || (reward.couponDiscountType === 'percent' && reward.couponDiscountValue > 100)) throw new Error('反馈奖励优惠值无效')
+      if (reward.couponDiscountValueMin <= 0 || reward.couponDiscountValueMax < reward.couponDiscountValueMin || (reward.couponDiscountType === 'percent' && reward.couponDiscountValueMax > 100)) throw new Error('反馈奖励优惠值范围无效')
       rewardData = await issueCouponReward(c, rewardRecord.id, reward)
     } else {
       rewardData = await issueGiftCardReward(c, rewardRecord.id)

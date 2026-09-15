@@ -653,13 +653,13 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount, deposit_payment_mode FROM orders WHERE id = ?').bind(orderId).first() as any
   await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
   if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && String(previous?.deposit_payment_mode || 'PAID') === 'PAID' && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
-  // Any path that lands the order on RETURNED/COMPLETED must stamp return_received_at,
-  // otherwise the RETURNED_ORDER_WITHOUT_RETURN_RECORD consistency check flags it. The
-  // staff verification flow already does this; do it here too for admin force-complete
-  // and auto-transitions that come through updateOrderStatus.
-  if (status === 'returned' || status === 'completed') {
-    await db.prepare("UPDATE orders SET return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP) WHERE id = ?").bind(orderId).run()
-  }
+    // Any path that lands the order on RETURNED/COMPLETED must stamp return_received_at,
+    // otherwise the RETURNED_ORDER_WITHOUT_RETURN_RECORD consistency check flags it. The
+    // staff verification flow already does this; do it here too for admin force-complete
+    // and auto-transitions that come through updateOrderStatus.
+    if (status === 'returned' || status === 'completed') {
+      await db.prepare("UPDATE orders SET return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP) WHERE id = ?").bind(orderId).run()
+    }
     await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
   }
   if (status === 'completed') {
@@ -940,8 +940,12 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
       enabled: Boolean(parsedFeedbackRewards.enabled),
       rewardType: ['BALANCE', 'COUPON', 'GIFT_CARD'].includes(String(parsedFeedbackRewards.rewardType)) ? parsedFeedbackRewards.rewardType : systemSettings.feedbackRewards.rewardType,
       balanceAmount: Math.min(10000, Math.max(0, Number(parsedFeedbackRewards.balanceAmount) || 0)),
+      balanceAmountMin: Math.min(10000, Math.max(0, Number(parsedFeedbackRewards.balanceAmountMin ?? parsedFeedbackRewards.balanceAmount) || 0)),
+      balanceAmountMax: Math.min(10000, Math.max(0, Number(parsedFeedbackRewards.balanceAmountMax ?? parsedFeedbackRewards.balanceAmount) || 0)),
       couponDiscountType: parsedFeedbackRewards.couponDiscountType === 'percent' ? 'percent' : 'fixed',
       couponDiscountValue: Math.min(10000, Math.max(0, Number(parsedFeedbackRewards.couponDiscountValue) || 0)),
+      couponDiscountValueMin: Math.min(10000, Math.max(0, Number(parsedFeedbackRewards.couponDiscountValueMin ?? parsedFeedbackRewards.couponDiscountValue) || 0)),
+      couponDiscountValueMax: Math.min(10000, Math.max(0, Number(parsedFeedbackRewards.couponDiscountValueMax ?? parsedFeedbackRewards.couponDiscountValue) || 0)),
       couponExpiresDays: Math.min(365, Math.max(1, Math.floor(Number(parsedFeedbackRewards.couponExpiresDays) || 30))),
     }
   }
@@ -1459,11 +1463,11 @@ export async function ensureContractForOrder(c: Context, order: Order, createdBy
   const template = await getContractTemplate(c)
   const customerSnapshot = customer?.role === 'CUSTOMER' && customer.name && customer.email && customer.phone
     ? {
-        customer_name: customer.name,
-        customer_email: customer.email,
-        customer_phone: customer.phone,
-        customer_identity_locked_at: now.toISOString(),
-      }
+      customer_name: customer.name,
+      customer_email: customer.email,
+      customer_phone: customer.phone,
+      customer_identity_locked_at: now.toISOString(),
+    }
     : {}
   const contract: Contract = {
     id: `ct-${nanoid(10)}`,

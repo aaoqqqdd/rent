@@ -50,9 +50,13 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     feedbackRewards: {
       enabled: Boolean(payload.feedbackRewards?.enabled),
       rewardType: ['BALANCE', 'COUPON', 'GIFT_CARD'].includes(String(payload.feedbackRewards?.rewardType)) ? String(payload.feedbackRewards.rewardType) : currentFeedbackRewards.rewardType,
-      balanceAmount: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.balanceAmount ?? currentFeedbackRewards.balanceAmount) || 0)),
+      balanceAmount: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.balanceAmountMin ?? currentFeedbackRewards.balanceAmountMin ?? currentFeedbackRewards.balanceAmount) || 0)),
+      balanceAmountMin: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.balanceAmountMin ?? currentFeedbackRewards.balanceAmountMin ?? currentFeedbackRewards.balanceAmount) || 0)),
+      balanceAmountMax: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.balanceAmountMax ?? currentFeedbackRewards.balanceAmountMax ?? currentFeedbackRewards.balanceAmount) || 0)),
       couponDiscountType: payload.feedbackRewards?.couponDiscountType === 'percent' ? 'percent' : payload.feedbackRewards?.couponDiscountType === 'fixed' ? 'fixed' : currentFeedbackRewards.couponDiscountType,
-      couponDiscountValue: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.couponDiscountValue ?? currentFeedbackRewards.couponDiscountValue) || 0)),
+      couponDiscountValue: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.couponDiscountValueMin ?? currentFeedbackRewards.couponDiscountValueMin ?? currentFeedbackRewards.couponDiscountValue) || 0)),
+      couponDiscountValueMin: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.couponDiscountValueMin ?? currentFeedbackRewards.couponDiscountValueMin ?? currentFeedbackRewards.couponDiscountValue) || 0)),
+      couponDiscountValueMax: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.couponDiscountValueMax ?? currentFeedbackRewards.couponDiscountValueMax ?? currentFeedbackRewards.couponDiscountValue) || 0)),
       couponMinimumOrderAmount: Math.min(1000000, Math.max(0, Number(payload.feedbackRewards?.couponMinimumOrderAmount ?? currentFeedbackRewards.couponMinimumOrderAmount ?? 0) || 0)),
       couponExpiresDays: Math.min(365, Math.max(1, Math.floor(Number(payload.feedbackRewards?.couponExpiresDays ?? currentFeedbackRewards.couponExpiresDays) || 30))),
     },
@@ -118,8 +122,8 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   if (String(payload.tallyFormUrl ?? '').trim() && !next.tallyFormUrl) {
     throw new Error('Tally 表单地址必须是 https://tally.so/embed/... 格式')
   }
-  if (next.feedbackRewards.rewardType === 'BALANCE' && next.feedbackRewards.enabled && next.feedbackRewards.balanceAmount <= 0) throw new Error('反馈奖励余额必须大于 0')
-  if (next.feedbackRewards.rewardType === 'COUPON' && next.feedbackRewards.enabled && (next.feedbackRewards.couponDiscountValue <= 0 || (next.feedbackRewards.couponDiscountType === 'percent' && next.feedbackRewards.couponDiscountValue > 100))) throw new Error('反馈奖励优惠值无效')
+  if (next.feedbackRewards.rewardType === 'BALANCE' && next.feedbackRewards.enabled && (next.feedbackRewards.balanceAmountMin <= 0 || next.feedbackRewards.balanceAmountMax < next.feedbackRewards.balanceAmountMin)) throw new Error('反馈奖励余额范围无效')
+  if (next.feedbackRewards.rewardType === 'COUPON' && next.feedbackRewards.enabled && (next.feedbackRewards.couponDiscountValueMin <= 0 || next.feedbackRewards.couponDiscountValueMax < next.feedbackRewards.couponDiscountValueMin || (next.feedbackRewards.couponDiscountType === 'percent' && next.feedbackRewards.couponDiscountValueMax > 100))) throw new Error('反馈奖励优惠值范围无效')
 
   for (const [name, value] of Object.entries(next.rmbPayment)) {
     if (value && (!/^https:\/\//i.test(String(value)) || String(value).includes('"'))) throw new Error(`${name} 必须是 HTTPS 图片地址`)

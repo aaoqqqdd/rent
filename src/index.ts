@@ -621,8 +621,9 @@ app.use('*', async (c, next) => {
   c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
   c.header('Cross-Origin-Opener-Policy', 'same-origin')
   c.header('Cross-Origin-Resource-Policy', 'same-origin')
+  c.header('X-Permitted-Cross-Domain-Policies', 'none')
   if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-  c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com https://tally.so; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com https://tally.so; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com https://tally.so; frame-ancestors 'none'")
+  c.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com https://tally.so https://web.squarecdn.com https://sandbox.web.squarecdn.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com https://tally.so https://connect.squareup.com https://connect.squareupsandbox.com; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com https://tally.so; frame-ancestors 'none'; form-action 'self' https://app.squareup.com")
 });
 
 app.use('*', async (c, next) => {
