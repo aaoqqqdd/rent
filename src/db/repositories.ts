@@ -20,6 +20,7 @@ import { generateReferenceNumber } from '../lib/reference'
 import { generateUserId } from '../lib/userId'
 import { hashPassword, verifyPassword } from '../lib/password'
 import { syncSquareCatalogItem, syncSquareCustomerProfile } from '../square'
+import { canTransitionDeviceLifecycle } from '../domain/deviceLifecycle'
 
 // ---------------------------------------------------------------------------
 // 私有：设备生命周期映射 + 行归一化
@@ -1045,7 +1046,18 @@ export async function releaseDeviceIfUnbooked(c: Context, deviceId: string): Pro
     WHERE deviceId = ? AND status IN ('paid', 'active', 'pending_pickup', 'pending_return')
     LIMIT 1
   `).bind(deviceId).first()
-  if (!activeOrder) await updateDeviceStatus(c, deviceId, 'available')
+  if (activeOrder) return
+  // 之前这里只改 legacy status 列，lifecycle_status（管理后台展示用）不同步，
+  // 导致订单被取消/强制完成后设备已经可租了，仪表盘却仍卡在“已归还待验收”等旧状态。
+  // 只在状态机允许直接跳到 READY 时才走 recordDeviceLifecycle；不允许时（如 DAMAGED、
+  // RETIRED）保持原有行为，不强行纠正 lifecycle_status。
+  const device = await c.env.RENT.prepare('SELECT lifecycle_status FROM devices WHERE id = ?').bind(deviceId).first() as any
+  const currentLifecycle = String(device?.lifecycle_status || 'READY')
+  if (canTransitionDeviceLifecycle(currentLifecycle, 'READY')) {
+    await recordDeviceLifecycle(c, deviceId, 'READY', { reason: '关联订单已取消/完成，设备已释放' })
+  } else {
+    await updateDeviceStatus(c, deviceId, 'available')
+  }
 }
 
 // ---------------------------------------------------------------------------
