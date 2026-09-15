@@ -5984,7 +5984,22 @@ tr:hover td {
   .official-document__meta > div:last-child { border-bottom: 0; }
 }
 @media print {
-  .official-document__archive { position: relative !important; top: auto !important; box-shadow: none !important; }
+  /* The on-screen masthead (full-bleed dark header, huge clamp() title) is sized
+     for a browser viewport. Left as-is, it alone can eat a third of an A4 page and
+     push an otherwise one-page receipt onto a second sheet. Print gets a compact,
+     inset header instead of the bleed trick. */
+  .official-document__archive {
+    position: relative !important;
+    top: auto !important;
+    box-shadow: none !important;
+    min-height: 0 !important;
+    margin: 0 0 20px !important;
+    padding: 16px 20px !important;
+  }
+  .official-document__archive .official-document__eyebrow { margin: 0 0 6px !important; }
+  .official-document__archive h1 { font-size: 24px !important; }
+  .official-document__archive .official-document__title h2 { margin: 8px 0 4px !important; font-size: 18px !important; }
+  .official-document { padding-top: 12mm !important; }
   .official-document {
     break-inside: avoid !important;
     page-break-inside: avoid !important;
