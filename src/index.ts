@@ -3862,6 +3862,14 @@ app.post('/admin/contracts/:id/data', async (c) => {
   return c.redirect(`/admin/contracts/${contract.id}`)
 })
 
+app.get('/admin/orders/balance-topups', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') {
+    return c.redirect('/login')
+  }
+  return c.html(await pages.renderAdminBalanceTopups(c, user))
+})
+
 app.get('/admin/orders/:id', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
