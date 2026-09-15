@@ -111,7 +111,12 @@ export function renderAdminDashboard(
       <table><thead><tr><th>设备名称</th><th>型号</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
         ${recentDevices.map((device) => {
     const deviceStatus = lifecycleStatusMap[device.lifecycleStatus || ''] || deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
-    return `<tr><td><strong>${escapeHtml(device.name)}</strong></td><td>${escapeHtml(device.model) || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${escapeHtml(device.customerName) || '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">远程操作</a></td></tr>`
+    // 归还后待验收/验机中的设备，「远程操作」直接指向该设备的验收入口（十项验证），
+    // 而不是之前那个跟具体设备无关的绑定列表页——之前点了也找不到验收在哪。
+    const needsAcceptance = device.lifecycleStatus === 'RETURNED' || device.lifecycleStatus === 'INSPECTION'
+    const controlHref = `/admin/devices/${encodeURIComponent(device.id)}/control`
+    const controlLabel = needsAcceptance ? '去验收' : '远程操作'
+    return `<tr><td><strong>${escapeHtml(device.name)}</strong></td><td>${escapeHtml(device.model) || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${escapeHtml(device.customerName) || '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="${controlHref}">${controlLabel}</a></td></tr>`
   }).join('')}
       </tbody></table>
       `}
