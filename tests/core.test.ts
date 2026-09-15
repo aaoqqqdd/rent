@@ -169,6 +169,14 @@ test('admin exception center belongs to system settings navigation', () => {
   assert.match(systemGroup, /异常任务中心/)
 })
 
+test('admin notification settings is available from notification navigation', () => {
+  const html = buildLayout('管理员页面', '<p>admin</p>', {
+    id: 'admin-1', name: 'Admin User', email: 'admin@example.com', role: 'ADMIN',
+  } as any)
+  const notificationGroup = html.slice(html.indexOf('<summary>通知中心'), html.indexOf('</details>', html.indexOf('<summary>通知中心')))
+  assert.match(notificationGroup, /href="\/admin\/notifications\/settings"[^>]*>.*通知设置/)
+})
+
 test('guest order links preserve the bound order identifier', async () => {
   const order = { id: 'o-order-1', userId: 'guest-1', orderNo: 'OD-20260913-ABC123', startDate: '2026-09-13', endDate: '2026-09-14' }
   const db = {
