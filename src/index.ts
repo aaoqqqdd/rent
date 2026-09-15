@@ -1739,7 +1739,6 @@ async function sendMarketingCampaignEmails(c: any, params: { campaignId: string;
       company_email: companyEmail,
       coupon_code: row.couponCode || '',
       discount_text: row.couponCode ? params.discountText : '',
-      unsubscribe_url: unsubscribeUrl,
     }
     const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
     const filledSubject = fill(params.subject)
@@ -1773,6 +1772,53 @@ app.get('/admin/marketing-emails', async (c) => {
   const customers = activeCustomers.filter((account: any) => !isMarketingOptedOut(account))
   const optedOutCount = activeCustomers.length - customers.length
   return c.html(pages.renderAdminMarketingEmails(user, { templates, campaigns, coupons, customers, optedOutCount }))
+})
+
+app.get('/admin/marketing-emails/data', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await ensureMarketingEmailTables(c.env.RENT)
+  const [audienceSummary, deliverySummary, campaignSummary, optedOutCustomers, campaigns] = await Promise.all([
+    c.env.RENT.prepare(`
+      SELECT COUNT(*) AS total_customers,
+             SUM(CASE WHEN status = 'active' AND TRIM(COALESCE(email, '')) <> '' THEN 1 ELSE 0 END) AS active_with_email,
+             SUM(CASE WHEN status = 'active' AND TRIM(COALESCE(email, '')) <> '' AND COALESCE(marketing_email_opt_out, 0) = 0 THEN 1 ELSE 0 END) AS sendable_customers,
+             SUM(CASE WHEN COALESCE(marketing_email_opt_out, 0) = 1 THEN 1 ELSE 0 END) AS opted_out_customers
+      FROM users WHERE role = 'CUSTOMER'
+    `).first(),
+    c.env.RENT.prepare(`
+      SELECT COUNT(*) AS recipient_count,
+             SUM(CASE WHEN status = 'SENT' THEN 1 ELSE 0 END) AS sent_count,
+             SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count
+      FROM marketing_campaign_recipients
+    `).first(),
+    c.env.RENT.prepare('SELECT COUNT(*) AS campaign_count FROM marketing_campaigns').first(),
+    c.env.RENT.prepare(`
+      SELECT u.id, u.name, u.email, u.status, u.marketing_opt_out_at,
+             COUNT(mcr.id) AS campaign_count, MAX(mcr.sent_at) AS last_marketing_sent_at
+      FROM users u
+      LEFT JOIN marketing_campaign_recipients mcr ON mcr.customer_id = u.id
+      WHERE u.role = 'CUSTOMER' AND COALESCE(u.marketing_email_opt_out, 0) = 1
+      GROUP BY u.id, u.name, u.email, u.status, u.marketing_opt_out_at
+      ORDER BY datetime(u.marketing_opt_out_at) DESC, u.name COLLATE NOCASE
+      LIMIT 500
+    `).all(),
+    c.env.RENT.prepare('SELECT id, name, subject, status, recipient_count, sent_count, failed_count, created_at FROM marketing_campaigns ORDER BY created_at DESC LIMIT 100').all(),
+  ])
+  return c.html(pages.renderAdminMarketingData(user, {
+    summary: {
+      totalCustomers: Number((audienceSummary as any)?.total_customers || 0),
+      activeWithEmail: Number((audienceSummary as any)?.active_with_email || 0),
+      sendableCustomers: Number((audienceSummary as any)?.sendable_customers || 0),
+      optedOutCustomers: Number((audienceSummary as any)?.opted_out_customers || 0),
+      campaignCount: Number((campaignSummary as any)?.campaign_count || 0),
+      recipientCount: Number((deliverySummary as any)?.recipient_count || 0),
+      sentCount: Number((deliverySummary as any)?.sent_count || 0),
+      failedCount: Number((deliverySummary as any)?.failed_count || 0),
+    },
+    optedOutCustomers: ((optedOutCustomers as any).results || []) as any[],
+    campaigns: ((campaigns as any).results || []) as any[],
+  }))
 })
 
 app.get('/admin/marketing-emails/:id', async (c) => {

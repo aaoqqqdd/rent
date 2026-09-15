@@ -49,12 +49,34 @@ export function renderFlexibleContent(value: unknown, format?: unknown): string 
   return sanitizeRichHtml(String(value ?? '').slice(0, 20000))
 }
 
+type EmailShellOptions = {
+  title: unknown
+  content: string
+  themeColor?: string
+  eyebrow?: string
+  footer: string
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
+}
+
+function renderEmailShell(options: EmailShellOptions): string {
+  const safeTitle = sanitizePlainText(options.title, 200)
+  const accent = /^#[0-9a-f]{6}$/i.test(String(options.themeColor)) ? String(options.themeColor) : '#f0a35b'
+  const eyebrow = escapeHtml(options.eyebrow || '账户服务 / ACCOUNT SERVICE')
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title><style>@media only screen and (max-width:640px){.email-frame{padding:12px 8px!important}.email-header,.email-content,.email-footer{padding-left:20px!important;padding-right:20px!important}.email-title{font-size:24px!important}}</style></head><body style="margin:0;background:#e8eeeb;color:#172331;font-family:Arial,'Noto Sans SC','Microsoft YaHei',sans-serif;"><div class="email-frame" style="padding:28px 16px;background:#e8eeeb;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #ccd8d2;"><tr><td class="email-header" style="padding:24px 32px 22px;background:#172b2a;color:#f6faf7;border-bottom:4px solid ${accent};"><table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td style="width:44px;height:44px;background:${accent};color:#172b2a;text-align:center;vertical-align:middle;font:700 16px/44px Arial,sans-serif;letter-spacing:-1px;">PR</td><td style="padding-left:14px;vertical-align:middle;"><div style="font:700 13px/1.2 Arial,sans-serif;letter-spacing:2.5px;color:#f6faf7;">PC RENTAL</div><div style="margin-top:6px;font:11px/1.2 Arial,sans-serif;letter-spacing:1.4px;color:#a9bdb6;">设备租赁 · 账户服务</div></td></tr></table></td></tr><tr><td class="email-content" style="padding:34px 32px 32px;"><div style="font:700 10px/1.2 Arial,sans-serif;letter-spacing:1.8px;color:${accent};text-transform:uppercase;">${eyebrow}</div><h1 class="email-title" style="margin:12px 0 20px;font-size:28px;line-height:1.28;font-weight:700;color:#172b2a;">${safeTitle}</h1><div style="width:44px;height:4px;background:${accent};margin-bottom:24px;"></div><div style="font-size:16px;line-height:1.8;color:#405450;">${options.content}</div></td></tr><tr><td class="email-footer" style="padding:18px 32px 20px;background:#f3f7f4;border-top:1px solid #d9e3de;color:#71817c;font-size:11px;line-height:1.75;">${options.footer}</td></tr></table></div></body></html>`
+}
+
 export function renderEmailNotificationHtml(title: unknown, content: unknown, companyName = 'PC Rental', themeColor = '#f0a35b'): string {
-  const safeTitle = sanitizePlainText(title, 200)
   const safeCompany = sanitizePlainText(companyName, 120)
-  const accent = /^#[0-9a-f]{6}$/i.test(String(themeColor)) ? String(themeColor) : '#f0a35b'
-  const messageHtml = renderFlexibleContent(content)
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title></head><body style="margin:0;background:#e9eef1;color:#172331;font-family:Arial,'Noto Sans SC',sans-serif;"><div style="padding:32px 16px;background:#e9eef1;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #cbd7df;box-shadow:0 12px 32px rgba(23,35,49,.12);"><tr><td style="padding:28px 32px;background:#172331;color:#f5f8fa;border-bottom:5px solid ${accent};"><div style="font:700 12px/1.2 Arial,sans-serif;letter-spacing:2px;color:${accent};">PR / PC RENTAL</div><div style="margin-top:14px;font-size:12px;letter-spacing:1.5px;color:#aebdca;">ASSET OPS · CUSTOMER NOTICE</div></td></tr><tr><td style="padding:36px 32px 30px;"><div style="font:700 11px/1.2 Arial,sans-serif;letter-spacing:1.8px;color:${accent};text-transform:uppercase;">${safeCompany} / MESSAGE</div><h1 style="margin:12px 0 22px;font-size:28px;line-height:1.25;color:#172331;">${safeTitle}</h1><div style="height:1px;background:#d7e0e6;margin-bottom:24px;"></div><div style="font-size:16px;line-height:1.8;color:#40515e;">${messageHtml}</div></td></tr><tr><td style="padding:20px 32px;background:#f5f8fa;border-top:1px solid #d7e0e6;color:#71818d;font:11px/1.7 monospace;">${safeCompany}<br>这是一封系统通知邮件，请勿直接回复。</td></tr></table></div></body></html>`
+  return renderEmailShell({
+    title,
+    content: renderFlexibleContent(content),
+    themeColor,
+    eyebrow: `${safeCompany} / MESSAGE`,
+    footer: `${safeCompany}<br>这是一封系统通知邮件，请勿直接回复。`,
+  })
 }
 
 // Marketing emails are admin-authored (ADMIN role only) and rendered solely by the
@@ -86,15 +108,26 @@ export function sanitizeMarketingEmailHtml(value: unknown): string {
 }
 
 export function renderMarketingEmailHtml(title: unknown, content: unknown, companyName = 'PC Rental', themeColor = '#f0a35b', unsubscribeUrl?: string): string {
-  const safeTitle = sanitizePlainText(title, 200)
   const safeCompany = sanitizePlainText(companyName, 120)
-  const accent = /^#[0-9a-f]{6}$/i.test(String(themeColor)) ? String(themeColor) : '#f0a35b'
   const messageHtml = sanitizeMarketingEmailHtml(content)
-  const safeUnsubscribeUrl = unsubscribeUrl ? sanitizePlainText(unsubscribeUrl, 500) : ''
+  const safeUnsubscribeUrl = unsubscribeUrl && /^https?:\/\//i.test(unsubscribeUrl) ? escapeHtml(unsubscribeUrl.slice(0, 500)) : ''
   const footer = safeUnsubscribeUrl
     ? `${safeCompany}<br>这是一封营销推广邮件。如不想再收到此类邮件，请<a href="${safeUnsubscribeUrl}" style="color:#71818d;text-decoration:underline;">点击取消订阅</a>。`
     : `${safeCompany}<br>这是一封营销推广邮件。`
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title></head><body style="margin:0;background:#e9eef1;color:#172331;font-family:Arial,'Noto Sans SC',sans-serif;"><div style="padding:32px 16px;background:#e9eef1;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #cbd7df;box-shadow:0 12px 32px rgba(23,35,49,.12);"><tr><td style="padding:28px 32px;background:#172331;color:#f5f8fa;border-bottom:5px solid ${accent};"><div style="font:700 12px/1.2 Arial,sans-serif;letter-spacing:2px;color:${accent};">PR / PC RENTAL</div><div style="margin-top:14px;font-size:12px;letter-spacing:1.5px;color:#aebdca;">MARKETING</div></td></tr><tr><td style="padding:36px 32px 30px;"><div style="font:700 11px/1.2 Arial,sans-serif;letter-spacing:1.8px;color:${accent};text-transform:uppercase;">${safeCompany} / OFFER</div><h1 style="margin:12px 0 22px;font-size:28px;line-height:1.25;color:#172331;">${safeTitle}</h1><div style="height:1px;background:#d7e0e6;margin-bottom:24px;"></div><div style="font-size:16px;line-height:1.8;color:#40515e;">${messageHtml}</div></td></tr><tr><td style="padding:20px 32px;background:#f5f8fa;border-top:1px solid #d7e0e6;color:#71818d;font:11px/1.7 monospace;">${footer}</td></tr></table></div></body></html>`
+  return renderEmailShell({ title, content: messageHtml, themeColor, eyebrow: `${safeCompany} / OFFER`, footer })
+}
+
+export function renderPlainTextEmailHtml(title: unknown, text: unknown, companyName = 'PC Rental'): string {
+  const paragraphs = sanitizePlainText(text, 20000)
+    .split(/\n{2,}/)
+    .map(paragraph => `<p style="margin:0 0 16px;">${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
+    .join('')
+  return renderEmailShell({
+    title,
+    content: paragraphs,
+    eyebrow: '账户服务 / ACCOUNT SERVICE',
+    footer: `${sanitizePlainText(companyName, 120)}<br>这是一封系统邮件，请勿直接回复。`,
+  })
 }
 
 export function createPageBreakHtml(): string {

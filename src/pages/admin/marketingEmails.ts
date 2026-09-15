@@ -2,10 +2,10 @@ import { buildLayout, sanitizePlainText } from '../../site'
 
 const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x] || x))
 
-const MARKETING_VARIABLES = '{customer_name}、{customer_email}、{coupon_code}、{discount_text}、{unsubscribe_url}、{company_name}、{company_email}'
+const MARKETING_VARIABLES = '{customer_name}、{customer_email}、{coupon_code}、{discount_text}、{company_name}、{company_email}'
 
 function variableIndex(): string {
-  return `<details class="variable-index"><summary>可用变量（${MARKETING_VARIABLES.split('、').length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${MARKETING_VARIABLES.split('、').map(v => `<code>${v}</code>`).join('')}</div><ul class="variable-index-notes"><li><code>{coupon_code}</code> 和 <code>{discount_text}</code> 仅在下方选择了优惠码后才会被替换，否则会原样保留，请按需使用。</li><li>退订链接无需手动插入 <code>{unsubscribe_url}</code>：系统会在每封邮件末尾自动附上「取消订阅」链接。</li></ul></section></details>`
+  return `<details class="variable-index"><summary>可用变量（${MARKETING_VARIABLES.split('、').length} 项）</summary><section class="contract-variable-group"><div class="variable-chip-list">${MARKETING_VARIABLES.split('、').map(v => `<code>${v}</code>`).join('')}</div><ul class="variable-index-notes"><li><code>{coupon_code}</code> 和 <code>{discount_text}</code> 仅在下方选择了优惠码后才会被替换，否则会原样保留，请按需使用。</li><li>系统会在每封营销邮件末尾自动附上「取消订阅」链接。</li></ul></section></details>`
 }
 
 function templateManager(templates: any[]): string {
@@ -107,7 +107,7 @@ function history(campaigns: any[]): string {
 }
 
 export function renderAdminMarketingEmails(user: any, data: { templates: any[]; campaigns: any[]; coupons: any[]; customers: any[]; optedOutCount?: number }): string {
-  const optedOutNote = data.optedOutCount ? `<p class="form-text">另有 ${data.optedOutCount} 位客户已取消订阅营销邮件，未在下方收件人列表中显示。</p>` : ''
+  const optedOutNote = data.optedOutCount ? `<p class="form-text">另有 ${data.optedOutCount} 位客户已取消订阅营销邮件，未在下方收件人列表中显示。<a href="/admin/marketing-emails/data">查看营销数据</a></p>` : `<p class="form-text"><a href="/admin/marketing-emails/data">查看营销数据和退订客户</a></p>`
   const body = `<div class="entity-header"><div class="identity-strip mono"><span>MARKETING / CAMPAIGNS</span><span>${data.customers.length} ACTIVE CUSTOMERS</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER OUTREACH</p><h2>营销邮件</h2><p>创建可复用的营销模板，向客户群发促销邮件，并可选择性地为每位收件人生成专属一次性优惠码。</p>${optedOutNote}</div></div></div>
   ${composeForm(data.templates, data.coupons, data.customers)}
   <div class="panel"><div class="section-title"><h3>营销模板库</h3><span class="section-note">共 ${data.templates.length} 个</span></div>${templateManager(data.templates)}</div>

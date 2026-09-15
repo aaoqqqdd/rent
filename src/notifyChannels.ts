@@ -11,6 +11,7 @@
 // 尽力而为、绝不抛错。
 
 import type { Context } from 'hono'
+import { renderPlainTextEmailHtml } from './lib/html'
 import { getSystemSettings } from './settings/systemSettings'
 
 export type EmailProvider = 'resend' | 'brevo' | 'mailersend'
@@ -221,13 +222,14 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
   const { provider, apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) return { ok: false, id: null, error: 'Email transport is not configured' }
   const recipients = Array.isArray(email.to) ? email.to : [email.to]
+  const html = email.html || renderPlainTextEmailHtml(email.subject, email.text, getSystemSettings().companyDetails.name || 'PC Rental')
 
   try {
     if (provider === 'brevo') {
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: { 'api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ sender: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, textContent: email.text, htmlContent: email.html || undefined }),
+        body: JSON.stringify({ sender: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, textContent: email.text, htmlContent: html }),
       })
       const result = await response.json().catch(() => ({})) as any
       return { ok: response.ok, id: result?.messageId || null, error: response.ok ? null : String(result?.message || response.status) }
@@ -236,7 +238,7 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
       const response = await fetch('https://api.mailersend.com/v1/email', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ from: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, text: email.text, html: email.html || undefined }),
+        body: JSON.stringify({ from: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, text: email.text, html }),
       })
       const messageId = response.headers.get('x-message-id')
       const ok = response.status === 202 || response.ok
@@ -248,7 +250,7 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: recipients, subject: email.subject, text: email.text, html: email.html || undefined }),
+      body: JSON.stringify({ from, to: recipients, subject: email.subject, text: email.text, html }),
     })
     const result = await response.json().catch(() => ({})) as any
     return { ok: response.ok, id: result?.id || null, error: response.ok ? null : String(result?.message || response.status) }

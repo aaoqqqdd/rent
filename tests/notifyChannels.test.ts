@@ -6,6 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveEmailCredentials, sendTransactionalEmail } from '../src/notifyChannels'
+import { renderEmailNotificationHtml, renderMarketingEmailHtml } from '../src/lib/html'
 import { runConnectivityProbes } from '../src/services/connectivity'
 
 const masterKey = 'test-settings-encryption-key'
@@ -56,6 +57,8 @@ test('transactional email uses the request format required by each provider', as
         assert.equal(body.from, 'PC Rental <sender@example.com>')
         assert.deepEqual(body.to, ['recipient@example.com'])
         assert.equal(body.text, 'test body')
+        assert.match(body.html, /PC RENTAL/)
+        assert.match(body.html, /账户服务/)
       },
     },
     {
@@ -68,6 +71,7 @@ test('transactional email uses the request format required by each provider', as
         assert.deepEqual(body.sender, { email: 'sender@example.com', name: 'PC Rental' })
         assert.deepEqual(body.to, [{ email: 'recipient@example.com' }])
         assert.equal(body.textContent, 'test body')
+        assert.match(body.htmlContent, /PC RENTAL/)
       },
     },
     {
@@ -80,6 +84,7 @@ test('transactional email uses the request format required by each provider', as
         assert.deepEqual(body.from, { email: 'sender@example.com', name: 'PC Rental' })
         assert.deepEqual(body.to, [{ email: 'recipient@example.com' }])
         assert.equal(body.text, 'test body')
+        assert.match(body.html, /PC RENTAL/)
       },
     },
   ] as const
@@ -107,6 +112,21 @@ test('transactional email uses the request format required by each provider', as
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('notification and marketing emails share the branded shell while keeping their content rules', () => {
+  const notification = renderEmailNotificationHtml('设备已准备好', '<p>请按时取件。</p>', '测试租赁', '#246b61')
+  const marketing = renderMarketingEmailHtml('会员专属优惠', '<p>现在下单可享优惠。</p>', '测试租赁', '#246b61', 'https://example.com/unsubscribe?token=a&next=b')
+
+  for (const html of [notification, marketing]) {
+    assert.match(html, /PC RENTAL/)
+    assert.match(html, /设备租赁 · 账户服务/)
+    assert.match(html, /background:#246b61/)
+    assert.doesNotMatch(html, /<script/i)
+  }
+  assert.match(notification, /系统通知邮件/)
+  assert.match(marketing, /点击取消订阅/)
+  assert.match(marketing, /token=a&amp;next=b/)
 })
 
 test('Resend connectivity uses the read-only domains endpoint and rejects non-2xx responses', async () => {
