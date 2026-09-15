@@ -63,6 +63,7 @@ export * from './admin/templates';
 export * from './admin/emailTemplates';
 export * from './admin/marketingEmails';
 export * from './admin/marketingData';
+export * from './admin/notificationSettings';
 export * from './admin/contractDetail';
 export * from './admin/contractData';
 export * from './admin/contracts';

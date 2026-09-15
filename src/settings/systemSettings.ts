@@ -13,7 +13,7 @@ export type SystemSettingsKey =
   | 'userTermsEn' | 'rentalTermsEn' | 'serviceTermsEn' | 'privacyPolicyEn' | 'softwareTermsEn'
   | 'copyrightNoticeEn' | 'cookiePolicyEn' | 'complaintsPolicyEn' | 'acceptableUsePolicyEn' | 'consumerRightsEn'
   | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings'
-  | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata' | 'tallyFormUrl'
+  | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'notificationSettings' | 'legalMetadata' | 'tallyFormUrl'
   | 'feedbackRewards'
 
 export const rentalTerms = `## 电脑租赁协议条款
@@ -57,6 +57,9 @@ PC Rental电脑租赁团队
 
 export const systemSettings = {
   tallyFormUrl: '',
+  notificationSettings: {
+    defaultDelivery: 'in_app_email' as 'in_app_email' | 'in_app_only',
+  },
   feedbackRewards: {
     enabled: false,
     rewardType: 'BALANCE' as 'BALANCE' | 'COUPON' | 'GIFT_CARD',

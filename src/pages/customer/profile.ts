@@ -12,6 +12,7 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
   const currentUser = await getUserById(c, user.id);
   const userToUse = currentUser || user;
   const deletionScheduledAt = userToUse.deletionScheduledAt || userToUse.deletion_scheduled_at;
+  const marketingOptedOut = Number(userToUse.marketing_email_opt_out ?? userToUse.marketingEmailOptOut) === 1;
 
   const countryCodes = [
     { code: '+61', name: 'AU' },
@@ -90,6 +91,12 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
           <button class="button" type="submit">保存修改</button>
         </div>
       </form>
+      <section class="panel" style="margin-top:24px;">
+        <div class="section-title"><h3>营销邮件</h3><span class="section-note">接收设备、租赁和优惠活动信息</span></div>
+        ${marketingOptedOut
+          ? `<p class="form-text">您当前已取消订阅营销邮件，不会收到促销和活动邮件。</p><form method="POST" action="/customer/profile/marketing-subscription"><input type="hidden" name="action" value="subscribe"><button class="button button-primary" type="submit">重新订阅营销邮件</button></form>`
+          : `<p class="form-text">您当前已订阅营销邮件。订单、合同和付款等重要账户邮件不受此设置影响。</p>`}
+      </section>
       <section class="danger-zone" style="margin-top:32px; padding-top:24px; border-top:1px solid var(--border);">
         <h3>删除账户</h3>
         ${deletionScheduledAt

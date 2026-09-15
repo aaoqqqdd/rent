@@ -264,7 +264,9 @@ export async function createNotification(c: Context, notification: { recipientId
   }
 
   // 补发邮件：尽力而为，绝不影响站内信；重复通知（dedupe 命中）不重复发信。
-  if (inserted && notification.notifyByEmail !== false) {
+  const defaultDelivery = getSystemSettings().notificationSettings?.defaultDelivery || 'in_app_email'
+  const notifyByEmail = notification.notifyByEmail ?? defaultDelivery === 'in_app_email'
+  if (inserted && notifyByEmail) {
     try { await sendNotificationEmail(c, notification) }
     catch (error: any) { console.error('sendNotificationEmail failed:', error?.message || error) }
   }

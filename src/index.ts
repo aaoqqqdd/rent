@@ -1506,6 +1506,22 @@ app.get('/admin/notifications', async (c) => {
   return c.html(buildLayout('管理员通知中心', body, user))
 })
 
+app.get('/admin/notifications/settings', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await loadSystemSettingsFromDB(c)
+  return c.html(pages.renderAdminNotificationSettings(user, getSystemSettings().notificationSettings, c.req.query('success') || '', 'success'))
+})
+
+app.post('/admin/notifications/settings', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const defaultDelivery = String(form.defaultDelivery || '') === 'in_app_only' ? 'in_app_only' : 'in_app_email'
+  await updateSystemSettings(c, { notificationSettings: { defaultDelivery } } as any)
+  return c.redirect('/admin/notifications/settings?success=' + encodeURIComponent('通知设置已保存'))
+})
+
 app.get('/admin/announcements', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -3203,6 +3219,16 @@ app.post('/customer/profile', async (c) => {
   const updatedUser = await updateUser(c, user.id, dataToUpdate)
 
   return c.html(await pages.renderCustomerProfile(c, updatedUser, '个人信息已更新', 'success'))
+})
+
+app.post('/customer/profile/marketing-subscription', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'CUSTOMER') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  if (String(form.action || '') !== 'subscribe') return c.redirect('/customer/profile')
+  await c.env.RENT.prepare("UPDATE users SET marketing_email_opt_out = 0, marketing_opt_out_at = NULL WHERE id = ? AND role = 'CUSTOMER'").bind(user.id).run()
+  const updatedUser = await getUserById(c, user.id)
+  return c.html(await pages.renderCustomerProfile(c, updatedUser || user, '您已重新订阅营销邮件。', 'success'))
 })
 
 app.post('/customer/profile/delete-account', async (c) => {

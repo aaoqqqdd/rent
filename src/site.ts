@@ -869,6 +869,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const companyDetailsValue = values.get('companyDetails')
   const rentalRulesValue = values.get('rentalRules')
   const registrationSettingsValue = values.get('registrationSettings')
+  const notificationSettingsValue = values.get('notificationSettings')
   const legalMetadataValue = values.get('legalMetadata')
   const tallyFormUrlValue = values.get('tallyFormUrl')
   const feedbackRewardsValue = values.get('feedbackRewards')
@@ -909,6 +910,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const parsedCompanyDetails = safeJsonParse<typeof systemSettings.companyDetails>(companyDetailsValue)
   const parsedRentalRules = safeJsonParse<typeof systemSettings.rentalRules>(rentalRulesValue)
   const parsedRegistrationSettings = safeJsonParse<typeof systemSettings.registrationSettings>(registrationSettingsValue)
+  const parsedNotificationSettings = safeJsonParse<typeof systemSettings.notificationSettings>(notificationSettingsValue)
   const parsedFeedbackRewards = safeJsonParse<typeof systemSettings.feedbackRewards>(feedbackRewardsValue)
 
   if (parsedPaymentMethods) {
@@ -933,6 +935,10 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
   if (parsedRegistrationSettings) systemSettings.registrationSettings = { ...systemSettings.registrationSettings, ...parsedRegistrationSettings }
+  if (parsedNotificationSettings) systemSettings.notificationSettings = {
+    ...systemSettings.notificationSettings,
+    defaultDelivery: parsedNotificationSettings.defaultDelivery === 'in_app_only' ? 'in_app_only' : 'in_app_email',
+  }
   if (tallyFormUrlValue !== undefined) systemSettings.tallyFormUrl = normalizeTallyEmbedUrl(tallyFormUrlValue)
   if (parsedFeedbackRewards) {
     systemSettings.feedbackRewards = {
@@ -1039,6 +1045,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     ['rentalRules', systemSettings.rentalRules],
     ['legalMetadata', systemSettings.legalMetadata],
     ['registrationSettings', systemSettings.registrationSettings],
+    ['notificationSettings', systemSettings.notificationSettings],
     ['tallyFormUrl', systemSettings.tallyFormUrl],
     ['feedbackRewards', systemSettings.feedbackRewards],
   ]
@@ -1773,14 +1780,14 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
-            ${renderNavGroup('通知管理', [['/admin/notifications', '通知中心'], ['/notifications', '发布通知']])}
+            ${renderNavGroup('通知管理', [['/admin/notifications', '通知中心'], ['/notifications', '发布通知'], ['/admin/email-templates', '通知模板'], ['/admin/marketing-emails', '营销邮件'], ['/admin/marketing-emails/data', '营销数据'], ['/admin/notifications/settings', '通知设置']])}
             ${renderNavGroup('用户管理', [['/admin/users', '用户管理']])}
             ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/orders/balance-topups', '充值订单'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/admin/templates/contract', '合同模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/coupons', '优惠码管理'], ['/admin/marketing-emails', '营销邮件'], ['/admin/marketing-emails/data', '营销数据'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('客户反馈', [['/admin/feedback-rewards', '反馈奖励记录'], ['/admin/feedback-gift-cards', '礼品卡库存']])}
-            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
+            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">
