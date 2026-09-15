@@ -5,7 +5,10 @@
 
 import { buildLayout } from '../../site';
 
-export function renderLogin(errorMessage?: string, showTestAccounts = false) {
+const escapeAttribute = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
+
+export function renderLogin(errorMessage?: string, showTestAccounts = false, redirectPath = '') {
+  const safeRedirectPath = /^\/(?![\\/])/.test(redirectPath) ? redirectPath : ''
   const body = `
     <div class="page-centered">
       <div class="login-container">
@@ -13,6 +16,7 @@ export function renderLogin(errorMessage?: string, showTestAccounts = false) {
           <div class="login-logo"><span class="logo-mark"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg></span>PC Rental</div>
           <p class="login-subtitle">专业设备租赁管理平台</p>
           <form method="POST" action="/login">
+            <input type="hidden" name="redirect" value="${escapeAttribute(safeRedirectPath)}" />
             <label class="form-label" for="login-account">邮箱地址</label>
             <input class="form-control" id="login-account" type="email" name="account" placeholder="name@example.com" autocomplete="username" required />
             <label class="form-label" for="login-password">登录密码</label>

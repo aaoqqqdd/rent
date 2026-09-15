@@ -37,6 +37,7 @@ import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeS
 import { extractInlineScripts } from './helpers'
 import { couponApplicableComponents, couponDiscountableBase } from '../src/actions/coupons'
 import { formatInvoicePaymentMethods } from '../src/pages/invoice'
+import { renderLogin } from '../src/pages/public/login'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = extractInlineScripts(html).map(script => script.trim()).filter(Boolean)
@@ -52,6 +53,12 @@ test('receipt payment summary includes every paid payment method', () => {
   ]), '信用卡 + 账户余额')
   assert.equal(formatInvoicePaymentMethods([{ payment_method: 'card', payment_provider: 'square' }]), '礼品卡')
   assert.equal(formatInvoicePaymentMethods([{ payment_method: 'wechat' }]), '微信支付')
+})
+
+test('login preserves a safe internal redirect for protected pages', () => {
+  const html = renderLogin(undefined, false, '/orders/o-1/invoice/print')
+  assert.match(html, /name="redirect" value="\/orders\/o-1\/invoice\/print"/)
+  assert.match(renderLogin(undefined, false, 'https://example.com/steal'), /name="redirect" value=""/)
 })
 
 test('coupon fee components default to rental and support delivery/deposit selections', () => {

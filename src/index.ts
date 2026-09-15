@@ -75,7 +75,6 @@ import {
   CONTRACT_OPERATIONAL_FIELDS,
   CONTRACT_SIGNED_FIELDS,
   issueInvoice,
-  recordBalanceTransaction,
   updateContractStatusInDB,
   getContractVariableData,
   generateContractNumber,
@@ -107,7 +106,6 @@ import {
   , renderNotificationMarkdown
   , renderFlexibleContent
   , renderEmailNotificationHtml
-  , renderMarketingEmailHtml
   , ensureNotificationsTable
   , getContractBySignToken
   , enqueueRentalUserDeletion
@@ -115,7 +113,6 @@ import {
   , lockReferralRelationship
   , createAuditLog
   , formatMelbourneDateTime
-  , logError
 } from './site'
 import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
@@ -126,10 +123,9 @@ import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
-import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
+import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
-import { computeOrderSettlementStatus } from './domain/orderSettlement'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
@@ -266,9 +262,6 @@ app.get('/favicon.svg', (c) => {
   return c.body('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg>')
 })
 app.get('/favicon.ico', (c) => c.redirect('/favicon.svg', 301))
-
-// 这是内部运维/租赁后台，不面向搜索引擎；营销与获客内容在独立的 rent-web 官网。
-app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'))
 
 app.get('/i18n.js', (c) => {
   c.header('Content-Type', 'text/javascript; charset=utf-8')
@@ -1115,17 +1108,17 @@ app.post('/customer/balance/top-up', async (c) => {
   if (!/^\d+(?:\.\d{1,2})?$/.test(amountText) || !Number.isFinite(amount) || amount < 1 || amount > 10000) return c.html(pages.renderCustomerBalanceTopUp(c, user, '请输入 1 至 10,000 AUD 的有效充值金额。'), 400)
   if (!['card', 'square', 'bank_transfer', 'alipay', 'wechat'].includes(method)) return c.html(pages.renderCustomerBalanceTopUp(c, user, '请选择有效的充值方式。'), 400)
   if (method === 'card' && !getSystemSettings().paymentMethods.stripe) return c.html(pages.renderCustomerBalanceTopUp(c, user, '信用卡充值当前未启用。'), 400)
-  if (method === 'square' && !getSystemSettings().paymentMethods.square) return c.html(pages.renderCustomerBalanceTopUp(c, user, '礼品卡支付当前未启用。'), 400)
+  if (method === 'square' && !getSystemSettings().paymentMethods.square) return c.html(pages.renderCustomerBalanceTopUp(c, user, 'Square 礼品卡支付当前未启用。'), 400)
   if (['alipay', 'wechat'].includes(method) && (!(getSystemSettings().paymentMethods as any)[method] || !getSystemSettings().rmbPayment[`${method}QrUrl`])) return c.text('该人民币支付方式当前未启用', 400)
   const rmbRate = ['alipay', 'wechat'].includes(method) ? await getAudCnyRate().catch(() => null) : null
   if (['alipay', 'wechat'].includes(method) && !rmbRate) return c.text('暂时无法获取实时汇率，请稍后重试', 503)
-  const id = generateReferenceNumber('TOP')
+  const id = `topup-${nanoid(12)}`
   await c.env.RENT.prepare("INSERT INTO balance_topups (id, user_id, amount, payment_method, cny_amount, status) VALUES (?, ?, ?, ?, ?, 'pending')").bind(id, user.id, Number(amount.toFixed(2)), method, rmbRate ? roundCnyUp(amount, rmbRate) : null).run()
   if (['bank_transfer', 'alipay', 'wechat'].includes(method)) {
     await c.env.RENT.prepare("UPDATE balance_topups SET status = 'awaiting_transfer' WHERE id = ?").bind(id).run()
     return c.redirect('/customer/balance/top-up')
   }
-  // 信用卡 / 礼品卡充值：先落一条 pending 记录，再跳到带 pay 参数的
+  // 信用卡 / Square 礼品卡充值：先落一条 pending 记录，再跳到带 pay 参数的
   // 充值页，由页面拉取 client_secret 就地收款。
   return c.redirect(`/customer/balance/top-up?pay=${encodeURIComponent(id)}`)
 })
@@ -1158,17 +1151,8 @@ app.post('/customer/balance/top-up/:id/square/payment', async (c) => {
     const body = await c.req.json() as any
     return c.json(await createSquareGiftCardBalanceTopUp(c, user, c.req.param('id'), body?.sourceId))
   } catch (error: any) {
-    return c.json({ error: error?.message || '无法创建礼品卡充值' }, 400)
+    return c.json({ error: error?.message || '无法创建 礼品卡充值' }, 400)
   }
-})
-
-app.post('/customer/balance/top-up/:id/select-transfer', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'CUSTOMER' || user.accountType === 'guest') return c.html(renderForbidden(), 403)
-  const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND payment_method = 'square' AND status = 'pending'").bind(c.req.param('id'), user.id).first() as any
-  if (!topup || Number(topup.square_paid_amount || 0) <= 0) return c.text('请先使用礼品卡扣除充值金额', 409)
-  await c.env.RENT.prepare("UPDATE balance_topups SET payment_method = 'bank_transfer', status = 'awaiting_transfer', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND status = 'pending'").bind(topup.id, user.id).run()
-  return c.redirect('/customer/balance/top-up')
 })
 
 app.post('/customer/balance/top-up/transfer', async (c) => {
@@ -1288,17 +1272,8 @@ app.post('/admin/users/:id/risk/:flagId/resolve', async (c) => {
   return c.redirect(`/admin/users/${encodeURIComponent(c.req.param('id'))}/risk`, 303)
 })
 
-const BALANCE_TOPUP_REDIRECT_TARGETS = ['/admin/exceptions', '/admin/orders/balance-topups']
-function resolveBalanceTopupRedirect(raw: unknown) {
-  const value = String(raw || '')
-  const path = value.split('?')[0]
-  return BALANCE_TOPUP_REDIRECT_TARGETS.includes(path) ? value : '/admin/exceptions'
-}
-
 app.post('/admin/balance-topups/:id/approve', async (c) => {
   const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const form = await c.req.parseBody()
-  const redirectTo = resolveBalanceTopupRedirect(form.redirect)
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).first() as any
   if (!topup) return c.text('充值记录不存在或已处理', 409)
   const claimed = await c.env.RENT.prepare("UPDATE balance_topups SET status = 'paid', paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(topup.id).run()
@@ -1308,16 +1283,14 @@ app.post('/admin/balance-topups/:id/approve', async (c) => {
     c.env.RENT.prepare("INSERT INTO balance_transactions (id, user_id, amount, balance_after, type, reason, created_by) SELECT ?, ?, ?, ROUND(balance, 2), 'top_up_transfer', ?, ? FROM users WHERE id = ?").bind(`bt-${nanoid(12)}`, topup.user_id, topup.amount, `银行转账充值（${topup.reference || '无 Reference'}）`, admin.id, topup.user_id),
   ])
   await createAuditLog(c, { actor: admin, action: 'BALANCE_TOPUP_APPROVED', targetType: 'BALANCE_TOPUP', targetId: topup.id, after: { amount: topup.amount, userId: topup.user_id } })
-  return c.redirect(redirectTo)
+  return c.redirect('/admin/exceptions')
 })
 
 app.post('/admin/balance-topups/:id/reject', async (c) => {
   const admin = c.get('user'); if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const form = await c.req.parseBody()
-  const redirectTo = resolveBalanceTopupRedirect(form.redirect)
   const result = await c.env.RENT.prepare("UPDATE balance_topups SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'submitted'").bind(c.req.param('id')).run()
   if (!result.meta?.changes) return c.text('充值记录不存在或已处理', 409)
-  return c.redirect(redirectTo)
+  return c.redirect('/admin/exceptions')
 })
 
 app.get('/customer/guest', async (c) => {
@@ -1670,291 +1643,6 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
   return c.redirect('/admin/email-templates')
 })
 
-async function ensureMarketingEmailTables(db: any): Promise<void> {
-  await db.prepare("CREATE TABLE IF NOT EXISTS marketing_email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run()
-  await db.prepare("CREATE TABLE IF NOT EXISTS marketing_campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', coupon_mode TEXT NOT NULL DEFAULT 'none', coupon_id TEXT, unique_discount_type TEXT, unique_discount_value REAL, unique_max_discount_amount REAL, unique_expires_at TEXT, recipient_count INTEGER NOT NULL DEFAULT 0, sent_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'SENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT)").run()
-  await db.prepare("CREATE TABLE IF NOT EXISTS marketing_campaign_recipients (id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL, customer_id TEXT NOT NULL, email TEXT NOT NULL, coupon_code TEXT, status TEXT NOT NULL DEFAULT 'PENDING', error_message TEXT, sent_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run()
-  try { await db.prepare('ALTER TABLE marketing_campaign_recipients ADD COLUMN unsubscribe_token TEXT').run() } catch (_) { }
-  try { await db.prepare('ALTER TABLE users ADD COLUMN marketing_email_opt_out INTEGER NOT NULL DEFAULT 0').run() } catch (_) { }
-  try { await db.prepare('ALTER TABLE users ADD COLUMN marketing_opt_out_at TEXT').run() } catch (_) { }
-}
-
-function generateUnsubscribeToken(): string {
-  return nanoid(32)
-}
-
-function isMarketingOptedOut(account: any): boolean {
-  return Number(account?.marketing_email_opt_out) === 1
-}
-
-function marketingDiscountText(discountType: string, discountValue: number, maxDiscountAmount?: number | null): string {
-  const base = discountType === 'percent' ? `${discountValue}% 的折扣` : `AUD$${Number(discountValue).toFixed(2)} 的优惠`
-  return maxDiscountAmount ? `${base}（最高优惠 AUD$${Number(maxDiscountAmount).toFixed(2)}）` : base
-}
-
-function generateMarketingCouponCode(prefix: string): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let suffix = ''
-  for (let i = 0; i < 8; i++) suffix += alphabet[Math.floor(Math.random() * alphabet.length)]
-  const cleanPrefix = String(prefix || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 12)
-  return cleanPrefix ? `${cleanPrefix}-${suffix}` : suffix
-}
-
-// Reuses the coupons table for one-off per-recipient codes: max_uses = 1 and
-// max_uses_per_customer = 1 make each generated code single-use by construction,
-// so no schema change is needed to scope a coupon to one customer.
-async function createUniqueMarketingCoupon(c: any, params: { discountType: string; discountValue: number; maxDiscountAmount: number | null; expiresAt: string | null; prefix: string; createdBy: string }): Promise<string> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const code = generateMarketingCouponCode(params.prefix)
-    try {
-      await c.env.RENT.prepare("INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, max_uses_per_customer, max_discount_amount, expires_at, active, status, created_by) VALUES (?, ?, ?, ?, 1, 1, ?, ?, 1, 'ACTIVE', ?)")
-        .bind(`cp-${nanoid(10)}`, code, params.discountType, params.discountValue, params.maxDiscountAmount, params.expiresAt, params.createdBy).run()
-      return code
-    } catch (error: any) {
-      if (!String(error?.message || '').toLowerCase().includes('unique')) throw error
-    }
-  }
-  throw new Error('无法生成唯一优惠码，请重试')
-}
-
-async function sendMarketingCampaignEmails(c: any, params: { campaignId: string; subject: string; body: string; themeColor: string; discountText: string; recipients: { id: string; customerId: string; email: string; couponCode: string | null; unsubscribeToken: string }[] }): Promise<void> {
-  const companyDetails = getSystemSettings().companyDetails || {}
-  const companyName = String(companyDetails.name || 'PC Rental')
-  const companyEmail = String(companyDetails.email || '')
-  const origin = new URL(c.req.url).origin
-  const { apiKey, from } = await resolveEmailCredentials(c)
-  let sent = 0, failed = 0
-  for (const row of params.recipients) {
-    const recipient = await getUserById(c, row.customerId)
-    if (isMarketingOptedOut(recipient)) {
-      await c.env.RENT.prepare("UPDATE marketing_campaign_recipients SET status = 'FAILED', error_message = '客户已取消订阅营销邮件' WHERE id = ?").bind(row.id).run()
-      failed++
-      continue
-    }
-    const unsubscribeUrl = `${origin}/unsubscribe?token=${encodeURIComponent(row.unsubscribeToken)}`
-    const vars: Record<string, string> = {
-      customer_name: String(recipient?.name || ''),
-      customer_email: row.email,
-      company_name: companyName,
-      company_email: companyEmail,
-      coupon_code: row.couponCode || '',
-      discount_text: row.couponCode ? params.discountText : '',
-    }
-    const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
-    const filledSubject = fill(params.subject)
-    const filledBody = fill(params.body)
-    let ok = false
-    let errorMessage = ''
-    if (!apiKey || !from) {
-      errorMessage = '邮件服务尚未配置'
-    } else {
-      const html = renderMarketingEmailHtml(filledSubject, filledBody, companyName, params.themeColor, unsubscribeUrl)
-      const text = `${filledBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}\n\n取消订阅营销邮件：${unsubscribeUrl}`
-      const result = await sendLoggedEmail(c, { eventType: 'MARKETING', recipient: row.email, key: `marketing:${params.campaignId}:${row.id}`, subject: filledSubject, text, html })
-      ok = result.ok
-      if (!ok) errorMessage = '发送失败'
-    }
-    if (ok) sent++; else failed++
-    await c.env.RENT.prepare('UPDATE marketing_campaign_recipients SET status = ?, error_message = ?, sent_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END WHERE id = ?').bind(ok ? 'SENT' : 'FAILED', errorMessage || null, ok ? 1 : 0, row.id).run()
-  }
-  const finalStatus = sent === 0 && failed > 0 ? 'FAILED' : 'SENT'
-  await c.env.RENT.prepare('UPDATE marketing_campaigns SET sent_count = ?, failed_count = ?, status = ?, sent_at = CURRENT_TIMESTAMP WHERE id = ?').bind(sent, failed, finalStatus, params.campaignId).run()
-}
-
-app.get('/admin/marketing-emails', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  await ensureMarketingEmailTables(c.env.RENT)
-  const templates = ((await c.env.RENT.prepare('SELECT * FROM marketing_email_templates ORDER BY updated_at DESC').all()).results || []) as any[]
-  const campaigns = ((await c.env.RENT.prepare('SELECT * FROM marketing_campaigns ORDER BY created_at DESC LIMIT 50').all()).results || []) as any[]
-  const coupons = ((await c.env.RENT.prepare("SELECT id, code, discount_type, discount_value FROM coupons WHERE active = 1 AND status = 'ACTIVE' ORDER BY created_at DESC").all()).results || []) as any[]
-  const activeCustomers = (await getUsers(c)).filter((account: any) => account.role === 'CUSTOMER' && account.status === 'active' && account.email)
-  const customers = activeCustomers.filter((account: any) => !isMarketingOptedOut(account))
-  const optedOutCount = activeCustomers.length - customers.length
-  return c.html(pages.renderAdminMarketingEmails(user, { templates, campaigns, coupons, customers, optedOutCount }))
-})
-
-app.get('/admin/marketing-emails/data', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  await ensureMarketingEmailTables(c.env.RENT)
-  const [audienceSummary, deliverySummary, campaignSummary, optedOutCustomers, campaigns] = await Promise.all([
-    c.env.RENT.prepare(`
-      SELECT COUNT(*) AS total_customers,
-             SUM(CASE WHEN status = 'active' AND TRIM(COALESCE(email, '')) <> '' THEN 1 ELSE 0 END) AS active_with_email,
-             SUM(CASE WHEN status = 'active' AND TRIM(COALESCE(email, '')) <> '' AND COALESCE(marketing_email_opt_out, 0) = 0 THEN 1 ELSE 0 END) AS sendable_customers,
-             SUM(CASE WHEN COALESCE(marketing_email_opt_out, 0) = 1 THEN 1 ELSE 0 END) AS opted_out_customers
-      FROM users WHERE role = 'CUSTOMER'
-    `).first(),
-    c.env.RENT.prepare(`
-      SELECT COUNT(*) AS recipient_count,
-             SUM(CASE WHEN status = 'SENT' THEN 1 ELSE 0 END) AS sent_count,
-             SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count
-      FROM marketing_campaign_recipients
-    `).first(),
-    c.env.RENT.prepare('SELECT COUNT(*) AS campaign_count FROM marketing_campaigns').first(),
-    c.env.RENT.prepare(`
-      SELECT u.id, u.name, u.email, u.status, u.marketing_opt_out_at,
-             COUNT(mcr.id) AS campaign_count, MAX(mcr.sent_at) AS last_marketing_sent_at
-      FROM users u
-      LEFT JOIN marketing_campaign_recipients mcr ON mcr.customer_id = u.id
-      WHERE u.role = 'CUSTOMER' AND COALESCE(u.marketing_email_opt_out, 0) = 1
-      GROUP BY u.id, u.name, u.email, u.status, u.marketing_opt_out_at
-      ORDER BY datetime(u.marketing_opt_out_at) DESC, u.name COLLATE NOCASE
-      LIMIT 500
-    `).all(),
-    c.env.RENT.prepare('SELECT id, name, subject, status, recipient_count, sent_count, failed_count, created_at FROM marketing_campaigns ORDER BY created_at DESC LIMIT 100').all(),
-  ])
-  return c.html(pages.renderAdminMarketingData(user, {
-    summary: {
-      totalCustomers: Number((audienceSummary as any)?.total_customers || 0),
-      activeWithEmail: Number((audienceSummary as any)?.active_with_email || 0),
-      sendableCustomers: Number((audienceSummary as any)?.sendable_customers || 0),
-      optedOutCustomers: Number((audienceSummary as any)?.opted_out_customers || 0),
-      campaignCount: Number((campaignSummary as any)?.campaign_count || 0),
-      recipientCount: Number((deliverySummary as any)?.recipient_count || 0),
-      sentCount: Number((deliverySummary as any)?.sent_count || 0),
-      failedCount: Number((deliverySummary as any)?.failed_count || 0),
-    },
-    optedOutCustomers: ((optedOutCustomers as any).results || []) as any[],
-    campaigns: ((campaigns as any).results || []) as any[],
-  }))
-})
-
-app.get('/admin/marketing-emails/:id', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const campaign = await c.env.RENT.prepare('SELECT * FROM marketing_campaigns WHERE id = ?').bind(c.req.param('id')).first() as any
-  if (!campaign) return c.html(renderNotFound(), 404)
-  const recipients = ((await c.env.RENT.prepare('SELECT * FROM marketing_campaign_recipients WHERE campaign_id = ? ORDER BY created_at').bind(campaign.id).all()).results || []) as any[]
-  return c.html(pages.renderAdminMarketingEmailDetail(user, campaign, recipients))
-})
-
-app.post('/admin/marketing-emails/templates', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const form = await c.req.parseBody()
-  const name = String(form.name || '').trim().slice(0, 80)
-  const subject = String(form.subject || '').trim().slice(0, 200)
-  const body = String(form.body || '').trim().slice(0, 10000)
-  if (!name || !subject || !body) return c.text('模板名称、主题和正文不能为空', 400)
-  await ensureMarketingEmailTables(c.env.RENT)
-  const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#f0a35b'
-  await c.env.RENT.prepare('INSERT INTO marketing_email_templates (id, name, subject, body, theme_color, created_by) VALUES (?, ?, ?, ?, ?, ?)').bind(`mktpl_${nanoid(12)}`, name, subject, body, themeColor, user.id).run()
-  return c.redirect('/admin/marketing-emails')
-})
-
-app.post('/admin/marketing-emails/templates/:id', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const form = await c.req.parseBody()
-  const name = String(form.name || '').trim().slice(0, 80)
-  const subject = String(form.subject || '').trim().slice(0, 200)
-  const body = String(form.body || '').trim().slice(0, 10000)
-  if (!name || !subject || !body) return c.text('模板名称、主题和正文不能为空', 400)
-  const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#f0a35b'
-  await c.env.RENT.prepare('UPDATE marketing_email_templates SET name = ?, subject = ?, body = ?, theme_color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(name, subject, body, themeColor, c.req.param('id')).run()
-  return c.redirect('/admin/marketing-emails')
-})
-
-app.post('/admin/marketing-emails/templates/:id/delete', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  await c.env.RENT.prepare('DELETE FROM marketing_email_templates WHERE id = ?').bind(c.req.param('id')).run()
-  return c.redirect('/admin/marketing-emails')
-})
-
-app.post('/admin/marketing-emails/send', async (c) => {
-  const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  await ensureMarketingEmailTables(c.env.RENT)
-  const form = await c.req.parseBody()
-  const name = String(form.name || '').trim().slice(0, 120)
-  const templateId = String(form.templateId || 'custom')
-  let subject = String(form.subject || '').trim().slice(0, 200)
-  let body = String(form.body || '').trim().slice(0, 20000)
-  let themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#f0a35b'
-  if (templateId !== 'custom') {
-    const template = await c.env.RENT.prepare('SELECT subject, body, theme_color FROM marketing_email_templates WHERE id = ?').bind(templateId).first() as any
-    if (template) { subject = template.subject; body = template.body; themeColor = template.theme_color || themeColor }
-  }
-  if (!name || !subject || !body) return c.text('批次名称、邮件主题和正文不能为空', 400)
-
-  const allCustomers = (await getUsers(c)).filter((account: any) => account.role === 'CUSTOMER' && account.status === 'active' && account.email && !isMarketingOptedOut(account))
-  let recipients: any[]
-  if (form.sendToAll) {
-    recipients = allCustomers
-  } else {
-    const rawIds = Array.isArray(form.recipientId) ? form.recipientId : (form.recipientId ? [form.recipientId] : [])
-    const idSet = new Set(rawIds.map(String))
-    recipients = allCustomers.filter((account: any) => idSet.has(String(account.id)))
-  }
-  if (!recipients.length) return c.text('请至少选择一位收件人，或勾选发送给全部活跃客户', 400)
-
-  const couponMode = ['none', 'shared', 'unique'].includes(String(form.couponMode)) ? String(form.couponMode) : 'none'
-  let sharedCoupon: any = null
-  let uniqueConfig: { discountType: string; discountValue: number; maxDiscountAmount: number | null; expiresAt: string | null; prefix: string } | null = null
-  let discountText = ''
-  if (couponMode === 'shared') {
-    sharedCoupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ? AND active = 1').bind(String(form.couponId || '')).first() as any
-    if (!sharedCoupon) return c.text('请选择一个有效的优惠码', 400)
-    discountText = marketingDiscountText(sharedCoupon.discount_type, sharedCoupon.discount_value, sharedCoupon.max_discount_amount)
-  } else if (couponMode === 'unique') {
-    const discountType = ['percent', 'fixed'].includes(String(form.uniqueDiscountType)) ? String(form.uniqueDiscountType) : 'percent'
-    const discountValue = Number(form.uniqueDiscountValue)
-    if (!Number.isFinite(discountValue) || discountValue <= 0 || (discountType === 'percent' && discountValue > 100)) return c.text('请输入有效的折扣值', 400)
-    const maxDiscountAmount = form.uniqueMaxDiscountAmount ? Number(form.uniqueMaxDiscountAmount) : null
-    const expiresAt = String(form.uniqueExpiresAt || '').replace('T', ' ') || null
-    uniqueConfig = { discountType, discountValue, maxDiscountAmount, expiresAt, prefix: String(form.uniqueCodePrefix || '').trim() }
-    discountText = marketingDiscountText(discountType, discountValue, maxDiscountAmount)
-  }
-
-  const campaignId = `camp_${nanoid(12)}`
-  await c.env.RENT.prepare('INSERT INTO marketing_campaigns (id, name, subject, body, theme_color, coupon_mode, coupon_id, unique_discount_type, unique_discount_value, unique_max_discount_amount, unique_expires_at, recipient_count, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(campaignId, name, subject, body, themeColor, couponMode, couponMode === 'shared' ? sharedCoupon.id : null, uniqueConfig?.discountType || null, uniqueConfig?.discountValue ?? null, uniqueConfig?.maxDiscountAmount ?? null, uniqueConfig?.expiresAt || null, recipients.length, user.id).run()
-
-  const recipientRows: { id: string; customerId: string; email: string; couponCode: string | null; unsubscribeToken: string }[] = []
-  for (const recipient of recipients) {
-    let couponCode: string | null = null
-    if (couponMode === 'shared') couponCode = String(sharedCoupon.code).toUpperCase()
-    else if (couponMode === 'unique' && uniqueConfig) couponCode = await createUniqueMarketingCoupon(c, { ...uniqueConfig, createdBy: user.id })
-    const recipientRowId = `mcr_${nanoid(12)}`
-    const unsubscribeToken = generateUnsubscribeToken()
-    await c.env.RENT.prepare('INSERT INTO marketing_campaign_recipients (id, campaign_id, customer_id, email, coupon_code, unsubscribe_token) VALUES (?, ?, ?, ?, ?, ?)').bind(recipientRowId, campaignId, recipient.id, String(recipient.email).toLowerCase(), couponCode, unsubscribeToken).run()
-    recipientRows.push({ id: recipientRowId, customerId: recipient.id, email: String(recipient.email).toLowerCase(), couponCode, unsubscribeToken })
-  }
-
-  await createAuditLog(c, { actor: user, action: 'MARKETING_EMAIL_CAMPAIGN_CREATED', targetType: 'MARKETING_CAMPAIGN', targetId: campaignId, after: { name, recipientCount: recipients.length, couponMode } })
-
-  c.executionCtx.waitUntil(sendMarketingCampaignEmails(c, { campaignId, subject, body, themeColor, discountText, recipients: recipientRows }))
-
-  return c.redirect('/admin/marketing-emails?success=' + encodeURIComponent(`营销邮件已开始发送，共 ${recipients.length} 位收件人`))
-})
-
-// 退订链接无需登录：令牌来自某次群发的收件人行（marketing_campaign_recipients），
-// 只用于定位该行对应的客户账号，退订状态则持久写在 users 表上，对之后的所有批次都生效。
-app.get('/unsubscribe', async (c) => {
-  await ensureMarketingEmailTables(c.env.RENT)
-  const token = String(c.req.query('token') || '').trim()
-  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return c.html(pages.renderUnsubscribeResult('取消订阅链接无效，请从营销邮件中重新点击链接。', false), 400)
-  const recipient = await c.env.RENT.prepare('SELECT customer_id, email FROM marketing_campaign_recipients WHERE unsubscribe_token = ?').bind(token).first() as any
-  if (!recipient) return c.html(pages.renderUnsubscribeResult('取消订阅链接无效或已失效。', false), 404)
-  const account = await getUserById(c, recipient.customer_id)
-  if (isMarketingOptedOut(account)) return c.html(pages.renderUnsubscribeResult('您已成功取消订阅营销邮件，无需重复操作。'))
-  return c.html(pages.renderUnsubscribeConfirm(token, recipient.email))
-})
-
-app.post('/unsubscribe', async (c) => {
-  await ensureMarketingEmailTables(c.env.RENT)
-  const form = await c.req.parseBody()
-  const token = String(form.token || '').trim()
-  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return c.html(pages.renderUnsubscribeResult('取消订阅链接无效，请从营销邮件中重新点击链接。', false), 400)
-  const recipient = await c.env.RENT.prepare('SELECT customer_id FROM marketing_campaign_recipients WHERE unsubscribe_token = ?').bind(token).first() as any
-  if (!recipient) return c.html(pages.renderUnsubscribeResult('取消订阅链接无效或已失效。', false), 404)
-  await c.env.RENT.prepare("UPDATE users SET marketing_email_opt_out = 1, marketing_opt_out_at = CURRENT_TIMESTAMP WHERE id = ?").bind(recipient.customer_id).run()
-  return c.html(pages.renderUnsubscribeResult('您已成功取消订阅营销邮件，我们不会再向您发送促销邮件。您仍会收到订单、合同等账户相关的重要通知邮件。'))
-})
-
 app.get('/notifications/announcements', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ announcements: [] }, 401)
@@ -2110,7 +1798,7 @@ app.post('/customer/rent/:id', async (c) => {
   try {
     const rows = (await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ?').bind(c.req.param('id')).all()).results || []
     for (const row of rows as any[]) deviceUnavailableSlots.add(`${String(row.unavailable_date || '').slice(0, 10)}:${String(row.time_slot || '')}`)
-  } catch (_) {}
+  } catch (_) { }
   const unavailable = new Set(rentalRules.unavailableDates)
   let blockedDate = ''
   for (let day = new Date(start); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { if (unavailable.has(day.toISOString().slice(0, 10))) { blockedDate = day.toISOString().slice(0, 10); break } }
@@ -2440,7 +2128,7 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
         await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
       }
     } catch (error: any) {
-      await logError(c, 'ERROR', 'Auto-charge rent on approval failed', error, { orderId: order.id })
+      console.error('Auto-charge rent on approval failed:', error?.message || error)
       await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
     }
     return c.redirect(staffOrderPath(order))
@@ -2531,11 +2219,8 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   Object.assign(inspectionSnapshot, checks, { batteryCycles, batteryHealth: String(form.batteryHealth || '').trim().slice(0, 100), damageDescription, damagePhotos, replacementCost: replacementCost.toFixed(2), returnDate: now.slice(0, 10), inspectionBy: user.name || user.id })
   const inspectionId = `inspection-${nanoid(12)}`
   const returnDevice = await getDeviceById(c, order.deviceId)
-  // 订单进 completed 的这一刻押金往往还没结清（HELD/PENDING）——settlement_status
-  // 要单独反映这个事实，不能让“已完成”看起来什么都办完了。
-  const settlementStatusOnCompletion = computeOrderSettlementStatus({ status: 'completed', deposit_status: order.deposit_status })
   await c.env.RENT.batch([
-    c.env.RENT.prepare("UPDATE orders SET status = 'completed', order_status = 'COMPLETED', payment_status = COALESCE(payment_status, 'PAID'), rental_status = 'COMPLETED', return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP), return_received_by = COALESCE(return_received_by, ?), settlement_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(user.id, settlementStatusOnCompletion, order.id),
+    c.env.RENT.prepare("UPDATE orders SET status = 'completed', order_status = 'COMPLETED', payment_status = COALESCE(payment_status, 'PAID'), rental_status = 'COMPLETED', return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP), return_received_by = COALESCE(return_received_by, ?), updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(user.id, order.id),
     c.env.RENT.prepare("INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, 'RETURNED', 'MANUAL', ?, ?), (?, ?, 'RETURNED', 'COMPLETED', 'SYSTEM', ?, ?)").bind(`rsh-${nanoid(16)}`, order.id, order.rental_status || 'RETURN_PENDING', user.id, '工作人员收到设备并开始归还验机', `rsh-${nanoid(16)}`, order.id, user.id, '归还验机完成，订单结算完成'),
     c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, rental_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, \'after_return\', ?, ?)').bind(inspectionId, order.deviceId, order.id, JSON.stringify(inspectionSnapshot), JSON.stringify({})),
     c.env.RENT.prepare("INSERT OR IGNORE INTO order_fulfillment_records (id, order_id, record_type, device_serial_number, accessories_json, condition_snapshot_json, notes, recorded_by) VALUES (?, ?, 'RETURN', ?, '[]', ?, ?, ?)").bind(`return-${nanoid(12)}`, order.id, String(returnDevice?.serialNumber || ''), JSON.stringify(inspectionSnapshot), damageDescription || null, user.id),
@@ -3005,7 +2690,7 @@ app.post('/customer/orders/:id/square/payment', async (c) => {
     const result = await createSquareGiftCardPayment(c, user, c.req.param('id'), body?.sourceId)
     return c.json(result)
   } catch (error: any) {
-    return c.json({ error: error?.message || '无法创建礼品卡付款' }, 400)
+    return c.json({ error: error?.message || '无法创建 Square 礼品卡付款' }, 400)
   }
 })
 
@@ -3038,7 +2723,7 @@ app.post('/customer/orders/:id/price-adjustment/square/payment', async (c) => {
     const body = await c.req.json() as any
     return c.json(await createSquareGiftCardPriceAdjustmentPayment(c, user, c.req.param('id'), body?.sourceId))
   } catch (error: any) {
-    return c.json({ error: error?.message || '无法创建礼品卡差价付款' }, 400)
+    return c.json({ error: error?.message || '无法创建 Square 礼品卡差价付款' }, 400)
   }
 })
 
@@ -3051,51 +2736,25 @@ app.post('/customer/orders/:id/switch-payment-method', async (c) => {
   if (!order || order.userId !== user.id || order.status !== 'pending_payment') return c.text('订单当前不能切换支付方式', 409)
   const form = await c.req.parseBody()
   const targetMethod = String(form.paymentMethod || '')
-  if (!['square', 'bank_transfer', 'alipay', 'wechat', 'balance'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
+  if (!['square', 'bank_transfer', 'alipay', 'wechat'].includes(targetMethod)) return c.text('目标支付方式无效', 400)
   await loadSystemSettingsFromDB(c)
   const settings = getSystemSettings()
-  const enabled = targetMethod === 'balance' ? true : targetMethod === 'square' ? settings.paymentMethods.square
+  const enabled = targetMethod === 'square' ? settings.paymentMethods.square
     : targetMethod === 'bank_transfer' ? settings.paymentMethods.bankTransfer
-    : targetMethod === 'alipay' ? (settings.paymentMethods.alipay && settings.rmbPayment.alipayQrUrl)
-    : (settings.paymentMethods.wechat && settings.rmbPayment.wechatQrUrl)
+      : targetMethod === 'alipay' ? (settings.paymentMethods.alipay && settings.rmbPayment.alipayQrUrl)
+        : (settings.paymentMethods.wechat && settings.rmbPayment.wechatQrUrl)
   if (!enabled) return c.text('该支付方式当前未启用', 409)
   if (String(order.paymentMethod) === targetMethod) return c.redirect(`/customer/orders/${order.id}`)
-  const squarePayment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND payment_provider = 'square' AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-  const squarePaidCents = Math.max(0, Math.round(Number(squarePayment?.square_paid_amount || 0) * 100))
-  const squareTargetCents = squarePayment ? Math.max(0, Math.round(Number(squarePayment.amount || 0) * 100)) : 0
-  const hasSquareRemainder = String(order.paymentProvider || order.payment_provider || '') === 'square' && squarePayment && squarePaidCents > 0 && squareTargetCents > 0
-  if (targetMethod === 'balance' && !hasSquareRemainder) return c.text('请先使用礼品卡扣除金额，再选择账户余额支付剩余金额', 409)
-  const remainingRentalCents = hasSquareRemainder ? Math.max(0, squareTargetCents - squarePaidCents) : Math.max(0, Math.round((Number(order.totalAmount || 0) - Number(order.depositAmount || 0)) * 100))
-  const depositCents = hasSquareRemainder && String(order.deposit_status || '').toUpperCase() === 'PENDING' ? Math.max(0, Math.round(Number(order.depositAmount || 0) * 100)) : 0
-  const paymentTotal = (remainingRentalCents + depositCents) / 100
-  if (hasSquareRemainder && paymentTotal <= 0) return c.text('订单没有待支付的剩余金额', 409)
+  const paymentTotal = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
   const storedPaymentMethod = targetMethod === 'square' ? 'card' : targetMethod
   const provider = targetMethod === 'square' ? 'square' : 'internal'
   if (targetMethod === 'square') await getSquareConfigSummary(c).then(summary => { if (!summary.configured) throw new Error('Square 尚未配置') })
-  if (targetMethod === 'balance' && hasSquareRemainder) {
-    await completeSquareGiftCardPayment(c, String(squarePayment.square_payment_id || squarePayment.transaction_id || ''), squareTargetCents)
-    const debited = await c.env.RENT.prepare("UPDATE users SET balance = ROUND(balance - ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND balance >= ?").bind(paymentTotal, user.id, paymentTotal).run()
-    if (!debited.meta?.changes) return c.text('账户余额不足，请先充值或选择其他支付方式', 409)
-    const nextBalance = Number((Number((await c.env.RENT.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first() as any)?.balance || 0)).toFixed(2))
-    const paymentId = `p-${nanoid(12)}`
-    await c.env.RENT.batch([
-      c.env.RENT.prepare("UPDATE payments SET status = 'paid', paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending','paid')").bind(squarePayment.id),
-      c.env.RENT.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, processing_fee, currency, status, transaction_id, paid_at) VALUES (?, ?, ?, 'balance', 'internal', ?, ?, ?, 0, 'AUD', 'paid', ?, CURRENT_TIMESTAMP)").bind(paymentId, order.id, user.id, paymentTotal, depositCents / 100, remainingRentalCents / 100, generateReferenceNumber('TXN')),
-      c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'balance', payment_provider = 'internal', deposit_status = CASE WHEN ? > 0 THEN 'PAID' ELSE deposit_status END, deposit_paid_at = CASE WHEN ? > 0 THEN COALESCE(deposit_paid_at, CURRENT_TIMESTAMP) ELSE deposit_paid_at END, deposit_held_amount = CASE WHEN ? > 0 THEN ? ELSE deposit_held_amount END, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(depositCents, depositCents, depositCents, depositCents / 100, order.id),
-    ])
-    await recordBalanceTransaction(c, user.id, -paymentTotal, 'rental_payment', `订单 ${order.orderNo || order.id} 礼品卡差额及押金`, null, nextBalance)
-    await ensureOrderNumber(c, order.id).catch(error => logError(c, 'WARNING', 'ensureOrderNumber failed after balance payment method switch', error, { orderId: order.id }))
-    // 完全静默的 .catch(() => {}) 曾经是发票丢失且查无记录的根因（见 8f746d9）——
-    // 这里同样不能吞掉失败，必须落到 error_logs 才能被发现和补开。
-    await issueInvoice(c, order.id).catch(error => logError(c, 'CRITICAL', 'issueInvoice failed after balance payment method switch', error, { orderId: order.id }))
-    return c.redirect(`/customer/orders/${order.id}`)
-  }
   const existing = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = ? AND payment_provider = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(order.id, storedPaymentMethod, provider).first() as any
   if (!existing) {
     await c.env.RENT.prepare(`
       INSERT INTO payments (id, rental_id, customer_id, payment_method, payment_provider, amount, deposit_amount, rental_amount, currency, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'AUD', 'pending')
-    `).bind(`p-${nanoid(12)}`, order.id, user.id, storedPaymentMethod, provider, paymentTotal, depositCents / 100, remainingRentalCents / 100).run()
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'AUD', 'pending')
+    `).bind(`p-${nanoid(12)}`, order.id, user.id, storedPaymentMethod, provider, paymentTotal, paymentTotal).run()
   }
   await c.env.RENT.prepare("UPDATE orders SET paymentMethod = ?, payment_provider = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(storedPaymentMethod, provider, order.id).run()
   return c.redirect(`/customer/orders/${order.id}`)
@@ -3116,9 +2775,6 @@ app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   const isDepositProof = String(form.depositProof || '') === '1'
   const requestedPaymentMethod = String(form.paymentMethod || order.paymentMethod || '').trim()
   if (isDepositProof && (isAdjustment || String(order.paymentProvider || order.payment_provider || '') !== 'square')) return c.text('该订单不能提交押金转账凭证', 409)
-  if (isDepositProof && String(order.deposit_status || '').toUpperCase() !== 'PENDING') return c.text('该订单当前没有待确认的押金', 409)
-  const pendingStripeDeposit = isDepositProof ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND payment_method = 'card' AND payment_provider = 'stripe' AND rental_amount = 0 AND deposit_amount > 0 AND status = 'pending' LIMIT 1").bind(order.id).first() : null
-  if (pendingStripeDeposit) return c.text('Stripe 押金付款正在处理中，请等待结果后再提交转账凭证', 409)
   if (!isAdjustment && !isDepositProof && !['bank_transfer', 'alipay', 'wechat'].includes(String(order.paymentMethod))) return c.text('订单不能提交付款凭证', 409)
   if (isAdjustment && !['bank_transfer', 'alipay', 'wechat'].includes(requestedPaymentMethod)) return c.text('差价付款方式无效', 400)
   if (isAdjustment && order.status === 'pending_payment') return c.text('当前订单尚未完成首次付款', 409)
@@ -3815,14 +3471,6 @@ app.get('/admin/orders', async (c) => {
   return c.html(await pages.renderAdminOrders(c, user))
 })
 
-app.get('/admin/orders/balance-topups', async (c) => {
-  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') {
-    return c.redirect('/login')
-  }
-  return c.html(await pages.renderAdminBalanceTopups(c, user))
-})
-
 app.get('/admin/order-review', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -4015,7 +3663,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const order = await getOrderById(c, c.req.param('id'))
   if (!order) return c.text('订单状态不允许审核', 409)
-  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, p.payment_method AS proof_payment_method, p.amount AS proof_amount, p.deposit_amount AS proof_deposit_amount, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
+  const proof = await c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.reference_number, p.payment_method AS proof_payment_method, p.deposit_amount AS proof_deposit_amount, a.id AS adjustment_id, a.amount AS adjustment_amount FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN order_price_adjustments a ON a.payment_id = p.id AND a.direction = 'increase' WHERE p.rental_id = ? AND pp.status = 'submitted' ORDER BY pp.uploaded_at DESC LIMIT 1").bind(order.id).first() as any
   if (!proof) return c.text('没有待审核的转账信息', 409)
   const isSquareDepositProof = !proof.adjustment_id && String(order.paymentProvider || order.payment_provider || '') === 'square' && proof.proof_payment_method === 'bank_transfer' && Number(proof.proof_deposit_amount || 0) > 0
   if (isSquareDepositProof) {
@@ -4044,28 +3692,6 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
     await createAuditLog(c, { actor: user, action: 'PRICE_ADJUSTMENT_PAYMENT_APPROVED', targetType: 'ORDER_PRICE_ADJUSTMENT', targetId: proof.adjustment_id, after: { orderId: order.id, reference: proof.reference_number } })
     return c.redirect('/admin/exceptions')
   }
-  const squareGiftPayment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND payment_provider = 'square' AND payment_method = 'card' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-  const squareResidualTransfer = squareGiftPayment && Number(squareGiftPayment.square_paid_amount || 0) > 0 && Number(proof.proof_amount || 0) > 0 && String(proof.proof_payment_method) === 'bank_transfer'
-  if (squareResidualTransfer) {
-    const targetCents = Math.round(Number(squareGiftPayment.amount || 0) * 100)
-    const paidCents = Math.round(Number(squareGiftPayment.square_paid_amount || 0) * 100)
-    const expectedRentalCents = Math.max(0, targetCents - paidCents)
-    const expectedDepositCents = String(order.deposit_status || '').toUpperCase() === 'PENDING' ? Math.round(Number(order.depositAmount || order.deposit_amount || 0) * 100) : 0
-    if (Math.round(Number(proof.proof_amount || 0) * 100) !== expectedRentalCents + expectedDepositCents) return c.text('剩余付款凭证金额与订单不一致', 409)
-    await completeSquareGiftCardPayment(c, String(squareGiftPayment.square_payment_id || squareGiftPayment.transaction_id || ''), targetCents)
-    await c.env.RENT.batch([
-      c.env.RENT.prepare("UPDATE payment_proofs SET status = 'approved', verified_at = CURRENT_TIMESTAMP, verified_by = ? WHERE id = ? AND status = 'submitted'").bind(user.id, proof.id),
-      c.env.RENT.prepare("UPDATE payments SET status = 'paid', transaction_id = COALESCE(transaction_id, ?), paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id IN (?, ?) AND status IN ('pending','paid')").bind(generateReferenceNumber('TXN'), squareGiftPayment.id, proof.payment_id),
-      c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'bank_transfer', payment_provider = 'internal', deposit_status = CASE WHEN ? > 0 THEN 'PAID' ELSE deposit_status END, deposit_paid_at = CASE WHEN ? > 0 THEN COALESCE(deposit_paid_at, CURRENT_TIMESTAMP) ELSE deposit_paid_at END, deposit_held_amount = CASE WHEN ? > 0 THEN ? ELSE deposit_held_amount END, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(expectedDepositCents, expectedDepositCents, expectedDepositCents, expectedDepositCents / 100, order.id),
-    ])
-    await ensureContractForOrder(c, order, user.id)
-    await recordDeviceLifecycle(c, order.deviceId, 'RESERVED', { orderId: order.id, reason: '礼品卡差额及押金转账审核通过', changedBy: user.id })
-    await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
-    // 不能让开票异常把整个审核请求报 500——付款凭证已经批准、订单已经 paid，
-    // 失败必须落 error_logs 才能被发现（同 8f746d9 的教训）。
-    await issueInvoice(c, order.id).catch(error => logError(c, 'CRITICAL', 'issueInvoice failed after Square residual bank-transfer approval', error, { orderId: order.id }))
-    return c.redirect('/admin/exceptions')
-  }
   const riskCustomer = await getUserById(c, order.userId)
   const customerRisk = riskCustomer?.role === 'CUSTOMER' ? await getCustomerRiskAssessment(c, riskCustomer.id) : null
   if (customerRisk?.blocked) return c.text(`该客户存在风控限制，不能创建合同或审核订单（风险分 ${customerRisk.score}/100）`, 403)
@@ -4079,8 +3705,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(order.id).run()
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
   await recordExternalRentalFlow(c, order.userId, Number(order.totalAmount), '银行转账', user.id, order.id)
-  // 同上：开票失败要能被看见，且不能挡住下面的 Windows 账号创建步骤继续执行。
-  await issueInvoice(c, order.id).catch(error => logError(c, 'CRITICAL', 'issueInvoice failed after bank-transfer approval', error, { orderId: order.id }))
+  await issueInvoice(c, order.id)
   // Bank-transfer approval is a completed payment event too: enqueue the
   // Windows rental-user creation immediately instead of waiting for the cron.
   const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
@@ -4226,15 +3851,10 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   const settlementId = `dst-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),
-    c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING', settlement_status = ? WHERE id = ?").bind(computeOrderSettlementStatus({ status: order.status, deposit_status: 'REFUND_PENDING' }), order.id),
+    c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING' WHERE id = ?").bind(order.id),
   ])
   await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_AUTO_APPROVED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, after: { ...snapshot, status: 'APPROVED' }, reason: deductionReason || '管理员提交，自动审批通过' })
-  const response = await refundDeposit(c, user, order.id, form)
-  if (response.status < 400) {
-    await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'EXECUTED', executed_by = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'APPROVED'").bind(user.id, settlementId).run()
-    await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_EXECUTED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, before: { status: 'APPROVED' }, after: { status: 'EXECUTED' } })
-  }
-  return response
+  return c.redirect(`/admin/orders/${order.id}`, 303)
 })
 
 app.get('/manager/deposit-settlements', async (c) => {
@@ -4637,7 +4257,7 @@ app.get('/admin/devices/:id/edit', async (c) => {
   const unavailableDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(device.id).all()).results || []).map((row: any) => row.unavailable_date)
   const unavailableTimeSlots = ((await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? ORDER BY unavailable_date, time_slot').bind(device.id).all().catch(() => ({ results: [] }))).results || []).reduce((result: Record<string, string[]>, row: any) => {
     const date = String(row.unavailable_date)
-    ;(result[date] ||= []).push(String(row.time_slot))
+      ; (result[date] ||= []).push(String(row.time_slot))
     return result
   }, {})
   const lifecycleEvents = (await c.env.RENT.prepare('SELECT previous_status, next_status, reason, changed_by, created_at FROM device_lifecycle_events WHERE device_id = ? ORDER BY created_at DESC LIMIT 8').bind(device.id).all()).results || []
@@ -5666,9 +5286,9 @@ export default {
     } as any
 
     // Import and run the cleanup function
-    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, notifyOverdueBankTransferRefunds, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob, deliverPendingAgreementUpdates } = await import('./site')
+    const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob, deliverPendingAgreementUpdates } = await import('./site')
 
-    // The hourly cron ("0 * * * *") only enforces the 24h unpaid-payment
+    // The hourly cron ("0 * * * *") only enforces the 24h unpaid-order
     // cancellation SLA — running the rest of the daily batch (notifications,
     // purges, etc.) every hour instead of once a day is not the intent.
     if (event.cron === '0 * * * *') {
@@ -5768,7 +5388,6 @@ export default {
         await runScheduledJob(c, 'cancel_expired_pending_payments', () => cancelExpiredPendingPaymentOrders(c))
         await runScheduledJob(c, 'create_due_date_notifications', () => createDueDateNotifications(c))
         await runScheduledJob(c, 'notify_overdue_payment_proofs', () => notifyOverduePaymentProofs(c))
-        await runScheduledJob(c, 'notify_overdue_bank_transfer_refunds', () => notifyOverdueBankTransferRefunds(c))
         await runScheduledJob(c, 'deliver_pending_agreement_updates', () => deliverPendingAgreementUpdates(c))
         await runScheduledJob(c, 'purge_old_device_inspections', async () => {
           const result = await env.RENT.prepare("DELETE FROM device_inspections WHERE created_at < datetime('now', '-1 year')").run()
