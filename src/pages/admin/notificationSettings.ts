@@ -6,9 +6,9 @@
 import { buildLayout, sanitizePlainText } from '../../site'
 
 export function renderAdminNotificationSettings(user: any, settings: any, message = '', type: 'success' | 'error' = 'success'): string {
-  const delivery = settings?.defaultDelivery === 'in_app_only' ? 'in_app_only' : 'in_app_email'
-  const alert = message ? `<div class="page-notification page-notification--${type}">${sanitizePlainText(message, 300)}</div>` : ''
-  const body = `<div class="page-header"><div><p class="section-code">COMMUNICATION / NOTIFICATIONS</p><h2>通知设置</h2><p>控制自动业务通知的默认发送方式。订单、合同和付款等重要通知仍会保留在站内通知中心。</p></div><a class="button button-secondary" href="/admin/notifications">返回通知管理</a></div>
+    const delivery = settings?.defaultDelivery === 'in_app_only' ? 'in_app_only' : 'in_app_email'
+    const alert = message ? `<div class="page-notification page-notification--${type}">${sanitizePlainText(message, 300)}</div>` : ''
+    const body = `<div class="page-header"><div><p class="section-code">COMMUNICATION / NOTIFICATIONS</p><h2>通知设置</h2><p>控制自动业务通知的默认发送方式。订单、合同和付款等重要通知仍会保留在站内通知中心。</p></div><a class="button button-secondary" href="/admin/notifications">返回通知管理</a></div>
     ${alert}
     <section class="panel"><div class="section-title"><h3>默认通知发送方式</h3><span class="section-note">自动业务通知</span></div>
       <form method="post" action="/admin/notifications/settings">
@@ -18,5 +18,5 @@ export function renderAdminNotificationSettings(user: any, settings: any, messag
         <button class="button button-primary" type="submit">保存通知设置</button>
       </form>
     </section>`
-  return buildLayout('通知设置 - 电脑租赁管理系统', body, user)
+    return buildLayout('通知设置 - 电脑租赁管理系统', body, user)
 }
