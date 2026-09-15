@@ -272,6 +272,42 @@ export async function createNotification(c: Context, notification: { recipientId
   }
 }
 
+// 「付款成功」邮件：套用后台可编辑的 payment_completed 模板，只在 issueInvoice
+// 第一次为某订单开票时调用一次（见 services/invoice.ts）。尽力而为——任何一步
+// 失败都不影响开票本身，调用方已经 catch 掉。
+export async function sendPaymentCompletedEmail(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<void> {
+  const { apiKey, from } = await resolveEmailCredentials(c)
+  if (!apiKey || !from) return
+  const customer = await c.env.RENT.prepare('SELECT name, email FROM users WHERE id = ?').bind(order.userId).first() as any
+  const email = String(customer?.email || '').trim()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith('@invalid.local')) return
+
+  const template = await c.env.RENT.prepare("SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = 'payment_completed'").first() as any
+  if (!template || template.enabled === 0) return
+
+  const device = order.deviceId ? await c.env.RENT.prepare('SELECT name FROM devices WHERE id = ?').bind(order.deviceId).first() as any : null
+  const companyDetails = getSystemSettings().companyDetails || ({} as any)
+  const vars: Record<string, string> = {
+    customer_name: normalizeCustomerName(customer?.name),
+    customer_email: email,
+    order_number: String(order.orderNo || order.id),
+    contract_number: String(contract?.contractNumber || ''),
+    device_name: String(device?.name || ''),
+    start_date: String(order.startDate || ''),
+    end_date: String(order.endDate || ''),
+    rental_period: order.rentalPeriod ? `${order.rentalPeriod} 天` : '',
+    total_amount: `AUD ${Number(order.totalAmount || 0).toFixed(2)}`,
+    deposit_amount: `AUD ${Number(order.depositAmount || 0).toFixed(2)}`,
+    order_detail_url: buildNotificationOrderDetailUrl(c.req.url, order.id, 'CUSTOMER'),
+    company_name: String(companyDetails.name || ''),
+    company_email: String(companyDetails.email || ''),
+  }
+  const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
+  const subject = fill(String(template.subject || '付款成功 - {order_number}'))
+  const html = renderEmailNotificationHtml(subject, fill(String(template.body || '')), vars.company_name, template.theme_color || '#f0a35b')
+  await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(`您好 ${vars.customer_name}：您的订单 ${vars.order_number} 已完成付款。`, 2000), html })
+}
+
 export async function deleteRentalApplicationNotifications(c: Context, orderId: string): Promise<void> {
   await ensureNotificationsTable(c)
   await c.env.RENT.prepare("UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE order_id = ? AND type = 'rental_application' AND deleted_at IS NULL").bind(orderId).run()
