@@ -113,6 +113,7 @@ import {
   , lockReferralRelationship
   , createAuditLog
   , formatMelbourneDateTime
+  , logError
 } from './site'
 import type { SystemSettingsKey } from './site'
 import { nanoid } from 'nanoid'
@@ -126,6 +127,7 @@ import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook
 import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
+import { computeOrderSettlementStatus } from './domain/orderSettlement'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
@@ -2142,7 +2144,7 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
         await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
       }
     } catch (error: any) {
-      console.error('Auto-charge rent on approval failed:', error?.message || error)
+      await logError(c, 'ERROR', 'Auto-charge rent on approval failed', error, { orderId: order.id })
       await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
     }
     return c.redirect(staffOrderPath(order))
@@ -2233,8 +2235,11 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   Object.assign(inspectionSnapshot, checks, { batteryCycles, batteryHealth: String(form.batteryHealth || '').trim().slice(0, 100), damageDescription, damagePhotos, replacementCost: replacementCost.toFixed(2), returnDate: now.slice(0, 10), inspectionBy: user.name || user.id })
   const inspectionId = `inspection-${nanoid(12)}`
   const returnDevice = await getDeviceById(c, order.deviceId)
+  // 订单进 completed 的这一刻押金往往还没结清（HELD/PENDING）——settlement_status
+  // 要单独反映这个事实，不能让“已完成”看起来什么都办完了。
+  const settlementStatusOnCompletion = computeOrderSettlementStatus({ status: 'completed', deposit_status: order.deposit_status })
   await c.env.RENT.batch([
-    c.env.RENT.prepare("UPDATE orders SET status = 'completed', order_status = 'COMPLETED', payment_status = COALESCE(payment_status, 'PAID'), rental_status = 'COMPLETED', return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP), return_received_by = COALESCE(return_received_by, ?), updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(user.id, order.id),
+    c.env.RENT.prepare("UPDATE orders SET status = 'completed', order_status = 'COMPLETED', payment_status = COALESCE(payment_status, 'PAID'), rental_status = 'COMPLETED', return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP), return_received_by = COALESCE(return_received_by, ?), settlement_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(user.id, settlementStatusOnCompletion, order.id),
     c.env.RENT.prepare("INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, 'RETURNED', 'MANUAL', ?, ?), (?, ?, 'RETURNED', 'COMPLETED', 'SYSTEM', ?, ?)").bind(`rsh-${nanoid(16)}`, order.id, order.rental_status || 'RETURN_PENDING', user.id, '工作人员收到设备并开始归还验机', `rsh-${nanoid(16)}`, order.id, user.id, '归还验机完成，订单结算完成'),
     c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, rental_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, \'after_return\', ?, ?)').bind(inspectionId, order.deviceId, order.id, JSON.stringify(inspectionSnapshot), JSON.stringify({})),
     c.env.RENT.prepare("INSERT OR IGNORE INTO order_fulfillment_records (id, order_id, record_type, device_serial_number, accessories_json, condition_snapshot_json, notes, recorded_by) VALUES (?, ?, 'RETURN', ?, '[]', ?, ?, ?)").bind(`return-${nanoid(12)}`, order.id, String(returnDevice?.serialNumber || ''), JSON.stringify(inspectionSnapshot), damageDescription || null, user.id),
@@ -3728,7 +3733,8 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   await c.env.RENT.prepare("UPDATE coupon_redemptions SET status = 'REDEEMED', redeemed_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'RESERVED'").bind(order.id).run()
   await ensureOrderNumber(c, order.id, String(proof.reference_number || proof.payment_id || ''))
   await recordExternalRentalFlow(c, order.userId, Number(order.totalAmount), '银行转账', user.id, order.id)
-  await issueInvoice(c, order.id)
+  // 同上：开票失败要能被看见，且不能挡住下面的 Windows 账号创建步骤继续执行。
+  await issueInvoice(c, order.id).catch(error => logError(c, 'CRITICAL', 'issueInvoice failed after bank-transfer approval', error, { orderId: order.id }))
   // Bank-transfer approval is a completed payment event too: enqueue the
   // Windows rental-user creation immediately instead of waiting for the cron.
   const contract = await c.env.RENT.prepare('SELECT id, contract_data FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
@@ -3874,7 +3880,7 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   const settlementId = `dst-${nanoid(12)}`
   await c.env.RENT.batch([
     c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, reviewed_by, reviewed_at, review_note, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, CURRENT_TIMESTAMP, '管理员提交，自动审批通过', ?, ?)").bind(settlementId, order.id, depositAmount, isSetupIntentDeposit ? 0 : refundAmount, deductionAmount, deductionAmount ? deductionCategory : null, deductionAmount ? deductionReason : null, refundMethod, user.id, user.id, generateReferenceNumber('DST'), JSON.stringify(snapshot)),
-    c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING' WHERE id = ?").bind(order.id),
+    c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING', settlement_status = ? WHERE id = ?").bind(computeOrderSettlementStatus({ status: order.status, deposit_status: 'REFUND_PENDING' }), order.id),
   ])
   await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_AUTO_APPROVED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, after: { ...snapshot, status: 'APPROVED' }, reason: deductionReason || '管理员提交，自动审批通过' })
   return c.redirect(`/admin/orders/${order.id}`, 303)
