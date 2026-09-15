@@ -1511,8 +1511,9 @@ export async function completeBankTransferRefund(c: Context, admin: any, refundI
   const depositAmount = Math.max(Number(payment?.deposit_amount || 0), orderDeposit(order))
   const totalRefunded = Number((await c.env.RENT.prepare("SELECT COALESCE(SUM(refund_amount), 0) AS amount FROM payment_refunds WHERE payment_id = ? AND type = 'deposit' AND status = 'succeeded'").bind(pending.payment_id).first() as any)?.amount || 0)
   const totalRefundAmount = Number(pending.refund_amount || 0) + Number(pending.refunded_processing_fee || 0)
-  await c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP WHERE id = ?")
-    .bind(totalRefunded >= depositAmount ? 'REFUNDED' : totalRefunded <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED', totalRefunded, order.id).run()
+  const nextDepositStatus = totalRefunded >= depositAmount ? 'REFUNDED' : totalRefunded <= 0 ? 'FORFEITED' : 'PARTIALLY_REFUNDED'
+  await c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP, settlement_status = ? WHERE id = ?")
+    .bind(nextDepositStatus, totalRefunded, computeOrderSettlementStatus({ status: order.status, deposit_status: nextDepositStatus }), order.id).run()
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -totalRefundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '押金退款（银行转账）', createdBy: admin.id, metadata: { channel: 'bank_transfer', principal: Number(pending.refund_amount || 0), processingFee: Number(pending.refunded_processing_fee || 0) } })
   if (Number(pending.refund_amount || 0) > 0) await issueCreditNote(c, order.id, Number(pending.refund_amount || 0), Number(pending.refunded_processing_fee || 0), `deposit-${nanoid(12)}`)
