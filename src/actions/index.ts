@@ -9,3 +9,4 @@ export * from './admin/saveSettings';
 export * from './staff/cancelContract';
 export * from './coupons';
 export * from './squarePayments';
+export * from './public/tallyFeedback';

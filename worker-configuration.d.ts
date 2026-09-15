@@ -4,6 +4,7 @@
 interface __BaseEnv_CloudflareBindings {
 	RENT: D1Database;
 	SETTINGS_ENCRYPTION_KEY: string;
+	TALLY_WEBHOOK_SECRET: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

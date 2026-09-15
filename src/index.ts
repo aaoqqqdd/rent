@@ -138,6 +138,7 @@ import {
   languageScriptVersion,
 } from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
+import { createTallyFeedbackToken } from './lib/tally'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
   const form: Record<string, string> = {}
@@ -576,11 +577,11 @@ app.use('*', async (c, next) => {
 
 app.use('*', async (c, next) => {
   const contentLength = Number(c.req.header('Content-Length') || 0)
-  const maxBody = ['/webhooks/stripe', '/webhooks/square'].includes(c.req.path) ? 512 * 1024 : 128 * 1024
+  const maxBody = ['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) ? 512 * 1024 : 128 * 1024
   if (contentLength > maxBody) return c.text('Request body too large', 413)
   const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
   const isPublicOrderLookup = c.req.path === '/public/order-lookup'
-  if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square'].includes(c.req.path) && !isPublicOrderLookup) {
+  if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
     if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
@@ -618,7 +619,7 @@ app.use('*', async (c, next) => {
   c.header('Cross-Origin-Opener-Policy', 'same-origin')
   c.header('Cross-Origin-Resource-Policy', 'same-origin')
   if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-  c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'")
+  c.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com https://tally.so; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com https://tally.so; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com https://tally.so; frame-ancestors 'none'")
 });
 
 app.use('*', async (c, next) => {
@@ -673,6 +674,19 @@ app.get('/login', async (c) => {
   const deletedMessage = c.req.query('deletion_requested') === '1' ? '账户删除申请已提交，进入 7 天冷静期；您已退出登录。7 天内重新登录可取消删除。' : undefined
   const message = c.req.query('reset') === '1' ? '密码已重置，请使用新密码登录。' : deletedMessage
   return c.html(pages.renderLogin(message, shouldShowTestAccounts(c)))
+})
+
+app.get('/contact', async (c) => {
+  return c.redirect('/feedback', 302)
+})
+
+app.get('/feedback', async (c) => {
+  await loadSystemSettingsFromDB(c)
+  const user = c.get('user')
+  const feedbackToken = user?.role === 'CUSTOMER' && user.accountType !== 'guest' && c.env.SETTINGS_ENCRYPTION_KEY
+    ? await createTallyFeedbackToken(String(c.env.SETTINGS_ENCRYPTION_KEY || ''), user.id)
+    : ''
+  return c.html(pages.renderTallyForm(getSystemSettings().tallyFormUrl, feedbackToken))
 })
 
 app.post('/login', async (c) => {
@@ -2823,6 +2837,15 @@ app.post('/webhooks/square', async (c) => {
   }
 })
 
+app.post('/webhooks/tally', async (c) => {
+  try {
+    return await actions.handleTallyFeedbackWebhook(c)
+  } catch (error: any) {
+    console.error('Tally feedback webhook processing failed:', error?.message || error)
+    return c.json({ received: false, error: 'processing_failed' }, 500)
+  }
+})
+
 app.get('/customer/rentals', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'CUSTOMER') {
@@ -4560,6 +4583,31 @@ app.get('/admin/settings', async (c) => {
   }
   await loadSystemSettingsFromDB(c)
   return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c)))
+})
+
+app.get('/admin/feedback-gift-cards', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const cards = (await c.env.RENT.prepare('SELECT brand, code, amount, status, created_at FROM feedback_gift_cards ORDER BY created_at DESC, id DESC LIMIT 200').all()).results || []
+  return c.html(pages.renderAdminFeedbackGiftCards(user, cards as any[]))
+})
+
+app.post('/admin/feedback-gift-cards', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const brand = String(form.brand || '').trim().slice(0, 80)
+  const code = String(form.code || '').trim().slice(0, 160)
+  const amountText = String(form.amount || '').trim()
+  const amount = amountText ? Number(amountText) : null
+  if (!brand || !code || (amount !== null && (!Number.isFinite(amount) || amount < 0))) return c.text('请填写有效的礼品卡品牌、兑换码和面值', 400)
+  try {
+    await c.env.RENT.prepare('INSERT INTO feedback_gift_cards (id, brand, code, amount, created_by) VALUES (?, ?, ?, ?, ?)').bind(`fgc-${nanoid(12)}`, brand, code, amount, user.id).run()
+  } catch (error: any) {
+    if (String(error?.message || '').toLowerCase().includes('unique')) return c.text('该礼品卡兑换码已存在', 409)
+    throw error
+  }
+  return c.redirect('/admin/feedback-gift-cards')
 })
 
 app.post('/admin/notify-channels/test', async (c) => {

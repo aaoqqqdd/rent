@@ -12,6 +12,7 @@ export * from './public/contractView';
 export * from './public/contractVerify';
 export * from './public/paymentResult';
 export * from './public/unsubscribe';
+export * from './public/tallyForm';
 export * from './invoice';
 
 export * from './customer/dashboard';
@@ -56,6 +57,7 @@ export * from './admin/deviceNew';
 export * from './admin/deviceEdit';
 export * from './admin/deviceControl';
 export * from './admin/settings';
+export * from './admin/feedbackGiftCards';
 export * from './admin/templates';
 export * from './admin/emailTemplates';
 export * from './admin/marketingEmails';

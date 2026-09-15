@@ -13,7 +13,8 @@ export type SystemSettingsKey =
   | 'userTermsEn' | 'rentalTermsEn' | 'serviceTermsEn' | 'privacyPolicyEn' | 'softwareTermsEn'
   | 'copyrightNoticeEn' | 'cookiePolicyEn' | 'complaintsPolicyEn' | 'acceptableUsePolicyEn' | 'consumerRightsEn'
   | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings'
-  | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata'
+  | 'companyDetails' | 'rentalRules' | 'registrationSettings' | 'legalMetadata' | 'tallyFormUrl'
+  | 'feedbackRewards'
 
 export const rentalTerms = `## 电脑租赁协议条款
 
@@ -55,6 +56,15 @@ PC Rental电脑租赁团队
 {register_time}`;
 
 export const systemSettings = {
+  tallyFormUrl: '',
+  feedbackRewards: {
+    enabled: false,
+    rewardType: 'BALANCE' as 'BALANCE' | 'COUPON' | 'GIFT_CARD',
+    balanceAmount: 5,
+    couponDiscountType: 'fixed' as 'fixed' | 'percent',
+    couponDiscountValue: 5,
+    couponExpiresDays: 30,
+  },
   companyDetails: {
     name: 'PC Rental',
     abn: '',

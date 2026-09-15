@@ -11,6 +11,7 @@ import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
 import { getSquareConfigSummary, saveSquareConfig } from '../../square'
 import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChannels'
 import { enqueueAgreementUpdate } from '../../services/notifications'
+import { normalizeTallyEmbedUrl } from '../../lib/tally'
 
 /** 保存协议更新记录，实际通知由定时任务统一发送。 */
 export async function notifyAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, _companyDetails?: any, _changedContent = ''): Promise<void> {
@@ -32,6 +33,8 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   // the in-code defaults when only company settings are being saved.
   await loadSystemSettingsFromDB(c)
 
+  const currentFeedbackRewards = getSystemSettings().feedbackRewards
+
   const stripeConfigInput = payload.stripeConfig
   const shouldSaveStripeConfig = Boolean(
     stripeConfigInput &&
@@ -43,6 +46,15 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   )
 
   const next = {
+    tallyFormUrl: normalizeTallyEmbedUrl(payload.tallyFormUrl ?? getSystemSettings().tallyFormUrl),
+    feedbackRewards: {
+      enabled: Boolean(payload.feedbackRewards?.enabled),
+      rewardType: ['BALANCE', 'COUPON', 'GIFT_CARD'].includes(String(payload.feedbackRewards?.rewardType)) ? String(payload.feedbackRewards.rewardType) : currentFeedbackRewards.rewardType,
+      balanceAmount: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.balanceAmount ?? currentFeedbackRewards.balanceAmount) || 0)),
+      couponDiscountType: payload.feedbackRewards?.couponDiscountType === 'percent' ? 'percent' : payload.feedbackRewards?.couponDiscountType === 'fixed' ? 'fixed' : currentFeedbackRewards.couponDiscountType,
+      couponDiscountValue: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.couponDiscountValue ?? currentFeedbackRewards.couponDiscountValue) || 0)),
+      couponExpiresDays: Math.min(365, Math.max(1, Math.floor(Number(payload.feedbackRewards?.couponExpiresDays ?? currentFeedbackRewards.couponExpiresDays) || 30))),
+    },
     companyDetails: {
       name: String(payload.companyDetails?.name ?? getSystemSettings().companyDetails.name).trim(),
       abn: String(payload.companyDetails?.abn ?? getSystemSettings().companyDetails.abn).trim(),
@@ -101,6 +113,12 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       requireEmailVerification: Boolean(payload.registrationSettings?.requireEmailVerification),
     },
   }
+
+  if (String(payload.tallyFormUrl ?? '').trim() && !next.tallyFormUrl) {
+    throw new Error('Tally 表单地址必须是 https://tally.so/embed/... 格式')
+  }
+  if (next.feedbackRewards.rewardType === 'BALANCE' && next.feedbackRewards.enabled && next.feedbackRewards.balanceAmount <= 0) throw new Error('反馈奖励余额必须大于 0')
+  if (next.feedbackRewards.rewardType === 'COUPON' && next.feedbackRewards.enabled && (next.feedbackRewards.couponDiscountValue <= 0 || (next.feedbackRewards.couponDiscountType === 'percent' && next.feedbackRewards.couponDiscountValue > 100))) throw new Error('反馈奖励优惠值无效')
 
   for (const [name, value] of Object.entries(next.rmbPayment)) {
     if (value && (!/^https:\/\//i.test(String(value)) || String(value).includes('"'))) throw new Error(`${name} 必须是 HTTPS 图片地址`)

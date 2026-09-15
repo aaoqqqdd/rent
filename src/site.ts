@@ -146,6 +146,7 @@ export type { User, Device, DeviceLifecycleStatus, Order, Contract, ContractTemp
 // ---------------------------------------------------------------------------
 import { systemSettings, getSystemSettings, rentalTerms } from './settings/systemSettings'
 import type { SystemSettingsKey } from './settings/systemSettings'
+import { normalizeTallyEmbedUrl } from './lib/tally'
 export { systemSettings, getSystemSettings, rentalTerms }
 export type { SystemSettingsKey }
 
@@ -869,6 +870,8 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const rentalRulesValue = values.get('rentalRules')
   const registrationSettingsValue = values.get('registrationSettings')
   const legalMetadataValue = values.get('legalMetadata')
+  const tallyFormUrlValue = values.get('tallyFormUrl')
+  const feedbackRewardsValue = values.get('feedbackRewards')
 
   // Only update values that actually exist in the database AND are non-empty
   // to prevent overwriting database-backed content with empty defaults or null values
@@ -906,6 +909,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const parsedCompanyDetails = safeJsonParse<typeof systemSettings.companyDetails>(companyDetailsValue)
   const parsedRentalRules = safeJsonParse<typeof systemSettings.rentalRules>(rentalRulesValue)
   const parsedRegistrationSettings = safeJsonParse<typeof systemSettings.registrationSettings>(registrationSettingsValue)
+  const parsedFeedbackRewards = safeJsonParse<typeof systemSettings.feedbackRewards>(feedbackRewardsValue)
 
   if (parsedPaymentMethods) {
     systemSettings.paymentMethods = {
@@ -929,6 +933,18 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
   if (parsedRegistrationSettings) systemSettings.registrationSettings = { ...systemSettings.registrationSettings, ...parsedRegistrationSettings }
+  if (tallyFormUrlValue !== undefined) systemSettings.tallyFormUrl = normalizeTallyEmbedUrl(tallyFormUrlValue)
+  if (parsedFeedbackRewards) {
+    systemSettings.feedbackRewards = {
+      ...systemSettings.feedbackRewards,
+      enabled: Boolean(parsedFeedbackRewards.enabled),
+      rewardType: ['BALANCE', 'COUPON', 'GIFT_CARD'].includes(String(parsedFeedbackRewards.rewardType)) ? parsedFeedbackRewards.rewardType : systemSettings.feedbackRewards.rewardType,
+      balanceAmount: Math.min(10000, Math.max(0, Number(parsedFeedbackRewards.balanceAmount) || 0)),
+      couponDiscountType: parsedFeedbackRewards.couponDiscountType === 'percent' ? 'percent' : 'fixed',
+      couponDiscountValue: Math.min(10000, Math.max(0, Number(parsedFeedbackRewards.couponDiscountValue) || 0)),
+      couponExpiresDays: Math.min(365, Math.max(1, Math.floor(Number(parsedFeedbackRewards.couponExpiresDays) || 30))),
+    }
+  }
 
   systemSettingsLoadedAt = Date.now()
   return systemSettings
@@ -1019,6 +1035,8 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     ['rentalRules', systemSettings.rentalRules],
     ['legalMetadata', systemSettings.legalMetadata],
     ['registrationSettings', systemSettings.registrationSettings],
+    ['tallyFormUrl', systemSettings.tallyFormUrl],
+    ['feedbackRewards', systemSettings.feedbackRewards],
   ]
 
   for (const [key, value] of fieldsToWrite) {
@@ -1773,7 +1791,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   // 页脚在所有页面（登录前后）保持一致：平铺三个核心法律链接，其余合规页面
   // 统一收进「更多」折叠菜单，避免一长排链接换行。
   const footerPrimaryLinks: Array<[string, string]> = [
-    ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
+    ['/feedback', '客户反馈'], ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
   ]
   const footerMoreLinks: Array<[string, string]> = [
     ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'],
