@@ -7,7 +7,7 @@ import { buildLayout, getSystemSettings } from '../../site';
 
 export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}, tallyWebhookConfigured: boolean = false) {
   const settings = getSystemSettings(); // 获取当前系统设置
-  const feedbackRewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponExpiresDays: 30 };
+  const feedbackRewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponMinimumOrderAmount: 0, couponExpiresDays: 30 };
   const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   const ts = {
     configured: Boolean(turnstile.configured),
@@ -64,6 +64,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <div class="form-group"><label class="form-label" for="feedbackBalanceAmount">余额奖励（AUD）</label><input class="form-control" id="feedbackBalanceAmount" type="number" min="0.01" max="10000" step="0.01" value="${feedbackRewards.balanceAmount}"></div>
             <div class="form-group"><label class="form-label" for="feedbackCouponDiscountType">优惠码类型</label><select class="form-control" id="feedbackCouponDiscountType"><option value="fixed" ${feedbackRewards.couponDiscountType === 'fixed' ? 'selected' : ''}>固定金额</option><option value="percent" ${feedbackRewards.couponDiscountType === 'percent' ? 'selected' : ''}>百分比</option></select></div>
             <div class="form-group"><label class="form-label" for="feedbackCouponDiscountValue">优惠值</label><input class="form-control" id="feedbackCouponDiscountValue" type="number" min="0.01" max="10000" step="0.01" value="${feedbackRewards.couponDiscountValue}"></div>
+            <div class="form-group"><label class="form-label" for="feedbackCouponMinimumOrderAmount">最低使用金额（AUD）</label><input class="form-control" id="feedbackCouponMinimumOrderAmount" type="number" min="0" max="1000000" step="0.01" value="${feedbackRewards.couponMinimumOrderAmount || 0}"><small class="form-text">填 0 表示不限制最低订单金额。</small></div>
             <div class="form-group"><label class="form-label" for="feedbackCouponExpiresDays">优惠码有效期（天）</label><input class="form-control" id="feedbackCouponExpiresDays" type="number" min="1" max="365" step="1" value="${feedbackRewards.couponExpiresDays}"></div>
           </div>
           <p class="form-text">礼品卡奖励不会调用 Square 发卡 API；请先在 <a href="/admin/feedback-gift-cards">礼品卡库存</a> 录入外部兑换码，系统按先进先出发放。发放记录（含失败原因和重试）请查看 <a href="/admin/feedback-rewards">反馈奖励记录</a>。</p>
@@ -285,6 +286,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             balanceAmount: Number(inputValue('feedbackBalanceAmount') || 0),
             couponDiscountType: inputValue('feedbackCouponDiscountType'),
             couponDiscountValue: Number(inputValue('feedbackCouponDiscountValue') || 0),
+            couponMinimumOrderAmount: Number(inputValue('feedbackCouponMinimumOrderAmount') || 0),
             couponExpiresDays: Number(inputValue('feedbackCouponExpiresDays') || 30),
           },
           bankDetails: {

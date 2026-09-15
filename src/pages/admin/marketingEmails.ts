@@ -57,6 +57,7 @@ function composeForm(templates: any[], coupons: any[], customers: any[]): string
         <select class="form-control" name="uniqueDiscountType"><option value="percent">百分比折扣</option><option value="fixed">固定金额折扣</option></select>
         <input class="form-control" name="uniqueDiscountValue" type="number" min="0.01" step="0.01" placeholder="折扣值">
         <input class="form-control" name="uniqueMaxDiscountAmount" type="number" min="0" step="0.01" placeholder="最高优惠金额（仅百分比折扣，可留空）">
+        <input class="form-control" name="uniqueMinimumOrderAmount" type="number" min="0" step="0.01" placeholder="最低使用金额（填 0 表示不限制）">
         <input class="form-control" name="uniqueExpiresAt" type="datetime-local">
         <input class="form-control" name="uniqueCodePrefix" maxlength="12" placeholder="优惠码前缀（可留空，例如 VIP）">
         <small class="form-text" style="grid-column:1/-1">系统会为每位收件人生成一个仅限本人使用一次的独立优惠码，并自动填充到邮件正文的 {coupon_code} 中。</small>

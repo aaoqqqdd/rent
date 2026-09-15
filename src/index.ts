@@ -1662,7 +1662,8 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
 
 async function ensureMarketingEmailTables(db: any): Promise<void> {
   await db.prepare("CREATE TABLE IF NOT EXISTS marketing_email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run()
-  await db.prepare("CREATE TABLE IF NOT EXISTS marketing_campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', coupon_mode TEXT NOT NULL DEFAULT 'none', coupon_id TEXT, unique_discount_type TEXT, unique_discount_value REAL, unique_max_discount_amount REAL, unique_expires_at TEXT, recipient_count INTEGER NOT NULL DEFAULT 0, sent_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'SENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT)").run()
+  await db.prepare("CREATE TABLE IF NOT EXISTS marketing_campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', coupon_mode TEXT NOT NULL DEFAULT 'none', coupon_id TEXT, unique_discount_type TEXT, unique_discount_value REAL, unique_max_discount_amount REAL, unique_minimum_order_amount REAL, unique_expires_at TEXT, recipient_count INTEGER NOT NULL DEFAULT 0, sent_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'SENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT)").run()
+  try { await db.prepare('ALTER TABLE marketing_campaigns ADD COLUMN unique_minimum_order_amount REAL').run() } catch (_) { }
   await db.prepare("CREATE TABLE IF NOT EXISTS marketing_campaign_recipients (id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL, customer_id TEXT NOT NULL, email TEXT NOT NULL, coupon_code TEXT, status TEXT NOT NULL DEFAULT 'PENDING', error_message TEXT, sent_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run()
   try { await db.prepare('ALTER TABLE marketing_campaign_recipients ADD COLUMN unsubscribe_token TEXT').run() } catch (_) { }
   try { await db.prepare('ALTER TABLE users ADD COLUMN marketing_email_opt_out INTEGER NOT NULL DEFAULT 0').run() } catch (_) { }
@@ -1692,12 +1693,12 @@ function generateMarketingCouponCode(prefix: string): string {
 
 // Reuses the coupons table for one-off per-recipient codes: max_uses = 1 and
 // max_uses_per_customer = 1 make each generated code single-use by construction.
-async function createUniqueMarketingCoupon(c: any, params: { discountType: string; discountValue: number; maxDiscountAmount: number | null; expiresAt: string | null; prefix: string; createdBy: string }): Promise<string> {
+async function createUniqueMarketingCoupon(c: any, params: { discountType: string; discountValue: number; maxDiscountAmount: number | null; minimumOrderAmount: number | null; expiresAt: string | null; prefix: string; createdBy: string }): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = generateMarketingCouponCode(params.prefix)
     try {
-      await c.env.RENT.prepare("INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, max_uses_per_customer, max_discount_amount, expires_at, active, status, created_by) VALUES (?, ?, ?, ?, 1, 1, ?, ?, 1, 'ACTIVE', ?)")
-        .bind(`cp-${nanoid(10)}`, code, params.discountType, params.discountValue, params.maxDiscountAmount, params.expiresAt, params.createdBy).run()
+      await c.env.RENT.prepare("INSERT INTO coupons (id, code, discount_type, discount_value, max_uses, max_uses_per_customer, max_discount_amount, minimum_order_amount, expires_at, active, status, created_by) VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?, 1, 'ACTIVE', ?)")
+        .bind(`cp-${nanoid(10)}`, code, params.discountType, params.discountValue, params.maxDiscountAmount, params.minimumOrderAmount, params.expiresAt, params.createdBy).run()
       return code
     } catch (error: any) {
       if (!String(error?.message || '').toLowerCase().includes('unique')) throw error
@@ -1905,7 +1906,7 @@ app.post('/admin/marketing-emails/send', async (c) => {
 
   const couponMode = ['none', 'shared', 'unique'].includes(String(form.couponMode)) ? String(form.couponMode) : 'none'
   let sharedCoupon: any = null
-  let uniqueConfig: { discountType: string; discountValue: number; maxDiscountAmount: number | null; expiresAt: string | null; prefix: string } | null = null
+  let uniqueConfig: { discountType: string; discountValue: number; maxDiscountAmount: number | null; minimumOrderAmount: number | null; expiresAt: string | null; prefix: string } | null = null
   let discountText = ''
   if (couponMode === 'shared') {
     sharedCoupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ? AND active = 1').bind(String(form.couponId || '')).first() as any
@@ -1916,8 +1917,10 @@ app.post('/admin/marketing-emails/send', async (c) => {
     const discountValue = Number(form.uniqueDiscountValue)
     if (!Number.isFinite(discountValue) || discountValue <= 0 || (discountType === 'percent' && discountValue > 100)) return c.text('请输入有效的折扣值', 400)
     const maxDiscountAmount = form.uniqueMaxDiscountAmount ? Number(form.uniqueMaxDiscountAmount) : null
+    const minimumOrderAmount = form.uniqueMinimumOrderAmount ? Number(form.uniqueMinimumOrderAmount) : null
+    if (minimumOrderAmount !== null && (!Number.isFinite(minimumOrderAmount) || minimumOrderAmount < 0)) return c.text('请输入有效的最低使用金额', 400)
     const expiresAt = String(form.uniqueExpiresAt || '').replace('T', ' ') || null
-    uniqueConfig = { discountType, discountValue, maxDiscountAmount, expiresAt, prefix: String(form.uniqueCodePrefix || '').trim() }
+    uniqueConfig = { discountType, discountValue, maxDiscountAmount, minimumOrderAmount, expiresAt, prefix: String(form.uniqueCodePrefix || '').trim() }
     discountText = marketingDiscountText(discountType, discountValue, maxDiscountAmount)
   }
 
@@ -1926,8 +1929,8 @@ app.post('/admin/marketing-emails/send', async (c) => {
   const promoEndDate = String(couponMode === 'shared' ? sharedCoupon?.expires_at || '' : uniqueConfig?.expiresAt || '').trim()
 
   const campaignId = `camp_${nanoid(12)}`
-  await c.env.RENT.prepare('INSERT INTO marketing_campaigns (id, name, subject, body, theme_color, coupon_mode, coupon_id, unique_discount_type, unique_discount_value, unique_max_discount_amount, unique_expires_at, recipient_count, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(campaignId, name, subject, body, themeColor, couponMode, couponMode === 'shared' ? sharedCoupon.id : null, uniqueConfig?.discountType || null, uniqueConfig?.discountValue ?? null, uniqueConfig?.maxDiscountAmount ?? null, uniqueConfig?.expiresAt || null, recipients.length, user.id).run()
+  await c.env.RENT.prepare('INSERT INTO marketing_campaigns (id, name, subject, body, theme_color, coupon_mode, coupon_id, unique_discount_type, unique_discount_value, unique_max_discount_amount, unique_minimum_order_amount, unique_expires_at, recipient_count, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(campaignId, name, subject, body, themeColor, couponMode, couponMode === 'shared' ? sharedCoupon.id : null, uniqueConfig?.discountType || null, uniqueConfig?.discountValue ?? null, uniqueConfig?.maxDiscountAmount ?? null, uniqueConfig?.minimumOrderAmount ?? null, uniqueConfig?.expiresAt || null, recipients.length, user.id).run()
 
   const recipientRows: { id: string; customerId: string; email: string; couponCode: string | null; unsubscribeToken: string }[] = []
   for (const recipient of recipients) {

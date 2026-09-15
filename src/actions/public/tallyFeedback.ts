@@ -47,6 +47,7 @@ function feedbackRewardSettings() {
     balanceAmount: Math.min(10000, Math.max(0, Number(settings.balanceAmount) || 0)),
     couponDiscountType: settings.couponDiscountType === 'percent' ? 'percent' : 'fixed',
     couponDiscountValue: Math.min(10000, Math.max(0, Number(settings.couponDiscountValue) || 0)),
+    couponMinimumOrderAmount: Math.min(1000000, Math.max(0, Number(settings.couponMinimumOrderAmount) || 0)),
     couponExpiresDays: Math.min(365, Math.max(1, Math.floor(Number(settings.couponExpiresDays) || 30))),
   }
 }
@@ -75,8 +76,8 @@ async function issueCouponReward(c: Context, rewardId: string, reward: ReturnTyp
   const code = `FEEDBACK-${rewardId.replace(/[^A-Za-z0-9]/g, '').slice(-14).toUpperCase()}`
   const expiresAt = new Date(Date.now() + reward.couponExpiresDays * 86400000).toISOString().slice(0, 19).replace('T', ' ')
   await c.env.RENT.prepare(`INSERT OR IGNORE INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword, max_discount_amount, minimum_order_amount, max_uses_per_customer, new_customer_only, stackable, restore_on_cancellation, status, active, applicable_components)
-    VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, ?, NULL, NULL, NULL, NULL, NULL, NULL, 1, 0, 0, 1, 'ACTIVE', 1, 'RENTAL_FEE')`)
-    .bind(couponId, code, reward.couponDiscountType, reward.couponDiscountValue, expiresAt).run()
+    VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, ?, NULL, NULL, NULL, NULL, NULL, ?, 1, 0, 0, 1, 'ACTIVE', 1, 'RENTAL_FEE')`)
+    .bind(couponId, code, reward.couponDiscountType, reward.couponDiscountValue, expiresAt, reward.couponMinimumOrderAmount || null).run()
   const coupon = await c.env.RENT.prepare('SELECT id, code, discount_type, discount_value, expires_at FROM coupons WHERE id = ?').bind(couponId).first() as any
   if (!coupon) throw new Error('反馈奖励优惠码创建失败')
   return { couponId: coupon.id, code: coupon.code, discountType: coupon.discount_type, discountValue: coupon.discount_value, expiresAt: coupon.expires_at, sourceRewardId: rewardId }

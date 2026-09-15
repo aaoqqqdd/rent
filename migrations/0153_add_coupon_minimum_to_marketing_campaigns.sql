@@ -1,0 +1,1 @@
+ALTER TABLE marketing_campaigns ADD COLUMN unique_minimum_order_amount REAL;

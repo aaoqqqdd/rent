@@ -53,6 +53,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       balanceAmount: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.balanceAmount ?? currentFeedbackRewards.balanceAmount) || 0)),
       couponDiscountType: payload.feedbackRewards?.couponDiscountType === 'percent' ? 'percent' : payload.feedbackRewards?.couponDiscountType === 'fixed' ? 'fixed' : currentFeedbackRewards.couponDiscountType,
       couponDiscountValue: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.couponDiscountValue ?? currentFeedbackRewards.couponDiscountValue) || 0)),
+      couponMinimumOrderAmount: Math.min(1000000, Math.max(0, Number(payload.feedbackRewards?.couponMinimumOrderAmount ?? currentFeedbackRewards.couponMinimumOrderAmount ?? 0) || 0)),
       couponExpiresDays: Math.min(365, Math.max(1, Math.floor(Number(payload.feedbackRewards?.couponExpiresDays ?? currentFeedbackRewards.couponExpiresDays) || 30))),
     },
     companyDetails: {

@@ -63,6 +63,7 @@ export const systemSettings = {
     balanceAmount: 5,
     couponDiscountType: 'fixed' as 'fixed' | 'percent',
     couponDiscountValue: 5,
+    couponMinimumOrderAmount: 0,
     couponExpiresDays: 30,
   },
   companyDetails: {
