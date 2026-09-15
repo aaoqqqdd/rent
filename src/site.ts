@@ -355,7 +355,7 @@ export async function applyPendingPaymentCancellation(c: Context, order: { id: s
   const changes = Number(result.meta?.changes ?? result.changes ?? 0)
   if (changes < 1) return false
   await releaseStripePendingPaymentIntents(c, order.id)
-  await c.env.RENT.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign')").bind(order.id).run()
+  await c.env.RENT.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign', 'signed')").bind(order.id).run()
   await c.env.RENT.prepare(`UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE rental_id = ? AND status = 'pending'`).bind(order.id).run()
   await releaseDeviceIfUnbooked(c, order.deviceId)
   const { releaseCouponForOrder } = await import('./actions/coupons')
@@ -683,8 +683,8 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   if (previous?.deviceId && lifecycleStatus) await recordDeviceLifecycle(c, previous.deviceId, lifecycleStatus, { orderId, reason: `订单状态：${status}` })
   await syncReferralOrderState(c, orderId, next.rental)
   if (status === 'cancelled') {
-    // 订单取消时同步作废尚未签署的合同；已签署合同保留原状态和签署记录。
-    await db.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign')").bind(orderId).run()
+    // 订单取消时同步作废关联合同（含已签署但尚未完成的合同）；已完成/已过期/已取消的合同保持原状态不变。
+    await db.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign', 'signed')").bind(orderId).run()
     // Dynamic import avoids a static circular dependency (actions/coupons.ts imports
     // recordFinancialLedgerEntry from this file).
     const { releaseCouponForOrder } = await import('./actions/coupons')
