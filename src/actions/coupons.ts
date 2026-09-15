@@ -91,6 +91,16 @@ export function calculateCouponDiscount(coupon: any, parts: number | CouponFeePa
 // Only call once the real customer identity is known (not the staff placeholder
 // used while a contract is awaiting signature).
 export async function checkCustomerCouponEligibility(c: Context, coupon: any, customerId: string): Promise<void> {
+  let targetedCustomers: any[] = []
+  try {
+    const recipients = await c.env.RENT.prepare(
+      'SELECT customer_id FROM marketing_campaign_recipients WHERE upper(coupon_code) = upper(?) LIMIT 2',
+    ).bind(String(coupon.code || '')).all() as any
+    targetedCustomers = recipients.results || []
+  } catch {
+    // Older deployments may not have the marketing recipient table yet.
+  }
+  if (targetedCustomers.length && !targetedCustomers.some((recipient: any) => String(recipient.customer_id || '') === customerId)) throw new Error('该优惠码仅限指定客户使用')
   if (coupon.new_customer_only) {
     const existingPaidOrder = await c.env.RENT.prepare("SELECT id FROM orders WHERE userId = ? AND payment_status = 'PAID' LIMIT 1").bind(customerId).first()
     if (existingPaidOrder) throw new Error('该优惠码仅限新客户使用')
