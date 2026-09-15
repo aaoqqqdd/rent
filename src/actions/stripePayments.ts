@@ -1497,6 +1497,75 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string, r
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 
+// 补救：订单已经进入 cancelled，但当初的自动退款（Stripe/余额）没有成功写入
+// payment_refunds（例如 Stripe 请求失败/超时），导致订单永久卡在待退款队列里且
+// 没有任何可点击的操作。cancelAndRefund 本身要求订单尚未取消，无法重用来重试，
+// 这里单独补一条路径，只补做退款本身，不重复处理合同/设备/优惠券（取消时已处理）。
+export async function retryCancellationRefund(c: Context, admin: any, orderId: string): Promise<Response> {
+  const order = await getOrderById(c, orderId)
+  if (!order) return c.text('订单不存在', 404)
+  if (order.status !== 'cancelled') return c.text('只有已取消的订单可以重试退款', 409)
+  const existingRefund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation'").bind(order.id).first()
+  if (existingRefund) return c.text('该订单已经有退款记录', 409)
+  const payment = await c.env.RENT.prepare("SELECT * FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!payment) return c.text('未找到已结算付款，不能自动退款', 409)
+  if (await hasOpenPaymentDispute(c, payment.id)) return c.text('该笔付款存在未解决的拒付争议，暂不能退款', 409)
+  const channel = cancellationRefundChannel(payment)
+  if (channel === 'unavailable') return c.text('未找到信用卡原路退款所需的 Stripe 交易记录，不能改为余额退款', 409)
+  const refundAmount = Number(payment.amount || 0)
+  if (!Number.isFinite(refundAmount) || refundAmount <= 0) return c.text('原始付款金额无效，不能自动退款', 409)
+  const refundedProcessingFee = Math.max(0, Number(payment.processing_fee || 0))
+
+  if (channel === 'bank_transfer') {
+    if (!order.refundBsb || !order.refundAccountNumber || !order.refundAccountName) return c.text('订单缺少银行退款账户信息', 409)
+    await c.env.RENT.batch([
+      c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, ?, 'cancellation', ?, ?, 0, 'pending', ?, 'bank_transfer', ?, ?, ?, '租前取消，等待管理员银行转账（重试）')`)
+        .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, refundAmount, refundAmount, admin.id, order.refundBsb, order.refundAccountNumber, order.refundAccountName),
+      c.env.RENT.prepare("UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(payment.id),
+    ])
+    await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单退款处理中', message: `您的订单 ${order.orderNo || order.id} 的退款将通过银行转账处理。`, orderId: order.id })
+    return c.redirect(`/admin/orders/${order.id}`, 303)
+  }
+
+  let stripeRefundId: string | null = null
+  if (channel === 'stripe') {
+    const params = new URLSearchParams({ payment_intent: payment.stripe_payment_intent_id, amount: String(cents(refundAmount)), 'metadata[order_id]': order.id, 'metadata[type]': 'cancellation' })
+    const refund = await stripeRequest(c, 'refunds', params, `cancellation-refund-retry-${order.id}`)
+    if (refund.status !== 'succeeded') return c.text('Stripe 全额退款尚未成功，请稍后重试', 502)
+    stripeRefundId = refund.id
+  }
+
+  await c.env.RENT.batch([
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'cancellation', ?, ?, ?, 0, ?, 'succeeded', ?, ?, ?, ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, refundAmount, refundAmount, refundedProcessingFee, stripeRefundId, admin.id, channel, null, null, null),
+    ...(channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(refundAmount, order.userId)] : []),
+    c.env.RENT.prepare("UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(payment.id),
+  ])
+  if (channel === 'balance') await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '取消订单全额退款（重试）', admin.id)
+  await issueCreditNoteSafely(c, order.id, Math.max(0, refundAmount - refundedProcessingFee), refundedProcessingFee, `cancellation-retry-${nanoid(12)}`, 'retryCancellationRefund')
+  await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status }), JSON.stringify({ status: 'cancelled', refundRetried: true }), '重试取消订单退款', admin.id).run()
+  const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -refundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '取消订单全额退款（重试）', createdBy: admin.id, metadata: { channel, refundedProcessingFee } })
+  await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单已退款', message: `您的订单 ${order.orderNo || order.id} 已退款 ${refundAmount.toFixed(2)} AUD。`, orderId: order.id })
+  return c.redirect(`/admin/orders/${order.id}`, 303)
+}
+
+// 管理员确认这笔订单实际不需要退款（例如误判、客户放弃退款），在待退款队列里
+// 记一条 refund_amount=0 的 succeeded 记录，让它按现有的 NOT EXISTS(succeeded) 规则
+// 从队列里退出，同时留下可查询的处理痕迹，而不是让它从列表里悄悄消失。
+export async function ignorePendingRefund(c: Context, admin: any, orderId: string, note?: string): Promise<void> {
+  const order = await getOrderById(c, orderId)
+  if (!order) throw new Error('订单不存在')
+  const existingRefund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND status = 'succeeded'").bind(order.id).first()
+  if (existingRefund) throw new Error('该订单已经处理过退款')
+  const payment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!payment) throw new Error('未找到该订单的付款记录，无法标记忽略')
+  const type = order.status === 'completed' ? 'deposit' : 'cancellation'
+  const reason = note && note.trim() ? note.trim() : '管理员标记为无需退款'
+  await c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, deduction_reason) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 'succeeded', ?, 'balance', ?)`)
+    .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, type, admin.id, reason).run()
+}
+
 export async function completeBankTransferRefund(c: Context, admin: any, refundId: string): Promise<void> {
   const pending = await c.env.RENT.prepare("SELECT * FROM payment_refunds WHERE id = ? AND type IN ('cancellation', 'early_return', 'deposit') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(refundId).first() as any
   if (!pending) throw new Error('退款记录不存在或已经处理')
