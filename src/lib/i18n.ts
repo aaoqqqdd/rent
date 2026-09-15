@@ -388,7 +388,19 @@ export const languageScript = String.raw`
     '暂无订单': 'No orders yet', '暂无设备': 'No devices yet', '远程操作': 'Remote actions', '管理员仪表盘': 'Admin dashboard',
     '仅在下方选择了优惠码后才会被替换，否则会原样保留，请按需使用。': 'is only substituted once you select a coupon below; otherwise it is left as-is — use as needed.',
     '退订链接无需手动插入': 'No need to manually insert the unsubscribe link',
-    '：系统会在每封邮件末尾自动附上「取消订阅」链接。': ': the system automatically appends an "Unsubscribe" link to the end of every email.'
+    '：系统会在每封邮件末尾自动附上「取消订阅」链接。': ': the system automatically appends an "Unsubscribe" link to the end of every email.',
+    // 发票 / 付款收据 / 退款凭证（这些是拼接在动态数据同一个文本节点里的静态前缀，
+    // 必须作为完整短语命中，否则会被更短的通用词条局部替换成中英夹杂）
+    '付款收据': 'Payment Receipt', '税务发票': 'Tax Invoice', '退款凭证号': 'Credit Note No.', '退款凭证': 'Credit Note',
+    '收据号': 'Receipt No.', '发票号': 'Invoice No.', '合同号': 'Contract No.', '交易号': 'Transaction No.',
+    '已付款': 'Paid', '已开具': 'Issued', '开具日期': 'Issued date', '付款日期': 'Payment date',
+    '可退还设备押金': 'Refundable device deposit', '支付处理手续费': 'Payment processing fee',
+    '退还的支付手续费': 'Refunded payment processing fee', '优惠码折扣': 'Coupon discount',
+    '本文件为已付款项的正式付款记录，不替代税务发票。': 'This document is the official payment record for amounts already paid and does not replace a tax invoice.',
+    'GST 已包含在适用项目中。': 'GST is included in the applicable items.', '本凭证记录：': 'This document records: ',
+    '退款项目': 'Refund item', '取消订单退款': 'Order cancellation refund', '订单退款': 'Order refund',
+    '退款记录': 'Refund records', '退款号': 'Refund No.', '扣除': 'Deducted', '退款后净额': 'Net amount after refund',
+    '至': 'to'
   };
 
   var keys = Object.keys(translations).sort(function (a, b) { return b.length - a.length; });
