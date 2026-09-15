@@ -6,6 +6,7 @@
 import { buildLayout, getDB, formatCurrency, formatMelbourneDate } from '../../site';
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
+import { escapeHtml } from '../../lib/html';
 
 // The order list has server-side pagination; cap how many rows we ever
 // render in one page load so the table stays usable as order volume grows.
@@ -242,7 +243,7 @@ export async function renderAdminOrders(c: Context, user: any) {
             <select id="userId" name="userId" class="form-control" style="width: 100%;">
               <option value="">全部客户</option>
               ${customerOptions.map((u: any) => `
-                <option value="${u.id}" ${userIdFilter === u.id ? 'selected' : ''}>${u.name}</option>
+                <option value="${u.id}" ${userIdFilter === u.id ? 'selected' : ''}>${escapeHtml(u.name)}</option>
               `).join('')}
             </select>
           </div>
@@ -339,10 +340,10 @@ export async function renderAdminOrders(c: Context, user: any) {
                   <td><input type="checkbox" name="orderIds" value="${order.id}" class="order-checkbox" form="bulk-order-form" /></td>
                   <td style="font-family: monospace;">${order.orderNo || order.id}</td>
                   <td>
-                    <div><strong>${order.customer?.name || '未知用户'}</strong>${order.customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</div>
-                    <small style="color: var(--text-secondary);">${order.customer?.email || ''}</small>
+                    <div><strong>${escapeHtml(order.customer?.name) || '未知用户'}</strong>${order.customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</div>
+                    <small style="color: var(--text-secondary);">${escapeHtml(order.customer?.email)}</small>
                   </td>
-                  <td>${order.device?.name || '未知设备'}</td>
+                  <td>${escapeHtml(order.device?.name) || '未知设备'}</td>
                   <td><strong>${formatCurrency(totalAmount)}</strong></td>
                   <td><span class="badge ${status.class}">${status.text}</span>${settlementPending ? ' <span class="badge badge-warning" title="押金尚未结清，不能视为完全办结">押金待结算</span>' : ''}</td>
                   <td>${startDate} ~ ${endDate}</td>

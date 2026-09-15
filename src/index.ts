@@ -4153,10 +4153,22 @@ app.post('/admin/orders/:id/deposit-refund', async (c) => {
     const submittedAmount = isSetupIntentDeposit ? Number(form.deductionAmount || 0) : Number(form.refundAmount)
     const approvedAmount = isSetupIntentDeposit ? Number(settlement.deduction_amount || 0) : Number(settlement.refund_amount)
     if (submittedAmount !== approvedAmount || String(form.deductionCategory || '') !== String(settlement.deduction_category || '') || String(form.deductionReason || '').trim() !== String(settlement.deduction_reason || '')) return c.text('执行金额或扣款说明必须与已批准的结算单一致', 409)
-    const response = await refundDeposit(c, user, c.req.param('id'), form)
+    // 先原子性地把结算单从 APPROVED 抢占为 EXECUTED，再执行实际打款；
+    // 避免并发/重复提交在旧的「先打款、后置状态」顺序下让同一结算单被执行两次（重复退款/重复入账）。
+    const claim = await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'EXECUTED', executed_by = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'APPROVED'").bind(user.id, settlement.id).run() as any
+    if (!claim.meta?.changes) return c.text('该押金结算单已被处理，请刷新页面', 409)
+    let response: Response
+    try {
+      response = await refundDeposit(c, user, c.req.param('id'), form)
+    } catch (error: any) {
+      await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'APPROVED', executed_by = NULL, executed_at = NULL WHERE id = ? AND status = 'EXECUTED'").bind(settlement.id).run()
+      return c.text(error.message || '押金退款失败', 502)
+    }
     if (response.status < 400) {
-      await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'EXECUTED', executed_by = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'APPROVED'").bind(user.id, settlement.id).run()
       await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_EXECUTED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlement.id, before: { status: 'APPROVED' }, after: { status: 'EXECUTED' } })
+    } else {
+      // 打款未成功（校验失败/银行卡拒绝等）：释放占用，允许重新提交。
+      await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'APPROVED', executed_by = NULL, executed_at = NULL WHERE id = ? AND status = 'EXECUTED'").bind(settlement.id).run()
     }
     return response
   } catch (error: any) {

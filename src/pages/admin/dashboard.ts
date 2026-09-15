@@ -5,6 +5,7 @@
 
 import { buildLayout, formatCurrency } from '../../site';
 import type { AdminDashboardData } from '../../services/adminDashboard';
+import { escapeHtml } from '../../lib/html';
 
 export function renderAdminDashboard(
   user: any,
@@ -40,7 +41,7 @@ export function renderAdminDashboard(
 
   const body = `
     <div class="hero">
-      <h2>欢迎回来，${user.name}！</h2>
+      <h2>欢迎回来，${escapeHtml(user.name)}！</h2>
       <p>这是您的管理员控制中心，管理整个系统的所有数据和设置。</p>
     </div>
     <div class="stats-grid">
@@ -110,7 +111,7 @@ export function renderAdminDashboard(
       <table><thead><tr><th>设备名称</th><th>型号</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
         ${recentDevices.map((device) => {
     const deviceStatus = lifecycleStatusMap[device.lifecycleStatus || ''] || deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
-    return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${device.customerName ?? '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">远程操作</a></td></tr>`
+    return `<tr><td><strong>${escapeHtml(device.name)}</strong></td><td>${escapeHtml(device.model) || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${escapeHtml(device.customerName) || '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">远程操作</a></td></tr>`
   }).join('')}
       </tbody></table>
       `}
