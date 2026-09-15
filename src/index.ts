@@ -4930,7 +4930,28 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c)))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), Boolean(c.env.TALLY_WEBHOOK_SECRET)))
+})
+
+app.get('/admin/feedback-rewards', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const rewards = (await c.env.RENT.prepare(`
+    SELECT fr.id, fr.customer_id, fr.reward_type, fr.reward_amount, fr.status, fr.failure_reason, fr.issued_at, fr.created_at, u.name AS customer_name
+    FROM feedback_rewards fr
+    LEFT JOIN users u ON u.id = fr.customer_id
+    ORDER BY fr.created_at DESC LIMIT 200
+  `).all()).results || []
+  return c.html(pages.renderAdminFeedbackRewards(user, rewards as any[]))
+})
+
+app.post('/admin/feedback-rewards/:id/retry', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const result = await actions.retryFeedbackReward(c, c.req.param('id'))
+  if (!result.rewarded) return c.text(result.reason === 'not_found' ? '该反馈奖励记录不存在' : result.reason === 'not_retryable' ? '该反馈奖励当前状态不允许重试' : `重试失败：${result.reason}`, 409)
+  await createAuditLog(c, { actor: user, action: 'FEEDBACK_REWARD_RETRIED', targetType: 'FEEDBACK_REWARD', targetId: c.req.param('id') })
+  return c.redirect('/admin/feedback-rewards')
 })
 
 app.get('/admin/feedback-gift-cards', async (c) => {
