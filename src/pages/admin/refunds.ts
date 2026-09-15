@@ -88,6 +88,7 @@ export async function renderAdminRefunds(c: Context, user: any) {
                   <td>
                     ${order.pending_refund_id ? `<form method="post" action="/admin/refunds/${order.pending_refund_id}/complete-bank-transfer" style="display:inline" onsubmit="return confirm('请确认已经完成银行转账，确认后系统将标记退款成功。');"><button class="button button-sm button-primary" type="submit">确认已转账</button></form>` : ''}
                     ${stuckAutoRefund ? `<form method="post" action="/admin/orders/${order.id}/retry-cancellation-refund" style="display:inline" onsubmit="return confirm('将重新发起自动退款（Stripe/余额），确认继续？');"><button class="button button-sm button-primary" type="submit">重试自动退款</button></form>` : ''}
+                    <form method="post" action="/admin/orders/${order.id}/ignore-refund" style="display:inline" onsubmit="var note=prompt('请填写忽略原因（将记录在退款记录中）：'); if(note===null) return false; this.querySelector('input[name=note]').value=note; return confirm('确认该订单无需退款，并从待退款列表移除？');"><input type="hidden" name="note"><button class="button button-sm button-secondary" type="submit">忽略</button></form>
                     <a href="/admin/orders/${order.id}" class="link-button">查看详情</a>
                   </td>
                 </tr>

@@ -1550,6 +1550,22 @@ export async function retryCancellationRefund(c: Context, admin: any, orderId: s
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 
+// 管理员确认这笔订单实际不需要退款（例如误判、客户放弃退款），在待退款队列里
+// 记一条 refund_amount=0 的 succeeded 记录，让它按现有的 NOT EXISTS(succeeded) 规则
+// 从队列里退出，同时留下可查询的处理痕迹，而不是让它从列表里悄悄消失。
+export async function ignorePendingRefund(c: Context, admin: any, orderId: string, note?: string): Promise<void> {
+  const order = await getOrderById(c, orderId)
+  if (!order) throw new Error('订单不存在')
+  const existingRefund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND status = 'succeeded'").bind(order.id).first()
+  if (existingRefund) throw new Error('该订单已经处理过退款')
+  const payment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!payment) throw new Error('未找到该订单的付款记录，无法标记忽略')
+  const type = order.status === 'completed' ? 'deposit' : 'cancellation'
+  const reason = note && note.trim() ? note.trim() : '管理员标记为无需退款'
+  await c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, deduction_reason) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 'succeeded', ?, 'balance', ?)`)
+    .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, type, admin.id, reason).run()
+}
+
 export async function completeBankTransferRefund(c: Context, admin: any, refundId: string): Promise<void> {
   const pending = await c.env.RENT.prepare("SELECT * FROM payment_refunds WHERE id = ? AND type IN ('cancellation', 'early_return', 'deposit') AND refund_method = 'bank_transfer' AND status = 'pending'").bind(refundId).first() as any
   if (!pending) throw new Error('退款记录不存在或已经处理')

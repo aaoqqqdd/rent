@@ -124,7 +124,7 @@ import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteK
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
 import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
@@ -4247,6 +4247,19 @@ app.post('/admin/orders/:id/retry-cancellation-refund', async (c) => {
     return response
   } catch (error: any) {
     return c.text(error.message || '重试退款失败', 502)
+  }
+})
+
+app.post('/admin/orders/:id/ignore-refund', async (c) => {
+  const admin = c.get('user')
+  if (!admin || admin.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  try {
+    const note = String((await c.req.parseBody()).note || '').trim()
+    await ignorePendingRefund(c, admin, c.req.param('id'), note)
+    await createAuditLog(c, { actor: admin, action: 'REFUND_IGNORED', targetType: 'ORDER', targetId: c.req.param('id'), reason: note || '管理员标记为无需退款' })
+    return c.redirect('/admin/refunds')
+  } catch (error: any) {
+    return c.text(error.message || '标记失败', 409)
   }
 })
 
