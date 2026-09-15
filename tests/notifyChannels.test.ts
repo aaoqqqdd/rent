@@ -127,7 +127,7 @@ test('notification emails use the reference layout and marketing emails keep the
   assert.match(marketing, /background-color:#111827/)
   assert.match(marketing, /background-color:#246b61/)
   assert.match(marketing, /support@example\.com/)
-  assert.match(marketing, /https:\/\/example\.com\/favicon\.svg/)
+  assert.match(marketing, /(?:^|["'(])https:\/\/example\.com\/favicon\.svg(?:["')]|$)/)
   assert.match(marketing, /border-radius:50%/)
   assert.match(marketing, /取消订阅/)
   assert.match(marketing, /token=a&amp;next=b/)
