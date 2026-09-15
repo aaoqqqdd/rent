@@ -40,6 +40,7 @@ export interface AdminDashboardData {
     name: string
     model: string | null
     status: string
+    lifecycleStatus: string | null
     customerName: string | null
   }>
 }
@@ -58,6 +59,7 @@ interface RecentDeviceRow {
   name?: string | null
   model?: string | null
   status?: string | null
+  lifecycleStatus?: string | null
   customerName?: string | null
 }
 
@@ -99,7 +101,7 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
   `
 
   const recentDevicesQuery = `
-    SELECT d.id, d.name, d.model, d.status,
+    SELECT d.id, d.name, d.model, d.status, d.lifecycle_status AS lifecycleStatus,
            (SELECT u.name FROM orders o JOIN users u ON o.userId = u.id
             WHERE o.deviceId = d.id AND o.status IN ('active', 'paid')
             ORDER BY o.createdAt DESC LIMIT 1) AS customerName
@@ -145,6 +147,7 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
       name: String(d.name || ''),
       model: d.model ?? null,
       status: String(d.status || ''),
+      lifecycleStatus: d.lifecycleStatus ?? null,
       customerName: d.customerName ?? null,
     })),
   }

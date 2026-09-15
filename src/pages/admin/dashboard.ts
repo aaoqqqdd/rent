@@ -30,6 +30,14 @@ export function renderAdminDashboard(
     'retired': { text: '已退役', class: 'badge-info' }
   }
 
+  // 遗留 status 字段把「已归还待验收」也归并成 'rented'，导致设备显示已出租但无当前租用者。
+  // 这里用更细的 lifecycle_status 覆盖显示，不影响 status 本身（预约新单仍以 status === 'available' 为准）。
+  const lifecycleStatusMap: Record<string, { text: string; class: string }> = {
+    'RETURNED': { text: '已归还待验收', class: 'badge-warning' },
+    'INSPECTION': { text: '归还验机中', class: 'badge-warning' },
+    'RESERVED': { text: '已预约', class: 'badge-info' },
+  }
+
   const body = `
     <div class="hero">
       <h2>欢迎回来，${user.name}！</h2>
@@ -101,7 +109,7 @@ export function renderAdminDashboard(
       ` : `
       <table><thead><tr><th>设备名称</th><th>型号</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
         ${recentDevices.map((device) => {
-    const deviceStatus = deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
+    const deviceStatus = lifecycleStatusMap[device.lifecycleStatus || ''] || deviceStatusMap[device.status] || { text: device.status, class: 'badge-info' }
     return `<tr><td><strong>${device.name}</strong></td><td>${device.model || '-'}</td><td><span class="badge ${deviceStatus.class}">${deviceStatus.text}</span></td><td>${device.customerName ?? '无'}</td><td><a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a> <a class="link-button" data-full-navigation="true" href="/admin/device-agent-bindings">远程操作</a></td></tr>`
   }).join('')}
       </tbody></table>
