@@ -1679,7 +1679,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
     '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
-    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/referrals': 'gift'
+    '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/referrals': 'gift',
+    '/admin/order-review': '⚑', '/admin/orders/balance-topups': '↥', '/admin/feedback-rewards': '✦', '/admin/feedback-gift-cards': 'gift'
   }
 
   const navIconSvg = (kind: string) => {
@@ -1740,7 +1741,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     return `<a href="${href}"><span class="nav-icon">${navIconSvg(icon)}</span>${text}</a>`
   }
   const chevronSvg = '<span class="nav-group-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>'
-  const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group" open><summary>${label}${chevronSvg}</summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
+  const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group"><summary>${label}${chevronSvg}</summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
   const mobileLinks = currentUser?.role === 'ADMIN'
     ? [['/admin/dashboard', '控制台', '◉'], ['/notifications', '通知', 'N'], ['/admin/order-review', '订单审核', '⚑'], ['/admin/orders', '订单', '▦'], ['/staff/contracts/new', '新建合同', '+'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
@@ -1773,21 +1774,21 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
           ${currentUser.role === 'STAFF' ? `
             ${renderNavLink('/staff/dashboard', '工作台')}
             ${renderNavLink('/notifications', '通知中心')}
-            ${renderNavGroup('租赁管理', [['/staff/orders', '租赁订单'], ['/staff/orders/ongoing', '进行中的租赁'], ['/staff/inspections', '验机记录']])}
+            ${renderNavGroup('租赁管理', [['/staff/orders', '租赁订单'], ['/staff/orders/ongoing', '进行中的租赁']])}
             ${renderNavGroup('合同管理', [['/staff/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/staff/contracts?status=pending_sign', '待签署合同']])}
-            ${renderNavGroup('设备运营', [['/staff/devices', '设备管理'], ['/staff/rentals/tracking', '租赁追踪']])}
+            ${renderNavGroup('设备运营', [['/staff/devices', '设备管理'], ['/staff/inspections', '验机记录'], ['/staff/rentals/tracking', '租赁追踪']])}
             ${getAccessLevel(currentUser) === 'MANAGER' ? renderNavGroup('人员管理', [['/manager/staff', 'Staff 员工']]) : ''}
           ` : ''}
           ${currentUser.role === 'ADMIN' ? `
             ${renderNavLink('/admin/dashboard', '控制台')}
             ${renderNavGroup('通知管理', [['/admin/notifications', '通知中心'], ['/notifications', '发布通知'], ['/admin/email-templates', '通知模板'], ['/admin/marketing-emails', '营销邮件'], ['/admin/marketing-emails/data', '营销数据'], ['/admin/notifications/settings', '通知设置']])}
-            ${renderNavGroup('用户管理', [['/admin/users', '用户管理']])}
+            ${renderNavLink('/admin/users', '用户管理')}
             ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/orders/balance-topups', '充值订单'], ['/admin/calendar', '租赁日历']])}
-            ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/admin/templates/contract', '合同模板']])}
+            ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/admin/templates/contract', '合同模板'], ['/admin/templates', '协议模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
-            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
-            ${renderNavGroup('客户反馈', [['/admin/feedback-rewards', '反馈奖励记录'], ['/admin/feedback-gift-cards', '礼品卡库存']])}
-            ${renderNavGroup('系统设置', [['/admin/templates', '协议模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
+            ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
+            ${renderNavGroup('营销增长', [['/admin/coupons', '优惠码管理'], ['/admin/referrals', '推荐奖励管理'], ['/admin/feedback-rewards', '反馈奖励记录'], ['/admin/feedback-gift-cards', '礼品卡库存']])}
+            ${renderNavGroup('系统设置', [['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">

@@ -286,6 +286,8 @@
       if (active) {
         active.classList.add('active');
         active.setAttribute('aria-current', 'page');
+        const group = active.closest('details.sidebar-nav-group');
+        if (group) group.open = true;
       }
     })();
 
@@ -321,7 +323,9 @@
         const path = String(nextPath || window.location.pathname).split('?')[0].replace(/\/$/, '') || '/';
         document.querySelectorAll('.sidebar-section a').forEach(function (link) { link.classList.remove('active'); link.removeAttribute('aria-current'); });
         const active = Array.from(document.querySelectorAll('.sidebar-section a')).filter(function (link) { const href = (link.getAttribute('href') || '').split('?')[0].replace(/\/$/, '') || '/'; return path === href || (href !== '/' && path.startsWith(href + '/')); }).sort(function (a, b) { return (b.getAttribute('href') || '').length - (a.getAttribute('href') || '').length; })[0];
-        if (active) { active.classList.add('active'); active.setAttribute('aria-current', 'page'); }
+        const activeGroup = active ? active.closest('details.sidebar-nav-group') : null;
+        document.querySelectorAll('.sidebar-nav-group').forEach(function (group) { if (group !== activeGroup) group.open = false; });
+        if (active) { active.classList.add('active'); active.setAttribute('aria-current', 'page'); if (activeGroup) activeGroup.open = true; }
       };
       const navigate = async function (url, addHistory) {
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
