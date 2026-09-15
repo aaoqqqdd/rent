@@ -21,7 +21,7 @@ const STAFF_ROLES = new Set(['ADMIN', 'MANAGER', 'STAFF'])
 const SITE_NOTIFICATION_TEMPLATE_ID = 'site_notification'
 const SITE_NOTIFICATION_TEMPLATE_NAME = '站内通知（自动邮件）'
 const SITE_NOTIFICATION_TEMPLATE_SUBJECT = '{title}'
-const SITE_NOTIFICATION_TEMPLATE_BODY = '<h2>{title}</h2><p>您好 {customer_name}：</p><p>{message}</p><p><strong>{company_name}</strong><br>{company_email}</p><hr style="border:0; border-top:1px solid #ddd; margin:24px 0;"><p style="font-size:12px; color:#888;">此邮件由系统自动发送，请勿直接回复。</p>'
+const SITE_NOTIFICATION_TEMPLATE_BODY = '<h2>{title}</h2><p>您好 {customer_name}：</p><p>{message}</p>'
 const SKIP_AUTO_EMAIL_TYPES = new Set(['announcement', 'manual'])
 
 let siteNotificationTemplateReady: Promise<void> | null = null
