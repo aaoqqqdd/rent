@@ -4775,18 +4775,18 @@ app.post('/admin/devices/:id/maintenance', async (c) => {
 // 独立成单独页面（而不是塞进设备远程控制页），点「去验收」直接落地到这个表单。
 app.get('/admin/devices/:id/accept', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
-  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
   const device = await getDeviceById(c, c.req.param('id'))
   if (!device) return c.redirect('/admin/devices')
   const activeOrder = await c.env.RENT.prepare("SELECT id FROM orders WHERE deviceId = ? AND status IN ('paid','active','pending_pickup','extended','overdue','suspended') LIMIT 1").bind(device.id).first()
   const openMaintenance = await c.env.RENT.prepare("SELECT id FROM maintenance_records WHERE device_id = ? AND status IN ('OPEN','IN_PROGRESS','DATA_CLEAN','SYSTEM_RESET','CLIENT_CHECK') LIMIT 1").bind(device.id).first()
-  const blockedReason = activeOrder ? '该设备仍关联进行中的租赁订单，暂时不能验收。' : openMaintenance ? '该设备已有进行中的维护记录，请先在设备详情页处理。' : undefined
-  return c.html(pages.renderAdminDeviceAccept(user, device, [...MAINTENANCE_CHECK_TYPES], blockedReason))
+  const blockedReason = activeOrder ? '该设备仍关联进行中的租赁订单，暂时不能验收。' : openMaintenance ? '该设备已有进行中的维护记录，请先处理。' : undefined
+  return c.html(pages.renderAdminDeviceAccept(user, device, [...MAINTENANCE_CHECK_TYPES], blockedReason, c.req.query('success')))
 })
 
 app.post('/admin/devices/:id/accept', async (c) => {
   const user = c.get('user')
-  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, c.req.param('id'))
   if (!device) return c.text('设备不存在', 404)
   const activeOrder = await c.env.RENT.prepare("SELECT id FROM orders WHERE deviceId = ? AND status IN ('paid','active','pending_pickup','extended','overdue','suspended') LIMIT 1").bind(device.id).first()
@@ -4818,7 +4818,7 @@ app.post('/admin/devices/:id/accept', async (c) => {
   await c.env.RENT.batch(statements)
   await recordDeviceLifecycle(c, device.id, allPassed ? 'READY' : 'MAINTENANCE', { orderId: undefined, reason: allPassed ? '一键验收，十项验证全部通过' : '一键验收发现未通过项，转入维护', changedBy: user.id })
   await createAuditLog(c, { actor: user, action: 'DEVICE_RETURN_ACCEPTED', targetType: 'MAINTENANCE_RECORD', targetId: id, after: { deviceId: device.id, allPassed, results }, reason: notes || undefined })
-  return c.redirect(`/admin/devices/${device.id}/control?success=${encodeURIComponent(allPassed ? '验收通过，设备已可租' : '验收发现未通过项，设备已转入维护，请在下方处理')}`, 303)
+  return c.redirect(`/admin/devices/${device.id}/accept?success=${encodeURIComponent(allPassed ? '验收通过，设备已可租' : '验收发现未通过项，设备已转入维护')}`, 303)
 })
 
 app.post('/admin/maintenance/:id/advance', async (c) => {

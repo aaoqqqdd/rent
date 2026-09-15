@@ -54,7 +54,7 @@ export async function getStaffDashboardData(c: Context, staffId?: string): Promi
   `;
 
   const recentDevicesQuery = `
-    SELECT d.id, d.name, d.status, u.name as customerName
+    SELECT d.id, d.name, d.status, d.lifecycle_status, u.name as customerName
     FROM devices d
     LEFT JOIN (
       SELECT o.deviceId, o.userId FROM orders o JOIN users owner ON o.userId = owner.id WHERE (o.status = 'active' OR o.status = 'paid') ${staffId ? 'AND owner.staff_id = ?' : ''}
