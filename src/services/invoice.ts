@@ -12,6 +12,7 @@ import { generateReferenceNumber } from '../lib/reference'
 import { safeJsonParse } from '../lib/json'
 import { getSystemSettings } from '../settings/systemSettings'
 import { getOrderById, getContractByOrderId } from '../db/repositories'
+import { sendPaymentCompletedEmail } from './notifications'
 
 export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const order = await getOrderById(c, orderId)
@@ -28,9 +29,17 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const invoiceId = `inv-${order.id}`
   const invoiceNumber = /^INV-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.invoice_number || '')) ? String(data.invoice_number) : generateReferenceNumber('INV')
   const receiptNumber = /^RCP-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.receipt_number || '')) ? String(data.receipt_number) : generateReferenceNumber('RCP')
+  // 是否是这张订单第一次开票——决定"付款成功"邮件只发一次，而不是每次
+  // issueInvoice 被幂等重入（webhook 重试、押金结算等）时都重新发一封。
+  const existing = await c.env.RENT.prepare('SELECT id FROM invoices WHERE id = ?').bind(invoiceId).first()
+  const isFirstIssuance = !existing
   await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, receipt_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET invoice_number = excluded.invoice_number, receipt_number = excluded.receipt_number, subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
     .bind(invoiceId, invoiceNumber, receiptNumber, order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
   await ensureReceiptAndTransactions(c, order, invoiceId)
+  if (isFirstIssuance) {
+    try { await sendPaymentCompletedEmail(c, order, contract) }
+    catch (error: any) { console.error('sendPaymentCompletedEmail failed:', error?.message || error) }
+  }
 }
 
 async function ensureFinanceTables(c: Context): Promise<void> {
