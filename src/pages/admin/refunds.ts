@@ -13,6 +13,7 @@ export async function renderAdminRefunds(c: Context, user: any) {
   const countResult = await c.env.RENT.prepare(`
     SELECT COUNT(*) AS total FROM orders o
     WHERE (o.status = 'completed' OR o.status = 'cancelled' OR (o.status = 'paid' AND o.startDate > ?))
+      AND NOT (o.status = 'completed' AND o.settlement_status = 'SETTLED')
       AND NOT EXISTS (SELECT 1 FROM payment_refunds r WHERE r.order_id = o.id AND r.status = 'succeeded')
   `).bind(today).first() as any;
   const total = Number(countResult?.total || 0);
@@ -22,6 +23,7 @@ export async function renderAdminRefunds(c: Context, user: any) {
     SELECT o.*, pending.id AS pending_refund_id, pending.refund_amount AS pending_refund_amount, pending.refund_bsb AS pending_refund_bsb, pending.refund_account_number AS pending_refund_account_number, pending.refund_account_name AS pending_refund_account_name, pending.deduction_reason AS pending_refund_reason, pending.type AS pending_refund_type, (SELECT COALESCE(SUM(a.amount), 0) FROM order_price_adjustments a WHERE a.order_id = o.id AND a.direction = 'decrease' AND a.status = 'succeeded' AND a.refund_method = 'pending_deposit' AND a.deposit_refunded = 0) AS pending_price_refund FROM orders o
     LEFT JOIN payment_refunds pending ON pending.order_id = o.id AND pending.type IN ('early_return', 'cancellation') AND pending.status = 'pending'
     WHERE (o.status = 'completed' OR o.status = 'cancelled' OR (o.status = 'paid' AND o.startDate > ?))
+      AND NOT (o.status = 'completed' AND o.settlement_status = 'SETTLED')
       AND NOT EXISTS (SELECT 1 FROM payment_refunds r WHERE r.order_id = o.id AND r.status = 'succeeded')
     ORDER BY o.updatedAt DESC
     LIMIT ? OFFSET ?
@@ -64,6 +66,9 @@ export async function renderAdminRefunds(c: Context, user: any) {
               const depositRefund = Number(order.deposit_amount || order.depositAmount || 0);
               const priceRefund = Number(order.pending_price_refund || 0);
               const refundAmount = order.pending_refund_amount != null ? order.pending_refund_amount : order.status === 'completed' ? depositRefund + priceRefund : (order.total_amount || order.totalAmount || 0);
+              // 订单已取消，但当初的自动退款（Stripe/余额）没有成功写入 payment_refunds，
+              // 卡在待处理队列里且没有银行转账记录可确认——需要走单独的重试入口。
+              const stuckAutoRefund = order.status === 'cancelled' && !order.pending_refund_id;
               return `
                 <tr>
                   <td style="font-family: monospace;">${order.id}</td>
@@ -75,12 +80,14 @@ export async function renderAdminRefunds(c: Context, user: any) {
                   <td><span style="color: var(--danger); font-weight: bold;">${formatCurrency(refundAmount)}</span></td>
                   <td>
                     <div>${order.pending_refund_type === 'cancellation' ? '取消订单全额退款' : order.pending_refund_type === 'early_return' ? '提前归还租金退款' : order.status === 'completed' ? (priceRefund > 0 ? '押金 + 降价差价退款' : '押金退款') : '租前取消全额退款'}</div>
-                    <small>${order.refundMethod === 'original' ? '原路退回' : '退回账户余额'}</small>
+                    <small>${order.refundMethod === 'original' ? (stuckAutoRefund ? '自动退款（原路退回）' : '原路退回') : (stuckAutoRefund ? '自动退款（退回余额）' : '退回账户余额')}</small>
                     ${order.pending_refund_amount != null ? `<small style="display:block;color:var(--danger);">${order.pending_refund_reason || ''}<br>BSB：${order.pending_refund_bsb || '未填写'}<br>账号：${order.pending_refund_account_number || '未填写'}<br>账户名：${order.pending_refund_account_name || '未填写'}</small>` : ''}
+                    ${stuckAutoRefund ? `<small style="display:block;color:var(--danger);">自动退款未成功处理，需要重试</small>` : ''}
                   </td>
-                  <td><span class="badge badge-warning">待退款</span></td>
+                  <td><span class="badge badge-warning">${stuckAutoRefund ? '自动退款异常' : '待退款'}</span></td>
                   <td>
                     ${order.pending_refund_id ? `<form method="post" action="/admin/refunds/${order.pending_refund_id}/complete-bank-transfer" style="display:inline" onsubmit="return confirm('请确认已经完成银行转账，确认后系统将标记退款成功。');"><button class="button button-sm button-primary" type="submit">确认已转账</button></form>` : ''}
+                    ${stuckAutoRefund ? `<form method="post" action="/admin/orders/${order.id}/retry-cancellation-refund" style="display:inline" onsubmit="return confirm('将重新发起自动退款（Stripe/余额），确认继续？');"><button class="button button-sm button-primary" type="submit">重试自动退款</button></form>` : ''}
                     <a href="/admin/orders/${order.id}" class="link-button">查看详情</a>
                   </td>
                 </tr>
