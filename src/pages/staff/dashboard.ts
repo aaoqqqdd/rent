@@ -4,13 +4,14 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, formatCurrency, staffOrderPath } from '../../site';
+import { escapeHtml } from '../../lib/html';
 
 export function renderStaffDashboard(user: any, dashboardData: any) {
   const { stats, recentOrders, recentDevices } = dashboardData;
 
   const body = `
     <div class="hero">
-      <h2>欢迎回来，${user.name}！</h2>
+      <h2>欢迎回来，${escapeHtml(user.name)}！</h2>
       <p>这是您的员工控制中心，管理所有租赁订单和设备状态。</p>
     </div>
     <div class="stats-grid">
@@ -58,7 +59,7 @@ export function renderStaffDashboard(user: any, dashboardData: any) {
         ${recentDevices.map((device: any) => {
           const deviceStatusClass = device.status === 'available' ? 'badge-success' : 
                                    device.status === 'rented' ? 'badge-primary' : 'badge-warning';
-          return `<tr><td>${device.name}</td><td><span class="badge ${deviceStatusClass}">${device.status}</span></td><td>${device.customerName ?? '无'}</td><td><a class="link-button" href="/staff/devices/${device.id}">查看详情</a></td></tr>`
+          return `<tr><td>${escapeHtml(device.name)}</td><td><span class="badge ${deviceStatusClass}">${escapeHtml(device.status)}</span></td><td>${escapeHtml(device.customerName) || '无'}</td><td><a class="link-button" href="/staff/devices/${device.id}">查看详情</a></td></tr>`
         }).join('')}
       </tbody></table>
     </div>
