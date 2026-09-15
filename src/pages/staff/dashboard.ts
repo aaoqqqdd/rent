@@ -57,9 +57,13 @@ export function renderStaffDashboard(user: any, dashboardData: any) {
       </div>
       <table><thead><tr><th>设备名称</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
         ${recentDevices.map((device: any) => {
-          const deviceStatusClass = device.status === 'available' ? 'badge-success' : 
+          const deviceStatusClass = device.status === 'available' ? 'badge-success' :
                                    device.status === 'rented' ? 'badge-primary' : 'badge-warning';
-          return `<tr><td>${escapeHtml(device.name)}</td><td><span class="badge ${deviceStatusClass}">${escapeHtml(device.status)}</span></td><td>${escapeHtml(device.customerName) || '无'}</td><td><a class="link-button" href="/staff/devices/${device.id}">查看详情</a></td></tr>`
+          const needsAcceptance = device.lifecycle_status === 'RETURNED' || device.lifecycle_status === 'INSPECTION';
+          const action = needsAcceptance
+            ? `<a class="link-button" href="/admin/devices/${device.id}/accept">去验收</a>`
+            : `<a class="link-button" href="/staff/devices/${device.id}">查看详情</a>`;
+          return `<tr><td>${escapeHtml(device.name)}</td><td><span class="badge ${deviceStatusClass}">${escapeHtml(device.status)}</span></td><td>${escapeHtml(device.customerName) || '无'}</td><td>${action}</td></tr>`
         }).join('')}
       </tbody></table>
     </div>

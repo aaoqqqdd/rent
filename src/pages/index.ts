@@ -56,6 +56,7 @@ export * from './admin/devices';
 export * from './admin/deviceNew';
 export * from './admin/deviceEdit';
 export * from './admin/deviceControl';
+export * from './admin/deviceAccept';
 export * from './admin/settings';
 export * from './admin/feedbackGiftCards';
 export * from './admin/feedbackRewards';
