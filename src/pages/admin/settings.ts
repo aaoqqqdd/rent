@@ -5,7 +5,7 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}, tallyWebhookConfigured: boolean = false) {
   const settings = getSystemSettings(); // 获取当前系统设置
   const feedbackRewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponExpiresDays: 30 };
   const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -56,8 +56,8 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">TALLY</span><div><h3>Tally 客户反馈与奖励</h3><p>请在 Tally 的 Share → Embed 中复制 <code>https://tally.so/embed/...</code> 地址。反馈表单必须添加名为 <code>feedbackToken</code> 的 Hidden field；Webhook 地址为 <code>/webhooks/tally</code>。</p></div></div>
-          <div class="form-group"><label class="form-label" for="tallyFormUrl">Tally Embed URL</label><input class="form-control" type="url" id="tallyFormUrl" name="tallyFormUrl" value="${escAttr(settings.tallyFormUrl)}" placeholder="https://tally.so/embed/xxxxxxxx"><small class="form-text">保存后访问 <a href="/contact" target="_blank" rel="noopener">/contact</a> 预览。</small></div>
+          <div class="form-section-title"><span class="mono">TALLY</span><div><h3>Tally 客户反馈与奖励</h3><p>请在 Tally 的 Share → Embed 中复制 <code>https://tally.so/embed/...</code> 地址。反馈表单必须添加名为 <code>feedbackToken</code> 的 Hidden field，并在 Tally 后台的 Webhook 设置中把地址指向 <code>/webhooks/tally</code>。当前 Webhook 密钥状态：<strong>${tallyWebhookConfigured ? '已配置（环境变量 TALLY_WEBHOOK_SECRET）' : '未配置 — 反馈提交后的 Webhook 会被拒绝，需在 Cloudflare Worker 环境变量中设置 TALLY_WEBHOOK_SECRET'}</strong>。</p></div></div>
+          <div class="form-group"><label class="form-label" for="tallyFormUrl">Tally Embed URL</label><input class="form-control" type="url" id="tallyFormUrl" name="tallyFormUrl" value="${escAttr(settings.tallyFormUrl)}" placeholder="https://tally.so/embed/xxxxxxxx"><small class="form-text">保存后访问 <a href="/feedback" target="_blank" rel="noopener">/feedback</a> 预览（需已登录正式客户账号）。</small></div>
           <div class="checkbox-group"><input type="checkbox" id="feedbackRewardEnabled" ${feedbackRewards.enabled ? 'checked' : ''}><label for="feedbackRewardEnabled">提交反馈后自动发放奖励</label></div>
           <div class="grid grid-2">
             <div class="form-group"><label class="form-label" for="feedbackRewardType">奖励类型</label><select class="form-control" id="feedbackRewardType"><option value="BALANCE" ${feedbackRewards.rewardType === 'BALANCE' ? 'selected' : ''}>账户余额</option><option value="COUPON" ${feedbackRewards.rewardType === 'COUPON' ? 'selected' : ''}>一次性优惠码</option><option value="GIFT_CARD" ${feedbackRewards.rewardType === 'GIFT_CARD' ? 'selected' : ''}>外部礼品卡兑换码</option></select></div>
@@ -66,7 +66,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <div class="form-group"><label class="form-label" for="feedbackCouponDiscountValue">优惠值</label><input class="form-control" id="feedbackCouponDiscountValue" type="number" min="0.01" max="10000" step="0.01" value="${feedbackRewards.couponDiscountValue}"></div>
             <div class="form-group"><label class="form-label" for="feedbackCouponExpiresDays">优惠码有效期（天）</label><input class="form-control" id="feedbackCouponExpiresDays" type="number" min="1" max="365" step="1" value="${feedbackRewards.couponExpiresDays}"></div>
           </div>
-          <p class="form-text">礼品卡奖励不会调用 Square 发卡 API；请先在 <a href="/admin/feedback-gift-cards">礼品卡库存</a> 录入外部兑换码，系统按先进先出发放。</p>
+          <p class="form-text">礼品卡奖励不会调用 Square 发卡 API；请先在 <a href="/admin/feedback-gift-cards">礼品卡库存</a> 录入外部兑换码，系统按先进先出发放。发放记录（含失败原因和重试）请查看 <a href="/admin/feedback-rewards">反馈奖励记录</a>。</p>
         </section>
 
         <section class="form-section">

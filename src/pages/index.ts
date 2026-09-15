@@ -58,6 +58,7 @@ export * from './admin/deviceEdit';
 export * from './admin/deviceControl';
 export * from './admin/settings';
 export * from './admin/feedbackGiftCards';
+export * from './admin/feedbackRewards';
 export * from './admin/templates';
 export * from './admin/emailTemplates';
 export * from './admin/marketingEmails';

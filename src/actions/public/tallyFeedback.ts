@@ -93,6 +93,42 @@ async function issueGiftCardReward(c: Context, rewardId: string): Promise<Record
   return { giftCardId: available.id, brand: available.brand, code: available.code, amount: available.amount, currency: available.currency }
 }
 
+async function resolveFeedbackReward(c: Context, rewardRecord: any, reward: ReturnType<typeof feedbackRewardSettings>, customerId: string): Promise<{ rewarded: boolean; reason?: string; detail?: string }> {
+  const db = c.env.RENT
+  if (rewardRecord.status === 'PROCESSING') {
+    await db.prepare("UPDATE feedback_rewards SET status = 'FAILED', failure_reason = '上一次奖励处理未完成，已允许安全重试', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'PROCESSING'").bind(rewardRecord.id).run()
+    rewardRecord.status = 'FAILED'
+  }
+  const locked = await db.prepare("UPDATE feedback_rewards SET status = 'PROCESSING', failure_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING', 'FAILED')").bind(rewardRecord.id).run() as any
+  if (!Number(locked.meta?.changes ?? locked.changes ?? 0)) return { rewarded: false, reason: 'reward_processing' }
+
+  try {
+    let rewardData: Record<string, unknown>
+    if (reward.rewardType === 'BALANCE') {
+      if (reward.balanceAmount <= 0) throw new Error('反馈奖励余额必须大于 0')
+      rewardData = await issueBalanceReward(c, rewardRecord.id, customerId, Number(reward.balanceAmount.toFixed(2)))
+    } else if (reward.rewardType === 'COUPON') {
+      if (reward.couponDiscountValue <= 0 || (reward.couponDiscountType === 'percent' && reward.couponDiscountValue > 100)) throw new Error('反馈奖励优惠值无效')
+      rewardData = await issueCouponReward(c, rewardRecord.id, reward)
+    } else {
+      rewardData = await issueGiftCardReward(c, rewardRecord.id)
+    }
+    await db.prepare('UPDATE feedback_rewards SET status = \'ISSUED\', reward_amount = ?, coupon_id = ?, gift_card_id = ?, reward_data = ?, issued_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(Number(rewardData.amount || rewardData.discountValue || 0) || null, rewardData.couponId || null, rewardData.giftCardId || null, JSON.stringify(rewardData), rewardRecord.id).run()
+    await createNotification(c, {
+      recipientId: customerId,
+      type: 'feedback_reward',
+      title: '客户反馈奖励已发放',
+      message: `感谢您完成客户反馈问卷！您的奖励是：${rewardDescription(reward.rewardType, rewardData)}。`,
+      dedupeKey: `feedback-reward:${rewardRecord.id}`,
+    })
+    return { rewarded: true, detail: rewardDescription(reward.rewardType, rewardData) }
+  } catch (error: any) {
+    await db.prepare('UPDATE feedback_rewards SET status = \'FAILED\', failure_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(String(error?.message || error).slice(0, 500), rewardRecord.id).run()
+    throw error
+  }
+}
+
 async function issueFeedbackReward(c: Context, payload: any, eventId: string): Promise<{ rewarded: boolean; reason?: string; detail?: string }> {
   await loadSystemSettingsFromDB(c)
   const reward = feedbackRewardSettings()
@@ -126,38 +162,16 @@ async function issueFeedbackReward(c: Context, payload: any, eventId: string): P
     }
   }
 
-  if (rewardRecord.status === 'PROCESSING') {
-    await db.prepare("UPDATE feedback_rewards SET status = 'FAILED', failure_reason = '上一次奖励处理未完成，已允许安全重试', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'PROCESSING'").bind(rewardRecord.id).run()
-    rewardRecord.status = 'FAILED'
-  }
-  const locked = await db.prepare("UPDATE feedback_rewards SET status = 'PROCESSING', failure_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('PENDING', 'FAILED')").bind(rewardRecord.id).run() as any
-  if (!Number(locked.meta?.changes ?? locked.changes ?? 0)) return { rewarded: false, reason: 'reward_processing' }
+  return await resolveFeedbackReward(c, rewardRecord, reward, customerId)
+}
 
-  try {
-    let rewardData: Record<string, unknown>
-    if (reward.rewardType === 'BALANCE') {
-      if (reward.balanceAmount <= 0) throw new Error('反馈奖励余额必须大于 0')
-      rewardData = await issueBalanceReward(c, rewardRecord.id, customerId, Number(reward.balanceAmount.toFixed(2)))
-    } else if (reward.rewardType === 'COUPON') {
-      if (reward.couponDiscountValue <= 0 || (reward.couponDiscountType === 'percent' && reward.couponDiscountValue > 100)) throw new Error('反馈奖励优惠值无效')
-      rewardData = await issueCouponReward(c, rewardRecord.id, reward)
-    } else {
-      rewardData = await issueGiftCardReward(c, rewardRecord.id)
-    }
-    await db.prepare('UPDATE feedback_rewards SET status = \'ISSUED\', reward_amount = ?, coupon_id = ?, gift_card_id = ?, reward_data = ?, issued_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(Number(rewardData.amount || rewardData.discountValue || 0) || null, rewardData.couponId || null, rewardData.giftCardId || null, JSON.stringify(rewardData), rewardRecord.id).run()
-    await createNotification(c, {
-      recipientId: customerId,
-      type: 'feedback_reward',
-      title: '客户反馈奖励已发放',
-      message: `感谢您完成客户反馈问卷！您的奖励是：${rewardDescription(reward.rewardType, rewardData)}。`,
-      dedupeKey: `feedback-reward:${rewardRecord.id}`,
-    })
-    return { rewarded: true, detail: rewardDescription(reward.rewardType, rewardData) }
-  } catch (error: any) {
-    await db.prepare('UPDATE feedback_rewards SET status = \'FAILED\', failure_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(String(error?.message || error).slice(0, 500), rewardRecord.id).run()
-    throw error
-  }
+export async function retryFeedbackReward(c: Context, rewardId: string): Promise<{ rewarded: boolean; reason?: string; detail?: string }> {
+  await loadSystemSettingsFromDB(c)
+  const reward = feedbackRewardSettings()
+  const rewardRecord = await c.env.RENT.prepare('SELECT * FROM feedback_rewards WHERE id = ?').bind(rewardId).first() as any
+  if (!rewardRecord) return { rewarded: false, reason: 'not_found' }
+  if (rewardRecord.status !== 'FAILED') return { rewarded: false, reason: 'not_retryable' }
+  return await resolveFeedbackReward(c, rewardRecord, reward, rewardRecord.customer_id)
 }
 
 export async function handleTallyFeedbackWebhook(c: Context): Promise<Response> {
