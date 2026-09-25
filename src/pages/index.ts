@@ -29,6 +29,7 @@ export * from './customer/balanceTopUp';
 export * from './customer/guestAccount';
 
 export * from './staff/dashboard';
+export * from './staff/mobileOperations';
 export * from './staff/orders';
 export * from './staff/orderDetail';
 export * from './staff/devices';

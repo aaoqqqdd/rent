@@ -5887,6 +5887,35 @@ tr:hover td {
   .mobile-bottom-nav a .nav-icon svg { width: 20px; height: 20px; }
   .mobile-bottom-nav a small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .6rem; }
 
+  .mobile-task-search { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .mobile-task-search .form-control { flex: 1 1 auto; min-width: 0; }
+  .mobile-task-search .button { flex: 0 0 auto; }
+  .mobile-task-search__hint { margin: -6px 0 12px; color: #718397; font-size: .7rem; }
+  .mobile-task-summary { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 12px; }
+  .mobile-task-summary > span { flex: 1 0 auto; padding: 10px 12px; border: 1px solid var(--m-line); border-radius: 10px; background: var(--m-paper); color: #607487; font-size: .75rem; }
+  .mobile-task-summary strong { color: var(--m-ink); font-size: 1rem; }
+  .mobile-task-summary .is-pickup { border-left: 3px solid #155eef; }
+  .mobile-task-summary .is-return { border-left: 3px solid #d97706; }
+  .mobile-task-list { display: grid; gap: 8px; }
+  .mobile-task-card { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--m-line); border-left: 3px solid #155eef; border-radius: 10px; background: var(--m-paper); }
+  .mobile-task-card.is-return { border-left-color: #d97706; }
+  .mobile-task-card__time { flex: 0 0 54px; display: grid; gap: 3px; color: #155eef; font-size: .72rem; }
+  .mobile-task-card.is-return .mobile-task-card__time { color: #b45309; }
+  .mobile-task-card__time span { color: #607487; font-size: .68rem; }
+  .mobile-task-card__body { min-width: 0; flex: 1 1 auto; display: grid; gap: 3px; }
+  .mobile-task-card__body strong, .mobile-task-card__body span, .mobile-task-card__body small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-task-card__body strong { font: 700 .78rem var(--font-mono); }
+  .mobile-task-card__body span { color: var(--m-ink); font-size: .82rem; }
+  .mobile-task-card__body small { color: #718397; font-size: .68rem; }
+  .mobile-task-card > .button { flex: 0 0 auto; min-width: 58px; padding-inline: 8px; }
+  @media (max-width: 380px) {
+    .mobile-task-search { flex-wrap: wrap; }
+    .mobile-task-search .form-control { flex-basis: 100%; }
+    .mobile-task-search .button { flex: 1 1 0; }
+    .mobile-task-card { gap: 7px; padding-inline: 9px; }
+    .mobile-task-card__time { flex-basis: 48px; }
+  }
+
   /* --- Page-specific single-column tweaks --- */
   .device-catalog-grid, .template-preview-grid, .guest-workspace,
   .fleet-calendar-toolbar, .order-detail-grid, .contract-detail-meta,

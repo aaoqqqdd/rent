@@ -177,6 +177,10 @@ function rentalPeriodPassed(date: string, period: string, today: string): boolea
   return date === today && melbourneMinutesNow() >= (period === 'AM' ? 12 * 60 : 23 * 60)
 }
 
+function isMobileDeviceRequest(c: any): boolean {
+  return /android|iphone|ipad|ipod|mobile|webos|iemobile|opera mini/i.test(c.req.header('User-Agent') || '')
+}
+
 async function sendLoggedEmail(c: any, input: { eventType: string, recipient: string, key: string, subject: string, text: string, html?: string, orderId?: string, templateId?: string }): Promise<{ ok: boolean }> {
   const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, order_id, template_id, idempotency_key, status, subject, text_body, html_body, last_attempt_at) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP)").bind(`email-${nanoid(12)}`, input.eventType, input.recipient, input.orderId || null, input.templateId || null, input.key, input.subject, input.text, input.html || null).run() as any
   if (!claimed.meta?.changes) return { ok: true }
@@ -666,8 +670,8 @@ app.get('/', async (c) => {
     return c.redirect('/login')
   }
   if (user.role === 'CUSTOMER') return c.redirect(user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard')
-  if (user.role === 'STAFF') return c.redirect('/staff/dashboard')
-  return c.redirect('/admin/dashboard')
+  if (user.role === 'STAFF') return c.redirect(isMobileDeviceRequest(c) ? '/staff/mobile' : '/staff/dashboard')
+  return c.redirect(isMobileDeviceRequest(c) ? '/staff/mobile' : '/admin/dashboard')
 })
 
 app.get('/login', async (c) => {
@@ -731,7 +735,7 @@ app.post('/login', async (c) => {
   await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()
   const response = c.redirect(user.role === 'CUSTOMER'
     ? (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard')
-    : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
+    : isMobileDeviceRequest(c) ? '/staff/mobile' : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
   const session = await createAuthSession(c, user.id, form.remember === 'on')
   let cookieOptions = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`;
   if (new URL(c.req.url).protocol === 'https:') cookieOptions += '; Secure'
@@ -2220,8 +2224,15 @@ app.get('/staff/dashboard', async (c) => {
   if (user.role !== 'STAFF' && user.role !== 'ADMIN') {
     return c.html(renderForbidden(), 403)
   }
+  if (isMobileDeviceRequest(c)) return c.redirect('/staff/mobile')
   const dashboardData = await getStaffDashboardData(c, user.role === 'ADMIN' ? undefined : user.id)
   return c.html(pages.renderStaffDashboard(user, dashboardData))
+})
+
+app.get('/staff/mobile', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(await pages.renderStaffMobileOperations(c, user))
 })
 
 app.get('/staff/profile', async (c) => {
@@ -3374,6 +3385,7 @@ app.get('/admin/dashboard', async (c) => {
   if (!user || user.role !== 'ADMIN') {
     return c.redirect('/login')
   }
+  if (isMobileDeviceRequest(c)) return c.redirect('/staff/mobile')
   // 以前这里拉 orders / users / devices 三张整表回内存做统计；改用数据库侧聚合。
   const { getAdminDashboardData } = await import('./services/adminDashboard')
   const [data, opsCounts] = await Promise.all([
