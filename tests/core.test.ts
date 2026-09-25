@@ -22,6 +22,7 @@ import { renderRegister } from '../src/pages/public/register'
 import { renderNewContractPage } from '../src/pages/staff/newContract'
 import { renderAdminOrderReview } from '../src/pages/admin/orderReview'
 import { renderStaffContracts } from '../src/pages/staff/contracts'
+import { renderStaffMobileOperations } from '../src/pages/staff/mobileOperations'
 import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
@@ -168,9 +169,9 @@ test('staff and admin mobile navigation keeps only core rental operations', () =
   } as any)
   for (const html of [adminHtml, staffHtml]) {
     const mobileNav = html.slice(html.indexOf('<nav class="mobile-bottom-nav"'), html.indexOf('</nav>', html.indexOf('<nav class="mobile-bottom-nav"')))
-    assert.match(mobileNav, /href="\/staff\/orders"[^>]*>.*订单/s)
-    assert.match(mobileNav, /href="\/staff\/orders\/ongoing\?stage=pickup"[^>]*>.*取货/s)
-    assert.match(mobileNav, /href="\/staff\/orders\/ongoing\?stage=return"[^>]*>.*归还/s)
+    assert.match(mobileNav, /href="\/staff\/mobile"[^>]*>.*今日订单/s)
+    assert.match(mobileNav, /href="\/staff\/mobile\?stage=pickup"[^>]*>.*取货/s)
+    assert.match(mobileNav, /href="\/staff\/mobile\?stage=return"[^>]*>.*归还/s)
     assert.match(mobileNav, /href="\/staff\/inspections"[^>]*>.*验机/s)
     assert.doesNotMatch(mobileNav, /通知|设置|客户|合同/)
     assert.match(html, /class="sidebar sidebar--desktop"/)
@@ -184,6 +185,33 @@ test('staff and admin mobile navigation keeps only core rental operations', () =
   assert.match(customerMobileNav, /href="\/customer\/dashboard"[^>]*>.*首页/s)
   assert.match(customerMobileNav, /href="\/customer\/rentals"[^>]*>.*租赁/s)
   assert.match(customerMobileNav, /href="\/customer\/profile"[^>]*>.*我的/s)
+})
+
+test('mobile staff operations page renders a fast searchable task list', async () => {
+  let query = ''
+  const db = {
+    prepare(sql: string) {
+      query = sql
+      return {
+        bind() { return this },
+        async all() {
+          return { results: [
+            { order_id: 'pickup-1', order_no: 'OD-PICKUP', status: 'pending_pickup', customer_name: '张三', device_name: 'Laptop A', task_type: 'pickup', task_slot: 'morning' },
+            { order_id: 'return-1', order_no: 'OD-RETURN', status: 'active', customer_name: '李四', device_name: 'Laptop B', task_type: 'return', task_slot: 'afternoon' },
+          ] }
+        },
+      }
+    },
+  }
+  const html = await renderStaffMobileOperations({ req: { query: () => '' }, env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff', role: 'STAFF' })
+  assert.match(query, /date\(o\.startDate\) = \?/)
+  assert.match(query, /date\(o\.endDate\) = \?/)
+  assert.match(html, /今日租赁任务/)
+  assert.match(html, /OD-PICKUP[\s\S]*去取货/)
+  assert.match(html, /OD-RETURN[\s\S]*去验机/)
+  assert.match(html, /name="q"/)
+  assert.match(html, /扫码或搜索订单号、客户、设备/)
+  assert.doesNotMatch(html, /sidebar--desktop/)
 })
 
 test('admin exception center belongs to system settings navigation', () => {

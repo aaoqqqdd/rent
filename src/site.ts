@@ -1652,7 +1652,7 @@ export async function loadDatabaseData(c: Context): Promise<void> {
 }
 
 
-export function buildLayout(title: string, body: string, currentUser?: User | null): string {
+export function buildLayout(title: string, body: string, currentUser?: User | null, options: { compactStaffNav?: boolean } = {}): string {
   const normalizedTitle = title.includes('电脑租赁管理系统') ? title : `${title} - 电脑租赁管理系统`
   const isAuthPage = title.includes('登录') || title.includes('注册') || title.includes('找回密码')
   const topNav =
@@ -1744,7 +1744,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group"><summary>${label}${chevronSvg}</summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
   const mobileLinks = currentUser?.role === 'ADMIN' || currentUser?.role === 'STAFF'
-    ? [['/staff/orders', '订单', '▦'], ['/staff/orders/ongoing?stage=pickup', '取货', '◷'], ['/staff/orders/ongoing?stage=return', '归还', '↺'], ['/staff/inspections', '验机', '◈']]
+    ? [['/staff/mobile', '今日订单', '◉'], ['/staff/mobile?stage=pickup', '取货', '◷'], ['/staff/mobile?stage=return', '归还', '↺'], ['/staff/inspections', '验机', '◈']]
       : currentUser?.accountType === 'guest'
         ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
         : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/devices', '可租设备', '▣'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
@@ -1758,7 +1758,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     ? `<button class="mobile-nav-toggle" type="button" aria-label="打开导航菜单" aria-expanded="false" aria-controls="app-sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>`
     : ''
 
-  const sidebar = currentUser
+  const sidebar = currentUser && !options.compactStaffNav
     ? `<aside class="sidebar ${currentUser.role === 'ADMIN' || currentUser.role === 'STAFF' ? 'sidebar--desktop' : ''}" id="${currentUser.role === 'ADMIN' || currentUser.role === 'STAFF' ? 'desktop-sidebar' : 'app-sidebar'}">
         <div class="sidebar-section">
           <h3>导航</h3>
