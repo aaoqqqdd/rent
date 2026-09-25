@@ -624,6 +624,8 @@ export async function getOrdersWithDetailsForUser(c: Context, userId: string): P
       o.endDate,
       o.totalAmount,
       o.status,
+      o.deliveryMethod,
+      o.deliveryFee,
       d.name as deviceName
     FROM orders o
     LEFT JOIN devices d ON o.deviceId = d.id
@@ -631,7 +633,17 @@ export async function getOrdersWithDetailsForUser(c: Context, userId: string): P
     ORDER BY o.createdAt DESC
   `;
   const result = await db.prepare(query).bind(userId).all();
-  return result.results || [];
+  const rows = (result.results || []) as any[]
+  if (!rows.length) return rows
+  try {
+    const placeholders = rows.map(() => '?').join(',')
+    const bookings = await db.prepare(`SELECT order_id, direction, status, provider_reference, tracking_url FROM delivery_bookings WHERE order_id IN (${placeholders}) ORDER BY created_at DESC`).bind(...rows.map(row => row.id)).all() as any
+    const grouped = new Map<string, any[]>()
+    for (const booking of bookings.results || []) grouped.set(String(booking.order_id), [...(grouped.get(String(booking.order_id)) || []), booking])
+    return rows.map(row => ({ ...row, deliveryBookings: grouped.get(String(row.id)) || [] }))
+  } catch {
+    return rows.map(row => ({ ...row, deliveryBookings: [] }))
+  }
 }
 
 export async function getOrdersByIds(c: Context, ids: string[]): Promise<Order[]> {

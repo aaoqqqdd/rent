@@ -92,3 +92,4 @@ export * from './admin/paymentDisputes';
 export * from './admin/anomalousOrders';
 export * from './admin/deviceCalendar';
 export * from './admin/deviceAgentBindings';
+export * from './admin/delivery';

@@ -23,6 +23,13 @@
 		// 仅允许已部署的营销官网跨站提交购物车订单。
 		"PUBLIC_WEB_ORIGIN": "https://rent-web.ydnw6zt6vj.workers.dev"
 	},
+	"services": [
+		{
+			"binding": "DELIVERY_SERVICE",
+			"service": "geekslope-web",
+			"remote": true
+		}
+	],
 	// "kv_namespaces": [
 	//   {
 	//     "binding": "MY_KV_NAMESPACE",
