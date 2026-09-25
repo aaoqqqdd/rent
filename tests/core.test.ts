@@ -159,6 +159,33 @@ test('guest sessions show their deletion date and only the guest workspace navig
   assert.doesNotMatch(html, /个人资料/)
 })
 
+test('staff and admin mobile navigation keeps only core rental operations', () => {
+  const adminHtml = buildLayout('管理员页面', '<p>admin</p>', {
+    id: 'admin-1', name: 'Admin User', email: 'admin@example.com', role: 'ADMIN',
+  } as any)
+  const staffHtml = buildLayout('员工页面', '<p>staff</p>', {
+    id: 'staff-1', name: 'Staff User', email: 'staff@example.com', role: 'STAFF',
+  } as any)
+  for (const html of [adminHtml, staffHtml]) {
+    const mobileNav = html.slice(html.indexOf('<nav class="mobile-bottom-nav"'), html.indexOf('</nav>', html.indexOf('<nav class="mobile-bottom-nav"')))
+    assert.match(mobileNav, /href="\/staff\/orders"[^>]*>.*订单/s)
+    assert.match(mobileNav, /href="\/staff\/orders\/ongoing\?stage=pickup"[^>]*>.*取货/s)
+    assert.match(mobileNav, /href="\/staff\/orders\/ongoing\?stage=return"[^>]*>.*归还/s)
+    assert.match(mobileNav, /href="\/staff\/inspections"[^>]*>.*验机/s)
+    assert.doesNotMatch(mobileNav, /通知|设置|客户|合同/)
+    assert.match(html, /class="sidebar sidebar--desktop"/)
+    assert.match(html, /class="sidebar sidebar--mobile"/)
+  }
+
+  const customerHtml = buildLayout('客户页面', '<p>customer</p>', {
+    id: 'customer-1', name: 'Customer User', email: 'customer@example.com', role: 'CUSTOMER',
+  } as any)
+  const customerMobileNav = customerHtml.slice(customerHtml.indexOf('<nav class="mobile-bottom-nav"'), customerHtml.indexOf('</nav>', customerHtml.indexOf('<nav class="mobile-bottom-nav"')))
+  assert.match(customerMobileNav, /href="\/customer\/dashboard"[^>]*>.*首页/s)
+  assert.match(customerMobileNav, /href="\/customer\/rentals"[^>]*>.*租赁/s)
+  assert.match(customerMobileNav, /href="\/customer\/profile"[^>]*>.*我的/s)
+})
+
 test('admin exception center belongs to system settings navigation', () => {
   const html = buildLayout('管理员页面', '<p>admin</p>', {
     id: 'admin-1', name: 'Admin User', email: 'admin@example.com', role: 'ADMIN',

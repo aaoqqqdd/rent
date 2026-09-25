@@ -1743,10 +1743,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const chevronSvg = '<span class="nav-group-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>'
   const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group"><summary>${label}${chevronSvg}</summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
-  const mobileLinks = currentUser?.role === 'ADMIN'
-    ? [['/admin/dashboard', '控制台', '◉'], ['/notifications', '通知', 'N'], ['/admin/order-review', '订单审核', '⚑'], ['/admin/orders', '订单', '▦'], ['/staff/contracts/new', '新建合同', '+'], ['/admin/users', '用户', '◎'], ['/admin/settings', '设置', '⚙']]
-    : currentUser?.role === 'STAFF'
-      ? [['/staff/dashboard', '工作台', '◉'], ['/notifications', '通知', 'N'], ['/staff/orders', '订单', '▦'], ['/staff/contracts', '合同', '▤'], ['/staff/customers', '客户', '◎']]
+  const mobileLinks = currentUser?.role === 'ADMIN' || currentUser?.role === 'STAFF'
+    ? [['/staff/orders', '订单', '▦'], ['/staff/orders/ongoing?stage=pickup', '取货', '◷'], ['/staff/orders/ongoing?stage=return', '归还', '↺'], ['/staff/inspections', '验机', '◈']]
       : currentUser?.accountType === 'guest'
         ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
         : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/devices', '可租设备', '▣'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
@@ -1761,7 +1759,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     : ''
 
   const sidebar = currentUser
-    ? `<aside class="sidebar" id="app-sidebar">
+    ? `<aside class="sidebar ${currentUser.role === 'ADMIN' || currentUser.role === 'STAFF' ? 'sidebar--desktop' : ''}" id="${currentUser.role === 'ADMIN' || currentUser.role === 'STAFF' ? 'desktop-sidebar' : 'app-sidebar'}">
         <div class="sidebar-section">
           <h3>导航</h3>
           ${currentUser.role === 'CUSTOMER' ? `
@@ -1800,6 +1798,21 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
       </aside>`
     : ''
 
+  const mobileOperationsSidebar = currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'STAFF')
+    ? `<aside class="sidebar sidebar--mobile" id="app-sidebar">
+        <div class="sidebar-section">
+          <h3>租赁操作</h3>
+          ${mobileLinks.map(([href, text]) => renderNavLink(href, text)).join('')}
+        </div>
+        <div class="sidebar-footer">
+          <div class="status-indicator online" title="正在检查系统状态">
+            <span class="led"></span>
+            <span>正常</span>
+          </div>
+        </div>
+      </aside>`
+    : ''
+
   const footerCompany = sanitizePlainText(systemSettings.companyDetails.name || 'PC Rental', 80)
   // 页脚在所有页面（登录前后）保持一致：平铺三个核心法律链接，其余合规页面
   // 统一收进「更多」折叠菜单，避免一长排链接换行。
@@ -1827,7 +1840,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_LABEL: mobileLabel,
     MOBILE_USER_BLOCK: mobileUserBlock,
     LANGUAGE_SWITCHER: languageSwitcher,
-    SIDEBAR: sidebar,
+    SIDEBAR: sidebar + mobileOperationsSidebar,
     CONTENT: body,
     FOOTER: footerHtml
   })
