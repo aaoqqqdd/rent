@@ -10,6 +10,7 @@ import { getTurnstileConfigSummary, saveTurnstileConfig } from '../../turnstile'
 import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
 import { getSquareConfigSummary, saveSquareConfig } from '../../square'
 import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChannels'
+import { getDeliveryConfigSummary, saveDeliveryConfig } from '../../deliveryConfig'
 import { enqueueAgreementUpdate } from '../../services/notifications'
 import { normalizeTallyEmbedUrl } from '../../lib/tally'
 
@@ -177,8 +178,15 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   )
   if (shouldSaveNotifyChannels) await saveNotifyChannels(c, notifyChannelsInput)
 
+  const deliveryConfigInput = payload.deliveryConfig
+  const shouldSaveDeliveryConfig = Boolean(deliveryConfigInput && (
+    deliveryConfigInput.apiToken || deliveryConfigInput.webhookSecret || deliveryConfigInput.adminToken ||
+    deliveryConfigInput.clear === true || Object.keys(deliveryConfigInput).some((key) => key !== 'clear')
+  ))
+  if (shouldSaveDeliveryConfig) await saveDeliveryConfig(c, deliveryConfigInput)
+
   await updateSystemSettings(c, next as any)
   await loadSystemSettingsFromDB(c)
 
-  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), square: await getSquareConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c), turnstile: await getTurnstileConfigSummary(c) })
+  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), square: await getSquareConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c), turnstile: await getTurnstileConfigSummary(c), delivery: await getDeliveryConfigSummary(c) })
 }

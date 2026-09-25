@@ -3,9 +3,32 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency } from '../../site';
-import { getOrdersWithDetailsForUser } from '../../site';
+import { buildLayout, formatCurrency, getOrdersWithDetailsForUser } from '../../site';
+import { deliveryStatusInfo } from '../../deliveryStatus';
 import { Context } from 'hono';
+
+function escape(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
+}
+
+function deliveryCell(order: any): string {
+  const bookings = Array.isArray(order.deliveryBookings) ? order.deliveryBookings : []
+  if (!bookings.length) return '—'
+  return bookings.map((booking: any) => {
+    const info = deliveryStatusInfo(booking.status)
+    const rawTracking = String(booking.tracking_url || '')
+    const tracking = /^https?:\/\//i.test(rawTracking) ? `<a class="link-button" href="${escape(rawTracking)}" target="_blank" rel="noopener noreferrer">追踪</a>` : ''
+    return `<div><strong>${booking.direction === 'return' ? '回收' : '派送'}：${escape(info.label)}</strong><small style="display:block">${escape(info.description)}</small>${info.special ? '<small style="display:block;color:#b42318">不能更新或取消</small>' : ''}${tracking}</div>`
+  }).join('')
+}
+
+function renderRows(orders: any[], actionLabel: string): string {
+  return orders.map((order: any) => `<tr><td>${escape(order.orderNo || '付款后生成')}</td><td>${escape(order.deviceName ?? '')}</td><td>${escape(order.startDate)} ~ ${escape(order.endDate)}</td><td>${formatCurrency(order.totalAmount)}</td><td>${escape(order.status)}</td><td>${deliveryCell(order)}</td><td><a class="link-button" href="/customer/orders/${encodeURIComponent(order.id)}">${actionLabel}</a></td></tr>`).join('')
+}
+
+function renderTable(orders: any[], empty: string, actionLabel: string): string {
+  return orders.length > 0 ? `<div class="table-wrapper"><table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>订单状态</th><th>配送状态</th><th>操作</th></tr></thead><tbody>${renderRows(orders, actionLabel)}</tbody></table></div>` : `<p>${empty}</p>`
+}
 
 export async function renderCustomerOrders(c: Context, user: any) {
   const orders = await getOrdersWithDetailsForUser(c, user.id);
@@ -16,51 +39,11 @@ export async function renderCustomerOrders(c: Context, user: any) {
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>我的订单</h2><span class="section-note">查看您的所有租赁订单。</span></div>
-
-      <h3>待付款订单</h3>
-      ${pendingOrders.length > 0 ? `
-        <div class="table-wrapper">
-          <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
-            ${pendingOrders.map((order: any) => `
-              <tr><td>${order.orderNo || '付款后生成'}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">去支付</a></td></tr>
-            `).join('')}
-          </tbody></table>
-        </div>
-      ` : '<p>您目前没有待付款订单。</p>'}
-
-      <h3 style="margin-top: 40px;">当前租赁中</h3>
-      ${activeOrders.length > 0 ? `
-        <div class="table-wrapper">
-          <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
-            ${activeOrders.map((order: any) => `
-              <tr><td>${order.orderNo || '付款后生成'}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>${order.status}</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
-            `).join('')}
-          </tbody></table>
-        </div>
-      ` : '<p>您目前没有正在租赁的设备。</p>'}
-
-      <h3 style="margin-top: 40px;">已完成订单</h3>
-      ${completedOrders.length > 0 ? `
-        <div class="table-wrapper">
-          <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
-            ${completedOrders.map((order: any) => `
-              <tr><td>${order.orderNo || '未生成'}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>已完成</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
-            `).join('')}
-          </tbody></table>
-        </div>
-      ` : '<p>您目前没有已完成的订单。</p>'}
-
-      <h3 style="margin-top: 40px;">已取消订单</h3>
-      ${cancelledOrders.length > 0 ? `
-        <div class="table-wrapper">
-          <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
-            ${cancelledOrders.map((order: any) => `
-              <tr><td>${order.orderNo || '未生成'}</td><td>${order.deviceName ?? ''}</td><td>${order.startDate} ~ ${order.endDate}</td><td>${formatCurrency(order.totalAmount)}</td><td>已取消</td><td><a class="link-button" href="/customer/orders/${order.id}">查看</a></td></tr>
-            `).join('')}
-          </tbody></table>
-        </div>
-      ` : '<p>您目前没有已取消的订单。</p>'}
+      <div class="section-title"><h2>我的订单</h2><span class="section-note">查看您的所有租赁订单及最新配送状态。</span></div>
+      <h3>待付款订单</h3>${renderTable(pendingOrders, '您目前没有待付款订单。', '去支付')}
+      <h3 style="margin-top: 40px;">当前租赁中</h3>${renderTable(activeOrders, '您目前没有正在租赁的设备。', '查看')}
+      <h3 style="margin-top: 40px;">已完成订单</h3>${renderTable(completedOrders, '您目前没有已完成的订单。', '查看')}
+      <h3 style="margin-top: 40px;">已取消订单</h3>${renderTable(cancelledOrders, '您目前没有已取消的订单。', '查看')}
     </div>
   `;
   return buildLayout('我的订单 - 电脑租赁管理系统', body, user);

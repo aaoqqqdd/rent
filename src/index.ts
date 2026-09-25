@@ -121,6 +121,7 @@ import { nanoid } from 'nanoid'
 import { getStripeConfigSummary } from './stripe'
 import { getSquareConfigSummary } from './square'
 import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteKey } from './turnstile'
+import { getDeliveryConfigSummary } from './deliveryConfig'
 import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
@@ -132,6 +133,8 @@ import { computeOrderSettlementStatus } from './domain/orderSettlement'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
 import { runConnectivityProbes } from './services/connectivity'
+import { createAdminDeliveryBooking } from './services/deliveryAdmin'
+import { handleDeliveryStatusEmail } from './services/deliveryNotifications'
 import {
   styleSheetText as siteStyles,
   styleSheetVersion,
@@ -3905,6 +3908,32 @@ app.get('/admin/orders', async (c) => {
   return c.html(await pages.renderAdminOrders(c, user))
 })
 
+app.get('/admin/delivery', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminDelivery(c, user))
+})
+
+app.post('/admin/delivery/bookings', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const form = await c.req.parseBody()
+  const orderId = String(form.orderId || '').trim()
+  const direction = String(form.direction || '')
+  if (!orderId || !['outbound', 'return'].includes(direction)) return c.redirect('/admin/delivery?error=' + encodeURIComponent('配送订单参数无效'))
+  const order = await getOrderById(c, orderId) as any
+  const status = String(order?.status || '').toLowerCase()
+  const allowedStatuses = direction === 'outbound' ? ['paid', 'pending_pickup', 'active'] : ['active', 'extended', 'overdue', 'suspended', 'pending_return']
+  if (!order || String(order.deliveryMethod || '') !== 'Delivery') return c.redirect('/admin/delivery?error=' + encodeURIComponent('该订单不是送货订单'))
+  if (!allowedStatuses.includes(status)) return c.redirect('/admin/delivery?error=' + encodeURIComponent('当前订单状态不可创建该配送订单'))
+  const result = await createAdminDeliveryBooking(c, { orderId, direction: direction as any, readyDateTime: String(form.readyDateTime || '') })
+  if (!result.ok) return c.redirect('/admin/delivery?error=' + encodeURIComponent(result.message))
+  await createAuditLog(c, { actor: user, action: 'DELIVERY_BOOKING_CREATED', targetType: 'ORDER', targetId: orderId, after: { direction, delivery: result.payload.booking || null } })
+  return c.redirect('/admin/delivery?success=' + encodeURIComponent(`${direction === 'outbound' ? '派送' : '回收'}订单已创建`), 303)
+})
+
+app.post('/internal/delivery-status-email', (c) => handleDeliveryStatusEmail(c as any))
+
 app.get('/admin/order-review', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
@@ -5094,7 +5123,7 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), Boolean(c.env.TALLY_WEBHOOK_SECRET)))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), Boolean(c.env.TALLY_WEBHOOK_SECRET), await getDeliveryConfigSummary(c)))
 })
 
 app.get('/admin/feedback-rewards', async (c) => {

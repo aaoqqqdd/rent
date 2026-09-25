@@ -5,7 +5,7 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}, tallyWebhookConfigured: boolean = false) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}, tallyWebhookConfigured: boolean = false, delivery: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
   const feedbackRewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, balanceAmountMin: 5, balanceAmountMax: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponDiscountValueMin: 5, couponDiscountValueMax: 5, couponMinimumOrderAmount: 0, couponExpiresDays: 30 };
   const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -21,6 +21,23 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
     brevo: notify.brevo || { from: '', apiKeyMasked: '', configured: false },
     mailersend: notify.mailersend || { from: '', apiKeyMasked: '', configured: false },
     webhook: notify.webhook || { enabled: false, urlMasked: '', configured: false },
+  };
+  const dc = {
+    configured: Boolean(delivery.configured),
+    adminConfigured: Boolean(delivery.adminConfigured),
+    webhookConfigured: Boolean(delivery.webhookConfigured),
+    apiTokenMasked: delivery.apiTokenMasked || '',
+    webhookSecretMasked: delivery.webhookSecretMasked || '',
+    adminTokenMasked: delivery.adminTokenMasked || '',
+    apiBaseUrl: delivery.apiBaseUrl || 'https://api.zoom2u.com',
+    pickupAddress: delivery.pickupAddress || '',
+    pickupContactName: delivery.pickupContactName || '',
+    pickupEmail: delivery.pickupEmail || '',
+    pickupPhone: delivery.pickupPhone || '',
+    pickupNotes: delivery.pickupNotes || '',
+    deliverySpeed: delivery.deliverySpeed || 'Same day',
+    vehicleType: delivery.vehicleType || 'Car',
+    packageType: delivery.packageType || 'Box',
   };
 
   const body = `
@@ -178,6 +195,26 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
+          <div class="form-section-title"><span class="mono">DELIVERY</span><div><h3>Zoom2u 配送 API 配置</h3><p>当前状态：${dc.configured ? 'API 已配置' : 'API 未配置'}，管理员接口${dc.adminConfigured ? '已配置' : '未配置'}，Webhook Secret${dc.webhookConfigured ? '已配置' : '未配置'}。密钥会使用 SETTINGS_ENCRYPTION_KEY 加密保存，留空表示保留原值。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="zoom2uApiToken">Zoom2u API Token</label><input class="form-control" type="password" id="zoom2uApiToken" placeholder="${dc.apiTokenMasked || '粘贴 Zoom2u API Token'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="deliveryAdminToken">配送管理 Token</label><input class="form-control" type="password" id="deliveryAdminToken" placeholder="${dc.adminTokenMasked || '主应用与官网 Worker 共用'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="zoom2uWebhookSecret">Zoom2u Webhook Secret</label><input class="form-control" type="password" id="zoom2uWebhookSecret" placeholder="${dc.webhookSecretMasked || '粘贴 Webhook Secret'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="zoom2uApiBaseUrl">Zoom2u API 地址</label><input class="form-control" type="url" id="zoom2uApiBaseUrl" value="${escAttr(dc.apiBaseUrl)}" placeholder="https://api.zoom2u.com"></div>
+            <div class="form-group"><label class="form-label" for="zoom2uPickupAddress">取货地址</label><input class="form-control" id="zoom2uPickupAddress" value="${escAttr(dc.pickupAddress)}" placeholder="完整街道地址"></div>
+            <div class="form-group"><label class="form-label" for="zoom2uPickupContactName">取货联系人</label><input class="form-control" id="zoom2uPickupContactName" value="${escAttr(dc.pickupContactName)}"></div>
+            <div class="form-group"><label class="form-label" for="zoom2uPickupEmail">取货联系人邮箱</label><input class="form-control" type="email" id="zoom2uPickupEmail" value="${escAttr(dc.pickupEmail)}"></div>
+            <div class="form-group"><label class="form-label" for="zoom2uPickupPhone">取货联系人电话</label><input class="form-control" id="zoom2uPickupPhone" value="${escAttr(dc.pickupPhone)}"></div>
+            <div class="form-group"><label class="form-label" for="zoom2uDeliverySpeed">配送速度</label><select class="form-control" id="zoom2uDeliverySpeed"><option value="Same day" ${dc.deliverySpeed === 'Same day' ? 'selected' : ''}>Same day</option><option value="3 hour" ${dc.deliverySpeed === '3 hour' ? 'selected' : ''}>3 hour</option><option value="VIP" ${dc.deliverySpeed === 'VIP' ? 'selected' : ''}>VIP</option></select></div>
+            <div class="form-group"><label class="form-label" for="zoom2uVehicleType">车辆类型</label><select class="form-control" id="zoom2uVehicleType"><option value="Bike" ${dc.vehicleType === 'Bike' ? 'selected' : ''}>Bike</option><option value="Car" ${dc.vehicleType === 'Car' ? 'selected' : ''}>Car</option><option value="Van" ${dc.vehicleType === 'Van' ? 'selected' : ''}>Van</option></select></div>
+            <div class="form-group"><label class="form-label" for="zoom2uPackageType">包裹类型</label><select class="form-control" id="zoom2uPackageType"><option value="Documents" ${dc.packageType === 'Documents' ? 'selected' : ''}>Documents</option><option value="Bag" ${dc.packageType === 'Bag' ? 'selected' : ''}>Bag</option><option value="Box" ${dc.packageType === 'Box' ? 'selected' : ''}>Box</option><option value="Custom" ${dc.packageType === 'Custom' ? 'selected' : ''}>Custom</option></select></div>
+          </div>
+          <div class="form-group"><label class="form-label" for="zoom2uPickupNotes">取货备注</label><textarea class="form-control" id="zoom2uPickupNotes" rows="2" placeholder="例如：请从前台取货">${escAttr(dc.pickupNotes)}</textarea></div>
+          <div class="checkbox-group"><input type="checkbox" id="clearDeliveryConfig"><label for="clearDeliveryConfig">清除已保存的配送配置</label></div>
+          <p class="form-text">配置保存到共享 D1 后，报价、派送和 Webhook 会由 geekslope-web 自动读取；不再需要在浏览器或代码中填写 API Key。</p>
+        </section>
+
+        <section class="form-section">
           <div class="form-section-title"><span class="mono">BANK</span><div><h3>银行转账账户信息</h3><p>客户选择银行转账时会看到这些账户信息，供其转账使用。</p></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label for="bankName" class="form-label">银行名称</label><input type="text" id="bankName" name="bankName" class="form-control" value="${settings.bankDetails.bankName}" placeholder="例如: Commonwealth Bank"></div>
@@ -246,6 +283,21 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             webhookUrl: inputValue('squareWebhookUrl'),
             webhookSignatureKey: inputValue('squareWebhookSignatureKey'),
             clear: document.getElementById('clearSquareConfig')?.checked || false,
+          },
+          deliveryConfig: {
+            apiToken: inputValue('zoom2uApiToken'),
+            webhookSecret: inputValue('zoom2uWebhookSecret'),
+            adminToken: inputValue('deliveryAdminToken'),
+            apiBaseUrl: inputValue('zoom2uApiBaseUrl'),
+            pickupAddress: inputValue('zoom2uPickupAddress'),
+            pickupContactName: inputValue('zoom2uPickupContactName'),
+            pickupEmail: inputValue('zoom2uPickupEmail'),
+            pickupPhone: inputValue('zoom2uPickupPhone'),
+            pickupNotes: inputValue('zoom2uPickupNotes'),
+            deliverySpeed: inputValue('zoom2uDeliverySpeed'),
+            vehicleType: inputValue('zoom2uVehicleType'),
+            packageType: inputValue('zoom2uPackageType'),
+            clear: document.getElementById('clearDeliveryConfig')?.checked || false,
           },
           turnstileConfig: {
             siteKey: formData.get('turnstileSiteKey'),

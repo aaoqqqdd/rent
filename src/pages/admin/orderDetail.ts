@@ -8,6 +8,8 @@ import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 import { renderReconciliationPanel } from '../partials/reconciliationPanel';
 import { normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
+import { getDeliveryBookingsForOrder, safeDeliveryTrackingUrl } from '../../services/deliveryViews'
+import { deliveryStatusInfo } from '../../deliveryStatus'
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
@@ -19,6 +21,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   if (!order) {
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user);
   }
+  const deliveryBookings = await getDeliveryBookingsForOrder(c, order.id)
 
   const [customer, device, existingContract, completedRefund, depositRefundSummary, pendingPriceRefundSummary, transferProof, statusHistory, depositSettlement, changeHistory, swapDevices] = await Promise.all([
     getUserById(c, order.userId), getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id),
@@ -110,6 +113,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   // 单独一个徽章显示，不能让“已完成”看起来什么都办完了（对应 o-af1VCjmW 那次事故）。
   const settlementPending = order.status === 'completed' && order.settlement_status === 'PENDING';
   const refundStatusLabel = completedRefund?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : completedRefund?.status === 'succeeded' ? (Number(completedRefund.refund_amount || 0) < Number(completedRefund.refundable_amount || completedRefund.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : '';
+  const deliveryBlock = deliveryBookings.length ? `<div class="panel" style="margin-bottom:24px"><div class="section-title"><div><h3>配送状态</h3><span class="section-note">Zoom2u 回调会自动更新状态并通知客户。</span></div></div>${deliveryBookings.map((booking: any) => { const info = deliveryStatusInfo(booking.status); const trackingUrl = safeDeliveryTrackingUrl(booking.trackingUrl); return `<div class="delivery-status-row"><div><strong>${booking.direction === 'return' ? '回收' : '派送'}：${escapeHtml(info.label)}</strong><p class="section-note">${escapeHtml(info.description)}</p>${booking.providerReference ? `<small class="section-note">配送编号：${escapeHtml(booking.providerReference)}</small>` : ''}${info.special ? '<small class="delivery-lock-note">该状态下不能更新或取消配送订单。</small>' : ''}</div>${trackingUrl ? `<a class="button button-secondary" href="${escapeHtml(trackingUrl)}" target="_blank" rel="noopener noreferrer">查看追踪链接</a>` : ''}</div>` }).join('')}</div>` : '';
 
   const body = `
     <div class="panel hero order-detail-shell admin-order-detail" style="padding: 32px; margin-bottom: 24px;">
@@ -133,6 +137,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       ${contract && isContractFinalized(contract) ? `<a class="button button-secondary" href="/contract/view/${contract.id}?from=order">查看合同</a>` : ''}
       ${contract && contract.status === 'pending_sign' ? `<a class="button button-primary" href="/staff/contracts/${encodeURIComponent(contract.id)}/progress">查看合同签署进度</a>` : ''}
     </div>
+    ${deliveryBlock}
     <section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>合同签署流程</h3><span class="section-note">${contract ? (contractFinalized ? '合同已签署' : '等待客户完成电子签名') : '合同尚未生成'}</span></div>${renderWorkflow()}${contract && contract.status === 'pending_sign' ? `<div class="record-actions" style="margin-top: 16px;"><a class="button button-secondary" href="/staff/contracts/${encodeURIComponent(contract.id)}/progress">打开签署链接管理</a></div>` : !contract ? '<p class="section-note" style="margin-top: 16px;">订单通过审核后，系统会自动生成客户签署合同。</p>' : ''}</section>
     ${statusHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>租赁状态历史</h3><span class="section-note">最近 ${statusHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>状态变化</th><th>触发方式</th><th>原因</th></tr></thead><tbody>${statusHistory.results.map((item: any) => `<tr><td class="mono">${escapeHtml(formatMelbourneDateTime(item.created_at))}</td><td>${escapeHtml(item.old_status || '—')} → <strong>${escapeHtml(item.new_status)}</strong></td><td>${escapeHtml(item.trigger_type)}${item.triggered_by ? ` · ${escapeHtml(item.triggered_by)}` : ''}</td><td>${escapeHtml(item.reason || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
     ${changeHistory?.results?.length ? `<section class="panel" style="margin: 0 0 24px;"><div class="section-title"><h3>订单修改历史</h3><span class="section-note">最近 ${changeHistory.results.length} 条</span></div><div class="table-wrapper"><table><thead><tr><th>时间</th><th>类型</th><th>变更内容</th><th>原因</th><th>操作人</th></tr></thead><tbody>${changeHistory.results.map((item: any) => {
