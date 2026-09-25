@@ -179,6 +179,10 @@ test('staff and admin mobile navigation keeps only core rental operations', () =
     assert.doesNotMatch(mobileNav, /通知|设置|客户|合同/)
     assert.match(html, /class="sidebar sidebar--desktop"/)
     assert.match(html, /class="sidebar sidebar--mobile"/)
+    const desktopSidebar = html.slice(html.indexOf('<aside class="sidebar sidebar--desktop"'), html.indexOf('</aside>', html.indexOf('<aside class="sidebar sidebar--desktop"')))
+    assert.match(desktopSidebar, /href="\/staff\/mobile"[^>]*>.*今日订单/s)
+    assert.match(desktopSidebar, /href="\/staff\/mobile\/scan"[^>]*>.*扫码/s)
+    assert.match(desktopSidebar, /href="\/staff\/inspections"[^>]*>.*验机/s)
   }
 
   const customerHtml = buildLayout('客户页面', '<p>customer</p>', {
@@ -214,7 +218,7 @@ test('mobile staff operations page renders a fast searchable task list', async (
   assert.match(html, /OD-RETURN[\s\S]*去验机/)
   assert.match(html, /name="q"/)
   assert.match(html, /扫码或搜索订单号、客户、设备/)
-  assert.doesNotMatch(html, /sidebar--desktop/)
+  assert.match(html, /class="sidebar sidebar--desktop"/)
 })
 
 test('mobile scan page uses the camera and routes pickup QR payloads', () => {
@@ -225,6 +229,9 @@ test('mobile scan page uses the camera and routes pickup QR payloads', () => {
   assertInlineScriptsParse(html)
   const payload = buildPickupQrPayload('o-abc_123')
   assert.equal(parsePickupQrPayload(payload), 'o-abc_123')
+  const directUrl = buildPickupQrPayload('o-abc_123', 'https://rent.example.test/notifications')
+  assert.equal(directUrl, 'https://rent.example.test/pickup/o-abc_123')
+  assert.equal(parsePickupQrPayload(directUrl), 'o-abc_123')
   assert.equal(parsePickupQrPayload('not-a-rental-code'), '')
 })
 

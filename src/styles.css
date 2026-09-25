@@ -5589,7 +5589,7 @@ tr:hover td {
 
 /* The full staff/admin navigation remains available on desktop;
    mobile operations use the compact navigation drawer below. */
-.sidebar--mobile { display: none !important; }
+.app-page .sidebar--mobile { display: none !important; }
 
 /* ============================================================
    Mobile layer — flat, compact, single slide-in navigation
@@ -5670,7 +5670,7 @@ tr:hover td {
     transition: transform .22s ease;
   }
   .sidebar--desktop { display: none !important; }
-  .sidebar--mobile { display: flex !important; }
+  .app-page .sidebar--mobile { display: flex !important; }
   body.is-nav-open .sidebar { transform: none; }
   body.is-nav-open { overflow: hidden; }
   .sidebar-section { display: block; min-width: 0; overflow: visible; }
