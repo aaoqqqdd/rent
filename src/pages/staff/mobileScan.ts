@@ -8,13 +8,14 @@ import { buildLayout, sanitizePlainText } from '../../site'
 
 export function renderStaffMobileScan(c: Context, user: any, error = '') {
   const safeError = error ? `<div class="page-notification page-notification--error">${sanitizePlainText(error, 300)}</div>` : ''
+  const cameraButtonLabel = error ? '继续扫码' : '打开相机'
   const body = `<div class="mobile-scan-page">
     <div class="page-header"><div><p class="section-code">CAMERA / QR WORKFLOW</p><h2>扫码作业</h2><p>用手机后置相机扫描客户邮件中的取货二维码。</p></div><a class="button button-secondary" href="/staff/mobile">今日任务</a></div>
     ${safeError}
     <section class="mobile-scan-panel panel">
       <div id="qr-reader" class="mobile-qr-reader"><div class="mobile-qr-reader__placeholder">点击“打开相机”后开始扫码</div></div>
       <p id="scan-status" class="mobile-scan-status">相机只在你点击按钮后启动。</p>
-      <div class="mobile-scan-actions"><button class="button button-primary" type="button" id="start-camera">打开相机</button><button class="button button-secondary" type="button" id="stop-camera" hidden>停止相机</button></div>
+      <div class="mobile-scan-actions"><button class="button button-primary" type="button" id="start-camera">${cameraButtonLabel}</button><button class="button button-secondary" type="button" id="stop-camera" hidden>停止相机</button></div>
       <form method="get" action="/staff/mobile/scan" class="mobile-scan-manual"><label class="form-label" for="scan-code">无法扫码？输入订单号</label><div class="mobile-scan-manual__row"><input class="form-control" id="scan-code" name="code" placeholder="订单号或扫码内容" autocomplete="off" inputmode="search" enterkeyhint="search" required><button class="button button-secondary" type="submit">查找</button></div></form>
     </section>
   </div>
