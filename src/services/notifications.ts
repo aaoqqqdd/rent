@@ -7,10 +7,11 @@
 // 依赖 settings（公司信息、发件人）与 lib/html（邮件模板）。
 
 import type { Context } from 'hono'
-import { renderEmailNotificationHtml, sanitizePlainText } from '../lib/html'
+import { escapeHtml, renderEmailNotificationHtml, sanitizePlainText } from '../lib/html'
 import { safeJsonParse } from '../lib/json'
 import { getSystemSettings } from '../settings/systemSettings'
 import { resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from '../notifyChannels'
+import { buildPickupQrPayload } from '../lib/pickupQr'
 
 const STAFF_ROLES = new Set(['ADMIN', 'MANAGER', 'STAFF'])
 
@@ -37,6 +38,30 @@ async function ensureSiteNotificationEmailTemplate(c: Context): Promise<void> {
   try { await siteNotificationTemplateReady } catch (error) { siteNotificationTemplateReady = null; throw error }
 }
 
+async function sendPickupReminderEmail(c: Context, notification: { recipientId: string; orderId?: string }, recipient: any, email: string): Promise<void> {
+  if (!notification.orderId) return
+  const order = await c.env.RENT.prepare('SELECT o.*, d.name AS device_name FROM orders o LEFT JOIN devices d ON d.id = o.deviceId WHERE o.id = ?').bind(notification.orderId).first() as any
+  if (!order || !['paid', 'pending_pickup'].includes(String(order.status))) return
+  const template = await c.env.RENT.prepare("SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = 'pickup_reminder'").first() as any
+  if (!template || template.enabled === 0) return
+  const companyDetails = getSystemSettings().companyDetails || ({} as any)
+  const vars: Record<string, string> = {
+    customer_name: normalizeCustomerName(recipient?.name), customer_email: email,
+    order_number: String(order.orderNo || order.id), device_name: String(order.device_name || ''),
+    pickup_date: String(order.startDate || ''), pickup_location: String(order.pickupLocation || '到店自取'),
+    order_detail_url: buildNotificationOrderDetailUrl(c.req.url, order.id, 'CUSTOMER'),
+    company_name: String(companyDetails.name || ''), company_email: String(companyDetails.email || ''),
+  }
+  const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
+  const subject = fill(String(template.subject || '取件提醒 - {order_number}'))
+  const payload = buildPickupQrPayload(order.id)
+  const qrImageUrl = `https://quickchart.io/qr?text=${encodeURIComponent(payload)}&size=240&margin=2&ecLevel=M`
+  const qrSection = `<hr style="margin:28px 0;border:0;border-top:1px solid #e5e7eb;"><div style="text-align:center;"><h3 style="margin:0 0 8px;color:#111827;">取货二维码</h3><p style="margin:0 0 14px;color:#6b7280;">到店后请向工作人员出示此二维码</p><img src="${escapeHtml(qrImageUrl)}" width="220" height="220" alt="订单 ${escapeHtml(vars.order_number)} 取货二维码" style="display:block;width:220px;height:220px;margin:0 auto;border:8px solid #fff;"><p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">订单号：${escapeHtml(vars.order_number)}</p></div>`
+  const html = renderEmailNotificationHtml(subject, fill(String(template.body || '')), vars.company_name, template.theme_color || '#f0a35b', qrSection)
+  const text = `您好 ${vars.customer_name}：您的订单 ${vars.order_number} 已准备取货。请到店后出示取货二维码。`
+  await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(text, 2000), html })
+}
+
 // 给一条已创建的站内信补发邮件：找收件人邮箱、找兜底模板、套用变量、发信。
 // 尽力而为——任何一步失败都不影响站内信本身，调用方只需 catch 掉即可。
 async function sendNotificationEmail(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string }): Promise<void> {
@@ -46,6 +71,11 @@ async function sendNotificationEmail(c: Context, notification: { recipientId: st
   const recipient = await c.env.RENT.prepare('SELECT name, email, role FROM users WHERE id = ?').bind(notification.recipientId).first() as any
   const email = String(recipient?.email || '').trim()
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith('@invalid.local')) return
+
+  if (notification.type === 'pickup_reminder') {
+    await sendPickupReminderEmail(c, notification, recipient, email)
+    return
+  }
 
   await ensureSiteNotificationEmailTemplate(c)
   const template = await c.env.RENT.prepare('SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = ?').bind(SITE_NOTIFICATION_TEMPLATE_ID).first() as any
@@ -246,7 +276,7 @@ export async function deliverPendingAgreementNotifications(c: Context): Promise<
   return queued.length
 }
 
-export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string; expiresAt?: string | null; dedupeKey?: string | null; notifyByEmail?: boolean }): Promise<void> {
+export async function createNotification(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string; senderId?: string; expiresAt?: string | null; dedupeKey?: string | null; notifyByEmail?: boolean }): Promise<boolean> {
   await ensureNotificationsTable(c)
   const id = `nt-${crypto.randomUUID()}`
   const result = await c.env.RENT.prepare('INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at, dedupe_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -270,6 +300,7 @@ export async function createNotification(c: Context, notification: { recipientId
     try { await sendNotificationEmail(c, notification) }
     catch (error: any) { console.error('sendNotificationEmail failed:', error?.message || error) }
   }
+  return inserted
 }
 
 // 「付款成功」邮件：套用后台可编辑的 payment_completed 模板，只在 issueInvoice
@@ -353,6 +384,25 @@ export async function createDueDateNotifications(c: Context): Promise<number> {
       `).bind(id, order.userId, notice.type, notice.title, `${notice.text} 订单：${order.orderNo || order.id}。`, order.id, null, null).run() as any
       created += Number(result.meta?.changes ?? result.changes ?? 0)
     }
+  }
+  const melbourneToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const pickupRows = await c.env.RENT.prepare(`
+    SELECT o.id, o.orderNo, o.userId, o.startDate, o.pickupLocation, d.name AS device_name
+    FROM orders o JOIN users u ON u.id = o.userId LEFT JOIN devices d ON d.id = o.deviceId
+    WHERE o.startDate = ? AND o.status IN ('paid', 'pending_pickup') AND u.role = 'CUSTOMER'
+      AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.recipient_id = o.userId AND n.order_id = o.id AND n.type = 'pickup_reminder')
+  `).bind(melbourneToday).all()
+  for (const order of (pickupRows.results || []) as any[]) {
+    const inserted = await createNotification(c, {
+      recipientId: order.userId,
+      type: 'pickup_reminder',
+      title: '今日取货提醒',
+      message: `您的订单 ${order.orderNo || order.id} 今天可以取货，请到店后出示邮件中的取货二维码。`,
+      orderId: order.id,
+      dedupeKey: `pickup-reminder:${order.id}:${melbourneToday}`,
+      notifyByEmail: true,
+    })
+    if (inserted) created++
   }
   return created
 }

@@ -5891,6 +5891,17 @@ tr:hover td {
   .mobile-task-search .form-control { flex: 1 1 auto; min-width: 0; }
   .mobile-task-search .button { flex: 0 0 auto; }
   .mobile-task-search__hint { margin: -6px 0 12px; color: #718397; font-size: .7rem; }
+  .mobile-scan-panel { max-width: 560px; margin-inline: auto; }
+  .mobile-qr-reader { min-height: 260px; display: grid; place-items: center; overflow: hidden; border: 1px dashed var(--m-line); border-radius: 14px; background: #0f172a; color: #cbd5e1; text-align: center; }
+  .mobile-qr-reader video, .mobile-qr-reader img { display: block; width: 100%; max-height: 420px; object-fit: cover; }
+  .mobile-qr-reader__placeholder { padding: 40px 20px; }
+  .mobile-scan-status { min-height: 20px; margin: 12px 0; color: #607487; font-size: .78rem; text-align: center; }
+  .mobile-scan-actions { display: flex; gap: 8px; justify-content: center; }
+  .mobile-scan-manual { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--m-line); }
+  .mobile-scan-manual__row { display: flex; gap: 8px; }
+  .mobile-scan-manual__row .form-control { min-width: 0; flex: 1 1 auto; }
+  .handover-inspection { margin: 18px 0; padding: 16px; border: 1px solid var(--m-line); border-radius: 12px; background: #f8fafc; }
+  .handover-inspection h3 { margin-top: 0; }
   .mobile-task-summary { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 12px; }
   .mobile-task-summary > span { flex: 1 0 auto; padding: 10px 12px; border: 1px solid var(--m-line); border-radius: 10px; background: var(--m-paper); color: #607487; font-size: .75rem; }
   .mobile-task-summary strong { color: var(--m-ink); font-size: 1rem; }
@@ -5914,6 +5925,8 @@ tr:hover td {
     .mobile-task-search .button { flex: 1 1 0; }
     .mobile-task-card { gap: 7px; padding-inline: 9px; }
     .mobile-task-card__time { flex-basis: 48px; }
+    .mobile-scan-manual__row { flex-wrap: wrap; }
+    .mobile-scan-manual__row .form-control, .mobile-scan-manual__row .button { flex-basis: 100%; }
   }
 
   /* --- Page-specific single-column tweaks --- */
