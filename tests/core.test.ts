@@ -21,6 +21,7 @@ import { renderStaffCustomerNew } from '../src/pages/staff/customerNew'
 import { renderRegister } from '../src/pages/public/register'
 import { renderNewContractPage } from '../src/pages/staff/newContract'
 import { renderAdminOrderReview } from '../src/pages/admin/orderReview'
+import { renderAdminOrders } from '../src/pages/admin/orders'
 import { renderStaffContracts } from '../src/pages/staff/contracts'
 import { renderStaffMobileOperations } from '../src/pages/staff/mobileOperations'
 import { renderStaffMobileScan } from '../src/pages/staff/mobileScan'
@@ -666,6 +667,23 @@ test('order status failures stay on the page and use a modal dialog', () => {
   assert.match(html, /Accept: 'application\/json'/)
   assert.match(html, /showModal/)
   assertInlineScriptsParse(html)
+})
+
+test('admin order CSV export is marked as a browser download', async () => {
+  const db = {
+    prepare(sql: string) {
+      return {
+        bind() { return this },
+        async all() { return { results: [] } },
+        async first() { return { total: 0, revenue: 0, pendingCount: 0, activeCount: 0, completedCount: 0 } },
+      }
+    },
+  }
+  const html = await renderAdminOrders(
+    { req: { url: 'https://rent.example.test/admin/orders' }, env: { RENT: db } } as any,
+    { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' },
+  )
+  assert.match(html, /href="\/admin\/orders\/export"[^>]*download>/)
 })
 
 test('user management forms use the shared identity record design', async () => {

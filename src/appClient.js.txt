@@ -372,7 +372,7 @@
       document.addEventListener('pointerover', function (event) {
         const target = event.target instanceof Element ? event.target : null;
         const link = target?.closest('a');
-        if (!link || link.dataset.fullNavigation === 'true' || link.target === '_blank') return;
+        if (!link || link.dataset.fullNavigation === 'true' || link.target === '_blank' || link.hasAttribute('download')) return;
         const url = new URL(link.href, window.location.href);
         if (url.origin === window.location.origin && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/webhooks/')) prefetch(url);
       }, { passive: true });
