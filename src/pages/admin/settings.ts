@@ -27,8 +27,10 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
     adminConfigured: Boolean(delivery.adminConfigured),
     webhookConfigured: Boolean(delivery.webhookConfigured),
     apiTokenMasked: delivery.apiTokenMasked || '',
+    customerApiKeyMasked: delivery.customerApiKeyMasked || '',
     webhookSecretMasked: delivery.webhookSecretMasked || '',
     adminTokenMasked: delivery.adminTokenMasked || '',
+    webhookUrl: delivery.webhookUrl || 'https://rent-web.ydnw6zt6vj.workers.dev/api/delivery/webhooks/zoom2u',
     apiBaseUrl: delivery.apiBaseUrl || 'https://api.zoom2u.com',
     pickupAddress: delivery.pickupAddress || '',
     pickupContactName: delivery.pickupContactName || '',
@@ -195,12 +197,14 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">DELIVERY</span><div><h3>Zoom2u 配送 API 配置</h3><p>当前状态：${dc.configured ? 'API 已配置' : 'API 未配置'}，管理员接口${dc.adminConfigured ? '已配置' : '未配置'}，Webhook Secret${dc.webhookConfigured ? '已配置' : '未配置'}。密钥会使用 SETTINGS_ENCRYPTION_KEY 加密保存，留空表示保留原值。</p></div></div>
+          <div class="form-section-title"><span class="mono">DELIVERY</span><div><h3>Zoom2u Integration</h3><p>按 Zoom2u「My Profile → Integration」的字段填写。当前状态：${dc.configured ? 'API 已配置' : 'API 未配置'}，Customer API key${dc.customerApiKeyMasked ? '已配置' : '未配置'}。密钥会使用 SETTINGS_ENCRYPTION_KEY 加密保存，留空表示保留原值。</p></div></div>
           <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="zoom2uApiToken">Zoom2u API Token</label><input class="form-control" type="password" id="zoom2uApiToken" placeholder="${dc.apiTokenMasked || '粘贴 Zoom2u API Token'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="deliveryAdminToken">配送管理 Token</label><input class="form-control" type="password" id="deliveryAdminToken" placeholder="${dc.adminTokenMasked || '主应用与官网 Worker 共用'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="zoom2uWebhookSecret">Zoom2u Webhook Secret</label><input class="form-control" type="password" id="zoom2uWebhookSecret" placeholder="${dc.webhookSecretMasked || '粘贴 Webhook Secret'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="zoom2uApiBaseUrl">Zoom2u API 地址</label><input class="form-control" type="url" id="zoom2uApiBaseUrl" value="${escAttr(dc.apiBaseUrl)}" placeholder="https://api.zoom2u.com"></div>
+            <div class="form-group"><label class="form-label" for="zoom2uApiToken">Your Zoom2U API key</label><input class="form-control" type="password" id="zoom2uApiToken" placeholder="${dc.apiTokenMasked || 'Paste your Zoom2U API key'}" autocomplete="new-password"><small class="form-text">用于调用 Zoom2u quote、create、status 等 API。</small></div>
+            <div class="form-group"><label class="form-label" for="zoom2uCustomerApiKey">Your Customer API key</label><input class="form-control" type="password" id="zoom2uCustomerApiKey" placeholder="${dc.customerApiKeyMasked || 'Paste your Customer API key'}" autocomplete="new-password"><small class="form-text">用于 Zoom2u Webhook 回调识别；不是本站内部配送管理 Token。</small></div>
+            <div class="form-group"><label class="form-label" for="zoom2uWebhookUrl">Your Web Hook Url</label><div style="display:flex;gap:8px;align-items:center"><input class="form-control" type="url" id="zoom2uWebhookUrl" value="${escAttr(dc.webhookUrl)}" readonly aria-describedby="zoom2uWebhookUrlHelp"><button type="button" class="button button-secondary" id="copyZoom2uWebhookUrl">复制</button></div><small class="form-text" id="zoom2uWebhookUrlHelp">把这个完整地址粘贴到 Zoom2u 的 Web Hook Url 字段。</small></div>
+            <div class="form-group"><label class="form-label" for="zoom2uApiBaseUrl">Zoom2u API 地址（高级）</label><input class="form-control" type="url" id="zoom2uApiBaseUrl" value="${escAttr(dc.apiBaseUrl)}" placeholder="https://api.zoom2u.com"></div>
+            <div class="form-group"><label class="form-label" for="deliveryAdminToken">Internal delivery management token</label><input class="form-control" type="password" id="deliveryAdminToken" placeholder="${dc.adminTokenMasked || '仅供 rent 与官网 Worker 共用'}" autocomplete="new-password"><small class="form-text">这是本站内部 token，不是 Zoom2u API key；两个 Worker 必须使用同一个值。</small></div>
+            <div class="form-group"><label class="form-label" for="zoom2uWebhookSecret">Zoom2u Webhook Authorization Secret（高级）</label><input class="form-control" type="password" id="zoom2uWebhookSecret" placeholder="${dc.webhookSecretMasked || '留空表示保留现有值'}" autocomplete="new-password"><small class="form-text">Zoom2u 回调 Authorization: Basic ... 使用的密钥；如 Zoom2u 另行提供，请填这里。</small></div>
             <div class="form-group"><label class="form-label" for="zoom2uPickupAddress">取货地址</label><input class="form-control" id="zoom2uPickupAddress" value="${escAttr(dc.pickupAddress)}" placeholder="完整街道地址"></div>
             <div class="form-group"><label class="form-label" for="zoom2uPickupContactName">取货联系人</label><input class="form-control" id="zoom2uPickupContactName" value="${escAttr(dc.pickupContactName)}"></div>
             <div class="form-group"><label class="form-label" for="zoom2uPickupEmail">取货联系人邮箱</label><input class="form-control" type="email" id="zoom2uPickupEmail" value="${escAttr(dc.pickupEmail)}"></div>
@@ -286,9 +290,11 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           },
           deliveryConfig: {
             apiToken: inputValue('zoom2uApiToken'),
+            customerApiKey: inputValue('zoom2uCustomerApiKey'),
             webhookSecret: inputValue('zoom2uWebhookSecret'),
             adminToken: inputValue('deliveryAdminToken'),
             apiBaseUrl: inputValue('zoom2uApiBaseUrl'),
+            webhookUrl: inputValue('zoom2uWebhookUrl'),
             pickupAddress: inputValue('zoom2uPickupAddress'),
             pickupContactName: inputValue('zoom2uPickupContactName'),
             pickupEmail: inputValue('zoom2uPickupEmail'),
@@ -411,6 +417,20 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           console.error('Error saving settings:', error);
           alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。'));
         });
+        });
+      })();
+    </script>
+    <script>
+      (function() {
+        const input = document.getElementById('zoom2uWebhookUrl');
+        const button = document.getElementById('copyZoom2uWebhookUrl');
+        if (!input || !button || button.dataset.ready === 'true') return;
+        button.dataset.ready = 'true';
+        button.addEventListener('click', async function() {
+          try { await navigator.clipboard.writeText(input.value); } catch (_) { input.focus(); input.select(); document.execCommand('copy'); }
+          const original = button.textContent;
+          button.textContent = '已复制';
+          window.setTimeout(() => { button.textContent = original || '复制'; }, 1500);
         });
       })();
     </script>

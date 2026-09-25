@@ -7,7 +7,9 @@ import type { Context } from 'hono'
 
 type StoredDeliveryConfig = {
   apiToken?: string
+  customerApiKey?: string
   webhookSecret?: string
+  webhookUrl?: string
   adminToken?: string
   apiBaseUrl?: string
   pickupAddress?: string
@@ -22,7 +24,9 @@ type StoredDeliveryConfig = {
 
 export type DeliveryRuntimeConfig = {
   apiToken: string
+  customerApiKey: string
   webhookSecret: string
+  webhookUrl: string
   adminToken: string
   apiBaseUrl: string
   pickupAddress: string
@@ -78,18 +82,25 @@ function clean(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max)
 }
 
+function defaultWebhookUrl(c: Context): string {
+  const origin = clean((c.env as any).PUBLIC_WEB_ORIGIN, 300) || 'https://rent-web.ydnw6zt6vj.workers.dev'
+  return `${origin.replace(/\/$/, '')}/api/delivery/webhooks/zoom2u`
+}
+
 function mask(value: string): string {
   return value ? `${value.slice(0, 6)}••••${value.slice(-4)}` : ''
 }
 
 export async function getDeliveryRuntimeConfig(c: Context): Promise<DeliveryRuntimeConfig> {
   const stored = await readStoredConfig(c)
-  const [apiToken, webhookSecret, adminToken] = await Promise.all([
-    safeDecrypt(c, stored.apiToken), safeDecrypt(c, stored.webhookSecret), safeDecrypt(c, stored.adminToken),
+  const [apiToken, customerApiKey, webhookSecret, adminToken] = await Promise.all([
+    safeDecrypt(c, stored.apiToken), safeDecrypt(c, stored.customerApiKey), safeDecrypt(c, stored.webhookSecret), safeDecrypt(c, stored.adminToken),
   ])
   return {
     apiToken: apiToken || clean((c.env as any).ZOOM2U_API_TOKEN, MAX_SECRET_LENGTH),
+    customerApiKey,
     webhookSecret: webhookSecret || clean((c.env as any).ZOOM2U_WEBHOOK_SECRET, MAX_SECRET_LENGTH),
+    webhookUrl: clean(stored.webhookUrl, 500) || defaultWebhookUrl(c),
     adminToken: adminToken || clean((c.env as any).DELIVERY_ADMIN_TOKEN, MAX_SECRET_LENGTH),
     apiBaseUrl: clean(stored.apiBaseUrl || (c.env as any).ZOOM2U_API_BASE_URL || 'https://api.zoom2u.com', 180).replace(/\/$/, ''),
     pickupAddress: clean(stored.pickupAddress || (c.env as any).ZOOM2U_PICKUP_ADDRESS, 300),
@@ -105,16 +116,19 @@ export async function getDeliveryRuntimeConfig(c: Context): Promise<DeliveryRunt
 
 export async function getDeliveryConfigSummary(c: Context) {
   const stored = await readStoredConfig(c)
-  const [apiToken, webhookSecret, adminToken] = await Promise.all([
-    safeDecrypt(c, stored.apiToken), safeDecrypt(c, stored.webhookSecret), safeDecrypt(c, stored.adminToken),
+  const [apiToken, customerApiKey, webhookSecret, adminToken] = await Promise.all([
+    safeDecrypt(c, stored.apiToken), safeDecrypt(c, stored.customerApiKey), safeDecrypt(c, stored.webhookSecret), safeDecrypt(c, stored.adminToken),
   ])
   return {
     configured: Boolean(apiToken || clean((c.env as any).ZOOM2U_API_TOKEN, MAX_SECRET_LENGTH)),
+    customerApiKeyConfigured: Boolean(customerApiKey),
     adminConfigured: Boolean(adminToken || clean((c.env as any).DELIVERY_ADMIN_TOKEN, MAX_SECRET_LENGTH)),
     webhookConfigured: Boolean(webhookSecret || clean((c.env as any).ZOOM2U_WEBHOOK_SECRET, MAX_SECRET_LENGTH)),
     apiTokenMasked: mask(apiToken),
+    customerApiKeyMasked: mask(customerApiKey),
     webhookSecretMasked: mask(webhookSecret),
     adminTokenMasked: mask(adminToken),
+    webhookUrl: clean(stored.webhookUrl, 500) || defaultWebhookUrl(c),
     usingEnvFallback: !apiToken && Boolean(clean((c.env as any).ZOOM2U_API_TOKEN, MAX_SECRET_LENGTH)),
     apiBaseUrl: clean(stored.apiBaseUrl || (c.env as any).ZOOM2U_API_BASE_URL || 'https://api.zoom2u.com', 180),
     pickupAddress: clean(stored.pickupAddress || (c.env as any).ZOOM2U_PICKUP_ADDRESS, 300),
@@ -135,12 +149,15 @@ export async function saveDeliveryConfig(c: Context, input: Record<string, any>)
   }
   const current = await readStoredConfig(c)
   const apiTokenPlain = clean(input.apiToken, MAX_SECRET_LENGTH)
+  const customerApiKeyPlain = clean(input.customerApiKey, MAX_SECRET_LENGTH)
   const webhookSecretPlain = clean(input.webhookSecret, MAX_SECRET_LENGTH)
   const adminTokenPlain = clean(input.adminToken, MAX_SECRET_LENGTH)
   const next: StoredDeliveryConfig = {
     apiToken: apiTokenPlain ? await encrypt(c, apiTokenPlain) : current.apiToken,
+    customerApiKey: customerApiKeyPlain ? await encrypt(c, customerApiKeyPlain) : current.customerApiKey,
     webhookSecret: webhookSecretPlain ? await encrypt(c, webhookSecretPlain) : current.webhookSecret,
     adminToken: adminTokenPlain ? await encrypt(c, adminTokenPlain) : current.adminToken,
+    webhookUrl: clean(input.webhookUrl ?? current.webhookUrl ?? defaultWebhookUrl(c), 500),
     apiBaseUrl: clean(input.apiBaseUrl ?? current.apiBaseUrl ?? 'https://api.zoom2u.com', 180).replace(/\/$/, ''),
     pickupAddress: clean(input.pickupAddress ?? current.pickupAddress, 300),
     pickupContactName: clean(input.pickupContactName ?? current.pickupContactName, 120),
@@ -153,5 +170,6 @@ export async function saveDeliveryConfig(c: Context, input: Record<string, any>)
   }
   if (next.pickupEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next.pickupEmail)) throw new Error('配送取货邮箱格式不正确')
   if (next.apiBaseUrl && !/^https:\/\//i.test(next.apiBaseUrl)) throw new Error('Zoom2u API 地址必须是 HTTPS')
+  if (next.webhookUrl && !/^https:\/\//i.test(next.webhookUrl)) throw new Error('Zoom2u Web Hook Url 必须是 HTTPS')
   await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('deliveryConfig', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP").bind(JSON.stringify(next)).run()
 }
