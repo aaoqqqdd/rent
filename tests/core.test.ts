@@ -180,9 +180,7 @@ test('staff and admin mobile navigation keeps only core rental operations', () =
     assert.match(html, /class="sidebar sidebar--desktop"/)
     assert.match(html, /class="sidebar sidebar--mobile"/)
     const desktopSidebar = html.slice(html.indexOf('<aside class="sidebar sidebar--desktop"'), html.indexOf('</aside>', html.indexOf('<aside class="sidebar sidebar--desktop"')))
-    assert.match(desktopSidebar, /href="\/staff\/mobile"[^>]*>.*今日订单/s)
-    assert.match(desktopSidebar, /href="\/staff\/mobile\/scan"[^>]*>.*扫码/s)
-    assert.match(desktopSidebar, /href="\/staff\/inspections"[^>]*>.*验机/s)
+    assert.doesNotMatch(desktopSidebar, /href="\/staff\/mobile(?:\?|\")|href="\/staff\/mobile\/scan"|>今日订单<\/a>|>取货<\/a>|>归还<\/a>|>扫码<\/a>/)
   }
 
   const customerHtml = buildLayout('客户页面', '<p>customer</p>', {
