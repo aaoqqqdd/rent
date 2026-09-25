@@ -146,7 +146,7 @@
     });
 
     document.addEventListener('DOMContentLoaded', function () {
-      const pageTitle = document.title;
+      let pageTitle = document.title;
       const notifiedStorageKey = 'rent-notified-notification-ids';
       const updateBrowserTitle = function (count) {
         document.title = count > 0 ? pageTitle + ' (' + count + ')' : pageTitle;
@@ -340,7 +340,8 @@
           const swap = function () {
             document.body.classList.add('has-navigated');
             content.replaceChildren(...Array.from(nextContent.childNodes));
-            document.title = parsed.title;
+            pageTitle = parsed.title;
+            document.title = pageTitle;
             runScripts(content);
             setActiveLink(url.pathname);
             if (window.runFilterTabMotion) window.runFilterTabMotion();

@@ -221,6 +221,7 @@ test('mobile staff operations page renders a fast searchable task list', async (
 
 test('mobile scan page uses the camera and routes pickup QR payloads', () => {
   const html = renderStaffMobileScan({} as any, { id: 'staff-1', name: 'Staff', role: 'STAFF' })
+  assert.match(html, /<title>扫码作业 - 电脑租赁管理系统<\/title>/)
   assert.match(html, /getUserMedia/)
   assert.match(html, /Html5Qrcode/)
   assert.match(html, /\/staff\/mobile\/scan\?code=/)
