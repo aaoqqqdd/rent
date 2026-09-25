@@ -113,7 +113,7 @@ npx wrangler secret put SETTINGS_ENCRYPTION_KEY
 
 ### 管理员配送管理
 
-管理员可在 `/admin/delivery` 查看所有送货订单、配送费、派送 / 回收状态和追踪链接，并创建 Zoom2u 派送单或回收单。该页面通过 `wrangler.jsonc` 中的 `DELIVERY_SERVICE` Service Binding 调用 `geekslope-web`，浏览器不会接触配送 Token。
+管理员可在 `/admin/delivery` 查看所有送货订单、配送费、派送 / 回收状态和追踪链接，并创建 Zoom2u 派送单或回收单。该页面通过 `wrangler.jsonc` 中的 `DELIVERY_SERVICE` Service Binding 调用 `geekslope-web`，浏览器不会接触配送 Token。官网和租客中心也会显示相同的标准配送状态；Zoom2u 状态变化会通过反向 `RENT_SERVICE` Service Binding 触发客户邮件，邮件按“配送单 + 状态”幂等去重。
 
 首次启用时，在 rent 和 geekslope-web 两个 Worker 设置同一个 `SETTINGS_ENCRYPTION_KEY`，执行主应用迁移，然后登录 rent 管理后台的 `/admin/settings`，在「Zoom2u 配送 API 配置」中填写 API Token、Webhook Secret、配送管理 Token 和取货地址：
 
