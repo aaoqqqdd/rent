@@ -231,6 +231,9 @@ test('mobile scan page uses the camera and routes pickup QR payloads', () => {
   assert.equal(directUrl, 'https://rent.example.test/pickup/o-abc_123')
   assert.equal(parsePickupQrPayload(directUrl), 'o-abc_123')
   assert.equal(parsePickupQrPayload('not-a-rental-code'), '')
+  const retryHtml = renderStaffMobileScan({} as any, { id: 'staff-1', name: 'Staff', role: 'STAFF' }, '请核实输入信息是否正确')
+  assert.match(retryHtml, /请核实输入信息是否正确/)
+  assert.match(retryHtml, />继续扫码</)
 })
 
 test('admin exception center belongs to system settings navigation', () => {

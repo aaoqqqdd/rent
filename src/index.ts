@@ -2267,7 +2267,7 @@ app.get('/staff/mobile/scan', async (c) => {
     if ((pickupReady || returnReady) && (user.role === 'ADMIN' || customer?.staffId === user.id)) {
       return c.redirect(`/staff/orders/${encodeURIComponent(order.id)}/${pickupReady ? 'handover' : 'inspection'}`)
     }
-    return c.html(await pages.renderStaffMobileScan(c, user, !order ? '未找到对应订单，请重新扫描。' : !pickupReady && !returnReady ? '该订单当前没有待处理的取货或归还任务。' : '你没有权限处理该客户的订单。'), 409)
+    return c.html(await pages.renderStaffMobileScan(c, user, !order ? '请核实输入信息是否正确' : !pickupReady && !returnReady ? '该订单当前没有待处理的取货或归还任务。' : '你没有权限处理该客户的订单。'), 409)
   }
   return c.html(pages.renderStaffMobileScan(c, user))
 })
