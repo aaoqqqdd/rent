@@ -35,5 +35,5 @@ export function renderStaffMobileScan(c: Context, user: any, error = '') {
     }catch(_){stopCamera();setStatus('无法打开相机。请确认已允许相机权限，并使用 HTTPS 访问；也可以手动输入订单号。')}};
     start.addEventListener('click',startCamera);stop.addEventListener('click',stopCamera);window.addEventListener('pagehide',stopCamera);
   })();</script>`
-  return buildLayout('手机扫码作业 - 电脑租赁管理系统', body, user, { compactStaffNav: true })
+  return buildLayout('扫码作业', body, user, { compactStaffNav: true })
 }
