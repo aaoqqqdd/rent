@@ -26,7 +26,7 @@
 	"services": [
 		{
 			"binding": "DELIVERY_SERVICE",
-			"service": "geekslope-web",
+			"service": "rent-web",
 			"remote": true
 		}
 	],

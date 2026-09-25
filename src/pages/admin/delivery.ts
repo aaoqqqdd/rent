@@ -52,7 +52,7 @@ function renderBooking(row: AdminDeliveryRow, direction: DeliveryDirection, conf
 }
 
 export async function renderAdminDelivery(c: Context, user: any): Promise<string> {
-  const { rows, available } = await getAdminDeliveryRows(c)
+  const { rows } = await getAdminDeliveryRows(c)
   const url = new URL(c.req.url)
   const error = url.searchParams.get('error') || ''
   const success = url.searchParams.get('success') || ''
@@ -60,8 +60,7 @@ export async function renderAdminDelivery(c: Context, user: any): Promise<string
   const configured = deliveryConfig.adminConfigured
   const body = `<div class="page-header"><div><p class="section-code">OPERATIONS / DELIVERY</p><h2>配送管理</h2><p>统一查看送货与回收状态，并从这里创建 Zoom2u 配送订单。</p></div><div class="record-actions"><a class="button button-secondary" href="/admin/orders">租赁订单</a><a class="button button-secondary" href="/admin/calendar">租赁日历</a></div></div>
     ${error ? `<div class="alert alert-danger">${escapeHtml(error)}</div>` : ''}${success ? `<div class="alert alert-success">${escapeHtml(success)}</div>` : ''}
-    ${!configured ? '<div class="alert">配送管理 Token 尚未配置。请在 rent 和 geekslope-web 两个 Worker 使用同一个 DELIVERY_ADMIN_TOKEN Secret。</div>' : ''}
-    ${!available ? '<div class="alert">配送记录表尚未完成迁移。请先执行最新 D1 migration 0156。</div>' : ''}
+    ${!configured ? '<div class="alert">配送管理 Token 尚未配置。请在「系统设置 → Zoom2u 配送 API 配置」中填写配送管理 Token。</div>' : ''}
     <div class="panel"><div class="section-title"><div><h3>送货订单</h3><span class="section-note">显示最近 200 笔未取消的送货订单</span></div><span class="badge badge-info">${rows.length} 笔</span></div>
       ${rows.length ? `<div class="table-wrapper"><table class="delivery-table"><thead><tr><th>订单 / 客户</th><th>设备 / 租期</th><th>送货地址</th><th>配送费</th><th>送货</th><th>回收</th></tr></thead><tbody>${rows.map(row => `<tr><td><a class="link-button" href="/admin/orders/${encodeURIComponent(row.id)}">${escapeHtml(row.orderNo || row.id)}</a><strong>${escapeHtml(row.customerName || '未知客户')}</strong><small>${escapeHtml(row.customerEmail || '')}</small><span class="badge badge-info">${escapeHtml(statusLabels[String(row.status).toLowerCase()] || row.status)}</span></td><td><strong>${escapeHtml(row.deviceName || '未知设备')}</strong><small>${escapeHtml(row.startDate)} 至 ${escapeHtml(row.endDate)}</small></td><td>${escapeHtml(row.pickupLocation || '未填写地址')}</td><td>${formatCurrency(Number(row.deliveryFee || 0))}</td><td>${renderBooking(row, 'outbound', configured)}</td><td>${renderBooking(row, 'return', configured)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty-state">暂无送货订单。网站订单审核并完成付款后，订单会出现在这里。</div>'}
     </div>
