@@ -54,7 +54,7 @@ async function sendPickupReminderEmail(c: Context, notification: { recipientId: 
   }
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
   const subject = fill(String(template.subject || '取件提醒 - {order_number}'))
-  const payload = buildPickupQrPayload(order.id)
+  const payload = buildPickupQrPayload(order.id, c.req.url)
   const qrImageUrl = `https://quickchart.io/qr?text=${encodeURIComponent(payload)}&size=240&margin=2&ecLevel=M`
   const qrSection = `<hr style="margin:28px 0;border:0;border-top:1px solid #e5e7eb;"><div style="text-align:center;"><h3 style="margin:0 0 8px;color:#111827;">取货二维码</h3><p style="margin:0 0 14px;color:#6b7280;">到店后请向工作人员出示此二维码</p><img src="${escapeHtml(qrImageUrl)}" width="220" height="220" alt="订单 ${escapeHtml(vars.order_number)} 取货二维码" style="display:block;width:220px;height:220px;margin:0 auto;border:8px solid #fff;"><p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">订单号：${escapeHtml(vars.order_number)}</p></div>`
   const html = renderEmailNotificationHtml(subject, fill(String(template.body || '')), vars.company_name, template.theme_color || '#f0a35b', qrSection)

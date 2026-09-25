@@ -683,7 +683,7 @@ app.get('/login', async (c) => {
   }
   const deletedMessage = c.req.query('deletion_requested') === '1' ? '账户删除申请已提交，进入 7 天冷静期；您已退出登录。7 天内重新登录可取消删除。' : undefined
   const message = c.req.query('reset') === '1' ? '密码已重置，请使用新密码登录。' : deletedMessage
-  return c.html(pages.renderLogin(message, shouldShowTestAccounts(c)))
+  return c.html(pages.renderLogin(message, shouldShowTestAccounts(c), c.req.query('redirect') || ''))
 })
 
 app.get('/contact', async (c) => {
@@ -703,8 +703,10 @@ app.post('/login', async (c) => {
   const form = await c.req.parseBody()
   const account = form.account?.trim()
   const password = form.password?.trim()
+  const requestedRedirect = String(form.redirect || '')
+  const redirectPath = /^\/(?![\\/])/.test(requestedRedirect) ? requestedRedirect : ''
   if (!account || !password) {
-    return c.html(pages.renderLogin('请输入账号和密码', shouldShowTestAccounts(c)))
+    return c.html(pages.renderLogin('请输入账号和密码', shouldShowTestAccounts(c), redirectPath))
   }
   const loginIp = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim().slice(0, 64)
   const normalizedAccount = String(account).toLowerCase().slice(0, 254)
@@ -718,14 +720,14 @@ app.post('/login', async (c) => {
     const remainingSeconds = lockMinutes * 60 - elapsedSeconds
     if (remainingSeconds > 0) {
       const remainingMinutes = Math.ceil(remainingSeconds / 60)
-      return c.html(pages.renderLogin(`登录失败次数过多，请 ${remainingMinutes} 分钟后再试`, shouldShowTestAccounts(c)), 429)
+      return c.html(pages.renderLogin(`登录失败次数过多，请 ${remainingMinutes} 分钟后再试`, shouldShowTestAccounts(c), redirectPath), 429)
     }
   }
   const user = await verifyUserCredentials(c, account, password)
   if (!user) {
     await c.env.RENT.prepare('INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (NULL, ?, ?, ?, \'failure\')').bind(normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
     await c.env.RENT.prepare('INSERT INTO login_attempts (ip_address, account) VALUES (?, ?)').bind(loginIp, normalizedAccount).run()
-    return c.html(pages.renderLogin('账号或密码错误', shouldShowTestAccounts(c)))
+    return c.html(pages.renderLogin('账号或密码错误', shouldShowTestAccounts(c), redirectPath))
   }
   // 冷静期内登录视为撤销删除申请。
   if ((user as any).deletion_scheduled_at || (user as any).deletionScheduledAt) {
@@ -735,9 +737,10 @@ app.post('/login', async (c) => {
   }
   await c.env.RENT.prepare("INSERT INTO login_history (user_id, account, ip_address, user_agent, status) VALUES (?, ?, ?, ?, 'success')").bind(user.id, normalizedAccount, loginIp, c.req.header('User-Agent') || '').run()
   await c.env.RENT.prepare('DELETE FROM login_attempts WHERE ip_address = ? AND account = ?').bind(loginIp, normalizedAccount).run()
-  const response = c.redirect(user.role === 'CUSTOMER'
+  const defaultRedirect = user.role === 'CUSTOMER'
     ? (user.accountType === 'guest' ? '/customer/guest' : '/customer/dashboard')
-    : isMobileDeviceRequest(c) ? '/staff/mobile' : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard')
+    : isMobileDeviceRequest(c) ? '/staff/mobile' : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard'
+  const response = c.redirect(redirectPath || defaultRedirect)
   const session = await createAuthSession(c, user.id, form.remember === 'on')
   let cookieOptions = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`;
   if (new URL(c.req.url).protocol === 'https:') cookieOptions += '; Secure'
@@ -1338,6 +1341,16 @@ app.post('/customer/guest/upgrade', async (c) => {
   if (password !== confirmation) return c.html(await pages.renderGuestAccount(c, user, '两次输入的新密码不一致。'))
   await updateUser(c, user.id, { password, accountType: 'formal', guestOrderId: null, guestExpiresAt: null })
   return c.redirect('/customer/dashboard?upgraded=1')
+})
+
+app.get('/pickup/:orderId', async (c) => {
+  const order = await getOrderById(c, c.req.param('orderId'))
+  if (!order) return c.html(renderNotFound(), 404)
+  const user = c.get('user')
+  if (!user) return c.redirect(`/login?redirect=${encodeURIComponent(c.req.path)}`)
+  if (['STAFF', 'ADMIN'].includes(user.role)) return c.redirect(`/staff/mobile/scan?code=${encodeURIComponent(c.req.url)}`)
+  if (user.role === 'CUSTOMER' && order.userId === user.id) return c.redirect(`/customer/orders/${encodeURIComponent(order.id)}`)
+  return c.html(renderForbidden(), 403)
 })
 
 app.get('/customer/orders', async (c) => {
