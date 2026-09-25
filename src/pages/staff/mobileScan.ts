@@ -18,7 +18,7 @@ export function renderStaffMobileScan(c: Context, user: any, error = '') {
       <form method="get" action="/staff/mobile/scan" class="mobile-scan-manual"><label class="form-label" for="scan-code">无法扫码？输入订单号</label><div class="mobile-scan-manual__row"><input class="form-control" id="scan-code" name="code" placeholder="订单号或扫码内容" autocomplete="off" inputmode="search" enterkeyhint="search" required><button class="button button-secondary" type="submit">查找</button></div></form>
     </section>
   </div>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script>(()=>{
     const reader=document.getElementById('qr-reader'),start=document.getElementById('start-camera'),stop=document.getElementById('stop-camera'),status=document.getElementById('scan-status');
     if(!reader||!start||!stop||!status)return;
