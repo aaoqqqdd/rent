@@ -398,6 +398,8 @@ export async function renderNewContractPage(c: Context, user: any) {
       const addressStatus = document.getElementById('address-search-status');
       let addressTimer;
       let addressRequest;
+      const addressCache = new Map();
+      let addressRequestSequence = 0;
       let activeSuggestion = -1;
       let sessionToken = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : String(Date.now());
       function setAddressStatus(message, state) {
@@ -420,8 +422,18 @@ export async function renderNewContractPage(c: Context, user: any) {
         clearTimeout(addressTimer);
         if (addressRequest) addressRequest.abort();
         const query = searchInput.value.trim();
+        const requestSequence = ++addressRequestSequence;
         document.getElementById('delivery-place-id').value = '';
         if (query.length < 3) { closeSuggestions(); suggestions.replaceChildren(); setAddressStatus('至少输入 3 个字符，或直接手工填写。'); return; }
+        const cachedSuggestions = addressCache.get(query.toLowerCase());
+        if (cachedSuggestions) {
+          suggestions.replaceChildren();
+          cachedSuggestions.forEach(function(item) { const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'option'); button.setAttribute('aria-selected', 'false'); button.dataset.placeId = item.placeId; button.dataset.address = JSON.stringify(item); const marker = document.createElement('span'); marker.className = 'address-suggestion-marker mono'; marker.textContent = 'AU'; const label = document.createElement('span'); label.textContent = item.text; button.append(marker, label); suggestions.appendChild(button); });
+          suggestions.hidden = !cachedSuggestions.length;
+          searchInput.setAttribute('aria-expanded', String(Boolean(cachedSuggestions.length)));
+          setAddressStatus(cachedSuggestions.length ? '请选择一个地址以自动填写。' : '没有找到匹配地址，请继续输入或手工填写。', cachedSuggestions.length ? 'ready' : 'empty');
+          return;
+        }
         setAddressStatus('正在查找澳洲地址…', 'loading');
         addressTimer = setTimeout(async function() {
           addressRequest = new AbortController();
@@ -429,8 +441,10 @@ export async function renderNewContractPage(c: Context, user: any) {
             const response = await fetch('/api/address/autocomplete?q=' + encodeURIComponent(query) + '&session=' + encodeURIComponent(sessionToken), { signal: addressRequest.signal });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || '地址联想暂时不可用');
+            if (requestSequence !== addressRequestSequence) return;
             suggestions.replaceChildren();
             const items = Array.isArray(data.suggestions) ? data.suggestions : [];
+            addressCache.set(query.toLowerCase(), items);
             items.forEach(function(item) { const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'option'); button.setAttribute('aria-selected', 'false'); button.dataset.placeId = item.placeId; button.dataset.address = JSON.stringify(item); const marker = document.createElement('span'); marker.className = 'address-suggestion-marker mono'; marker.textContent = 'AU'; const label = document.createElement('span'); label.textContent = item.text; button.append(marker, label); suggestions.appendChild(button); });
             if (items.length) { const attribution = document.createElement('small'); attribution.textContent = '© OpenStreetMap contributors'; suggestions.appendChild(attribution); }
             suggestions.hidden = !items.length;
@@ -441,7 +455,7 @@ export async function renderNewContractPage(c: Context, user: any) {
             closeSuggestions();
             setAddressStatus(error.message || '地址联想暂时不可用，请手工填写。', 'error');
           }
-        }, 300);
+        }, 180);
       });
       searchInput.addEventListener('keydown', function(event) {
         const options = suggestions.querySelectorAll('button[role="option"]');

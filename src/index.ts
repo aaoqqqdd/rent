@@ -5602,38 +5602,52 @@ app.get('/api/address/autocomplete', async (c) => {
   const input = String(c.req.query('q') || '').trim().slice(0, 120)
   if (input.length < 3) return c.json({ suggestions: [] })
   const headers = { Accept: 'application/json', 'User-Agent': 'PC-Rental/1.0 address search' }
+  const cacheUrl = new URL(c.req.url)
+  cacheUrl.search = `?q=${encodeURIComponent(input)}&__address_cache_v=2`
+  const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' })
+  const cache = caches.default
+  const cached = await cache.match(cacheKey)
+  if (cached) return cached
+  const searchController = new AbortController()
+  const timeout = setTimeout(() => searchController.abort(), 1800)
   const providers = [
-    async () => {
-      const response = await fetch('https://photon.komoot.io/api/?' + new URLSearchParams({ q: `${input}, Australia`, limit: '6', lang: 'en' }), { headers })
+    async (signal: AbortSignal) => {
+      const response = await fetch('https://photon.komoot.io/api/?' + new URLSearchParams({ q: `${input}, Melbourne, Victoria, Australia`, limit: '6', lang: 'en' }), { headers, signal })
       if (!response.ok) throw new Error(`Photon ${response.status}`)
       const data = await response.json() as any
       return (data.features || []).map((feature: any) => feature.properties || {})
     },
-    async () => {
-      const response = await fetch('https://nominatim.openstreetmap.org/search?' + new URLSearchParams({ q: `${input}, Australia`, format: 'jsonv2', addressdetails: '1', limit: '6', countrycodes: 'au' }), { headers })
+    async (signal: AbortSignal) => {
+      const response = await fetch('https://nominatim.openstreetmap.org/search?' + new URLSearchParams({ q: `${input}, Melbourne, Victoria, Australia`, format: 'jsonv2', addressdetails: '1', limit: '6', countrycodes: 'au' }), { headers, signal })
       if (!response.ok) throw new Error(`Nominatim ${response.status}`)
       const data = await response.json() as any[]
       return data.map((item: any) => ({ ...item.address, osm_type: item.osm_type, osm_id: item.osm_id, display_name: item.display_name }))
     },
   ]
-  for (const provider of providers) {
-    try {
-      const items = await provider()
-      const suggestions = items.slice(0, 6).map((p: any) => {
-        const street = [p.housenumber, p.house_number, p.street, p.road].filter(Boolean).join(' ')
-        const text = [street, p.city || p.town || p.suburb || p.locality, p.state, p.postcode].filter(Boolean).join(', ') || String(p.display_name || '')
-        const placeId = `${p.osm_type || 'osm'}_${p.osm_id || text}`.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 300)
-        const stateNames: Record<string, string> = { victoria: 'VIC', vic: 'VIC', 'new south wales': 'NSW', nsw: 'NSW', queensland: 'QLD', qld: 'QLD', 'south australia': 'SA', sa: 'SA', 'western australia': 'WA', wa: 'WA', tasmania: 'TAS', tas: 'TAS', 'northern territory': 'NT', nt: 'NT', 'australian capital territory': 'ACT', act: 'ACT' }
-        const rawState = String(p.state || '').trim()
-        const state = stateNames[rawState.toLowerCase()] || rawState.toUpperCase()
-        return { placeId, text, street, suburb: p.city || p.town || p.suburb || p.locality || '', state, postcode: p.postcode || '', formattedAddress: text }
-      }).filter((item: any) => item.placeId && item.text)
-      if (suggestions.length) return c.json({ suggestions })
-    } catch (error: any) {
-      console.error('Address provider failed:', error?.message || error)
-    }
+  try {
+    const items = await Promise.any(providers.map((provider) => provider(searchController.signal).then((results) => {
+      if (!results.length) throw new Error('No address suggestions')
+      return results
+    })))
+    const suggestions = items.slice(0, 6).map((p: any) => {
+      const street = [p.housenumber, p.house_number, p.street, p.road].filter(Boolean).join(' ')
+      const text = [street, p.city || p.town || p.suburb || p.locality, p.state, p.postcode].filter(Boolean).join(', ') || String(p.display_name || '')
+      const placeId = `${p.osm_type || 'osm'}_${p.osm_id || text}`.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 300)
+      const stateNames: Record<string, string> = { victoria: 'VIC', vic: 'VIC', 'new south wales': 'NSW', nsw: 'NSW', queensland: 'QLD', qld: 'QLD', 'south australia': 'SA', sa: 'SA', 'western australia': 'WA', wa: 'WA', tasmania: 'TAS', tas: 'TAS', 'northern territory': 'NT', nt: 'NT', 'australian capital territory': 'ACT', act: 'ACT' }
+      const rawState = String(p.state || '').trim()
+      const state = stateNames[rawState.toLowerCase()] || rawState.toUpperCase()
+      return { placeId, text, street, suburb: p.city || p.town || p.suburb || p.locality || '', state, postcode: p.postcode || '', formattedAddress: text }
+    }).filter((item: any) => item.placeId && item.text)
+    const response = new Response(JSON.stringify({ suggestions }), { status: 200, headers: { 'content-type': 'application/json; charset=UTF-8', 'cache-control': 'public, max-age=300, s-maxage=900' } })
+    c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()))
+    return response
+  } catch (error: any) {
+    console.error('Address providers failed:', error?.message || error)
+    return c.json({ error: '地址联想暂时不可用，可手工填写地址' }, 502)
+  } finally {
+    clearTimeout(timeout)
+    searchController.abort()
   }
-  return c.json({ error: '地址联想暂时不可用，可手工填写地址' }, 502)
 })
 
 app.get('/api/address/details', async (c) => {
