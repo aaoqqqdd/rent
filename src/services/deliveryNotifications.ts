@@ -61,6 +61,7 @@ export async function handleDeliveryStatusEmail(c: Context<{ Bindings: DeliveryB
   const key = `delivery-status:${booking.id}:${status.key}`
   const existing = await db.prepare('SELECT id, status FROM email_events WHERE idempotency_key = ? LIMIT 1').bind(key).first<Record<string, unknown>>()
   if (String(existing?.status || '') === 'SENT') return c.json({ ok: true, duplicate: true }, 200)
+  if (existing && !['FAILED', 'SKIPPED'].includes(String(existing.status || ''))) return c.json({ ok: true, duplicate: true }, 200)
   const eventId = String(existing?.id || `email-delivery-${crypto.randomUUID().replaceAll('-', '')}`)
   if (!existing) {
     await db.prepare(`INSERT OR IGNORE INTO email_events
