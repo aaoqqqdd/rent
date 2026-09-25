@@ -7,6 +7,8 @@ import { buildLayout, getOrderById, getUserById, getDeviceById, formatCurrency, 
 import { renderManualInspectionFields, inspectionText } from '../../lib/inspection'
 import { renderReconciliationPanel } from '../partials/reconciliationPanel'
 import type { Context } from 'hono'
+import { getDeliveryBookingsForOrder, safeDeliveryTrackingUrl } from '../../services/deliveryViews'
+import { deliveryStatusInfo } from '../../deliveryStatus'
 
 const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
@@ -19,6 +21,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   if (user.role !== 'ADMIN' && customer?.staffId !== user.id) {
     return buildLayout('无权查看订单', '<div class="panel"><h2>无权查看订单</h2></div>', user)
   }
+  const deliveryBookings = await getDeliveryBookingsForOrder(c, order.id)
   const [device, existingContract, timeChanges, changeHistory, beforeInspectionRow] = await Promise.all([getDeviceById(c, order.deviceId), getContractByOrderId(c, order.id), c.env.RENT.prepare('SELECT * FROM order_time_change_history WHERE order_id = ? ORDER BY created_at DESC LIMIT 10').bind(order.id).all(), c.env.RENT.prepare('SELECT h.change_type, h.before_json, h.after_json, h.reason, h.changed_by, h.created_at, u.name AS changed_by_name FROM order_change_history h LEFT JOIN users u ON u.id = h.changed_by WHERE h.order_id = ? ORDER BY h.created_at DESC LIMIT 20').bind(order.id).all(), c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE rental_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.id).first()])
   let beforeInspection: Record<string, any> = {}
   try { beforeInspection = JSON.parse((beforeInspectionRow as any)?.snapshot_json || '{}') } catch (_) { }
@@ -83,6 +86,8 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           ` : ''}
         </div>
       </div>
+
+      ${deliveryBookings.length ? `<div class="panel" style="margin-top:20px"><div class="section-title"><div><h3>配送状态</h3><span class="section-note">Zoom2u 回调会自动更新状态并通知客户。</span></div></div>${deliveryBookings.map((booking: any) => { const info = deliveryStatusInfo(booking.status); const trackingUrl = safeDeliveryTrackingUrl(booking.trackingUrl); return `<div class="delivery-status-row"><div><strong>${booking.direction === 'return' ? '回收' : '派送'}：${esc(info.label)}</strong><p class="section-note">${esc(info.description)}</p>${booking.providerReference ? `<small class="section-note">配送编号：${esc(booking.providerReference)}</small>` : ''}${info.special ? '<small class="delivery-lock-note">该状态下不能更新或取消配送订单。</small>' : ''}</div>${trackingUrl ? `<a class="button button-secondary" href="${esc(trackingUrl)}" target="_blank" rel="noopener noreferrer">查看追踪链接</a>` : ''}</div>` }).join('')}</div>` : ''}
 
       ${timeChanges?.results?.length ? `<div class="panel" style="margin-top:20px;"><h3>预约时间变更记录</h3>${timeChanges.results.map((change: any) => `<p>${formatMelbourneDateTime(change.created_at)}：${change.previous_pickup_slot || '未设置'} / ${change.previous_return_slot || '未设置'} → ${change.pickup_slot} / ${change.return_slot}${Number(change.additional_service_fee) > 0 ? `，新增服务费 ${formatCurrency(change.additional_service_fee)}` : ''}</p>`).join('')}</div>` : ''}
 
