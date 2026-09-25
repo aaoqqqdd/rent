@@ -113,16 +113,16 @@ npx wrangler secret put SETTINGS_ENCRYPTION_KEY
 
 ### 管理员配送管理
 
-管理员可在 `/admin/delivery` 查看所有送货订单、配送费、派送 / 回收状态和追踪链接，并创建 Zoom2u 派送单或回收单。该页面通过 `wrangler.jsonc` 中的 `DELIVERY_SERVICE` Service Binding 调用 `geekslope-web`，浏览器不会接触配送 Token。
+管理员可在 `/admin/delivery` 查看所有送货订单、配送费、派送 / 回收状态和追踪链接，并创建 Zoom2u 派送单或回收单。该页面通过 `wrangler.jsonc` 中的 `DELIVERY_SERVICE` Service Binding 调用 `rent-web`，浏览器不会接触配送 Token。
 
-首次启用时，在 rent 和 geekslope-web 两个 Worker 设置同一个 `SETTINGS_ENCRYPTION_KEY`，执行主应用迁移，然后登录 rent 管理后台的 `/admin/settings`，在「Zoom2u 配送 API 配置」中填写 API Token、Webhook Secret、配送管理 Token 和取货地址：
+首次启用时，在 rent 和 rent-web 两个 Worker 设置同一个 `SETTINGS_ENCRYPTION_KEY`，执行主应用迁移，然后登录 rent 管理后台的 `/admin/settings`，按 Zoom2u 的字段填写 `Your Zoom2U API key`、`Your Customer API key` 和 `Your Web Hook Url`。Webhook Authorization Secret、内部配送管理 token 和取货地址等属于高级 / 内部配置：
 
 ```bash
 npx wrangler secret put SETTINGS_ENCRYPTION_KEY
 npx wrangler d1 migrations apply rent --remote
 ```
 
-两个 Worker 必须使用相同的 `SETTINGS_ENCRYPTION_KEY`，否则官网无法解密后台保存的配送 Token。旧版 `ZOOM2U_*` 和 `DELIVERY_ADMIN_TOKEN` Wrangler Secrets 仍可作为兼容回退，但新配置优先使用后台设置。配送记录保存在共享 D1 的 `delivery_bookings` 表中；Zoom2u 的报价、派单和 Webhook 仍由 geekslope-web 负责。
+两个 Worker 必须使用相同的 `SETTINGS_ENCRYPTION_KEY`，否则官网无法解密后台保存的配送 Token。旧版 `ZOOM2U_*` 和 `DELIVERY_ADMIN_TOKEN` Wrangler Secrets 仍可作为兼容回退，但新配置优先使用后台设置。配送记录保存在共享 D1 的 `delivery_bookings` 表中；Zoom2u 的报价、派单和 Webhook 仍由 rent-web 负责。
 
 ### 配置送货地址联想
 
