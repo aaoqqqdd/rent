@@ -36,7 +36,8 @@ test('due-date notifications are inserted once per order and reminder type', asy
           return { meta: { changes: 1 } }
         },
         async all() {
-          if (/SELECT o\.id/i.test(sql)) return { results: [{ id: 'order-1', userId: 'customer-1', orderNo: 'ORD-1' }] }
+          if (/SELECT o\.id/i.test(sql) && /o\.endDate/i.test(sql)) return { results: [{ id: 'order-1', userId: 'customer-1', orderNo: 'ORD-1' }] }
+          if (/SELECT o\.id/i.test(sql) && /o\.startDate/i.test(sql)) return { results: [{ id: 'order-2', userId: 'customer-1', orderNo: 'ORD-2' }] }
           return { results: [] }
         },
       }
@@ -44,7 +45,7 @@ test('due-date notifications are inserted once per order and reminder type', asy
   }
   const context = { env: { RENT: db } } as any
 
-  assert.equal(await createDueDateNotifications(context), 2)
+  assert.equal(await createDueDateNotifications(context), 3)
   assert.equal(await createDueDateNotifications(context), 0)
-  assert.equal(statements.filter(sql => /INSERT OR IGNORE INTO notifications/i.test(sql)).length, 4)
+  assert.equal(statements.filter(sql => /INSERT OR IGNORE INTO notifications/i.test(sql)).length, 6)
 })

@@ -23,6 +23,8 @@ import { renderNewContractPage } from '../src/pages/staff/newContract'
 import { renderAdminOrderReview } from '../src/pages/admin/orderReview'
 import { renderStaffContracts } from '../src/pages/staff/contracts'
 import { renderStaffMobileOperations } from '../src/pages/staff/mobileOperations'
+import { renderStaffMobileScan } from '../src/pages/staff/mobileScan'
+import { buildPickupQrPayload, parsePickupQrPayload } from '../src/lib/pickupQr'
 import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
@@ -172,6 +174,7 @@ test('staff and admin mobile navigation keeps only core rental operations', () =
     assert.match(mobileNav, /href="\/staff\/mobile"[^>]*>.*今日订单/s)
     assert.match(mobileNav, /href="\/staff\/mobile\?stage=pickup"[^>]*>.*取货/s)
     assert.match(mobileNav, /href="\/staff\/mobile\?stage=return"[^>]*>.*归还/s)
+    assert.match(mobileNav, /href="\/staff\/mobile\/scan"[^>]*>.*扫码/s)
     assert.match(mobileNav, /href="\/staff\/inspections"[^>]*>.*验机/s)
     assert.doesNotMatch(mobileNav, /通知|设置|客户|合同/)
     assert.match(html, /class="sidebar sidebar--desktop"/)
@@ -212,6 +215,17 @@ test('mobile staff operations page renders a fast searchable task list', async (
   assert.match(html, /name="q"/)
   assert.match(html, /扫码或搜索订单号、客户、设备/)
   assert.doesNotMatch(html, /sidebar--desktop/)
+})
+
+test('mobile scan page uses the camera and routes pickup QR payloads', () => {
+  const html = renderStaffMobileScan({} as any, { id: 'staff-1', name: 'Staff', role: 'STAFF' })
+  assert.match(html, /getUserMedia/)
+  assert.match(html, /Html5Qrcode/)
+  assert.match(html, /\/staff\/mobile\/scan\?code=/)
+  assertInlineScriptsParse(html)
+  const payload = buildPickupQrPayload('o-abc_123')
+  assert.equal(parsePickupQrPayload(payload), 'o-abc_123')
+  assert.equal(parsePickupQrPayload('not-a-rental-code'), '')
 })
 
 test('admin exception center belongs to system settings navigation', () => {
@@ -350,7 +364,7 @@ test('return inspection is available for every active rental status', async () =
       },
     }
     const html = await renderStaffInspection({ env: { RENT: db } } as any, { id: 'staff-1', role: 'STAFF', name: 'Staff' }, 'o1')
-    assert.match(html, /<h2>归还验机<\/h2>/)
+    assert.match(html, /<h2>归还后验机<\/h2>/)
     assert.doesNotMatch(html, /当前订单不能执行归还验机/)
   }
 })
