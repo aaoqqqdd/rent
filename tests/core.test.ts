@@ -40,7 +40,7 @@ import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedbac
 import { renderStaffInspection } from '../src/pages/staff/inspection'
 import { renderGuestAccount } from '../src/pages/customer/guestAccount'
 import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
-import { isPickupHoldExpired } from '../src/domain/pickupHold'
+import { isPickupHoldExpired, returnOverdueDays } from '../src/domain/pickupHold'
 import { extractInlineScripts } from './helpers'
 import { couponApplicableComponents, couponDiscountableBase } from '../src/actions/coupons'
 import { formatInvoicePaymentMethods } from '../src/pages/invoice'
@@ -69,6 +69,13 @@ test('store pickup holds expire two Melbourne hours after the scheduled exact ti
   assert.equal(isPickupHoldExpired(order, new Date('2026-10-05T00:30:00Z')), true) // 11:30 AEDT
   assert.equal(isPickupHoldExpired({ startDate: '2026-10-05', pickupTimeSlot: '23:30' }, new Date('2026-10-05T14:30:00Z')), true)
   assert.equal(isPickupHoldExpired({ ...order, deliveryMethod: 'Delivery' }, new Date('2026-10-05T00:30:00Z')), false)
+})
+
+test('return becomes overdue after its two-hour grace period and rents accrue from the next day', () => {
+  const order = { endDate: '2026-10-05', returnTimeSlot: '20:00' }
+  assert.equal(returnOverdueDays(order, new Date('2026-10-05T10:59:00Z')), null) // 21:59 AEDT
+  assert.equal(returnOverdueDays(order, new Date('2026-10-05T11:01:00Z')), 0)
+  assert.equal(returnOverdueDays(order, new Date('2026-10-06T01:00:00Z')), 1)
 })
 
 test('login preserves a safe internal redirect for protected pages', () => {

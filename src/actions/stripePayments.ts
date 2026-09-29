@@ -5,14 +5,14 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation, logError } from '../site'
+import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation, logError, updateOrderStatus } from '../site'
 import { createNotification } from '../services/notifications'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { squareRequest } from '../square'
 import { releaseCouponForOrder } from './coupons'
 import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
 import { computeOrderSettlementStatus } from '../domain/orderSettlement'
-import { isPickupHoldExpired } from '../domain/pickupHold'
+import { isPickupHoldExpired, returnOverdueDays } from '../domain/pickupHold'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
@@ -1208,6 +1208,7 @@ async function settlePreauthorizedDeposit(c: Context, admin: any, order: any, fo
   if (!/^\d+(\.\d{1,2})?$/.test(refundText) || !Number.isFinite(refundAmount) || refundAmount < 0 || refundAmount > remaining) return c.text(`退款金额无效：本次最多可释放 ${remaining.toFixed(2)}`, 400)
   const totalReleased = Number((previous + refundAmount).toFixed(2))
   const deductionAmount = Number(Math.max(0, depositAmount - totalReleased).toFixed(2))
+  if (deductionAmount < Number((order as any).overdue_deposit_applied || 0)) return c.text('退款金额不能覆盖已计入的逾期归还费用', 409)
   const deduction = validateDepositDeduction(form, depositAmount, deductionAmount)
   if (deduction instanceof Response) return deduction
   const selectedRefundMethod = String(form.refundMethod || order.refundMethod || 'balance')
@@ -1253,6 +1254,7 @@ async function settleSetupIntentDeposit(c: Context, admin: any, order: any, form
   const deductionText = String(form.deductionAmount ?? '0').trim()
   const deductionAmount = Number(deductionText)
   if (!/^\d+(\.\d{1,2})?$/.test(deductionText) || !Number.isFinite(deductionAmount) || deductionAmount < 0) return c.text('扣款金额无效', 400)
+  if (deductionAmount < Number(order.overdue_deposit_applied || 0)) return c.text('扣款金额不能低于已计入的逾期归还费用', 409)
   const deduction = validateDepositDeduction(form, depositAmount, deductionAmount)
   if (deduction instanceof Response) return deduction
   if (deductionAmount === 0) {
@@ -1320,6 +1322,7 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   const depositRefundAmount = Number((refundAmount - priceRefundAmount).toFixed(2))
   const totalRefunded = Number((previouslyRefunded + depositRefundAmount).toFixed(2))
   const deductionAmount = Number(Math.max(0, depositAmount - totalRefunded).toFixed(2))
+  if (deductionAmount < Number((order as any).overdue_deposit_applied || 0)) return c.text('退款金额不能覆盖已计入的逾期归还费用', 409)
   const refundedProcessingFee = refundableDepositFee(depositRefundAmount, payment)
   const totalRefundAmount = Number((refundAmount + refundedProcessingFee).toFixed(2))
   const refundItem = String(form.refundItem || 'deposit').trim()
@@ -1523,6 +1526,57 @@ export async function expireMissedPickupOrders(c: Context, now = new Date()): Pr
     }
   }
   return { expired, failed }
+}
+
+function dateAfter(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00Z`)
+  value.setUTCDate(value.getUTCDate() + days)
+  return value.toISOString().slice(0, 10)
+}
+
+export async function chargeOverdueReturns(c: Context, now = new Date()): Promise<{ overdue: number; charged: number }> {
+  const administrator = await c.env.RENT.prepare("SELECT id FROM users WHERE role = 'ADMIN' AND COALESCE(status, 'active') = 'active' ORDER BY created_at ASC LIMIT 1").first() as any
+  if (!administrator?.id) throw new Error('没有可用于处理逾期归还的管理员账户')
+  const candidates = ((await c.env.RENT.prepare("SELECT o.*, d.pricePerDay FROM orders o LEFT JOIN devices d ON d.id = o.deviceId WHERE o.status IN ('active', 'extended', 'overdue') AND o.return_received_at IS NULL").all()).results || []) as any[]
+  let overdue = 0
+  let charged = 0
+  for (const order of candidates) {
+    const overdueDays = returnOverdueDays(order, now)
+    if (overdueDays === null) continue
+    overdue++
+    const dailyRate = Math.max(0, Number(order.dailyRate || order.pricePerDay || 0))
+    const charges = [{ date: String(order.endDate), rental: 0, fee: 25 }, ...Array.from({ length: overdueDays }, (_, index) => ({ date: dateAfter(String(order.endDate), index + 1), rental: dailyRate, fee: 0 }))]
+    const before = await c.env.RENT.prepare('SELECT COUNT(*) AS count FROM overdue_return_charges WHERE order_id = ?').bind(order.id).first() as any
+    for (const charge of charges) {
+      await c.env.RENT.prepare('INSERT OR IGNORE INTO overdue_return_charges (id, order_id, charge_date, rental_amount, handling_fee) VALUES (?, ?, ?, ?, ?)').bind(`orc-${nanoid(12)}`, order.id, charge.date, charge.rental, charge.fee).run()
+    }
+    const summary = await c.env.RENT.prepare('SELECT COALESCE(SUM(rental_amount + handling_fee), 0) AS total FROM overdue_return_charges WHERE order_id = ?').bind(order.id).first() as any
+    const total = Number(Number(summary?.total || 0).toFixed(2))
+    const previousDepositApplied = Math.max(0, Number(order.overdue_deposit_applied || 0))
+    const otherDepositDeductions = Math.max(0, Number(order.deposit_deduction_amount || 0) - previousDepositApplied)
+    const depositHeld = Math.max(0, Number(order.deposit_held_amount || 0))
+    const depositAvailable = Math.max(0, depositHeld - otherDepositDeductions)
+    const depositApplied = Number(Math.min(total, depositAvailable).toFixed(2))
+    const outstanding = Number(Math.max(0, total - depositApplied).toFixed(2))
+    const previousOutstanding = Math.max(0, Number(order.overdue_outstanding_amount || 0))
+    const amountAdded = Number(Math.max(0, outstanding - previousOutstanding).toFixed(2))
+    const nextDepositStatus = depositApplied <= 0 ? order.deposit_status : depositApplied >= depositHeld ? 'FORFEITED' : 'PARTIALLY_DEDUCTED'
+    await c.env.RENT.prepare("UPDATE orders SET totalAmount = totalAmount + ?, overdue_charge_total = ?, overdue_deposit_applied = ?, overdue_outstanding_amount = ?, deposit_deduction_amount = ?, deposit_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(amountAdded, total, depositApplied, outstanding, Number((otherDepositDeductions + depositApplied).toFixed(2)), nextDepositStatus, order.id).run()
+    if (String(order.status) !== 'overdue') await updateOrderStatus(c, order.id, 'overdue', { reason: '超过预约归还时间 2 小时' })
+    const after = await c.env.RENT.prepare('SELECT COUNT(*) AS count FROM overdue_return_charges WHERE order_id = ?').bind(order.id).first() as any
+    const addedRows = Math.max(0, Number(after?.count || 0) - Number(before?.count || 0))
+    if (addedRows > 0) {
+      charged += addedRows
+      await createNotification(c, {
+        recipientId: order.userId, senderId: administrator.id, type: 'rental_overdue',
+        title: '设备归还已逾期',
+        message: `订单 ${order.orderNo || order.id} 已超过预约归还时间 2 小时。已计入一次 AUD 25.00 逾期处理手续费${overdueDays ? `及 ${overdueDays} 天逾期租金` : ''}；将优先从押金扣除，押金不足部分为待补款。`,
+        orderId: order.id, dedupeKey: `rental-overdue:${order.id}:${charges.at(-1)?.date}`,
+      })
+    }
+  }
+  return { overdue, charged }
 }
 
 // 补救：订单已经进入 cancelled，但当初的自动退款（Stripe/余额）没有成功写入

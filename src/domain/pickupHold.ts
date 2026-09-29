@@ -8,6 +8,8 @@ const LEGACY_PICKUP_START_MINUTES: Record<string, number> = {
   morning: 9 * 60,
   afternoon: 13 * 60,
   evening_service: 21 * 60,
+  delivery_morning: 9 * 60,
+  delivery_afternoon: 13 * 60,
 }
 
 function dateDay(value: string): number | null {
@@ -47,4 +49,15 @@ export function isPickupHoldExpired(order: any, now = new Date()): boolean {
   if (scheduledDay === null || scheduledMinutes === null) return false
   const current = melbourneDayAndMinutes(now)
   return current.day * 1440 + current.minutes >= scheduledDay * 1440 + scheduledMinutes + 120
+}
+
+// Returns the number of overdue calendar days after the two-hour return grace
+// period. Zero means the return is overdue today but has not crossed midnight.
+export function returnOverdueDays(order: any, now = new Date()): number | null {
+  const scheduledDay = dateDay(String(order?.endDate || order?.end_date || ''))
+  const scheduledMinutes = pickupStartMinutes(order?.returnTimeSlot || order?.return_time_slot)
+  if (scheduledDay === null || scheduledMinutes === null) return null
+  const current = melbourneDayAndMinutes(now)
+  if (current.day * 1440 + current.minutes < scheduledDay * 1440 + scheduledMinutes + 120) return null
+  return Math.max(0, current.day - scheduledDay)
 }
