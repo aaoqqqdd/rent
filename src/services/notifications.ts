@@ -371,6 +371,7 @@ export async function buildTaxInvoiceDocument(c: Context, order: any, contract?:
     customerName: String(context.customer?.name || ''),
     customerEmail: context.email,
     customerPhone: String(context.customer?.phone || ''),
+    customerAddress: String(safeJsonParse<any>((contract as any)?.contract_data)?.customer_address || order.deliveryAddress || ''),
     orderNumber: String(order.orderNo || order.id),
     contractNumber: String(contract?.contractNumber || ''),
     documentNumber,
