@@ -8,33 +8,49 @@ import { buildLayout, getSystemSettings } from '../../site'
 export function renderAdminTaxInvoiceTemplate(user: any): string {
   const template = (getSystemSettings().taxInvoiceTemplate || {}) as Record<string, string>
   const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x] || x))
-  const input = (id: string, label: string, key: string) => `<div class="form-group"><label class="form-label" for="${id}">${label}</label><input class="form-control" id="${id}" value="${esc(template[key])}"></div>`
-  const fields = [
-    ['taxInvoiceTitle', 'Document title', 'title'],
-    ['taxInvoiceAbnLabel', 'ABN label', 'abnLabel'],
-    ['taxInvoiceDocumentNumberLabel', 'Invoice number label', 'documentNumberLabel'],
-    ['taxInvoiceIssuedLabel', 'Issued label', 'issuedLabel'],
-    ['taxInvoiceBilledToLabel', 'Billed to label', 'billedToLabel'],
-    ['taxInvoiceRentalOrderLabel', 'Rental order label', 'rentalOrderLabel'],
-    ['taxInvoiceDescriptionLabel', 'Description label', 'descriptionLabel'],
-    ['taxInvoiceAmountLabel', 'Amount label', 'amountLabel'],
-    ['taxInvoiceTotalLabel', 'Total label', 'totalLabel'],
-    ['taxInvoiceContractLabel', 'Contract label', 'contractLabel'],
-    ['taxInvoicePaymentLabel', 'Payment label', 'paymentLabel'],
-    ['taxInvoicePaidLabel', 'Paid label', 'paidLabel'],
-    ['taxInvoiceGstLabel', 'GST label', 'gstLabel'],
-    ['taxInvoiceDepositLabel', 'Deposit label', 'depositLabel'],
-    ['taxInvoiceProcessingFeeLabel', 'Processing fee label', 'processingFeeLabel'],
-    ['taxInvoiceDiscountLabel', 'Discount label', 'discountLabel'],
-    ['taxInvoicePaymentReferenceLabel', 'Payment reference label', 'paymentReferenceLabel'],
-    ['taxInvoiceQuestionsLabel', 'Questions label', 'questionsLabel'],
-  ].map(([id, label, key]) => input(id, label, key)).join('')
-  const textareas = [
-    ['taxInvoiceThankYouText', 'Thank-you text', 'thankYouText'],
-    ['taxInvoiceRecordNote', 'Record note', 'recordNote'],
-    ['taxInvoiceGeneratedByText', 'Generated-by text', 'generatedByText'],
-  ].map(([id, label, key]) => `<div class="form-group"><label class="form-label" for="${id}">${label}</label><textarea class="form-control" id="${id}" rows="2">${esc(template[key])}</textarea></div>`).join('')
-  const script = `<script>(()=>{const form=document.getElementById('taxInvoiceTemplateForm');if(!form)return;const input=id=>String(document.getElementById(id)?.value||'').trim();const save=async()=>{const taxInvoiceTemplate={title:input('taxInvoiceTitle'),abnLabel:input('taxInvoiceAbnLabel'),documentNumberLabel:input('taxInvoiceDocumentNumberLabel'),issuedLabel:input('taxInvoiceIssuedLabel'),billedToLabel:input('taxInvoiceBilledToLabel'),rentalOrderLabel:input('taxInvoiceRentalOrderLabel'),contractLabel:input('taxInvoiceContractLabel'),paymentLabel:input('taxInvoicePaymentLabel'),paidLabel:input('taxInvoicePaidLabel'),descriptionLabel:input('taxInvoiceDescriptionLabel'),amountLabel:input('taxInvoiceAmountLabel'),gstLabel:input('taxInvoiceGstLabel'),depositLabel:input('taxInvoiceDepositLabel'),processingFeeLabel:input('taxInvoiceProcessingFeeLabel'),discountLabel:input('taxInvoiceDiscountLabel'),totalLabel:input('taxInvoiceTotalLabel'),paymentReferenceLabel:input('taxInvoicePaymentReferenceLabel'),questionsLabel:input('taxInvoiceQuestionsLabel'),thankYouText:input('taxInvoiceThankYouText'),recordNote:input('taxInvoiceRecordNote'),generatedByText:input('taxInvoiceGeneratedByText')};const response=await fetch('/admin/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({taxInvoiceTemplate})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{};}catch{data={error:raw||'保存失败'};}if(!response.ok||!data.success)throw new Error(data.error||'保存失败');alert('PDF 模板已保存');window.location.reload();};form.addEventListener('submit',event=>{event.preventDefault();save().catch(error=>alert(error instanceof Error?error.message:'保存失败'));});})();</script>`
-  const body = `<div class="page-header"><div><p class="section-code">FINANCE / DOCUMENTS</p><h2>Tax Invoice PDF 模板</h2><p>专门编辑付款成功后发送给客户的 A4 英文 Tax Invoice。保存后，新生成的 PDF 会使用这些标题、字段名和页脚文案。</p></div><a class="button button-secondary" href="/admin/settings">返回系统设置</a></div><form id="taxInvoiceTemplateForm" class="panel" novalidate><div class="section-title"><h3>英文 PDF 内容</h3><span class="section-note">建议保留英文，以确保标准 PDF 字体兼容</span></div><div class="grid grid-2">${fields}</div><div class="grid grid-2">${textareas}</div><div class="record-archive__actions"><button class="button button-primary" type="submit">保存 PDF 模板</button></div></form>${script}`
+  const value = (key: string, fallback: string) => String(template[key] || fallback)
+  const preview = (key: string, fallback: string) => `<span class="tax-invoice-preview__editable" contenteditable="true" role="textbox" spellcheck="false" data-preview="${key}" data-fallback="${esc(fallback)}">${esc(value(key, fallback))}</span>`
+  const input = (id: string, label: string, key: string, fallback: string) => `<label class="tax-invoice-field" for="${id}"><span>${label}</span><input class="form-control" id="${id}" data-template-key="${key}" value="${esc(value(key, fallback))}"></label>`
+  const textarea = (id: string, label: string, key: string, fallback: string) => `<label class="tax-invoice-field tax-invoice-field--wide" for="${id}"><span>${label}</span><textarea class="form-control" id="${id}" data-template-key="${key}" rows="2">${esc(value(key, fallback))}</textarea></label>`
+  const section = (number: string, title: string, description: string, content: string) => `<section class="tax-invoice-editor__section"><div class="tax-invoice-editor__section-head"><span>${number}</span><div><h3>${title}</h3><p>${description}</p></div></div><div class="tax-invoice-editor__fields">${content}</div></section>`
+
+  const identity = [
+    input('taxInvoiceTitle', 'Document title', 'title', 'TAX INVOICE'),
+    input('taxInvoiceAbnLabel', 'ABN label', 'abnLabel', 'ABN'),
+    input('taxInvoiceDocumentNumberLabel', 'Invoice number label', 'documentNumberLabel', 'Invoice#'),
+    input('taxInvoiceIssuedLabel', 'Issued label', 'issuedLabel', 'Issue date'),
+    textarea('taxInvoiceInvoiceMessage', 'Invoice message', 'invoiceMessage', 'Thank you for choosing PC Rental.'),
+  ].join('')
+  const columns = [
+    input('taxInvoiceBilledToLabel', 'Billed-to heading', 'billedToLabel', 'BILL TO'),
+    input('taxInvoiceRentalOrderLabel', 'Details heading', 'rentalOrderLabel', 'DETAILS'),
+    input('taxInvoicePaymentLabel', 'Payment heading', 'paymentLabel', 'PAYMENT'),
+    input('taxInvoiceDescriptionLabel', 'Description label', 'descriptionLabel', 'Description'),
+    input('taxInvoiceItemLabel', 'Item column label', 'itemLabel', 'ITEM'),
+    input('taxInvoiceQuantityLabel', 'Quantity column label', 'quantityLabel', 'QTY'),
+    input('taxInvoicePriceLabel', 'Price column label', 'priceLabel', 'PRICE'),
+    input('taxInvoiceAmountLabel', 'Amount column label', 'amountLabel', 'AMOUNT'),
+  ].join('')
+  const totals = [
+    input('taxInvoiceSubtotalLabel', 'Subtotal label', 'subtotalLabel', 'Subtotal'),
+    input('taxInvoiceGstLabel', 'GST label', 'gstLabel', 'GST (included)'),
+    input('taxInvoiceDepositLabel', 'Deposit label', 'depositLabel', 'Refundable security deposit'),
+    input('taxInvoiceProcessingFeeLabel', 'Processing fee label', 'processingFeeLabel', 'Processing fee'),
+    input('taxInvoiceDiscountLabel', 'Discount label', 'discountLabel', 'Discount'),
+    input('taxInvoiceTotalLabel', 'Total label', 'totalLabel', 'Total Due'),
+  ].join('')
+  const payment = [
+    input('taxInvoiceContractLabel', 'Contract label', 'contractLabel', 'Contract'),
+    input('taxInvoicePaidLabel', 'Paid label', 'paidLabel', 'Paid'),
+    input('taxInvoicePaymentReferenceLabel', 'Payment reference label', 'paymentReferenceLabel', 'Payment reference'),
+    input('taxInvoiceQuestionsLabel', 'Questions label', 'questionsLabel', 'Questions?'),
+  ].join('')
+  const footer = [
+    textarea('taxInvoiceThankYouText', 'Thank-you text', 'thankYouText', 'Thank you for your business.'),
+    textarea('taxInvoiceRecordNote', 'Record note', 'recordNote', 'Please keep this invoice for your records.'),
+    textarea('taxInvoiceGeneratedByText', 'Generated-by text', 'generatedByText', 'Generated by PC Rental'),
+  ].join('')
+  const script = `<script>(()=>{const form=document.getElementById('taxInvoiceTemplateForm');if(!form)return;const fields=[...form.querySelectorAll('[data-template-key]')];const fieldFor=key=>fields.find(field=>field.dataset.templateKey===key);const values=()=>{const taxInvoiceTemplate={};fields.forEach(field=>{taxInvoiceTemplate[field.dataset.templateKey]=String(field.value||'').trim();});return taxInvoiceTemplate;};const refresh=()=>{const data=values();document.querySelectorAll('[data-preview]').forEach(node=>{const key=node.dataset.preview||'';if(document.activeElement!==node)node.textContent=data[key]||node.dataset.fallback||'';});};const save=async()=>{const response=await fetch('/admin/settings/save',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},body:JSON.stringify({taxInvoiceTemplate:values()})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{};}catch{data={error:raw||'保存失败'};}if(!response.ok||!data.success)throw new Error(data.error||'保存失败');const status=document.getElementById('taxInvoiceSaveStatus');if(status)status.textContent='已保存';setTimeout(()=>{if(status)status.textContent='实时预览';},2200);};fields.forEach(field=>field.addEventListener('input',refresh));document.querySelectorAll('[data-preview]').forEach(node=>{node.addEventListener('input',()=>{const field=fieldFor(node.dataset.preview||'');if(field)field.value=String(node.textContent||'').trim();});node.addEventListener('blur',refresh);});form.addEventListener('submit',event=>{event.preventDefault();const button=form.querySelector('button[type="submit"]');if(button)button.disabled=true;save().catch(error=>alert(error instanceof Error?error.message:'保存失败')).finally(()=>{if(button)button.disabled=false;});});refresh();})();</script>`
+  const body = `<div class="page-header tax-invoice-editor__intro"><div><p class="section-code">FINANCE / DOCUMENTS / PDF</p><h2>Tax Invoice PDF 模板</h2><p>编辑左侧英文标签，右侧会即时更新为客户收到的 A4 Tax Invoice。付款成功邮件和这份收据 PDF 分开管理。</p></div><a class="button button-secondary" href="/admin/settings">返回系统设置</a></div><div class="tax-invoice-editor"><form id="taxInvoiceTemplateForm" class="tax-invoice-editor__controls" novalidate><div class="tax-invoice-editor__controls-top"><div><span class="section-code">TEMPLATE EDITOR</span><strong>Australian GST invoice</strong></div><span class="tax-invoice-editor__status"><i></i><span id="taxInvoiceSaveStatus">实时预览</span></span></div>${section('01', 'Document identity', '控制发票顶部的标题、编号和日期字段。', identity)}${section('02', 'Invoice columns', '对应参考发票中的三栏信息和商品明细表头。', columns)}${section('03', 'Totals and GST', '控制发票底部金额汇总区域的英文标签。', totals)}${section('04', 'Payment details', '控制付款状态、合同和客户问题提示。', payment)}${section('05', 'Footer messages', '控制页面底部的感谢、记录和生成信息。', footer)}<div class="tax-invoice-editor__save"><button class="button button-primary" type="submit">保存 PDF 模板</button><span>保存后用于下载、邮件发送和管理员发送的 Tax Invoice。</span></div></form><div class="tax-invoice-editor__preview-shell"><div class="tax-invoice-editor__preview-bar"><div><span class="section-code">PREVIEW</span><strong>A4 / PDF</strong></div><span>示例数据</span></div><article class="tax-invoice-preview"><header class="tax-invoice-preview__header"><div class="tax-invoice-preview__brand"><div class="tax-invoice-preview__mark">PC</div><div><strong>PC RENTAL</strong><span>DEVICE RENTAL SERVICES</span><small>Street Address · Melbourne VIC</small></div></div><div class="tax-invoice-preview__meta"><strong>${preview('documentNumberLabel', 'Invoice#')} 00000</strong><span>${preview('issuedLabel', 'Issue date')} · 29/09/2026</span><span>${preview('abnLabel', 'ABN')} · 12 345 678 901</span></div></header><div class="tax-invoice-preview__rule"></div><div class="tax-invoice-preview__title"><h1>${preview('title', 'TAX INVOICE')}</h1><p>${preview('invoiceMessage', 'Thank you for choosing PC Rental.')}</p></div><div class="tax-invoice-preview__columns"><div><b>${preview('billedToLabel', 'BILL TO')}</b><strong>Alex Morgan</strong><span>alex@example.com</span><span>Melbourne, VIC</span></div><div><b>${preview('rentalOrderLabel', 'DETAILS')}</b><strong>Rental order #R-1042</strong><span>${preview('contractLabel', 'Contract')} · CT-1042</span><span>Rental period · 01–07 Oct 2026</span></div><div><b>${preview('paymentLabel', 'PAYMENT')}</b><strong>${preview('paidLabel', 'Paid')}</strong><span>${preview('paymentReferenceLabel', 'Payment reference')} · ch_123456</span><span>Visa ···· 4242</span></div></div><div class="tax-invoice-preview__table"><div class="tax-invoice-preview__table-head"><span>${preview('itemLabel', 'ITEM')}</span><span>${preview('quantityLabel', 'QTY')}</span><span>${preview('priceLabel', 'PRICE')}</span><span>${preview('amountLabel', 'AMOUNT')}</span></div><div class="tax-invoice-preview__table-row"><span>MacBook Pro 14-inch</span><span>1</span><span>$180.00</span><span>$180.00</span></div><div class="tax-invoice-preview__table-row"><span>Protective case</span><span>1</span><span>$20.00</span><span>$20.00</span></div></div><div class="tax-invoice-preview__summary"><div><span>${preview('subtotalLabel', 'Subtotal')}</span><strong>$200.00</strong></div><div><span>${preview('gstLabel', 'GST (included)')}</span><strong>$18.18</strong></div><div><span>${preview('depositLabel', 'Refundable security deposit')}</span><strong>$100.00</strong></div><div class="tax-invoice-preview__total"><span>${preview('totalLabel', 'Total Due')}</span><strong>$300.00 AUD</strong></div></div><footer class="tax-invoice-preview__footer"><strong>${preview('thankYouText', 'Thank you for your business.')}</strong><span>${preview('recordNote', 'Please keep this invoice for your records.')}</span><span>${preview('generatedByText', 'Generated by PC Rental')}</span></footer></article></div></div>${script}`
   return buildLayout('Tax Invoice PDF 模板 - 电脑租赁管理系统', body, user)
 }

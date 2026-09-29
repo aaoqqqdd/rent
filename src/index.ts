@@ -695,11 +695,12 @@ app.use('*', async (c, next) => {
   if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
+    const sameOriginAjax = c.req.header('X-Requested-With') === 'XMLHttpRequest' && /^application\/json(?:;|$)/i.test(c.req.header('Content-Type') || '')
     const hasSessionCookie = /(?:^|;\s*)session=[^;]+/.test(c.req.header('cookie') || '')
     let originValid = true
     if (origin) {
       try { originValid = new URL(origin).origin === new URL(c.req.url).origin } catch { originValid = false }
-    } else if (hasSessionCookie && fetchSite !== 'same-origin') {
+    } else if (hasSessionCookie && fetchSite !== 'same-origin' && !sameOriginAjax) {
       // A browser session without an Origin header is not verifiably same
       // origin. Reject it rather than accepting a forged cross-site form.
       originValid = false
@@ -1925,6 +1926,7 @@ async function sendMarketingCampaignEmails(c: any, params: { campaignId: string;
 app.get('/admin/marketing-emails', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await loadSystemSettingsFromDB(c)
   await ensureMarketingEmailTables(c.env.RENT)
   const templates = ((await c.env.RENT.prepare('SELECT * FROM marketing_email_templates ORDER BY updated_at DESC').all()).results || []) as any[]
   const campaigns = ((await c.env.RENT.prepare('SELECT * FROM marketing_campaigns ORDER BY created_at DESC LIMIT 50').all()).results || []) as any[]
@@ -1933,6 +1935,16 @@ app.get('/admin/marketing-emails', async (c) => {
   const customers = activeCustomers.filter((account: any) => !isMarketingOptedOut(account))
   const optedOutCount = activeCustomers.length - customers.length
   return c.html(pages.renderAdminMarketingEmails(user, { templates, campaigns, coupons, customers, optedOutCount }))
+})
+
+app.post('/admin/marketing/feedback-settings', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限' }, 403)
+  try {
+    return await actions.handleSaveTallyFeedbackSettings(c)
+  } catch (error: any) {
+    return c.json({ success: false, error: error?.message || '保存失败' }, 400)
+  }
 })
 
 app.get('/admin/marketing-emails/data', async (c) => {
@@ -3188,10 +3200,12 @@ app.get('/orders/:id/invoice/pdf', async (c) => {
   try {
     const document = await buildTaxInvoiceDocument(c, order, contract)
     if (!document) return c.text('Tax Invoice 尚未开具', 404)
+    const safeDocumentNumber = document.documentNumber.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'invoice'
     return new Response(document.pdf as any, {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="tax-invoice-${document.documentNumber}.pdf"`,
+        'Content-Disposition': `attachment; filename="tax-invoice-${safeDocumentNumber}.pdf"`,
+        'Content-Length': String(document.pdf.byteLength),
         'Cache-Control': 'private, no-store',
       },
     })
@@ -3203,6 +3217,7 @@ app.get('/orders/:id/invoice/pdf', async (c) => {
 
 app.post('/orders/:id/invoice/email', async (c) => {
   const user = c.get('user')
+  const wantsJson = /application\/json/i.test(c.req.header('Accept') || '')
   if (!user) return c.redirect('/login')
   const order = await getOrderById(c, c.req.param('id'))
   if (!order || (user.role === 'CUSTOMER' && order.userId !== user.id)) return c.text('发票不存在或无权访问', 403)
@@ -3210,9 +3225,11 @@ app.post('/orders/:id/invoice/email', async (c) => {
   if (!isContractFinalized(contract)) return c.text('收据尚未生成', 409)
   try {
     await sendTaxInvoiceEmail(c, order, contract)
+    if (wantsJson) return c.json({ success: true, message: user.role === 'ADMIN' ? 'Tax Invoice 已发送给客户' : 'Tax Invoice 已发送到您的邮箱' })
     return c.redirect(`/orders/${encodeURIComponent(order.id)}/invoice?success=${encodeURIComponent(user.role === 'ADMIN' ? 'Tax Invoice 已发送给客户' : 'Tax Invoice 已发送到您的邮箱')}`)
   } catch (error: any) {
     console.error('Tax invoice email failed:', error?.message || error)
+    if (wantsJson) return c.json({ success: false, error: 'Tax Invoice 邮件发送失败' }, 500)
     return c.redirect(`/orders/${encodeURIComponent(order.id)}/invoice?error=${encodeURIComponent('Tax Invoice 邮件发送失败')}`)
   }
 })
