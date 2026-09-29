@@ -695,11 +695,12 @@ app.use('*', async (c, next) => {
   if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
+    const sameOriginAjax = c.req.header('X-Requested-With') === 'XMLHttpRequest' && /^application\/json(?:;|$)/i.test(c.req.header('Content-Type') || '')
     const hasSessionCookie = /(?:^|;\s*)session=[^;]+/.test(c.req.header('cookie') || '')
     let originValid = true
     if (origin) {
       try { originValid = new URL(origin).origin === new URL(c.req.url).origin } catch { originValid = false }
-    } else if (hasSessionCookie && fetchSite !== 'same-origin') {
+    } else if (hasSessionCookie && fetchSite !== 'same-origin' && !sameOriginAjax) {
       // A browser session without an Origin header is not verifiably same
       // origin. Reject it rather than accepting a forged cross-site form.
       originValid = false
