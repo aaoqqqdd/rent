@@ -36,10 +36,37 @@ test('receipt PDF is a valid single-page PDF with the important receipt fields',
   assert.match(source, /^%PDF-1\.4\n/)
   assert.match(source, /CUSTOM TAX INVOICE/)
   assert.match(source, /AMOUNT DUE/)
+  assert.match(source, /ITEM/)
+  assert.match(source, /QTY/)
+  assert.match(source, /PRICE/)
   assert.match(source, /ABN 12 345 678 901/)
   assert.match(source, /INV-123/)
   assert.match(source, /ORD-123/)
   assert.match(source, /\/Count 1/)
   assert.match(source, /startxref/)
   assert.match(bytesToBase64(pdf), /^JVBERi0xLjQK/)
+})
+
+test('payment receipt and tax invoice use distinct document titles and numbers', () => {
+  const pdf = buildReceiptPdf({
+    companyName: 'PC Rental',
+    customerName: 'Customer',
+    customerEmail: 'customer@example.com',
+    orderNumber: 'ORD-123',
+    documentNumber: 'RCP-123',
+    issuedAt: '2026-09-29',
+    paymentMethod: 'CARD',
+    deviceName: 'Gaming PC',
+    subtotal: 100,
+    gstAmount: 10,
+    depositAmount: 0,
+    processingFee: 0,
+    discountAmount: 0,
+    totalAmount: 110,
+    template: { title: 'PAYMENT RECEIPT', documentNumberLabel: 'RECEIPT NO.' },
+  })
+  const source = new TextDecoder().decode(pdf)
+  assert.match(source, /PAYMENT RECEIPT/)
+  assert.match(source, /RECEIPT NO\. RCP-123/)
+  assert.doesNotMatch(source, /TAX INVOICE/)
 })

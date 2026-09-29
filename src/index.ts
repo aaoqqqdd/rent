@@ -7,6 +7,7 @@
 import { Hono } from 'hono'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
+import { serviceFeeRate } from './domain/pickupTimeSlots'
 import {
   renderNotFound,
   renderForbidden,
@@ -124,6 +125,7 @@ import { getSquareConfigSummary } from './square'
 import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteKey } from './turnstile'
 import { getDeliveryConfigSummary } from './deliveryConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
+import { ensureInAppNotificationTemplates } from './services/inAppNotificationTemplates'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer, expireMissedPickupOrders } from './actions/stripePayments'
 import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
@@ -147,6 +149,7 @@ import {
 import { getTableColumns as getCachedTableColumns } from './db/client'
 import { createTallyFeedbackToken } from './lib/tally'
 import { parsePickupQrPayload } from './lib/pickupQr'
+import { pickupTimeSlotEndMinutes } from './domain/pickupTimeSlots'
 import { readManualInspectionFields, renderManualInspectionFields, inspectionText } from './lib/inspection'
 import { decryptSecret } from './lib/secretBox'
 import { migrateLegacyContractSecrets } from './services/secretMigration'
@@ -184,6 +187,17 @@ function melbourneMinutesNow(): number {
 
 function rentalPeriodPassed(date: string, period: string, today: string): boolean {
   return date === today && melbourneMinutesNow() >= (period === 'AM' ? 12 * 60 : 23 * 60)
+}
+
+const PICKUP_TIME_SLOTS = new Set(['morning_service', 'morning', 'afternoon', 'evening_service'])
+const SERVICE_FEE_TIME_SLOTS = new Set(['morning_service', 'evening_service'])
+
+function pickupTimeSlotPeriod(slot: string): 'AM' | 'PM' {
+  return slot === 'afternoon' || slot === 'evening_service' ? 'PM' : 'AM'
+}
+
+function pickupTimeSlotPassed(date: string, slot: string, today: string, rentalRules: any): boolean {
+  return date === today && melbourneMinutesNow() >= pickupTimeSlotEndMinutes(slot, rentalRules)
 }
 
 function isMobileDeviceRequest(c: any): boolean {
@@ -695,6 +709,7 @@ app.use('*', async (c, next) => {
   if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
+    const sameOriginAjax = c.req.header('X-Requested-With') === 'XMLHttpRequest' && /^application\/json(?:;|$)/i.test(c.req.header('Content-Type') || '')
     const hasSessionCookie = /(?:^|;\s*)session=[^;]+/.test(c.req.header('cookie') || '')
     let originValid = true
     if (origin) {
@@ -1509,7 +1524,8 @@ app.post('/customer/orders/:id/time-slots', async (c) => {
   const oldFee = Number(order.serviceFee || order.service_fee || 0)
   const rent = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0) - oldFee)
   const chargeable = delivery ? 0 : [pickup, returned].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length
-  const requestedFee = Number((rent * 0.1 * chargeable).toFixed(2))
+  await loadSystemSettingsFromDB(c)
+  const requestedFee = Number((rent * serviceFeeRate(getSystemSettings().rentalRules) * chargeable).toFixed(2))
   const additionalFee = Math.max(0, requestedFee - oldFee)
   const newFee = oldFee + additionalFee
   await c.env.RENT.prepare('UPDATE orders SET pickupTimeSlot = ?, returnTimeSlot = ?, serviceFee = ?, totalAmount = totalAmount + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(pickup, returned, newFee, additionalFee, order.id).run()
@@ -1622,15 +1638,15 @@ app.get('/notifications', async (c) => {
   // 通告历史单独放在 /admin/announcements，通知中心只显示收件通知。
   const sentAnnouncements: any[] = []
   const recipients = user.role === 'ADMIN' || user.role === 'STAFF' ? (await getUsers(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive') : []
-  if (user.role === 'ADMIN' || user.role === 'STAFF') await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
-  const emailTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM email_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
-  const emailTemplateOptions = `<option value="custom">自定义通知</option>${emailTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
+  if (user.role === 'ADMIN' || user.role === 'STAFF') await ensureInAppNotificationTemplates(c)
+  const inAppNotificationTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM in_app_notification_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
+  const inAppNotificationTemplateOptions = `<option value="custom">自定义通知</option>${inAppNotificationTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
   const recipientOptions = recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')
   const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 HTML）</label><textarea class="form-control html-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 HTML，自定义通知时必填）</label><textarea class="form-control html-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount'),template=document.getElementById('notificationTemplate'),title=document.getElementById('notificationTitle'),message=document.getElementById('notificationMessage');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};const syncTemplateFields=()=>{const custom=!template||template.value==='custom';[title,message].forEach(field=>{if(!field)return;field.required=custom;field.setAttribute('aria-required',String(custom));});};search.addEventListener('input',update);select.addEventListener('change',update);template?.addEventListener('change',syncTemplateFields);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();syncTemplateFields();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<a class="notification-item ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><div><strong>${sanitizePlainText(item.title, 200)}</strong><div class="notification-message">${renderNotificationMarkdown(notificationListMessage(item))}</div><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div>${item.order_id ? `<span class="button button-sm button-secondary">查看订单</span>` : ''}</a>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
   const pagination = pageCount > 1 ? `<nav class="pagination" aria-label="通知分页">${Array.from({ length: pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === page ? 'button-primary' : 'button-secondary'}" href="/notifications?page=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''
   const bodyWithAnnouncementExpiry = body.replace('name="message" maxlength="2000" required></textarea>', 'name="message" maxlength="2000" required></textarea><div class="form-group"><label class="form-label" for="announcementExpiresAt">下架日期和时间（选填）</label><input class="form-control" id="announcementExpiresAt" name="expiresAt" type="datetime-local"><small class="form-text">到时间后，所有用户都不会再看到这条通告。</small></div>')
   const bodyWithSendAnchor = bodyWithAnnouncementExpiry.replace('<form method="post" action="/notifications/send" class="panel notification-compose">', '<form id="send-notification" method="post" action="/notifications/send" class="panel notification-compose">')
-  const bodyWithTemplateChoice = bodyWithSendAnchor.replace('<div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>', `<div class="form-group"><label class="form-label" for="notificationTemplate">发送内容</label><select class="form-control" id="notificationTemplate" name="templateId">${emailTemplateOptions}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>`)
+  const bodyWithTemplateChoice = bodyWithSendAnchor.replace('<div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>', `<div class="form-group"><label class="form-label" for="notificationTemplate">发送内容</label><select class="form-control" id="notificationTemplate" name="templateId">${inAppNotificationTemplateOptions}</select><small class="form-text">管理模板：<a href="/admin/in-app-notification-templates">站内通知模板</a></small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>`)
   const bodyWithArchiveLink = user.role === 'ADMIN' ? bodyWithTemplateChoice.replace('<h3>发布通告</h3>', '<div class="section-title"><h3>发布通告</h3><a class="link-button" href="/admin/announcements">历史通告 →</a></div>') : bodyWithTemplateChoice
   return c.html(buildLayout('通知中心', bodyWithArchiveLink + pagination, user))
 })
@@ -1815,6 +1831,47 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
   return c.redirect('/admin/email-templates')
 })
 
+app.get('/admin/in-app-notification-templates', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminInAppNotificationTemplates(c, user))
+})
+
+app.post('/admin/in-app-notification-templates', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const name = sanitizePlainText(String(form.name || '').trim(), 80)
+  const title = sanitizePlainText(String(form.title || '').trim(), 120)
+  const message = sanitizeRichHtml(String(form.message || '').trim()).slice(0, 10000)
+  if (!name || !title || !message) return c.text('模板名称、通知标题和正文不能为空', 400)
+  await ensureInAppNotificationTemplates(c)
+  await c.env.RENT.prepare('INSERT INTO in_app_notification_templates (id, name, title, message) VALUES (?, ?, ?, ?)').bind(`custom_${nanoid(12)}`, name, title, message).run()
+  return c.redirect('/admin/in-app-notification-templates')
+})
+
+app.post('/admin/in-app-notification-templates/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const title = sanitizePlainText(String(form.title || '').trim(), 120)
+  const message = sanitizeRichHtml(String(form.message || '').trim()).slice(0, 10000)
+  if (!title || !message) return c.text('通知标题和正文不能为空', 400)
+  await ensureInAppNotificationTemplates(c)
+  await c.env.RENT.prepare('UPDATE in_app_notification_templates SET title = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(title, message, c.req.param('id')).run()
+  return c.redirect('/admin/in-app-notification-templates')
+})
+
+app.post('/admin/in-app-notification-templates/:id/delete', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const id = c.req.param('id')
+  if (!id.startsWith('custom_')) return c.text('内置模板不能删除', 400)
+  await ensureInAppNotificationTemplates(c)
+  await c.env.RENT.prepare('DELETE FROM in_app_notification_templates WHERE id = ?').bind(id).run()
+  return c.redirect('/admin/in-app-notification-templates')
+})
+
 async function ensureMarketingEmailTables(db: any): Promise<void> {
   await db.prepare("CREATE TABLE IF NOT EXISTS marketing_email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run()
   await db.prepare("CREATE TABLE IF NOT EXISTS marketing_campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, theme_color TEXT NOT NULL DEFAULT '#f0a35b', coupon_mode TEXT NOT NULL DEFAULT 'none', coupon_id TEXT, unique_discount_type TEXT, unique_discount_value REAL, unique_max_discount_amount REAL, unique_minimum_order_amount REAL, unique_expires_at TEXT, recipient_count INTEGER NOT NULL DEFAULT 0, sent_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'SENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT)").run()
@@ -1932,6 +1989,7 @@ async function sendMarketingCampaignEmails(c: any, params: { campaignId: string;
 app.get('/admin/marketing-emails', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await loadSystemSettingsFromDB(c)
   await ensureMarketingEmailTables(c.env.RENT)
   const templates = ((await c.env.RENT.prepare('SELECT * FROM marketing_email_templates ORDER BY updated_at DESC').all()).results || []) as any[]
   const campaigns = ((await c.env.RENT.prepare('SELECT * FROM marketing_campaigns ORDER BY created_at DESC LIMIT 50').all()).results || []) as any[]
@@ -1940,6 +1998,16 @@ app.get('/admin/marketing-emails', async (c) => {
   const customers = activeCustomers.filter((account: any) => !isMarketingOptedOut(account))
   const optedOutCount = activeCustomers.length - customers.length
   return c.html(pages.renderAdminMarketingEmails(user, { templates, campaigns, coupons, customers, optedOutCount }))
+})
+
+app.post('/admin/marketing/feedback-settings', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限' }, 403)
+  try {
+    return await actions.handleSaveTallyFeedbackSettings(c)
+  } catch (error: any) {
+    return c.json({ success: false, error: error?.message || '保存失败' }, 400)
+  }
 })
 
 app.get('/admin/marketing-emails/data', async (c) => {
@@ -2225,10 +2293,11 @@ app.post('/notifications/send', async (c) => {
   let title = String(form.title || '').trim().slice(0, 120)
   let message = String(form.message || '').trim().slice(0, 1000)
   if (templateId !== 'custom') {
-    const template = await c.env.RENT.prepare('SELECT subject, body FROM email_templates WHERE id = ? AND enabled = 1').bind(templateId).first() as any
+    await ensureInAppNotificationTemplates(c)
+    const template = await c.env.RENT.prepare('SELECT title, message FROM in_app_notification_templates WHERE id = ? AND enabled = 1').bind(templateId).first() as any
     if (!template) return c.text('通知模板不存在或已停用', 400)
-    title = String(template.subject || '').trim().slice(0, 120)
-    message = String(template.body || '').trim().slice(0, 1000)
+    title = String(template.title || '').trim().slice(0, 120)
+    message = String(template.message || '').trim().slice(0, 1000)
   }
   const allowedRecipients = (await getUsers(c)).filter((recipient: any) =>
     recipientIds.includes(recipient.id) &&
@@ -2269,13 +2338,15 @@ app.post('/customer/rent/:id', async (c) => {
   const endDate = String(form.endDate || '')
   const todayValue = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const deliveryMethod = String(form.deliveryMethod || 'Pickup') === 'Delivery' ? 'Delivery' : 'Pickup'
+  const pickupTimeSlot = String(form.pickupTimeSlot || '')
+  const returnTimeSlot = String(form.returnTimeSlot || '')
   const deliveryAddress = String(form.deliveryAddress || '').trim().slice(0, 1000)
   const rentalNote = String(form.rentalNote || '').trim().slice(0, 500)
   const couponCode = String(form.couponCode || '').trim().toUpperCase().slice(0, 40)
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
-  const startPeriod = form.startPeriod === 'PM' ? 'PM' : 'AM'
-  const endPeriod = form.endPeriod === 'PM' ? 'PM' : 'AM'
+  const startPeriod = deliveryMethod === 'Pickup' ? pickupTimeSlotPeriod(pickupTimeSlot) : form.startPeriod === 'PM' ? 'PM' : 'AM'
+  const endPeriod = deliveryMethod === 'Pickup' ? pickupTimeSlotPeriod(returnTimeSlot) : form.endPeriod === 'PM' ? 'PM' : 'AM'
   const halfDays = Math.round((end.getTime() - start.getTime()) / 86400000) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
   const deviceUnavailableSlots = new Set<string>()
   try {
@@ -2291,6 +2362,14 @@ app.post('/customer/rent/:id', async (c) => {
     const periodSlots = period === 'AM' ? ['morning_service', 'morning'] : ['afternoon', 'evening_service']
     return periodSlots.every((slot) => slots.includes(slot) || deviceUnavailableSlots.has(`${date}:${slot}`))
   }
+  const selectedTimeUnavailable = deliveryMethod === 'Pickup' && (
+    !PICKUP_TIME_SLOTS.has(pickupTimeSlot) || !PICKUP_TIME_SLOTS.has(returnTimeSlot)
+    || pickupTimeSlotPassed(startDate, pickupTimeSlot, todayValue, rentalRules) || pickupTimeSlotPassed(endDate, returnTimeSlot, todayValue, rentalRules)
+    || (rentalRules.unavailableTimeSlots?.[startDate] || []).includes(pickupTimeSlot)
+    || (rentalRules.unavailableTimeSlots?.[endDate] || []).includes(returnTimeSlot)
+    || deviceUnavailableSlots.has(`${startDate}:${pickupTimeSlot}`)
+    || deviceUnavailableSlots.has(`${endDate}:${returnTimeSlot}`)
+  )
   let invalidPeriod = !['AM', 'PM'].includes(startPeriod) || !['AM', 'PM'].includes(endPeriod) || halfDays <= 0 || rentalPeriodPassed(startDate, startPeriod, todayValue) || rentalPeriodPassed(endDate, endPeriod, todayValue)
   for (let day = new Date(start); Number.isFinite(day.getTime()) && day <= end; day.setUTCDate(day.getUTCDate() + 1)) {
     const date = day.toISOString().slice(0, 10)
@@ -2309,10 +2388,13 @@ app.post('/customer/rent/:id', async (c) => {
       String(row.startDate || '').slice(0, 10), String(row.startPeriod || 'AM'), String(row.endDate || '').slice(0, 10), String(row.endPeriod || 'AM'),
     ))
   }
-  if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start > end || halfDays <= 0 || Math.ceil(halfDays / 2) < rentalRules.minimumRentalDays || blockedDate || invalidPeriod || periodConflict) {
+  if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start > end || halfDays <= 0 || Math.ceil(halfDays / 2) < rentalRules.minimumRentalDays || blockedDate || invalidPeriod || selectedTimeUnavailable || periodConflict) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
   const rentAmount = calculateRentalFee(device, Math.ceil(halfDays / 2))
+  const serviceFee = deliveryMethod === 'Pickup'
+    ? Number((rentAmount * serviceFeeRate(rentalRules) * [pickupTimeSlot, returnTimeSlot].filter((slot) => SERVICE_FEE_TIME_SLOTS.has(slot)).length).toFixed(2))
+    : 0
   const couponFeeParts = { rentalFee: rentAmount, deliveryFee: 0, depositFee: Number(device.depositAmount || 0) }
   let discountAmount = 0
   let appliedCouponCode: string | null = null
@@ -2331,9 +2413,10 @@ app.post('/customer/rent/:id', async (c) => {
   await insertOrder(c, {
     id: orderId, orderNo: generateReferenceNumber('OD'), userId: user.id,
     deviceId: device.id, startDate, endDate, startPeriod, endPeriod, rentalPeriod: Math.ceil(halfDays / 2), status: 'pending_approval',
-    paymentMethod: 'card', totalAmount: rentAmount + device.depositAmount - discountAmount,
+    paymentMethod: 'card', totalAmount: rentAmount + serviceFee + device.depositAmount - discountAmount,
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
-    deliveryMethod, deliveryFee: 0, rentalNote, couponCode: appliedCouponCode, discountAmount,
+    pickupTimeSlot: deliveryMethod === 'Pickup' ? pickupTimeSlot : undefined, returnTimeSlot: deliveryMethod === 'Pickup' ? returnTimeSlot : undefined,
+    deliveryMethod, deliveryFee: 0, serviceFee, rentalNote, couponCode: appliedCouponCode, discountAmount,
     createdAt: new Date().toISOString()
   } as any)
   if (couponCode) {
@@ -3195,10 +3278,12 @@ app.get('/orders/:id/invoice/pdf', async (c) => {
   try {
     const document = await buildTaxInvoiceDocument(c, order, contract)
     if (!document) return c.text('Tax Invoice 尚未开具', 404)
+    const safeDocumentNumber = document.documentNumber.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'invoice'
     return new Response(document.pdf as any, {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="tax-invoice-${document.documentNumber}.pdf"`,
+        'Content-Disposition': `attachment; filename="tax-invoice-${safeDocumentNumber}.pdf"`,
+        'Content-Length': String(document.pdf.byteLength),
         'Cache-Control': 'private, no-store',
       },
     })
@@ -3210,6 +3295,7 @@ app.get('/orders/:id/invoice/pdf', async (c) => {
 
 app.post('/orders/:id/invoice/email', async (c) => {
   const user = c.get('user')
+  const wantsJson = /application\/json/i.test(c.req.header('Accept') || '')
   if (!user) return c.redirect('/login')
   const order = await getOrderById(c, c.req.param('id'))
   if (!order || (user.role === 'CUSTOMER' && order.userId !== user.id)) return c.text('发票不存在或无权访问', 403)
@@ -3217,9 +3303,11 @@ app.post('/orders/:id/invoice/email', async (c) => {
   if (!isContractFinalized(contract)) return c.text('收据尚未生成', 409)
   try {
     await sendTaxInvoiceEmail(c, order, contract)
+    if (wantsJson) return c.json({ success: true, message: user.role === 'ADMIN' ? 'Tax Invoice 已发送给客户' : 'Tax Invoice 已发送到您的邮箱' })
     return c.redirect(`/orders/${encodeURIComponent(order.id)}/invoice?success=${encodeURIComponent(user.role === 'ADMIN' ? 'Tax Invoice 已发送给客户' : 'Tax Invoice 已发送到您的邮箱')}`)
   } catch (error: any) {
     console.error('Tax invoice email failed:', error?.message || error)
+    if (wantsJson) return c.json({ success: false, error: 'Tax Invoice 邮件发送失败' }, 500)
     return c.redirect(`/orders/${encodeURIComponent(order.id)}/invoice?error=${encodeURIComponent('Tax Invoice 邮件发送失败')}`)
   }
 })

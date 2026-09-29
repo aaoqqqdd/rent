@@ -1685,7 +1685,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/staff/contracts/new': '+', '/staff/contracts?status=pending_sign': '✍', '/staff/inspections': '◈', '/staff/mobile/scan': '▦', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/tax-invoice-template': '▣', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
+    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/in-app-notification-templates': '▤', '/admin/tax-invoice-template': '▣', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
     '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/referrals': 'gift',
     '/admin/order-review': '⚑', '/admin/orders/balance-topups': '↥', '/admin/feedback-rewards': '✦', '/admin/feedback-gift-cards': 'gift'
   }
@@ -1766,20 +1766,42 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     : ''
 
   const searchTrigger = currentUser
-    ? `<button class="sidebar-search-trigger" type="button" data-global-search-trigger aria-controls="global-search"><span class="sidebar-search-trigger__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg></span><span>搜索工作台</span><kbd>⌘ K</kbd></button>`
+    ? `<button class="sidebar-search-trigger" type="button" data-global-search-trigger aria-controls="global-search"><span class="sidebar-search-trigger__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg></span><span class="sidebar-search-trigger__label">快速定位</span><kbd>⌘ K</kbd></button>`
+    : ''
+
+  const searchIndex = currentUser?.role === 'ADMIN'
+    ? [
+        ['/admin/settings#companyName', '公司资料与营业规则', '系统设置', '公司名称 ABN 地址 联系方式 自取地点 配送区域 不可用日期 营业规则'],
+        ['/admin/settings#requireEmailVerification', '注册安全与邮箱验证', '系统设置', '注册 安全 邮箱验证 验证码'],
+        ['/admin/marketing-emails#feedbackRewards', '反馈奖励与礼品卡', '营销增长', 'Tally 反馈 奖励 余额 优惠码 礼品卡'],
+        ['/admin/settings#priceStrategy', '价格策略', '系统设置', '价格 租金 押金 计算'],
+        ['/admin/settings#processingFeeRate', '支付方式与手续费', '系统设置', '支付 Stripe Square 银行转账 余额 手续费'],
+        ['/admin/settings#bankName', '银行转账账户信息', '系统设置', '银行 BSB 账号 账户 转账'],
+        ['/admin/settings#alipayQrUrl', '支付宝 / 微信收款码', '系统设置', '支付宝 微信 收款码 二维码 RMB 人民币 图片付款'],
+        ['/admin/settings#defaultReferralRate', '推荐返佣规则', '系统设置', '推荐 返佣 分成 结算'],
+        ['/admin/api-settings#turnstileSiteKey', 'Turnstile 验证', 'API 设置', 'Cloudflare Turnstile 人机 验证码 bot 注册'],
+        ['/admin/api-settings#emailProvider', '邮件与通知渠道', 'API 设置', 'Resend Brevo MailerSend 邮件 Webhook 通知 推送'],
+        ['/admin/api-settings#stripePublishableKey', 'Stripe 支付配置', 'API 设置', 'Stripe API 信用卡 支付 Webhook 密钥'],
+        ['/admin/api-settings#squareApplicationId', 'Square 礼品卡配置', 'API 设置', 'Square API 礼品卡 支付 沙盒'],
+        ['/admin/api-settings#cloudinaryCloudName', 'Cloudinary 媒体上传', 'API 设置', 'Cloudinary API 付款凭证 损坏照片 图片上传'],
+        ['/admin/api-settings#zoom2uApiToken', 'Zoom2u 配送配置', 'API 设置', 'Zoom2u 配送 API 派送 回收 取货'],
+      ]
+    : []
+  const searchIndexHtml = searchIndex.length
+    ? `<div id="global-search-index" hidden aria-hidden="true">${searchIndex.map(([href, label, group, keywords]) => `<a href="${href}" data-search-group="${group}" data-search-keywords="${keywords}">${label}</a>`).join('')}</div>`
     : ''
 
   const searchPanel = currentUser
     ? `<aside class="global-search" id="global-search" aria-hidden="true">
         <div class="global-search__scrim" data-global-search-close></div>
         <section class="global-search__panel" role="dialog" aria-modal="true" aria-labelledby="global-search-title">
-          <div class="global-search__head"><div><span class="section-code">WORKSPACE SEARCH</span><h2 id="global-search-title">搜索工作台</h2></div><button class="global-search__close" type="button" data-global-search-close aria-label="关闭搜索">Esc</button></div>
-          <label class="global-search__input-wrap" for="global-search-input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg><input id="global-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="搜索订单号、客户、设备或功能" aria-controls="global-search-results" aria-autocomplete="list"></label>
+          <div class="global-search__head"><div><span class="section-code">QUICK NAVIGATION</span><h2 id="global-search-title">去哪里？</h2></div><button class="global-search__close" type="button" data-global-search-close aria-label="关闭搜索">Esc</button></div>
+          <label class="global-search__input-wrap" for="global-search-input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg><input id="global-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="查找订单、客户、设备或设置功能" aria-controls="global-search-results" aria-autocomplete="list"></label>
           <div class="global-search__meta" id="global-search-meta">从导航入口和订单中快速定位</div>
           <div class="global-search__results" id="global-search-results" role="listbox" aria-label="搜索结果"></div>
           <div class="global-search__foot"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> 关闭</span></div>
         </section>
-      </aside>`
+      </aside>${searchIndexHtml}`
     : ''
 
   const sidebar = currentUser
@@ -1811,7 +1833,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('营销增长', [['/admin/coupons', '优惠码管理'], ['/admin/marketing-emails', '营销邮件'], ['/admin/marketing-emails/data', '营销数据'], ['/admin/referrals', '推荐奖励管理'], ['/admin/feedback-rewards', '反馈奖励记录'], ['/admin/feedback-gift-cards', '礼品卡库存']])}
-            ${renderNavGroup('系统设置', [['/admin/email-templates', '邮件通知模板'], ['/admin/tax-invoice-template', 'Tax Invoice PDF 模板'], ['/admin/settings', '系统设置'], ['/admin/api-settings', 'API 设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
+            ${renderNavGroup('系统设置', [['/admin/email-templates', '邮件通知模板'], ['/admin/in-app-notification-templates', '站内通知模板'], ['/admin/tax-invoice-template', 'Tax Invoice PDF 模板'], ['/admin/settings', '系统设置'], ['/admin/api-settings', 'API 设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">
@@ -1843,7 +1865,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   // 页脚在所有页面（登录前后）保持一致：平铺三个核心法律链接，其余合规页面
   // 统一收进「更多」折叠菜单，避免一长排链接换行。
   const footerPrimaryLinks: Array<[string, string]> = [
-    ['/feedback', '客户反馈'], ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
+    ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
   ]
   const footerMoreLinks: Array<[string, string]> = [
     ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'],

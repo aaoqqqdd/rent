@@ -9,21 +9,19 @@ import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
 import { decryptSecret } from '../../lib/secretBox';
-import { legacyPickupSlot, pickupTimeOptions } from '../../domain/pickupTimeSlots';
+import { legacyPickupSlot, pickupTimeOptions, pickupTimeSlotEndMinutes, pickupTimeSlots, serviceFeeRate } from '../../domain/pickupTimeSlots';
 
-function isTimeSlotPassed(date: string, slot: string): boolean {
+function isTimeSlotPassed(date: string, slot: string, rentalRules: any): boolean {
   const melbourneDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
   const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0)
   const minutes = (hour === 24 ? 0 : hour) * 60 + Number(parts.find((part) => part.type === 'minute')?.value || 0)
-  const endMinutes: Record<string, number> = { morning_service: 8 * 60, morning: 12 * 60, afternoon: 20 * 60, evening_service: 23 * 60, delivery_morning: 12 * 60, delivery_afternoon: 19 * 60 }
-  const exactMinutes = /^([01]\d|2[0-3]):(?:00|30)$/.test(slot) ? Number(slot.slice(0, 2)) * 60 + Number(slot.slice(3)) : 0
-  return date === melbourneDate && minutes >= (exactMinutes || endMinutes[slot] || 24 * 60)
+  return date === melbourneDate && minutes >= pickupTimeSlotEndMinutes(slot, rentalRules)
 }
 
 function pickupTimeSelector(rules: any, date: string, id: string, label: string): string {
   const blocked = rules.unavailableTimeSlots?.[date] || []
-  const times = (mode: 'business' | 'non_business') => pickupTimeOptions(rules, date, mode).filter(time => !blocked.includes(time) && !blocked.includes(legacyPickupSlot(time, rules)) && !isTimeSlotPassed(date, time))
+  const times = (mode: 'business' | 'non_business') => pickupTimeOptions(rules, date, mode).filter(time => !blocked.includes(time) && !blocked.includes(legacyPickupSlot(time, rules)) && !isTimeSlotPassed(date, time, rules))
   return `<div class="form-group pickup-mode-selector" data-pickup-mode-selector data-business='${JSON.stringify(times('business'))}' data-non-business='${JSON.stringify(times('non_business'))}'><label class="form-label" for="${id}Mode">${label}</label><select class="form-control" id="${id}Mode" data-pickup-mode required><option value="">先选择时段类型</option><option value="business">营业时段（免服务费）</option><option value="non_business">非营业时段（需服务费）</option></select><select class="form-control" id="${id}" name="${id}" data-pickup-time disabled required><option value="">请先选择时段类型</option></select></div>`
 }
 
@@ -398,7 +396,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           <input type="hidden" name="stripeSetupIntentId" value="">
           ${hasSavedCard ? `<input type="hidden" name="paymentMethod" value="stripe"><input type="hidden" name="refundMethod" value="${escapeAttribute(String((order as any).refundMethod || 'original'))}">` : ''}
           <div class="grid grid-2" style="margin: 20px 0;">
-            ${(() => { const unavailable = rentalRules.unavailableTimeSlots || {}; const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'; const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : [['morning_service', '7:00–8:00（早间服务费 10%）'], ['morning', '9:00–12:00（无服务费）'], ['afternoon', '13:00–20:00（无服务费）'], ['evening_service', '21:00–23:00（晚间服务费 10%）']]; const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value) && !isTimeSlotPassed(date, value)); return `<div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>`; })()}
+            ${(() => { const unavailable = rentalRules.unavailableTimeSlots || {}; const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'; const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : pickupTimeSlots(rentalRules); const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value) && !isTimeSlotPassed(date, value, rentalRules)); return `<div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}"${value === (order as any).pickupTimeSlot ? ' selected' : ''}>${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}"${value === (order as any).returnTimeSlot ? ' selected' : ''}>${label}</option>`).join('')}</select></div>`; })()}
           </div>
 
             <div class="form-group" style="margin: 20px 0;"><label class="form-label" for="couponCode">优惠码（选填）</label><input class="form-control" id="couponCode" name="couponCode" maxlength="40" placeholder="输入优惠码后继续付款"><small class="form-text" id="coupon-preview" aria-live="polite"></small></div>
@@ -478,6 +476,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const FULL_AUTHORIZATION = ${depositPaymentMode === 'PREAUTH' ? 'true' : 'false'};
               const RENT_ONLY = ${Number((stripePrincipal - orderServiceFee).toFixed(2))};
               const SERVICE_FEE_SLOTS = ['morning_service', 'evening_service'];
+              const SERVICE_FEE_RATE = ${serviceFeeRate(rentalRules)};
               const pickupTimeSlotSelect = document.getElementById('pickupTimeSlot');
               const returnTimeSlotSelect = document.getElementById('returnTimeSlot');
               const applyTotal = total => {
@@ -542,7 +541,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               // 金额要立即刷新，不用等提交表单。
               const recomputeServiceFee = () => {
                 const slots = [pickupTimeSlotSelect?.value, returnTimeSlotSelect?.value].filter(value => SERVICE_FEE_SLOTS.includes(value)).length;
-                const serviceFee = Math.round(RENT_ONLY * 0.1 * slots * 100) / 100;
+                const serviceFee = Math.round(RENT_ONLY * SERVICE_FEE_RATE * slots * 100) / 100;
                 applyTotal(RENT_ONLY + serviceFee + ORDER_DEPOSIT);
               };
               pickupTimeSlotSelect?.addEventListener('change', recomputeServiceFee);

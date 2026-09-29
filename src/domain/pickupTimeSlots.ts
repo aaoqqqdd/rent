@@ -6,6 +6,7 @@
 export const HALF_HOUR_TIME_OPTIONS = Array.from({ length: 48 }, (_, index) => `${String(Math.floor(index / 2)).padStart(2, '0')}:${index % 2 ? '30' : '00'}`)
 
 export type TimeRange = { start: string; end: string }
+export type LegacyServiceFeeHours = { morningStart: string; morningEnd: string; eveningStart: string; eveningEnd: string }
 export type WeeklyUnavailablePickupRange = TimeRange & { weekday: number }
 export type PickupTimeSettings = {
   businessHours: TimeRange
@@ -48,12 +49,13 @@ export function serviceFeeRate(rules: any): number {
   return Number.isFinite(rate) ? Math.min(1, Math.max(0, rate)) : 0.1
 }
 
-export function hasValidPickupTimeSettings(settings: PickupTimeSettings): boolean {
-  if (!validRange(settings.businessHours) || !settings.serviceFeeHours.length) return false
-  const businessStart = minutes(settings.businessHours.start), businessEnd = minutes(settings.businessHours.end)
-  return settings.serviceFeeHours.every(validRange)
-    && settings.serviceFeeHours.every(range => minutes(range.end) <= businessStart || minutes(range.start) >= businessEnd)
-    && settings.unavailablePickupHours.every(range => validRange(range) && Number.isInteger(range.weekday) && range.weekday >= 0 && range.weekday <= 6)
+export function hasValidPickupTimeSettings(settings: PickupTimeSettings | { serviceFeeHours: LegacyServiceFeeHours; businessHours: TimeRange }): boolean {
+  const normalized = pickupTimeSettings(settings)
+  if (!validRange(normalized.businessHours) || !normalized.serviceFeeHours.length) return false
+  const businessStart = minutes(normalized.businessHours.start), businessEnd = minutes(normalized.businessHours.end)
+  return normalized.serviceFeeHours.every(validRange)
+    && normalized.serviceFeeHours.every(range => minutes(range.end) <= businessStart || minutes(range.start) >= businessEnd)
+    && normalized.unavailablePickupHours.every(range => validRange(range) && Number.isInteger(range.weekday) && range.weekday >= 0 && range.weekday <= 6)
 }
 
 function inRange(time: string, range: TimeRange): boolean {
@@ -84,6 +86,28 @@ export function pickupTimeOptions(rules: any, date: string, mode: 'business' | '
   return HALF_HOUR_TIME_OPTIONS.filter(time => pickupTimeMode(time, rules) === mode && !isUnavailablePickupTime(time, date, rules))
 }
 
-export function pickupTimeSlotEndMinutes(slot: string, _rules: any): number {
-  return HALF_HOUR_TIME_OPTIONS.includes(slot) ? minutes(slot) : 24 * 60
+export function pickupTimeSlotEndMinutes(slot: string, rules: any): number {
+  if (HALF_HOUR_TIME_OPTIONS.includes(slot)) return minutes(slot)
+  const settings = pickupTimeSettings(rules)
+  const endTimes: Record<string, string> = {
+    morning_service: settings.serviceFeeHours[0]?.end || '08:00',
+    morning: '12:00',
+    afternoon: settings.businessHours.end,
+    evening_service: settings.serviceFeeHours[1]?.end || '23:00',
+    delivery_morning: '12:00',
+    delivery_afternoon: '19:00',
+  }
+  return endTimes[slot] ? minutes(endTimes[slot]) : 24 * 60
+}
+
+export function pickupTimeSlots(rules: any): Array<[string, string]> {
+  const settings = pickupTimeSettings(rules)
+  const feePercent = Number((serviceFeeRate(rules) * 100).toFixed(2))
+  const displayTime = (value: string) => value.replace(/^0/, '')
+  return [
+    ['morning_service', `${displayTime(settings.serviceFeeHours[0]?.start || '07:00')}–${displayTime(settings.serviceFeeHours[0]?.end || '08:00')}（早间服务费 ${feePercent}%）`],
+    ['morning', `${displayTime(settings.businessHours.start)}–12:00（无服务费）`],
+    ['afternoon', `13:00–${displayTime(settings.businessHours.end)}（无服务费）`],
+    ['evening_service', `${displayTime(settings.serviceFeeHours[1]?.start || '21:00')}–${displayTime(settings.serviceFeeHours[1]?.end || '23:00')}（晚间服务费 ${feePercent}%）`],
+  ]
 }

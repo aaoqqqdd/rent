@@ -16,6 +16,7 @@ export interface ReceiptPdfData {
   customerName: string
   customerEmail: string
   customerPhone?: string
+  customerAddress?: string
   orderNumber: string
   contractNumber?: string
   documentNumber: string
@@ -167,8 +168,7 @@ export function buildReceiptPdf(data: ReceiptPdfData): Uint8Array {
   const companyMeta = [displayText(data.companyAddress, 70, ''), data.companyPhone ? displayText(data.companyPhone, 24) : '', data.companyAbn ? `${template.abnLabel} ${displayText(data.companyAbn, 20)}` : ''].filter(Boolean).join(' | ')
   text(lines, 42, 778, companyMeta, 8.5, 'F1', '0.78 0.82 0.87')
   text(lines, 42, 748, template.title, 22, 'F2', '1 1 1')
-  text(lines, 395, 797, template.documentNumberLabel, 8, 'F2', '0.95 0.55 0.18')
-  text(lines, 395, 780, data.documentNumber, 12, 'F2', '1 1 1')
+  text(lines, 395, 797, `${template.documentNumberLabel} ${displayText(data.documentNumber, 24)}`, 8, 'F2', '0.95 0.55 0.18')
   text(lines, 395, 758, `${template.issuedLabel} ${displayText(data.issuedAt, 28)}`, 8.5, 'F1', '0.78 0.82 0.87')
 
   text(lines, 42, 685, template.billedToLabel, 8, 'F2', '0.95 0.55 0.18')
@@ -182,10 +182,14 @@ export function buildReceiptPdf(data: ReceiptPdfData): Uint8Array {
   text(lines, 300, 615, `${template.paidLabel}: ${displayText(data.paidAt || data.issuedAt, 28)}`, 9)
   line(lines, 42, 590, 553, 590, '0.75 0.78 0.82', 1.2)
 
-  text(lines, 42, 568, template.descriptionLabel, 8, 'F2', '0.34 0.39 0.46')
+  text(lines, 42, 568, template.itemLabel, 8, 'F2', '0.34 0.39 0.46')
+  text(lines, 250, 568, template.quantityLabel, 8, 'F2', '0.34 0.39 0.46')
+  text(lines, 300, 568, template.priceLabel, 8, 'F2', '0.34 0.39 0.46')
   text(lines, 400, 568, template.amountLabel, 8, 'F2', '0.34 0.39 0.46')
   line(lines, 42, 555, 553, 555)
   text(lines, 42, 531, ascii(data.deviceName, 'Rental device'), 10, 'F2')
+  text(lines, 250, 531, '1', 10, 'F1')
+  text(lines, 300, 531, money(data.subtotal, currency), 10, 'F1')
   text(lines, 42, 515, `${displayText(data.startDate)} to ${displayText(data.endDate)}${data.rentalPeriod ? ` - ${data.rentalPeriod} days` : ''}`, 8.5, 'F1', '0.38 0.43 0.49')
   text(lines, 400, 531, money(data.subtotal, currency), 10, 'F2')
   let rowY = 480
