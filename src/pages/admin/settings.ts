@@ -7,7 +7,6 @@ import { buildLayout, getSystemSettings } from '../../site';
 
 export function renderAdminSettings(user: any) {
   const settings = getSystemSettings(); // 获取当前系统设置
-  const feedbackRewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, balanceAmountMin: 5, balanceAmountMax: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponDiscountValueMin: 5, couponDiscountValueMax: 5, couponMinimumOrderAmount: 0, couponExpiresDays: 30 };
   const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   const body = `
     <div class="panel">
@@ -39,21 +38,6 @@ export function renderAdminSettings(user: any) {
         <section class="form-section">
           <div class="form-section-title"><span class="mono">AUTH</span><div><h3>注册安全设置</h3><p>关闭时仍可发送验证邮件，但注册后不会阻止用户直接进入系统。</p></div></div>
           <div class="checkbox-group"><input type="checkbox" id="requireEmailVerification" ${settings.registrationSettings?.requireEmailVerification ? 'checked' : ''}><label for="requireEmailVerification">强制新注册用户验证邮箱</label></div>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-title"><span class="mono">TALLY</span><div><h3>Tally 客户反馈与奖励</h3><p>请在 Tally 的 Share → Embed 中复制 <code>https://tally.so/embed/...</code> 地址。反馈表单必须添加名为 <code>feedbackToken</code> 的 Hidden field，并在 Tally 后台的 Webhook 设置中把地址指向 <code>/webhooks/tally</code>。Webhook 密钥由 Cloudflare Worker 环境变量 <code>TALLY_WEBHOOK_SECRET</code> 管理。</p></div></div>
-          <div class="form-group"><label class="form-label" for="tallyFormUrl">Tally Embed URL</label><input class="form-control" type="url" id="tallyFormUrl" name="tallyFormUrl" value="${escAttr(settings.tallyFormUrl)}" placeholder="https://tally.so/embed/xxxxxxxx"><small class="form-text">保存后访问 <a href="/feedback" target="_blank" rel="noopener">/feedback</a> 预览（需已登录正式客户账号）。</small></div>
-          <div class="checkbox-group"><input type="checkbox" id="feedbackRewardEnabled" ${feedbackRewards.enabled ? 'checked' : ''}><label for="feedbackRewardEnabled">提交反馈后自动发放奖励</label></div>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="feedbackRewardType">奖励类型</label><select class="form-control" id="feedbackRewardType"><option value="BALANCE" ${feedbackRewards.rewardType === 'BALANCE' ? 'selected' : ''}>账户余额</option><option value="COUPON" ${feedbackRewards.rewardType === 'COUPON' ? 'selected' : ''}>一次性优惠码</option><option value="GIFT_CARD" ${feedbackRewards.rewardType === 'GIFT_CARD' ? 'selected' : ''}>外部礼品卡兑换码</option></select></div>
-            <div class="form-group"><label class="form-label" for="feedbackBalanceAmountMin">余额奖励范围（AUD）</label><div class="grid grid-2"><input class="form-control" id="feedbackBalanceAmountMin" type="number" min="0.01" max="10000" step="0.01" value="${feedbackRewards.balanceAmountMin ?? feedbackRewards.balanceAmount}" placeholder="最低金额"><input class="form-control" id="feedbackBalanceAmountMax" type="number" min="0.01" max="10000" step="0.01" value="${feedbackRewards.balanceAmountMax ?? feedbackRewards.balanceAmount}" placeholder="最高金额"></div></div>
-            <div class="form-group"><label class="form-label" for="feedbackCouponDiscountType">优惠码类型</label><select class="form-control" id="feedbackCouponDiscountType"><option value="fixed" ${feedbackRewards.couponDiscountType === 'fixed' ? 'selected' : ''}>固定金额</option><option value="percent" ${feedbackRewards.couponDiscountType === 'percent' ? 'selected' : ''}>百分比</option></select></div>
-            <div class="form-group"><label class="form-label" for="feedbackCouponDiscountValueMin">优惠值范围</label><div class="grid grid-2"><input class="form-control" id="feedbackCouponDiscountValueMin" type="number" min="0.01" max="10000" step="0.01" value="${feedbackRewards.couponDiscountValueMin ?? feedbackRewards.couponDiscountValue}" placeholder="最低优惠"><input class="form-control" id="feedbackCouponDiscountValueMax" type="number" min="0.01" max="10000" step="0.01" value="${feedbackRewards.couponDiscountValueMax ?? feedbackRewards.couponDiscountValue}" placeholder="最高优惠"></div></div>
-            <div class="form-group"><label class="form-label" for="feedbackCouponMinimumOrderAmount">最低使用金额（AUD）</label><input class="form-control" id="feedbackCouponMinimumOrderAmount" type="number" min="0" max="1000000" step="0.01" value="${feedbackRewards.couponMinimumOrderAmount || 0}"><small class="form-text">填 0 表示不限制最低订单金额。</small></div>
-            <div class="form-group"><label class="form-label" for="feedbackCouponExpiresDays">优惠码有效期（天）</label><input class="form-control" id="feedbackCouponExpiresDays" type="number" min="1" max="365" step="1" value="${feedbackRewards.couponExpiresDays}"></div>
-          </div>
-          <p class="form-text">礼品卡奖励不会调用 Square 发卡 API；请先在 <a href="/admin/feedback-gift-cards">礼品卡库存</a> 录入外部兑换码，系统按先进先出发放。发放记录（含失败原因和重试）请查看 <a href="/admin/feedback-rewards">反馈奖励记录</a>。</p>
         </section>
 
         <section class="form-section">
@@ -171,18 +155,6 @@ export function renderAdminSettings(user: any) {
           },
           registrationSettings: {
             requireEmailVerification: document.getElementById('requireEmailVerification').checked,
-          },
-          tallyFormUrl: inputValue('tallyFormUrl'),
-          feedbackRewards: {
-            enabled: document.getElementById('feedbackRewardEnabled').checked,
-            rewardType: inputValue('feedbackRewardType'),
-            balanceAmountMin: Number(inputValue('feedbackBalanceAmountMin') || 0),
-            balanceAmountMax: Number(inputValue('feedbackBalanceAmountMax') || 0),
-            couponDiscountType: inputValue('feedbackCouponDiscountType'),
-            couponDiscountValueMin: Number(inputValue('feedbackCouponDiscountValueMin') || 0),
-            couponDiscountValueMax: Number(inputValue('feedbackCouponDiscountValueMax') || 0),
-            couponMinimumOrderAmount: Number(inputValue('feedbackCouponMinimumOrderAmount') || 0),
-            couponExpiresDays: Number(inputValue('feedbackCouponExpiresDays') || 30),
           },
           bankDetails: {
             bankName: formData.get('bankName'),

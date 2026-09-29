@@ -6712,3 +6712,391 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* Tax invoice template editor */
+.tax-invoice-editor {
+  display: grid;
+  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.tax-invoice-editor__intro {
+  align-items: flex-start;
+}
+.tax-invoice-editor__controls {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #d7dee5;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(18, 31, 43, .08);
+}
+.tax-invoice-editor__controls-top,
+.tax-invoice-editor__save {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 20px;
+}
+.tax-invoice-editor__controls-top {
+  color: #253444;
+  border-bottom: 1px solid #e2e7eb;
+}
+.tax-invoice-editor__controls-top > div {
+  display: grid;
+  gap: 5px;
+}
+.tax-invoice-editor__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #657381;
+  font-size: .76rem;
+  white-space: nowrap;
+}
+.tax-invoice-editor__status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #31946b;
+  box-shadow: 0 0 0 4px rgba(49, 148, 107, .12);
+}
+.tax-invoice-editor__section {
+  padding: 19px 20px 21px;
+  border-bottom: 1px solid #e2e7eb;
+}
+.tax-invoice-editor__section-head {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+.tax-invoice-editor__section-head > span {
+  color: #b87526;
+  font: 700 .72rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em;
+}
+.tax-invoice-editor__section-head h3 {
+  margin: 0;
+  color: #223344;
+  font-size: .96rem;
+}
+.tax-invoice-editor__section-head p {
+  margin: 5px 0 0;
+  color: #788692;
+  font-size: .78rem;
+  line-height: 1.5;
+}
+.tax-invoice-editor__fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 13px 12px;
+}
+.tax-invoice-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.tax-invoice-field--wide {
+  grid-column: 1 / -1;
+}
+.tax-invoice-field > span {
+  color: #53616e;
+  font-size: .76rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.tax-invoice-field .form-control {
+  min-height: 39px;
+  padding: 9px 10px;
+  border-color: #cbd5dc;
+  border-radius: 6px;
+  color: #263544;
+  font-size: .82rem;
+}
+.tax-invoice-field textarea.form-control {
+  min-height: 67px;
+  resize: vertical;
+}
+.tax-invoice-editor__save {
+  align-items: flex-start;
+  flex-direction: column;
+  background: #f8fafb;
+  border-radius: 0 0 14px 14px;
+}
+.tax-invoice-editor__save > span {
+  color: #788692;
+  font-size: .75rem;
+  line-height: 1.45;
+}
+.tax-invoice-editor__preview-shell {
+  min-width: 0;
+  padding: 21px;
+  background: #e7ebee;
+  border: 1px solid #d2dae0;
+  border-radius: 14px;
+}
+.tax-invoice-editor__preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 auto 15px;
+  max-width: 780px;
+  color: #647381;
+  font-size: .75rem;
+}
+.tax-invoice-editor__preview-bar > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.tax-invoice-editor__preview-bar strong {
+  color: #263544;
+  font-size: .82rem;
+  letter-spacing: .08em;
+}
+.tax-invoice-preview {
+  max-width: 780px;
+  min-height: 900px;
+  margin: 0 auto;
+  padding: 48px 54px 42px;
+  box-sizing: border-box;
+  background: #fff;
+  color: #172431;
+  box-shadow: 0 16px 38px rgba(35, 48, 59, .14);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.tax-invoice-preview__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 30px;
+}
+.tax-invoice-preview__brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+}
+.tax-invoice-preview__mark {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  flex: 0 0 auto;
+  background: #536274;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+.tax-invoice-preview__brand strong,
+.tax-invoice-preview__brand span,
+.tax-invoice-preview__brand small,
+.tax-invoice-preview__meta span,
+.tax-invoice-preview__columns span,
+.tax-invoice-preview__footer span {
+  display: block;
+}
+.tax-invoice-preview__brand strong {
+  color: #344252;
+  font-size: .98rem;
+  letter-spacing: .12em;
+}
+.tax-invoice-preview__brand span {
+  margin-top: 3px;
+  color: #82909b;
+  font-size: .56rem;
+  letter-spacing: .15em;
+}
+.tax-invoice-preview__brand small {
+  margin-top: 10px;
+  color: #73808b;
+  font-size: .66rem;
+}
+.tax-invoice-preview__meta {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  color: #697783;
+  font-size: .66rem;
+  text-align: right;
+}
+.tax-invoice-preview__meta strong {
+  color: #283847;
+  font-size: .8rem;
+}
+.tax-invoice-preview__rule {
+  margin: 31px 0 37px;
+  border-top: 4px solid #536274;
+}
+.tax-invoice-preview__title h1 {
+  margin: 0;
+  color: #172431;
+  font-size: clamp(1.7rem, 3.8vw, 2.5rem);
+  font-weight: 750;
+  letter-spacing: .07em;
+}
+.tax-invoice-preview__title p {
+  max-width: 440px;
+  margin: 12px 0 0;
+  color: #6b7882;
+  font-size: .74rem;
+  line-height: 1.6;
+}
+.tax-invoice-preview__editable {
+  border-radius: 3px;
+  outline: 0 solid rgba(184, 117, 38, 0);
+  transition: background .16s ease, outline .16s ease;
+}
+.tax-invoice-preview__editable:hover,
+.tax-invoice-preview__editable:focus {
+  background: rgba(214, 162, 91, .14);
+  outline: 3px solid rgba(184, 117, 38, .14);
+}
+.tax-invoice-preview__columns {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-top: 53px;
+}
+.tax-invoice-preview__columns > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid #d7dce0;
+}
+.tax-invoice-preview__columns b {
+  margin-bottom: 5px;
+  color: #536274;
+  font-size: .61rem;
+  letter-spacing: .12em;
+}
+.tax-invoice-preview__columns strong {
+  color: #253544;
+  font-size: .74rem;
+}
+.tax-invoice-preview__columns span {
+  color: #71808c;
+  font-size: .67rem;
+  line-height: 1.35;
+}
+.tax-invoice-preview__table {
+  margin-top: 39px;
+  border-top: 1px solid #ccd4da;
+}
+.tax-invoice-preview__table-head,
+.tax-invoice-preview__table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 86px 94px;
+  gap: 12px;
+  align-items: center;
+}
+.tax-invoice-preview__table-head {
+  padding: 11px 0;
+  color: #536274;
+  font-size: .6rem;
+  font-weight: 750;
+  letter-spacing: .1em;
+}
+.tax-invoice-preview__table-head span:not(:first-child),
+.tax-invoice-preview__table-row span:not(:first-child) {
+  text-align: right;
+}
+.tax-invoice-preview__table-row {
+  min-height: 42px;
+  border-top: 1px solid #e6eaed;
+  color: #465562;
+  font-size: .7rem;
+}
+.tax-invoice-preview__summary {
+  display: grid;
+  gap: 10px;
+  max-width: 325px;
+  margin: 32px 0 0 auto;
+  color: #64727d;
+  font-size: .7rem;
+}
+.tax-invoice-preview__summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+.tax-invoice-preview__summary strong {
+  color: #344452;
+  font-weight: 650;
+  text-align: right;
+}
+.tax-invoice-preview__summary .tax-invoice-preview__total {
+  margin-top: 5px;
+  padding-top: 14px;
+  border-top: 1px solid #536274;
+  color: #263544;
+  font-size: .82rem;
+}
+.tax-invoice-preview__summary .tax-invoice-preview__total strong {
+  font-size: 1rem;
+}
+.tax-invoice-preview__footer {
+  display: grid;
+  gap: 7px;
+  margin-top: 62px;
+  padding-top: 17px;
+  border-top: 1px solid #d7dce0;
+  color: #7a8791;
+  font-size: .65rem;
+  line-height: 1.45;
+}
+.tax-invoice-preview__footer strong {
+  color: #445361;
+  font-size: .69rem;
+}
+@media (max-width: 1120px) {
+  .tax-invoice-editor {
+    grid-template-columns: 1fr;
+  }
+  .tax-invoice-editor__controls {
+    position: static;
+    max-height: none;
+    order: 2;
+  }
+  .tax-invoice-editor__preview-shell {
+    order: 1;
+  }
+}
+@media (max-width: 700px) {
+  .tax-invoice-editor__fields {
+    grid-template-columns: 1fr;
+  }
+  .tax-invoice-field--wide {
+    grid-column: auto;
+  }
+  .tax-invoice-editor__preview-shell {
+    padding: 12px;
+  }
+  .tax-invoice-preview {
+    min-height: 0;
+    padding: 28px 20px;
+  }
+  .tax-invoice-preview__header,
+  .tax-invoice-preview__columns {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+  .tax-invoice-preview__meta {
+    text-align: left;
+  }
+  .tax-invoice-preview__columns {
+    gap: 16px;
+    margin-top: 36px;
+  }
+  .tax-invoice-preview__table-head,
+  .tax-invoice-preview__table-row {
+    grid-template-columns: minmax(0, 1fr) 35px 66px 75px;
+    gap: 5px;
+    font-size: .61rem;
+  }
+}
