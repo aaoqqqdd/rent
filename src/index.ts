@@ -147,7 +147,7 @@ import { getTableColumns as getCachedTableColumns } from './db/client'
 import { createTallyFeedbackToken } from './lib/tally'
 import { parsePickupQrPayload } from './lib/pickupQr'
 import { readManualInspectionFields, renderManualInspectionFields, inspectionText } from './lib/inspection'
-import { getCloudinaryConfigSummary, getCloudinaryRuntimeConfig, uploadCloudinaryImages } from './lib/cloudinary'
+import { getCloudinaryConfigSummary, getCloudinaryRuntimeConfig, uploadCloudinaryImage, uploadCloudinaryImages } from './lib/cloudinary'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
   const form: Record<string, string> = {}
@@ -602,6 +602,7 @@ app.use('*', async (c, next) => {
   const uploadPath = c.req.method === 'POST' && (
     c.req.path === '/contract/sign' ||
     c.req.path === '/customer/balance/top-up/transfer' ||
+    c.req.path === '/admin/settings/upload-image' ||
     /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ||
     /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path)
   )
@@ -5141,6 +5142,21 @@ app.get('/admin/settings', async (c) => {
   }
   await loadSystemSettingsFromDB(c)
   return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), Boolean(c.env.TALLY_WEBHOOK_SECRET), await getDeliveryConfigSummary(c), await getCloudinaryConfigSummary(c)))
+})
+
+app.post('/admin/settings/upload-image', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限' }, 403)
+  const form = await c.req.parseBody()
+  const kind = String(form.kind || '')
+  const folder = kind === 'alipay' ? 'rent/rmb-payment-qr/alipay' : kind === 'wechat' ? 'rent/rmb-payment-qr/wechat' : ''
+  if (!folder) return c.json({ success: false, error: '不支持的收款码类型' }, 400)
+  try {
+    const url = await uploadCloudinaryImage(form.imageFile, await getCloudinaryRuntimeConfig(c), folder)
+    return c.json({ success: true, url })
+  } catch (error: any) {
+    return c.json({ success: false, error: error?.message || '图片上传失败' }, 400)
+  }
 })
 
 app.get('/admin/feedback-rewards', async (c) => {

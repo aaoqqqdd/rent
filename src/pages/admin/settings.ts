@@ -247,10 +247,10 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">RMB</span><div><h3>人民币收款码</h3><p>请输入公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。</p></div></div>
+          <div class="form-section-title"><span class="mono">RMB</span><div><h3>人民币收款码</h3><p>可直接选择图片上传到 Cloudinary；也可以继续填写公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。</p></div></div>
           <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="alipayQrUrl">支付宝收款码 URL</label><input class="form-control" id="alipayQrUrl" name="alipayQrUrl" type="url" value="${settings.rmbPayment.alipayQrUrl}" placeholder="https://.../alipay-qr.png"></div>
-            <div class="form-group"><label class="form-label" for="wechatQrUrl">微信收款码 URL</label><input class="form-control" id="wechatQrUrl" name="wechatQrUrl" type="url" value="${settings.rmbPayment.wechatQrUrl}" placeholder="https://.../wechat-qr.png"></div>
+            <div class="form-group"><label class="form-label" for="alipayQrFile">支付宝收款码图片</label><input class="form-control" id="alipayQrFile" type="file" accept="image/jpeg,image/png,image/webp"><label class="form-label" for="alipayQrUrl">支付宝收款码 URL（自动回填）</label><input class="form-control" id="alipayQrUrl" name="alipayQrUrl" type="url" value="${escAttr(settings.rmbPayment.alipayQrUrl)}" placeholder="https://.../alipay-qr.png"><small class="form-text">支持 JPG、PNG、WebP，单张不超过 5MB。</small></div>
+            <div class="form-group"><label class="form-label" for="wechatQrFile">微信收款码图片</label><input class="form-control" id="wechatQrFile" type="file" accept="image/jpeg,image/png,image/webp"><label class="form-label" for="wechatQrUrl">微信收款码 URL（自动回填）</label><input class="form-control" id="wechatQrUrl" name="wechatQrUrl" type="url" value="${escAttr(settings.rmbPayment.wechatQrUrl)}" placeholder="https://.../wechat-qr.png"><small class="form-text">支持 JPG、PNG、WebP，单张不超过 5MB。</small></div>
           </div>
         </section>
 
@@ -274,8 +274,32 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         const form = document.getElementById('systemSettingsForm');
         if (!form || form.dataset.settingsReady === 'true') return;
         form.dataset.settingsReady = 'true';
-        form.addEventListener('submit', function(event) {
+        form.addEventListener('submit', async function(event) {
         event.preventDefault();
+
+        const uploadQrImage = async (fileId, kind, urlId) => {
+          const fileInput = document.getElementById(fileId);
+          const file = fileInput?.files?.[0];
+          if (!file) return;
+          const uploadData = new FormData();
+          uploadData.append('imageFile', file);
+          uploadData.append('kind', kind);
+          const response = await fetch('/admin/settings/upload-image', { method: 'POST', body: uploadData });
+          const rawText = await response.text();
+          let data = {};
+          try { data = rawText ? JSON.parse(rawText) : {}; } catch { data = { error: rawText || '图片上传失败' }; }
+          if (!response.ok || !data.success || !data.url) throw new Error(data.error || '图片上传失败');
+          document.getElementById(urlId).value = data.url;
+        };
+        try {
+          await Promise.all([
+            uploadQrImage('alipayQrFile', 'alipay', 'alipayQrUrl'),
+            uploadQrImage('wechatQrFile', 'wechat', 'wechatQrUrl'),
+          ]);
+        } catch (error) {
+          alert('收款码上传失败: ' + (error instanceof Error ? error.message : '请稍后重试'));
+          return;
+        }
 
         const formData = new FormData(this);
         const inputValue = (id) => document.getElementById(id)?.value || '';
