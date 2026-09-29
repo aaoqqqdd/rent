@@ -11,6 +11,7 @@ import { getEmailConfigSummary, saveEmailConfig } from '../../emailConfig'
 import { getSquareConfigSummary, saveSquareConfig } from '../../square'
 import { getNotifyChannelsSummary, saveNotifyChannels } from '../../notifyChannels'
 import { getDeliveryConfigSummary, saveDeliveryConfig } from '../../deliveryConfig'
+import { getCloudinaryConfigSummary, saveCloudinaryConfig } from '../../lib/cloudinary'
 import { enqueueAgreementUpdate } from '../../services/notifications'
 import { normalizeTallyEmbedUrl } from '../../lib/tally'
 
@@ -132,6 +133,14 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
 
   if (shouldSaveStripeConfig) await saveStripeConfig(c, stripeConfigInput)
 
+  const cloudinaryConfigInput = payload.cloudinaryConfig
+  const shouldSaveCloudinaryConfig = Boolean(cloudinaryConfigInput && (
+    // Cloud Name is echoed back on every settings save, so it must not by
+    // itself trigger validation when credentials already live in env vars.
+    cloudinaryConfigInput.apiKey || cloudinaryConfigInput.apiSecret || cloudinaryConfigInput.clear === true
+  ))
+  if (shouldSaveCloudinaryConfig) await saveCloudinaryConfig(c, cloudinaryConfigInput)
+
   const squareConfigInput = payload.squareConfig
   const shouldSaveSquareConfig = Boolean(squareConfigInput && (squareConfigInput.accessToken || squareConfigInput.webhookSignatureKey || squareConfigInput.applicationId || squareConfigInput.locationId || squareConfigInput.clear === true))
   if (shouldSaveSquareConfig) await saveSquareConfig(c, squareConfigInput)
@@ -188,5 +197,5 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   await updateSystemSettings(c, next as any)
   await loadSystemSettingsFromDB(c)
 
-  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), square: await getSquareConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c), turnstile: await getTurnstileConfigSummary(c), delivery: await getDeliveryConfigSummary(c) })
+  return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), square: await getSquareConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c), turnstile: await getTurnstileConfigSummary(c), delivery: await getDeliveryConfigSummary(c), cloudinary: await getCloudinaryConfigSummary(c) })
 }

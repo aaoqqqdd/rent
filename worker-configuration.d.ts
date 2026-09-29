@@ -6,6 +6,9 @@ interface __BaseEnv_CloudflareBindings {
 	rent: D1Database;
 	PUBLIC_WEB_ORIGIN: "https://rent-web.ydnw6zt6vj.workers.dev";
 	SETTINGS_ENCRYPTION_KEY: string;
+	CLOUDINARY_CLOUD_NAME: string;
+	CLOUDINARY_API_KEY: string;
+	CLOUDINARY_API_SECRET: string;
 	DELIVERY_SERVICE: Fetcher /* geekslope-web */;
 }
 declare namespace Cloudflare {

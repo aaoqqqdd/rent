@@ -5,7 +5,7 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}, tallyWebhookConfigured: boolean = false, delivery: any = {}) {
+export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}, tallyWebhookConfigured: boolean = false, delivery: any = {}, cloudinary: any = {}) {
   const settings = getSystemSettings(); // 获取当前系统设置
   const feedbackRewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, balanceAmountMin: 5, balanceAmountMax: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponDiscountValueMin: 5, couponDiscountValueMax: 5, couponMinimumOrderAmount: 0, couponExpiresDays: 30 };
   const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -14,6 +14,13 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
     usingEnvFallback: Boolean(turnstile.usingEnvFallback),
     siteKey: turnstile.siteKey || '',
     secretKeyMasked: turnstile.secretKeyMasked || '',
+  };
+  const cy = {
+    configured: Boolean(cloudinary.configured),
+    usingEnvFallback: Boolean(cloudinary.usingEnvFallback),
+    cloudName: cloudinary.cloudName || '',
+    apiKeyMasked: cloudinary.apiKeyMasked || '',
+    apiSecretMasked: cloudinary.apiSecretMasked || '',
   };
   const nc = {
     emailProvider: notify.emailProvider || 'resend',
@@ -197,6 +204,17 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
+          <div class="form-section-title"><span class="mono">MEDIA</span><div><h3>Cloudinary 图片上传</h3><p>当前状态：${cy.configured ? (cy.usingEnvFallback ? '已配置（使用环境变量）' : '已配置') : '未配置'}。用于付款凭证和设备损坏照片上传。请在 Cloudinary 控制台的 API Keys 页面填写 Cloud Name、API Key 和 API Secret；密钥会加密保存，留空表示保留原值。</p></div></div>
+          <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="cloudinaryCloudName">Cloud Name</label><input class="form-control" id="cloudinaryCloudName" value="${escAttr(cy.cloudName)}" placeholder="例如：dxxxxxxx"></div>
+            <div class="form-group"><label class="form-label" for="cloudinaryApiKey">API Key</label><input class="form-control" type="password" id="cloudinaryApiKey" placeholder="${cy.apiKeyMasked || '留空保留现有值'}" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="cloudinaryApiSecret">API Secret</label><input class="form-control" type="password" id="cloudinaryApiSecret" placeholder="${cy.apiSecretMasked || '留空保留现有值'}" autocomplete="new-password"></div>
+          </div>
+          <small class="form-text">上传限制：JPG、PNG、WebP，单张最大 5MB；损坏照片最多 5 张。没有后台配置时仍可兼容读取旧的 Wrangler Secrets。</small>
+          <div class="checkbox-group"><input type="checkbox" id="clearCloudinaryConfig"><label for="clearCloudinaryConfig">清除后台保存的 Cloudinary 配置（改回使用环境变量）</label></div>
+        </section>
+
+        <section class="form-section">
           <div class="form-section-title"><span class="mono">DELIVERY</span><div><h3>Zoom2u Integration</h3><p>按 Zoom2u「My Profile → Integration」的字段填写。当前状态：${dc.configured ? 'API 已配置' : 'API 未配置'}，Customer API key${dc.customerApiKeyMasked ? '已配置' : '未配置'}。密钥会使用 SETTINGS_ENCRYPTION_KEY 加密保存，留空表示保留原值。</p></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label class="form-label" for="zoom2uApiToken">Your Zoom2U API key</label><input class="form-control" type="password" id="zoom2uApiToken" placeholder="${dc.apiTokenMasked || 'Paste your Zoom2U API key'}" autocomplete="new-password"><small class="form-text">用于调用 Zoom2u quote、create、status 等 API。</small></div>
@@ -278,6 +296,12 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             secretKey: formData.get('stripeSecretKey'),
             webhookSecret: formData.get('stripeWebhookSecret'),
             clear: formData.has('clearStripeConfig'),
+          },
+          cloudinaryConfig: {
+            cloudName: inputValue('cloudinaryCloudName'),
+            apiKey: inputValue('cloudinaryApiKey'),
+            apiSecret: inputValue('cloudinaryApiSecret'),
+            clear: document.getElementById('clearCloudinaryConfig')?.checked || false,
           },
           squareConfig: {
             applicationId: inputValue('squareApplicationId'),

@@ -35,6 +35,7 @@ import { timingSafeEqualStr } from './lib/checksum'
 import { parseCookie } from './lib/cookie'
 import { generateUserId, generateReferralCode } from './lib/userId'
 import { validateHostedImageUrls } from './lib/hostedImages'
+import { uploadCloudinaryImage, uploadCloudinaryImages } from './lib/cloudinary'
 import { safeJsonParse } from './lib/json'
 import { dispatchChannelAlert } from './notifyChannels'
 
@@ -51,6 +52,7 @@ export {
   parseCookie,
   generateUserId, generateReferralCode,
   validateHostedImageUrls,
+  uploadCloudinaryImage, uploadCloudinaryImages,
   formatOrderChangeActor,
 }
 export type { Role, AccessLevel }
