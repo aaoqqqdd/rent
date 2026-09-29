@@ -414,8 +414,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           : 'PAID'
         await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ?, deposit_status = CASE WHEN depositAmount > 0 THEN ? ELSE \'NOT_REQUIRED\' END WHERE id = ?')
           .bind(depositMethod, selectedDepositMode, selectedDepositMode === 'PAID' ? 'PENDING' : 'NOT_REQUIRED', contract.rentalId).run()
-        ; (order as any).deposit_method = depositMethod
-        ; (order as any).deposit_payment_mode = selectedDepositMode
+          ; (order as any).deposit_method = depositMethod
+          ; (order as any).deposit_payment_mode = selectedDepositMode
 
         // **核心签约逻辑**
         const userInfo = signSession.userInfo;
