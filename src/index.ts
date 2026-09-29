@@ -7,6 +7,7 @@
 import { Hono } from 'hono'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
+import { serviceFeeRate } from './domain/pickupTimeSlots'
 import {
   renderNotFound,
   renderForbidden,
@@ -147,6 +148,7 @@ import {
 import { getTableColumns as getCachedTableColumns } from './db/client'
 import { createTallyFeedbackToken } from './lib/tally'
 import { parsePickupQrPayload } from './lib/pickupQr'
+import { pickupTimeSlotEndMinutes } from './domain/pickupTimeSlots'
 import { readManualInspectionFields, renderManualInspectionFields, inspectionText } from './lib/inspection'
 import { decryptSecret } from './lib/secretBox'
 import { migrateLegacyContractSecrets } from './services/secretMigration'
@@ -184,6 +186,17 @@ function melbourneMinutesNow(): number {
 
 function rentalPeriodPassed(date: string, period: string, today: string): boolean {
   return date === today && melbourneMinutesNow() >= (period === 'AM' ? 12 * 60 : 23 * 60)
+}
+
+const PICKUP_TIME_SLOTS = new Set(['morning_service', 'morning', 'afternoon', 'evening_service'])
+const SERVICE_FEE_TIME_SLOTS = new Set(['morning_service', 'evening_service'])
+
+function pickupTimeSlotPeriod(slot: string): 'AM' | 'PM' {
+  return slot === 'afternoon' || slot === 'evening_service' ? 'PM' : 'AM'
+}
+
+function pickupTimeSlotPassed(date: string, slot: string, today: string, rentalRules: any): boolean {
+  return date === today && melbourneMinutesNow() >= pickupTimeSlotEndMinutes(slot, rentalRules)
 }
 
 function isMobileDeviceRequest(c: any): boolean {
@@ -1503,7 +1516,8 @@ app.post('/customer/orders/:id/time-slots', async (c) => {
   const oldFee = Number(order.serviceFee || order.service_fee || 0)
   const rent = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0) - oldFee)
   const chargeable = delivery ? 0 : [pickup, returned].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length
-  const requestedFee = Number((rent * 0.1 * chargeable).toFixed(2))
+  await loadSystemSettingsFromDB(c)
+  const requestedFee = Number((rent * serviceFeeRate(getSystemSettings().rentalRules) * chargeable).toFixed(2))
   const additionalFee = Math.max(0, requestedFee - oldFee)
   const newFee = oldFee + additionalFee
   await c.env.RENT.prepare('UPDATE orders SET pickupTimeSlot = ?, returnTimeSlot = ?, serviceFee = ?, totalAmount = totalAmount + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(pickup, returned, newFee, additionalFee, order.id).run()
@@ -2274,13 +2288,15 @@ app.post('/customer/rent/:id', async (c) => {
   const endDate = String(form.endDate || '')
   const todayValue = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const deliveryMethod = String(form.deliveryMethod || 'Pickup') === 'Delivery' ? 'Delivery' : 'Pickup'
+  const pickupTimeSlot = String(form.pickupTimeSlot || '')
+  const returnTimeSlot = String(form.returnTimeSlot || '')
   const deliveryAddress = String(form.deliveryAddress || '').trim().slice(0, 1000)
   const rentalNote = String(form.rentalNote || '').trim().slice(0, 500)
   const couponCode = String(form.couponCode || '').trim().toUpperCase().slice(0, 40)
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
-  const startPeriod = form.startPeriod === 'PM' ? 'PM' : 'AM'
-  const endPeriod = form.endPeriod === 'PM' ? 'PM' : 'AM'
+  const startPeriod = deliveryMethod === 'Pickup' ? pickupTimeSlotPeriod(pickupTimeSlot) : form.startPeriod === 'PM' ? 'PM' : 'AM'
+  const endPeriod = deliveryMethod === 'Pickup' ? pickupTimeSlotPeriod(returnTimeSlot) : form.endPeriod === 'PM' ? 'PM' : 'AM'
   const halfDays = Math.round((end.getTime() - start.getTime()) / 86400000) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
   const deviceUnavailableSlots = new Set<string>()
   try {
@@ -2296,6 +2312,14 @@ app.post('/customer/rent/:id', async (c) => {
     const periodSlots = period === 'AM' ? ['morning_service', 'morning'] : ['afternoon', 'evening_service']
     return periodSlots.every((slot) => slots.includes(slot) || deviceUnavailableSlots.has(`${date}:${slot}`))
   }
+  const selectedTimeUnavailable = deliveryMethod === 'Pickup' && (
+    !PICKUP_TIME_SLOTS.has(pickupTimeSlot) || !PICKUP_TIME_SLOTS.has(returnTimeSlot)
+    || pickupTimeSlotPassed(startDate, pickupTimeSlot, todayValue, rentalRules) || pickupTimeSlotPassed(endDate, returnTimeSlot, todayValue, rentalRules)
+    || (rentalRules.unavailableTimeSlots?.[startDate] || []).includes(pickupTimeSlot)
+    || (rentalRules.unavailableTimeSlots?.[endDate] || []).includes(returnTimeSlot)
+    || deviceUnavailableSlots.has(`${startDate}:${pickupTimeSlot}`)
+    || deviceUnavailableSlots.has(`${endDate}:${returnTimeSlot}`)
+  )
   let invalidPeriod = !['AM', 'PM'].includes(startPeriod) || !['AM', 'PM'].includes(endPeriod) || halfDays <= 0 || rentalPeriodPassed(startDate, startPeriod, todayValue) || rentalPeriodPassed(endDate, endPeriod, todayValue)
   for (let day = new Date(start); Number.isFinite(day.getTime()) && day <= end; day.setUTCDate(day.getUTCDate() + 1)) {
     const date = day.toISOString().slice(0, 10)
@@ -2314,10 +2338,13 @@ app.post('/customer/rent/:id', async (c) => {
       String(row.startDate || '').slice(0, 10), String(row.startPeriod || 'AM'), String(row.endDate || '').slice(0, 10), String(row.endPeriod || 'AM'),
     ))
   }
-  if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start > end || halfDays <= 0 || Math.ceil(halfDays / 2) < rentalRules.minimumRentalDays || blockedDate || invalidPeriod || periodConflict) {
+  if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start > end || halfDays <= 0 || Math.ceil(halfDays / 2) < rentalRules.minimumRentalDays || blockedDate || invalidPeriod || selectedTimeUnavailable || periodConflict) {
     return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
   }
   const rentAmount = calculateRentalFee(device, Math.ceil(halfDays / 2))
+  const serviceFee = deliveryMethod === 'Pickup'
+    ? Number((rentAmount * serviceFeeRate(rentalRules) * [pickupTimeSlot, returnTimeSlot].filter((slot) => SERVICE_FEE_TIME_SLOTS.has(slot)).length).toFixed(2))
+    : 0
   const couponFeeParts = { rentalFee: rentAmount, deliveryFee: 0, depositFee: Number(device.depositAmount || 0) }
   let discountAmount = 0
   let appliedCouponCode: string | null = null
@@ -2336,9 +2363,10 @@ app.post('/customer/rent/:id', async (c) => {
   await insertOrder(c, {
     id: orderId, orderNo: generateReferenceNumber('OD'), userId: user.id,
     deviceId: device.id, startDate, endDate, startPeriod, endPeriod, rentalPeriod: Math.ceil(halfDays / 2), status: 'pending_approval',
-    paymentMethod: 'card', totalAmount: rentAmount + device.depositAmount - discountAmount,
+    paymentMethod: 'card', totalAmount: rentAmount + serviceFee + device.depositAmount - discountAmount,
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
-    deliveryMethod, deliveryFee: 0, rentalNote, couponCode: appliedCouponCode, discountAmount,
+    pickupTimeSlot: deliveryMethod === 'Pickup' ? pickupTimeSlot : undefined, returnTimeSlot: deliveryMethod === 'Pickup' ? returnTimeSlot : undefined,
+    deliveryMethod, deliveryFee: 0, serviceFee, rentalNote, couponCode: appliedCouponCode, discountAmount,
     createdAt: new Date().toISOString()
   } as any)
   if (couponCode) {

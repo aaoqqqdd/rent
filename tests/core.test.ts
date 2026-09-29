@@ -28,6 +28,7 @@ import { renderStaffContracts } from '../src/pages/staff/contracts'
 import { renderStaffMobileOperations } from '../src/pages/staff/mobileOperations'
 import { renderStaffMobileScan } from '../src/pages/staff/mobileScan'
 import { buildPickupQrPayload, parsePickupQrPayload } from '../src/lib/pickupQr'
+import { HALF_HOUR_TIME_OPTIONS, hasValidPickupTimeSettings, pickupTimeSlots, serviceFeeRate } from '../src/domain/pickupTimeSlots'
 import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
@@ -632,6 +633,9 @@ test('rich text editor pages emit valid browser JavaScript', async () => {
   assert.match(settingsHtml, /href="\/admin\/templates"/)
   assert.match(settingsHtml, /完整邮件变量索引/)
   assert.doesNotMatch(settingsHtml, /邮件通知模板可用变量/)
+  assert.match(settingsHtml, /早间服务费/)
+  assert.match(settingsHtml, /营业时段/)
+  assert.match(settingsHtml, /value="00:30"/)
 
   const hubHtml = renderAdminTemplateHub(user)
   assert.match(hubHtml, /href="\/admin\/templates\/user"/)
@@ -657,6 +661,17 @@ test('rich text editor pages emit valid browser JavaScript', async () => {
   assert.doesNotMatch(contractTemplateHtml, /合同模板可用变量/)
   assert.ok(contractTemplateHtml.indexOf('id="templateSaveStatus"') < contractTemplateHtml.indexOf('class="form-actions form-actions-right"'))
   assertInlineScriptsParse(contractTemplateHtml)
+})
+
+test('pickup time settings use half-hour boundaries and reject overlapping ranges', () => {
+  assert.equal(HALF_HOUR_TIME_OPTIONS.length, 48)
+  assert.equal(HALF_HOUR_TIME_OPTIONS[1], '00:30')
+  assert.equal(HALF_HOUR_TIME_OPTIONS[47], '23:30')
+  assert.equal(hasValidPickupTimeSettings({ serviceFeeHours: { morningStart: '07:30', morningEnd: '08:30', eveningStart: '20:30', eveningEnd: '22:00' }, businessHours: { start: '09:00', end: '20:00' } }), true)
+  assert.equal(hasValidPickupTimeSettings({ serviceFeeHours: { morningStart: '07:30', morningEnd: '09:30', eveningStart: '20:30', eveningEnd: '22:00' }, businessHours: { start: '09:00', end: '20:00' } }), false)
+  assert.match(pickupTimeSlots({ businessHours: { start: '09:30', end: '19:30' } })[1][1], /9:30/)
+  assert.equal(serviceFeeRate({ serviceFeeRate: 0.125 }), 0.125)
+  assert.equal(serviceFeeRate({ serviceFeeRate: 2 }), 1)
 })
 
 test('data retention controls stay in their matching table columns and submit one row', () => {

@@ -139,6 +139,18 @@ function rect(lines: string[], x: number, y: number, width: number, height: numb
   lines.push(`${color} rg ${x} ${y} ${width} ${height} re f`)
 }
 
+function circle(lines: string[], centerX: number, centerY: number, radius: number, color: string) {
+  const k = radius * 0.55228475
+  lines.push(`${color} rg ${centerX + radius} ${centerY} m ${centerX + radius} ${centerY + k} ${centerX + k} ${centerY + radius} ${centerX} ${centerY + radius} c ${centerX - k} ${centerY + radius} ${centerX - radius} ${centerY + k} ${centerX - radius} ${centerY} c ${centerX - radius} ${centerY - k} ${centerX - k} ${centerY - radius} ${centerX} ${centerY - radius} c ${centerX + k} ${centerY - radius} ${centerX + radius} ${centerY - k} ${centerX + radius} ${centerY} c f`)
+}
+
+function websiteLogo(lines: string[], x: number, y: number, size: number) {
+  const scale = size / 64
+  circle(lines, x + size / 2, y + size / 2, size / 2, '0.04 0.04 0.06')
+  lines.push(`0.15 0.39 0.92 rg ${x + 24 * scale} ${y + 10 * scale} m ${x + 42 * scale} ${y + 39 * scale} l ${x + 33 * scale} ${y + 39 * scale} l ${x + 24 * scale} ${y + 25 * scale} l ${x + 15 * scale} ${y + 39 * scale} l ${x + 6 * scale} ${y + 39 * scale} l ${x + 24 * scale} ${y + 10 * scale} f`)
+  lines.push(`1 1 1 rg ${x + 5 * scale} ${y + 39 * scale} m ${x + 14 * scale} ${y + 39 * scale} l ${x + 33 * scale} ${y + 4 * scale} l ${x + 24 * scale} ${y + 4 * scale} l ${x + 5 * scale} ${y + 39 * scale} f`)
+}
+
 function concatBytes(parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((sum, part) => sum + part.length, 0)
   const output = new Uint8Array(total)
