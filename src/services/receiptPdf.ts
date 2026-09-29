@@ -16,6 +16,7 @@ export interface ReceiptPdfData {
   customerName: string
   customerEmail: string
   customerPhone?: string
+  customerAddress?: string
   orderNumber: string
   contractNumber?: string
   documentNumber: string
@@ -50,13 +51,18 @@ export interface ReceiptPdfTemplate {
   paymentLabel: string
   paidLabel: string
   descriptionLabel: string
+  itemLabel: string
+  quantityLabel: string
+  priceLabel: string
   amountLabel: string
+  subtotalLabel: string
   gstLabel: string
   depositLabel: string
   processingFeeLabel: string
   discountLabel: string
   totalLabel: string
   paymentReferenceLabel: string
+  invoiceMessage: string
   thankYouText: string
   recordNote: string
   questionsLabel: string
@@ -74,13 +80,18 @@ export const DEFAULT_RECEIPT_PDF_TEMPLATE: ReceiptPdfTemplate = {
   paymentLabel: 'Payment',
   paidLabel: 'Paid',
   descriptionLabel: 'DESCRIPTION',
+  itemLabel: 'ITEM',
+  quantityLabel: 'QTY',
+  priceLabel: 'PRICE',
   amountLabel: 'AMOUNT (AUD)',
-  gstLabel: 'GST',
+  subtotalLabel: 'Subtotal',
+  gstLabel: 'GST (included)',
   depositLabel: 'Refundable security deposit',
   processingFeeLabel: 'Payment processing fee',
   discountLabel: 'Discount',
-  totalLabel: 'TOTAL PAID',
+  totalLabel: 'Total Due',
   paymentReferenceLabel: 'Payment reference',
+  invoiceMessage: 'Thank you for your business.',
   thankYouText: 'Thank you for choosing our rental service.',
   recordNote: 'This document records the payment received for the rental order.',
   questionsLabel: 'Questions?',
@@ -112,6 +123,12 @@ function money(value: number, currency = 'AUD'): string {
 
 function text(lines: string[], x: number, y: number, value: unknown, size = 10, font = 'F1', color = '0.12 0.16 0.22') {
   lines.push(`${color} rg BT /${font} ${size} Tf ${x} ${y} Td ${pdfLiteral(value)} Tj ET`)
+}
+
+function rightText(lines: string[], right: number, y: number, value: unknown, size = 10, font = 'F1', color = '0.12 0.16 0.22', max = 72) {
+  const rendered = displayText(value, max)
+  const width = rendered.length * size * 0.51
+  text(lines, Math.max(42, right - width), y, rendered, size, font, color)
 }
 
 function line(lines: string[], x1: number, y1: number, x2: number, y2: number, color = '0.86 0.88 0.91', width = 1) {
@@ -163,56 +180,96 @@ export function buildReceiptPdf(data: ReceiptPdfData): Uint8Array {
   const currency = ascii(data.currency, 'AUD')
   const template = { ...DEFAULT_RECEIPT_PDF_TEMPLATE, ...(data.template || {}) }
   const lines: string[] = []
-  websiteLogo(lines, 42, 774, 42)
-  text(lines, 96, 800, ascii(data.companyName, 'PC Rental'), 15, 'F2', '0.10 0.14 0.20')
-  const companyMeta = [displayText(data.companyAddress, 60, ''), data.companyPhone ? displayText(data.companyPhone, 24) : '', data.companyAbn ? `${template.abnLabel} ${displayText(data.companyAbn, 20)}` : ''].filter(Boolean).join(' | ')
-  text(lines, 96, 781, companyMeta, 8.5, 'F1', '0.38 0.43 0.49')
-  text(lines, 42, 735, template.title, 22, 'F2', '0.10 0.14 0.20')
-  text(lines, 395, 797, template.documentNumberLabel, 8, 'F2', '0.32 0.38 0.45')
-  text(lines, 395, 780, data.documentNumber, 12, 'F2', '0.10 0.14 0.20')
-  text(lines, 395, 758, `${template.issuedLabel} ${displayText(data.issuedAt, 28)}`, 8.5, 'F1', '0.38 0.43 0.49')
-  line(lines, 42, 720, 553, 720, '0.95 0.55 0.18', 2.5)
+  const ink = '0.08 0.10 0.13'
+  const muted = '0.38 0.41 0.46'
+  const slate = '0.31 0.37 0.44'
+  const lightLine = '0.83 0.84 0.86'
+  const contentRight = 553
 
-  text(lines, 42, 685, template.billedToLabel, 8, 'F2', '0.95 0.55 0.18')
-  text(lines, 42, 663, ascii(data.customerName, 'Customer'), 12, 'F2')
-  text(lines, 42, 645, data.customerEmail, 9)
-  text(lines, 42, 630, data.customerPhone, 9)
-  text(lines, 300, 685, template.rentalOrderLabel, 8, 'F2', '0.95 0.55 0.18')
-  text(lines, 300, 663, data.orderNumber, 12, 'F2')
-  text(lines, 300, 645, `${template.contractLabel}: ${displayText(data.contractNumber)}`, 9)
-  text(lines, 300, 630, `${template.paymentLabel}: ${displayText(data.paymentMethod, 28)}`, 9)
-  text(lines, 300, 615, `${template.paidLabel}: ${displayText(data.paidAt || data.issuedAt, 28)}`, 9)
-  line(lines, 42, 590, 553, 590, '0.75 0.78 0.82', 1.2)
+  // The layout follows the supplied Australian GST invoice reference: a quiet
+  // white page, compact business header, three information columns, then a
+  // four-column item table and a right-aligned total block.
+  rect(lines, 42, 746, 52, 52, slate)
+  text(lines, 58, 765, ascii(data.companyName, 'PC').slice(0, 2).toUpperCase(), 18, 'F2', '1 1 1')
+  text(lines, 108, 794, ascii(data.companyName, 'PC Rental'), 12, 'F2', ink)
+  text(lines, 108, 776, displayText(data.companyAddress, 50, ''), 8.5, 'F1', muted)
+  text(lines, 108, 761, data.companyPhone ? `Phone ${displayText(data.companyPhone, 30)}` : '', 8.5, 'F1', muted)
+  text(lines, 108, 746, data.companyAbn ? `${template.abnLabel} ${displayText(data.companyAbn, 24)}` : '', 8.5, 'F1', muted)
+  rightText(lines, contentRight, 794, `${template.documentNumberLabel} ${data.documentNumber}`, 10, 'F2', ink, 40)
+  rightText(lines, contentRight, 775, template.issuedLabel, 8, 'F2', ink, 24)
+  rightText(lines, contentRight, 758, displayText(data.issuedAt, 24), 9, 'F1', muted, 24)
+  line(lines, 42, 728, contentRight, 728, slate, 3.5)
 
-  text(lines, 42, 568, template.descriptionLabel, 8, 'F2', '0.34 0.39 0.46')
-  text(lines, 400, 568, template.amountLabel, 8, 'F2', '0.34 0.39 0.46')
-  line(lines, 42, 555, 553, 555)
-  text(lines, 42, 531, ascii(data.deviceName, 'Rental device'), 10, 'F2')
-  text(lines, 42, 515, `${displayText(data.startDate)} to ${displayText(data.endDate)}${data.rentalPeriod ? ` - ${data.rentalPeriod} days` : ''}`, 8.5, 'F1', '0.38 0.43 0.49')
-  text(lines, 400, 531, money(data.subtotal, currency), 10, 'F2')
-  let rowY = 480
-  const row = (label: string, amount: number, negative = false) => {
-    if (!amount) return
-    text(lines, 42, rowY, label, 9)
-    text(lines, 400, rowY, `${negative ? '-' : ''}${money(Math.abs(amount), currency)}`, 9)
-    rowY -= 24
+  text(lines, 42, 687, template.title, 26, 'F2', ink)
+  text(lines, 42, 662, template.invoiceMessage, 10, 'F1', muted)
+
+  const columnTop = 610
+  line(lines, 42, columnTop, 196, columnTop, lightLine, 1)
+  line(lines, 213, columnTop, 383, columnTop, lightLine, 1)
+  line(lines, 400, columnTop, contentRight, columnTop, lightLine, 1)
+  text(lines, 42, 590, template.billedToLabel, 9, 'F2', ink)
+  text(lines, 42, 568, ascii(data.customerName, 'Customer'), 10, 'F2', ink)
+  text(lines, 42, 551, data.customerEmail, 8.5, 'F1', muted)
+  text(lines, 42, 536, data.customerPhone, 8.5, 'F1', muted)
+  text(lines, 42, 521, displayText(data.customerAddress, 34, ''), 8.5, 'F1', muted)
+
+  text(lines, 213, 590, template.rentalOrderLabel, 9, 'F2', ink)
+  text(lines, 213, 568, `${template.contractLabel}: ${displayText(data.contractNumber, 24)}`, 8.5, 'F1', muted)
+  text(lines, 213, 551, `Order: ${displayText(data.orderNumber, 24)}`, 8.5, 'F1', muted)
+  text(lines, 213, 534, `${displayText(data.startDate)} - ${displayText(data.endDate)}`, 8.5, 'F1', muted)
+  text(lines, 213, 517, data.rentalPeriod ? `${data.rentalPeriod} days` : '', 8.5, 'F1', muted)
+
+  text(lines, 400, 590, template.paymentLabel, 9, 'F2', ink)
+  text(lines, 400, 568, `${template.paidLabel}: ${displayText(data.paidAt || data.issuedAt, 22)}`, 8.5, 'F1', muted)
+  text(lines, 400, 551, displayText(data.paymentMethod, 28), 8.5, 'F1', muted)
+  text(lines, 400, 534, data.transactionId ? `${template.paymentReferenceLabel}: ${displayText(data.transactionId, 18)}` : '', 8.5, 'F1', muted)
+
+  const tableTop = 486
+  line(lines, 42, tableTop, contentRight, tableTop, lightLine, 1)
+  text(lines, 42, tableTop - 21, template.itemLabel, 8.5, 'F2', ink)
+  text(lines, 350, tableTop - 21, template.quantityLabel, 8.5, 'F2', ink)
+  text(lines, 415, tableTop - 21, template.priceLabel, 8.5, 'F2', ink)
+  rightText(lines, contentRight, tableTop - 21, template.amountLabel, 8.5, 'F2', ink, 22)
+  line(lines, 42, tableTop - 34, contentRight, tableTop - 34, lightLine, 1)
+
+  const rows: Array<{ label: string; detail?: string; quantity: string; price: number; amount: number; negative?: boolean }> = [
+    { label: ascii(data.deviceName, 'Rental device'), detail: `${displayText(data.startDate)} - ${displayText(data.endDate)}`, quantity: '1', price: data.subtotal, amount: data.subtotal },
+  ]
+  if (data.processingFee) rows.push({ label: template.processingFeeLabel, quantity: '1', price: data.processingFee, amount: data.processingFee })
+  if (data.depositAmount) rows.push({ label: template.depositLabel, quantity: '1', price: data.depositAmount, amount: data.depositAmount })
+  if (data.discountAmount) rows.push({ label: template.discountLabel, quantity: '1', price: data.discountAmount, amount: data.discountAmount, negative: true })
+  let rowY = tableTop - 68
+  for (const item of rows) {
+    text(lines, 42, rowY, item.label, 9, 'F2', ink)
+    if (item.detail) text(lines, 42, rowY - 15, item.detail, 8, 'F1', muted)
+    text(lines, 350, rowY, item.quantity, 9, 'F1', ink)
+    rightText(lines, 470, rowY, `${item.negative ? '-' : ''}${money(item.price, currency)}`, 9, 'F1', ink, 20)
+    rightText(lines, contentRight, rowY, `${item.negative ? '-' : ''}${money(item.amount, currency)}`, 9, 'F1', ink, 20)
+    line(lines, 42, rowY - 28, contentRight, rowY - 28, lightLine, 0.8)
+    rowY -= item.detail ? 48 : 44
   }
-  row(template.gstLabel, data.gstAmount)
-  row(template.depositLabel, data.depositAmount)
-  row(template.processingFeeLabel, data.processingFee)
-  row(template.discountLabel, data.discountAmount, true)
-  line(lines, 42, rowY + 6, 553, rowY + 6)
-  text(lines, 300, rowY - 22, template.totalLabel, 11, 'F2')
-  text(lines, 400, rowY - 22, money(data.totalAmount, currency), 13, 'F2', '0.95 0.42 0.08')
 
-  const paymentRef = data.transactionId ? `${template.paymentReferenceLabel}: ${displayText(data.transactionId, 48)}` : 'Payment completed successfully.'
-  text(lines, 42, 245, paymentRef, 8.5, 'F1', '0.38 0.43 0.49')
-  text(lines, 42, 222, template.thankYouText, 10, 'F2')
-  text(lines, 42, 204, template.recordNote, 8.5, 'F1', '0.38 0.43 0.49')
-  line(lines, 42, 172, 553, 172)
-  text(lines, 42, 148, data.companyEmail ? `${template.questionsLabel} ${displayText(data.companyEmail, 70)}` : 'Please contact us if you have any questions.', 8.5, 'F1', '0.38 0.43 0.49')
-  text(lines, 42, 116, `Document ID: ${displayText(data.documentId, 70)}`, 7.5, 'F1', '0.55 0.59 0.64')
-  text(lines, 42, 92, template.generatedByText, 7.5, 'F1', '0.55 0.59 0.64')
+  const summaryTop = Math.max(215, rowY - 2)
+  const summaryRow = (label: string, amount: number, y: number, negative = false) => {
+    text(lines, 360, y, label, 9, 'F1', muted)
+    rightText(lines, contentRight, y, `${negative ? '-' : ''}${money(Math.abs(amount), currency)}`, 9, 'F1', ink, 20)
+  }
+  summaryRow(template.subtotalLabel, data.subtotal, summaryTop)
+  summaryRow(template.gstLabel, data.gstAmount, summaryTop - 19)
+  if (data.processingFee) summaryRow(template.processingFeeLabel, data.processingFee, summaryTop - 38)
+  if (data.depositAmount) summaryRow(template.depositLabel, data.depositAmount, summaryTop - 57)
+  if (data.discountAmount) summaryRow(template.discountLabel, data.discountAmount, summaryTop - 76, true)
+  const totalY = summaryTop - (data.discountAmount ? 105 : data.depositAmount ? 86 : data.processingFee ? 67 : 48)
+  line(lines, 42, totalY + 17, contentRight, totalY + 17, lightLine, 1.1)
+  text(lines, 360, totalY - 2, template.totalLabel, 12, 'F2', ink)
+  rightText(lines, contentRight, totalY - 2, money(data.totalAmount, currency), 13, 'F2', ink, 22)
+
+  text(lines, 42, 84, template.thankYouText, 10, 'F2', ink)
+  text(lines, 42, 66, template.recordNote, 8.5, 'F1', muted)
+  line(lines, 42, 47, contentRight, 47, lightLine, 1)
+  text(lines, 42, 30, data.companyEmail ? `${template.questionsLabel} ${displayText(data.companyEmail, 66)}` : '', 8.5, 'F1', muted)
+  rightText(lines, contentRight, 30, 'Page 1', 8, 'F1', '0.63 0.64 0.67', 12)
+  text(lines, 42, 15, `${template.generatedByText}${data.documentId ? ` | Document ID: ${displayText(data.documentId, 36)}` : ''}`, 7.5, 'F1', '0.55 0.56 0.59')
 
   const stream = lines.join('\n')
   const objects = [

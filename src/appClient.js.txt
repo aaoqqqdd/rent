@@ -252,20 +252,21 @@
 
       const getPageEntries = function () {
         const seen = new Set();
-        return Array.from(document.querySelectorAll('.sidebar-section a')).map(function (link) {
+        return Array.from(document.querySelectorAll('.sidebar-section a, #global-search-index a')).map(function (link) {
           const href = link.getAttribute('href') || '';
           const label = (link.textContent || '').replace(/\s+/g, ' ').trim();
-          const group = link.closest('details')?.querySelector('summary')?.textContent.replace(/\s+/g, ' ').trim() || '导航';
+          const group = link.dataset.searchGroup || link.closest('details')?.querySelector('summary')?.textContent.replace(/\s+/g, ' ').trim() || '导航';
+          const keywords = link.dataset.searchKeywords || '';
           const key = href + '|' + label;
           if (!href || !label || seen.has(key)) return null;
           seen.add(key);
-          return { href: href, label: label, group: group, icon: link.querySelector('.nav-icon')?.innerHTML || '' };
+          return { href: href, label: label, group: group, keywords: keywords, icon: link.querySelector('.nav-icon')?.innerHTML || '' };
         }).filter(Boolean);
       };
 
       const matches = function (entry, query) {
         if (!query) return true;
-        const haystack = (entry.label + ' ' + entry.group + ' ' + entry.href).toLowerCase();
+        const haystack = (entry.label + ' ' + entry.group + ' ' + (entry.keywords || '') + ' ' + entry.href).toLowerCase();
         return haystack.indexOf(query.toLowerCase()) !== -1;
       };
 
@@ -551,6 +552,10 @@
             document.title = pageTitle;
             runScripts(content);
             setActiveLink(url.pathname);
+            if (url.hash) window.setTimeout(function () {
+              const target = document.getElementById(url.hash.slice(1));
+              if (target) target.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+            }, 0);
             if (window.runFilterTabMotion) window.runFilterTabMotion();
           };
           if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {

@@ -65,7 +65,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   const next = {
     tallyFormUrl: normalizeTallyEmbedUrl(payload.tallyFormUrl ?? getSystemSettings().tallyFormUrl),
     feedbackRewards: {
-      enabled: Boolean(payload.feedbackRewards?.enabled),
+      enabled: typeof payload.feedbackRewards?.enabled === 'boolean' ? payload.feedbackRewards.enabled : currentFeedbackRewards.enabled,
       rewardType: ['BALANCE', 'COUPON', 'GIFT_CARD'].includes(String(payload.feedbackRewards?.rewardType)) ? String(payload.feedbackRewards.rewardType) : currentFeedbackRewards.rewardType,
       balanceAmount: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.balanceAmountMin ?? currentFeedbackRewards.balanceAmountMin ?? currentFeedbackRewards.balanceAmount) || 0)),
       balanceAmountMin: Math.min(10000, Math.max(0, Number(payload.feedbackRewards?.balanceAmountMin ?? currentFeedbackRewards.balanceAmountMin ?? currentFeedbackRewards.balanceAmount) || 0)),
@@ -217,4 +217,37 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   await loadSystemSettingsFromDB(c)
 
   return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), square: await getSquareConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c), turnstile: await getTurnstileConfigSummary(c), delivery: await getDeliveryConfigSummary(c), cloudinary: await getCloudinaryConfigSummary(c) })
+}
+
+/** Save only the Tally feedback campaign settings, without touching unrelated system settings. */
+export async function handleSaveTallyFeedbackSettings(c: Context): Promise<Response> {
+  const payload = JSON.parse(await c.req.text() || '{}')
+  await loadSystemSettingsFromDB(c)
+
+  const current = getSystemSettings().feedbackRewards
+  const rawEmbedUrl = String(payload.tallyFormUrl ?? getSystemSettings().tallyFormUrl).trim()
+  const tallyFormUrl = normalizeTallyEmbedUrl(rawEmbedUrl)
+  if (rawEmbedUrl && !tallyFormUrl) throw new Error('Tally 表单地址必须是 https://tally.so/embed/... 格式')
+
+  const input = payload.feedbackRewards && typeof payload.feedbackRewards === 'object' ? payload.feedbackRewards : {}
+  const feedbackRewards = {
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : current.enabled,
+    rewardType: ['BALANCE', 'COUPON', 'GIFT_CARD'].includes(String(input.rewardType)) ? String(input.rewardType) : current.rewardType,
+    balanceAmount: Math.min(10000, Math.max(0, Number(input.balanceAmountMin ?? current.balanceAmountMin ?? current.balanceAmount) || 0)),
+    balanceAmountMin: Math.min(10000, Math.max(0, Number(input.balanceAmountMin ?? current.balanceAmountMin ?? current.balanceAmount) || 0)),
+    balanceAmountMax: Math.min(10000, Math.max(0, Number(input.balanceAmountMax ?? current.balanceAmountMax ?? current.balanceAmount) || 0)),
+    couponDiscountType: input.couponDiscountType === 'percent' ? 'percent' : input.couponDiscountType === 'fixed' ? 'fixed' : current.couponDiscountType,
+    couponDiscountValue: Math.min(10000, Math.max(0, Number(input.couponDiscountValueMin ?? current.couponDiscountValueMin ?? current.couponDiscountValue) || 0)),
+    couponDiscountValueMin: Math.min(10000, Math.max(0, Number(input.couponDiscountValueMin ?? current.couponDiscountValueMin ?? current.couponDiscountValue) || 0)),
+    couponDiscountValueMax: Math.min(10000, Math.max(0, Number(input.couponDiscountValueMax ?? current.couponDiscountValueMax ?? current.couponDiscountValue) || 0)),
+    couponMinimumOrderAmount: Math.min(1000000, Math.max(0, Number(input.couponMinimumOrderAmount ?? current.couponMinimumOrderAmount ?? 0) || 0)),
+    couponExpiresDays: Math.min(365, Math.max(1, Math.floor(Number(input.couponExpiresDays ?? current.couponExpiresDays) || 30))),
+  }
+
+  if (feedbackRewards.rewardType === 'BALANCE' && feedbackRewards.enabled && (feedbackRewards.balanceAmountMin <= 0 || feedbackRewards.balanceAmountMax < feedbackRewards.balanceAmountMin)) throw new Error('反馈奖励余额范围无效')
+  if (feedbackRewards.rewardType === 'COUPON' && feedbackRewards.enabled && (feedbackRewards.couponDiscountValueMin <= 0 || feedbackRewards.couponDiscountValueMax < feedbackRewards.couponDiscountValueMin || (feedbackRewards.couponDiscountType === 'percent' && feedbackRewards.couponDiscountValueMax > 100))) throw new Error('反馈奖励优惠值范围无效')
+
+  await updateSystemSettings(c, { tallyFormUrl, feedbackRewards } as any)
+  await loadSystemSettingsFromDB(c)
+  return c.json({ success: true, tallyFormUrl: getSystemSettings().tallyFormUrl, feedbackRewards: getSystemSettings().feedbackRewards })
 }
