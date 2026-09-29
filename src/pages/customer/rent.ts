@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, getDeviceById, formatCurrency, getDeviceRentalRules } from '../../site';
+import { pickupTimeSlots, serviceFeeRate } from '../../domain/pickupTimeSlots';
 import type { Context } from 'hono';
 
 export async function renderCustomerRent(c: Context, deviceId: string, user: any, errorMessage?: string) {
@@ -13,6 +14,7 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
     return buildLayout('租赁设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求租赁的设备不存在。</p></div>', user);
   }
   const rentalRules = await getDeviceRentalRules(c, deviceId)
+  const pickupSlots = pickupTimeSlots(rentalRules)
   const bookingRanges = ((await c.env.RENT.prepare("SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled')").bind(deviceId).all()).results || []) as any[]
 
   // Do not use toISOString() here: UTC can already be tomorrow while the
@@ -56,6 +58,7 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
           <select id="endPeriod" name="endPeriod" class="form-control"><option value="AM">上午</option><option value="PM">下午</option></select>
         </div></div>
         <div class="form-group"><label class="form-label" for="deliveryMethod">设备交付方式</label><select id="deliveryMethod" name="deliveryMethod" class="form-control"><option value="Pickup">到店自取</option><option value="Delivery">送货上门（运费由管理员/员工确认）</option></select></div>
+        <div class="grid grid-2" id="pickupTimeGroup"><div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select id="pickupTimeSlot" name="pickupTimeSlot" class="form-control">${pickupSlots.map(([value, label]) => `<option value="${value}"${value === 'morning' ? ' selected' : ''}>${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select id="returnTimeSlot" name="returnTimeSlot" class="form-control">${pickupSlots.map(([value, label]) => `<option value="${value}"${value === 'morning' ? ' selected' : ''}>${label}</option>`).join('')}</select></div></div>
         <div class="form-group" id="deliveryAddressGroup" hidden><label class="form-label" for="deliveryAddress">送货地址</label><textarea id="deliveryAddress" name="deliveryAddress" class="form-control" rows="3" placeholder="请填写完整的街道、Suburb、州和邮编"></textarea><small class="form-text">提交后由绑定员工或管理员确认配送范围和运费，暂不在此页面收取。</small></div>
         <div class="form-group"><label class="form-label" for="rentalNote">申请备注（选填）</label><textarea id="rentalNote" name="rentalNote" class="form-control" rows="2" maxlength="500" placeholder="例如配送时间、设备使用要求等"></textarea></div>
         <div class="form-group"><label class="form-label" for="couponCode">优惠码（选填）</label><input id="couponCode" name="couponCode" class="form-control" maxlength="40" placeholder="输入优惠码"><small class="form-text" id="couponQuotePreview" aria-live="polite"></small></div>
@@ -91,6 +94,26 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
             code.addEventListener('input', preview);
             start.addEventListener('change', preview);
             end.addEventListener('change', preview);
+          })();
+        </script>
+
+        <script>
+          (() => {
+            const delivery = document.getElementById('deliveryMethod'), group = document.getElementById('pickupTimeGroup'), pickup = document.getElementById('pickupTimeSlot'), returned = document.getElementById('returnTimeSlot'), startPeriod = document.getElementById('startPeriod'), endPeriod = document.getElementById('endPeriod'), start = document.getElementById('startDate'), end = document.getElementById('endDate'), quote = document.getElementById('quotePreview');
+            const rate = ${Number(device.pricePerDay || device.dailyRate || 0)}, weeklyDiscount = ${Number(device.weeklyDiscountPercent || device.weekly_discount_percent || 0)}, monthlyDiscount = ${Number(device.monthlyDiscountPercent || device.monthly_discount_percent || 0)}, deposit = ${Number(device.depositAmount || 0)}, serviceFeeRate = ${serviceFeeRate(rentalRules)};
+            const slotPeriod = slot => ['afternoon', 'evening_service'].includes(slot) ? 'PM' : 'AM';
+            const rentalFee = days => { const monthlyDays = Math.floor(days / 30) * 30, remaining = days - monthlyDays, weeklyDays = Math.floor(remaining / 7) * 7, dailyDays = remaining - weeklyDays; return monthlyDays * rate * (1 - monthlyDiscount / 100) + weeklyDays * rate * (1 - weeklyDiscount / 100) + dailyDays * rate; };
+            const update = () => {
+              const selfPickup = delivery.value === 'Pickup'; group.hidden = !selfPickup; pickup.disabled = !selfPickup; returned.disabled = !selfPickup;
+              if (!selfPickup) return;
+              startPeriod.value = slotPeriod(pickup.value); endPeriod.value = slotPeriod(returned.value);
+              if (!start.value || !end.value) return;
+              const halfDays = Math.round((Date.parse(end.value + 'T00:00:00Z') - Date.parse(start.value + 'T00:00:00Z')) / 86400000) * 2 + (endPeriod.value === 'PM' ? 1 : 0) - (startPeriod.value === 'PM' ? 1 : 0);
+              const days = Math.ceil(halfDays / 2); if (days < 1) return;
+              const rent = rentalFee(days), serviceFee = Math.round(rent * serviceFeeRate * [pickup.value, returned.value].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length * 100) / 100;
+              quote.innerHTML = '<strong>租赁报价</strong><p>' + days + ' 天租金：AUD$ ' + rent.toFixed(2) + (serviceFee ? '；时段服务费：AUD$ ' + serviceFee.toFixed(2) : '') + '；押金：AUD$ ' + deposit.toFixed(2) + '；<strong>预计总额：AUD$ ' + (rent + serviceFee + deposit).toFixed(2) + '</strong>。</p>';
+            };
+            [delivery, pickup, returned, start, end].forEach(input => input.addEventListener('change', update)); update();
           })();
         </script>
 

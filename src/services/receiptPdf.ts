@@ -122,6 +122,18 @@ function rect(lines: string[], x: number, y: number, width: number, height: numb
   lines.push(`${color} rg ${x} ${y} ${width} ${height} re f`)
 }
 
+function circle(lines: string[], centerX: number, centerY: number, radius: number, color: string) {
+  const k = radius * 0.55228475
+  lines.push(`${color} rg ${centerX + radius} ${centerY} m ${centerX + radius} ${centerY + k} ${centerX + k} ${centerY + radius} ${centerX} ${centerY + radius} c ${centerX - k} ${centerY + radius} ${centerX - radius} ${centerY + k} ${centerX - radius} ${centerY} c ${centerX - radius} ${centerY - k} ${centerX - k} ${centerY - radius} ${centerX} ${centerY - radius} c ${centerX + k} ${centerY - radius} ${centerX + radius} ${centerY - k} ${centerX + radius} ${centerY} c f`)
+}
+
+function websiteLogo(lines: string[], x: number, y: number, size: number) {
+  const scale = size / 64
+  circle(lines, x + size / 2, y + size / 2, size / 2, '0.04 0.04 0.06')
+  lines.push(`0.15 0.39 0.92 rg ${x + 24 * scale} ${y + 10 * scale} m ${x + 42 * scale} ${y + 39 * scale} l ${x + 33 * scale} ${y + 39 * scale} l ${x + 24 * scale} ${y + 25 * scale} l ${x + 15 * scale} ${y + 39 * scale} l ${x + 6 * scale} ${y + 39 * scale} l ${x + 24 * scale} ${y + 10 * scale} f`)
+  lines.push(`1 1 1 rg ${x + 5 * scale} ${y + 39 * scale} m ${x + 14 * scale} ${y + 39 * scale} l ${x + 33 * scale} ${y + 4 * scale} l ${x + 24 * scale} ${y + 4 * scale} l ${x + 5 * scale} ${y + 39 * scale} f`)
+}
+
 function concatBytes(parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((sum, part) => sum + part.length, 0)
   const output = new Uint8Array(total)
@@ -151,15 +163,15 @@ export function buildReceiptPdf(data: ReceiptPdfData): Uint8Array {
   const currency = ascii(data.currency, 'AUD')
   const template = { ...DEFAULT_RECEIPT_PDF_TEMPLATE, ...(data.template || {}) }
   const lines: string[] = []
-  rect(lines, 0, 720, PAGE_WIDTH, 122, '0.08 0.11 0.16')
-  rect(lines, 0, 720, 8, 122, '0.95 0.55 0.18')
-  text(lines, 42, 800, ascii(data.companyName, 'PC Rental'), 19, 'F2', '1 1 1')
-  const companyMeta = [displayText(data.companyAddress, 70, ''), data.companyPhone ? displayText(data.companyPhone, 24) : '', data.companyAbn ? `${template.abnLabel} ${displayText(data.companyAbn, 20)}` : ''].filter(Boolean).join(' | ')
-  text(lines, 42, 778, companyMeta, 8.5, 'F1', '0.78 0.82 0.87')
-  text(lines, 42, 748, template.title, 22, 'F2', '1 1 1')
-  text(lines, 395, 797, template.documentNumberLabel, 8, 'F2', '0.95 0.55 0.18')
-  text(lines, 395, 780, data.documentNumber, 12, 'F2', '1 1 1')
-  text(lines, 395, 758, `${template.issuedLabel} ${displayText(data.issuedAt, 28)}`, 8.5, 'F1', '0.78 0.82 0.87')
+  websiteLogo(lines, 42, 774, 42)
+  text(lines, 96, 800, ascii(data.companyName, 'PC Rental'), 15, 'F2', '0.10 0.14 0.20')
+  const companyMeta = [displayText(data.companyAddress, 60, ''), data.companyPhone ? displayText(data.companyPhone, 24) : '', data.companyAbn ? `${template.abnLabel} ${displayText(data.companyAbn, 20)}` : ''].filter(Boolean).join(' | ')
+  text(lines, 96, 781, companyMeta, 8.5, 'F1', '0.38 0.43 0.49')
+  text(lines, 42, 735, template.title, 22, 'F2', '0.10 0.14 0.20')
+  text(lines, 395, 797, template.documentNumberLabel, 8, 'F2', '0.32 0.38 0.45')
+  text(lines, 395, 780, data.documentNumber, 12, 'F2', '0.10 0.14 0.20')
+  text(lines, 395, 758, `${template.issuedLabel} ${displayText(data.issuedAt, 28)}`, 8.5, 'F1', '0.38 0.43 0.49')
+  line(lines, 42, 720, 553, 720, '0.95 0.55 0.18', 2.5)
 
   text(lines, 42, 685, template.billedToLabel, 8, 'F2', '0.95 0.55 0.18')
   text(lines, 42, 663, ascii(data.customerName, 'Customer'), 12, 'F2')

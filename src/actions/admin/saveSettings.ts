@@ -14,6 +14,7 @@ import { getDeliveryConfigSummary, saveDeliveryConfig } from '../../deliveryConf
 import { getCloudinaryConfigSummary, saveCloudinaryConfig } from '../../lib/cloudinary'
 import { enqueueAgreementUpdate } from '../../services/notifications'
 import { normalizeTallyEmbedUrl } from '../../lib/tally'
+import { hasValidPickupTimeSettings, pickupTimeSettings } from '../../domain/pickupTimeSlots'
 
 /** 保存协议更新记录，实际通知由定时任务统一发送。 */
 export async function notifyAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, _companyDetails?: any, _changedContent = ''): Promise<void> {
@@ -36,6 +37,14 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   await loadSystemSettingsFromDB(c)
 
   const currentFeedbackRewards = getSystemSettings().feedbackRewards
+  const pickupHours = pickupTimeSettings({
+    ...getSystemSettings().rentalRules,
+    serviceFeeHours: payload.rentalRules?.serviceFeeHours ?? getSystemSettings().rentalRules.serviceFeeHours,
+    businessHours: payload.rentalRules?.businessHours ?? getSystemSettings().rentalRules.businessHours,
+  })
+  const serviceFeeRate = Number(payload.rentalRules?.serviceFeeRate ?? getSystemSettings().rentalRules.serviceFeeRate ?? 0.1)
+  if (!hasValidPickupTimeSettings(pickupHours)) throw new Error('服务费时段与营业时段必须依次排列，且每段的结束时间要晚于开始时间')
+  if (!Number.isFinite(serviceFeeRate) || serviceFeeRate < 0 || serviceFeeRate > 1) throw new Error('时段服务费比例必须在 0% 到 100% 之间')
   const currentTaxInvoiceTemplate = getSystemSettings().taxInvoiceTemplate
   const taxInvoiceTemplateInput = payload.taxInvoiceTemplate && typeof payload.taxInvoiceTemplate === 'object' ? payload.taxInvoiceTemplate : {}
   const taxInvoiceTemplate = Object.fromEntries(Object.keys(currentTaxInvoiceTemplate).map((key) => {
@@ -120,6 +129,9 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       unavailableTimeSlots: payload.rentalRules?.unavailableTimeSlots && typeof payload.rentalRules.unavailableTimeSlots === 'object' && !Array.isArray(payload.rentalRules.unavailableTimeSlots)
         ? Object.fromEntries(Object.entries(payload.rentalRules.unavailableTimeSlots).filter(([date, slots]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Array.isArray(slots)).slice(0, 366).map(([date, slots]) => [date, (slots as unknown[]).filter(value => ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(value))).slice(0, 4)]).filter(([, slots]) => (slots as unknown[]).length > 0))
         : getSystemSettings().rentalRules.unavailableTimeSlots,
+      serviceFeeHours: pickupHours.serviceFeeHours,
+      serviceFeeRate,
+      businessHours: pickupHours.businessHours,
       minimumRentalDays: Math.max(1, Math.floor(Number(payload.rentalRules?.minimumRentalDays ?? getSystemSettings().rentalRules.minimumRentalDays) || 1)),
       bufferDays: Math.max(0, Math.floor(Number(payload.rentalRules?.bufferDays ?? getSystemSettings().rentalRules.bufferDays) || 0)),
     },

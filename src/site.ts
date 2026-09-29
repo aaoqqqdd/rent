@@ -1843,7 +1843,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   // 页脚在所有页面（登录前后）保持一致：平铺三个核心法律链接，其余合规页面
   // 统一收进「更多」折叠菜单，避免一长排链接换行。
   const footerPrimaryLinks: Array<[string, string]> = [
-    ['/feedback', '客户反馈'], ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
+    ['/user-terms', '用户协议'], ['/service-terms', '服务条款'], ['/privacy', '隐私政策'],
   ]
   const footerMoreLinks: Array<[string, string]> = [
     ['/cookies', 'Cookie 政策'], ['/refund-policy', '退款政策'], ['/consumer-rights', '消费者权利'],

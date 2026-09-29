@@ -4,10 +4,13 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, getSystemSettings } from '../../site';
+import { HALF_HOUR_TIME_OPTIONS, pickupTimeSettings } from '../../domain/pickupTimeSlots';
 
 export function renderAdminSettings(user: any) {
   const settings = getSystemSettings(); // 获取当前系统设置
   const feedbackRewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, balanceAmountMin: 5, balanceAmountMax: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponDiscountValueMin: 5, couponDiscountValueMax: 5, couponMinimumOrderAmount: 0, couponExpiresDays: 30 };
+  const pickupHours = pickupTimeSettings(settings.rentalRules)
+  const timeOptions = (selected: string) => HALF_HOUR_TIME_OPTIONS.map(value => `<option value="${value}" ${value === selected ? 'selected' : ''}>${value}</option>`).join('')
   const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   const body = `
     <div class="panel">
@@ -31,6 +34,7 @@ export function renderAdminSettings(user: any) {
               <div class="form-group"><label class="form-label" for="deliveryNote">配送说明</label><input id="deliveryNote" name="deliveryNote" class="form-control" value="${settings.companyDetails.deliveryNote || ''}" placeholder="例如：配送范围和运费以审核确认为准"><small class="form-text">官网申请页、租赁指南和设备详情会读取这段说明。</small></div>
             <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><textarea id="unavailableDates" name="unavailableDates" class="form-control" rows="4" placeholder="2026-12-25\n2026-12-26">${settings.rentalRules.unavailableDates.join('\n')}</textarea><small class="form-text">每行一个 YYYY-MM-DD；这些日期不能取货或归还。</small></div>
             <div class="form-group"><label class="form-label" for="unavailableTimeSlots">按日期设置不可用时间段</label><textarea id="unavailableTimeSlots" name="unavailableTimeSlots" class="form-control" rows="4" placeholder="2026-12-25: afternoon, evening_service">${Object.entries(settings.rentalRules.unavailableTimeSlots || {}).map(([date, slots]) => `${date}: ${(slots as string[]).join(', ')}`).join('\n')}</textarea><small class="form-text">每行格式：日期: 时间段；例如 2026-12-25: afternoon, evening_service。可用时间段：morning_service、morning、afternoon、evening_service。</small></div>
+            <div class="form-group"><label class="form-label">取还时间段</label><div class="grid grid-3"><div><small class="form-text">早间服务费</small><div class="grid grid-2"><select id="morningServiceStart" class="form-control">${timeOptions(pickupHours.serviceFeeHours.morningStart)}</select><select id="morningServiceEnd" class="form-control">${timeOptions(pickupHours.serviceFeeHours.morningEnd)}</select></div></div><div><small class="form-text">营业时段</small><div class="grid grid-2"><select id="businessHoursStart" class="form-control">${timeOptions(pickupHours.businessHours.start)}</select><select id="businessHoursEnd" class="form-control">${timeOptions(pickupHours.businessHours.end)}</select></div></div><div><small class="form-text">晚间服务费</small><div class="grid grid-2"><select id="eveningServiceStart" class="form-control">${timeOptions(pickupHours.serviceFeeHours.eveningStart)}</select><select id="eveningServiceEnd" class="form-control">${timeOptions(pickupHours.serviceFeeHours.eveningEnd)}</select></div></div></div><label class="form-label" for="serviceFeeRate" style="margin-top:12px">时段服务费比例（%）</label><input id="serviceFeeRate" type="number" min="0" max="100" step="0.01" class="form-control" value="${(Number(settings.rentalRules.serviceFeeRate ?? 0.1) * 100).toFixed(2)}"><small class="form-text">早间或晚间服务时段每次取货/归还按租金收取此比例；填 0 表示免服务费。每个下拉框按 30 分钟划分。顺序须为：早间服务费 → 营业时段 → 晚间服务费。</small></div>
             <div class="grid grid-2"><div><label class="form-label" for="minimumRentalDays">最短租赁天数</label><input id="minimumRentalDays" name="minimumRentalDays" type="number" min="1" step="1" class="form-control" value="${settings.rentalRules.minimumRentalDays}"></div><div><label class="form-label" for="bufferDays">设备周转缓冲天数</label><input id="bufferDays" name="bufferDays" type="number" min="0" step="1" class="form-control" value="${settings.rentalRules.bufferDays}"><small class="form-text">自动扩展订单前后不可预约的缓冲时间。</small></div></div>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="clearEmailTransport"><label for="clearEmailTransport">清除已保存的 SMTP 配置</label></div>
@@ -211,6 +215,9 @@ export function renderAdminSettings(user: any) {
           rentalRules: {
             unavailableDates: String(formData.get('unavailableDates') || '').split(/\\n+/).map(value => value.trim()).filter(Boolean),
             unavailableTimeSlots: String(formData.get('unavailableTimeSlots') || '').split(/\\n+/).reduce((result, line) => { const [date, values] = line.split(':'); const slots = String(values || '').split(',').map(value => value.trim()).filter(value => ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(value)); if (/^\\d{4}-\\d{2}-\\d{2}$/.test(String(date || '').trim()) && slots.length) result[String(date).trim()] = slots; return result; }, {}),
+            serviceFeeHours: { morningStart: inputValue('morningServiceStart'), morningEnd: inputValue('morningServiceEnd'), eveningStart: inputValue('eveningServiceStart'), eveningEnd: inputValue('eveningServiceEnd') },
+            serviceFeeRate: Number(inputValue('serviceFeeRate') || 0) / 100,
+            businessHours: { start: inputValue('businessHoursStart'), end: inputValue('businessHoursEnd') },
             minimumRentalDays: Number(formData.get('minimumRentalDays') || 1),
             bufferDays: Number(formData.get('bufferDays') || 0),
           },
