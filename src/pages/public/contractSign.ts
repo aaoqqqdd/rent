@@ -8,6 +8,7 @@ import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../acti
 import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
+import { decryptSecret } from '../../lib/secretBox';
 
 function isTimeSlotPassed(date: string, slot: string): boolean {
   const melbourneDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -164,11 +165,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
     const signedContractData = typeof contract.contract_data === 'string'
       ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })()
       : (contract.contract_data || {})
-    const windowsPassword = String(signedContractData.windows_password || '')
+    const windowsPassword = await decryptSecret(c, signedContractData.windows_password)
     const canViewWindowsPassword = viewerUser?.role === 'CUSTOMER' && String(order.userId || '') === String(viewerUser.id)
     const isGuestAccount = contractCustomer?.accountType === 'guest'
     const canViewGuestPassword = isGuestAccount && (!viewerUser || String(viewerUser.id) === String(order.userId || ''))
-    const guestPassword = canViewGuestPassword ? String(signedContractData.guest_password || '') : ''
+    const guestPassword = canViewGuestPassword ? await decryptSecret(c, signedContractData.guest_password) : ''
     const paymentStatusLabel = isWebsiteOrderContract
       ? '合同已签署，订单已确认，无需在线付款。'
       : order.status === 'paid'

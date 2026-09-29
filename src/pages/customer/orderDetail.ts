@@ -10,6 +10,7 @@ import { renderSquareGiftCardPaymentBox } from '../partials/squareGiftCardPaymen
 import { depositPaymentModeForOrder, normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
 import { getOrderPriceAdjustmentSummary } from '../../actions/stripePayments';
 import { getDeliveryBookingsForOrder, safeDeliveryTrackingUrl, type DeliveryBookingView } from '../../services/deliveryViews';
+import { decryptSecret } from '../../lib/secretBox';
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   stripe: '信用卡（Stripe）', card: '信用卡（Stripe）', square: '礼品卡', bank_transfer: '银行转账', alipay: '支付宝', wechat: '微信',
@@ -68,7 +69,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const deducted = Number(depositRefund?.deduction_amount || 0) > 0
   const refundLabel = refundStatus?.status === 'pending' ? '退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? '部分退款' : '已退款') : ''
   const windowsData = typeof contract?.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })() : (contract?.contract_data || {})
-  const windowsPassword = String(windowsData.windows_password || '')
+  const windowsPassword = await decryptSecret(c, windowsData.windows_password)
   const rentalStatusLabels: Record<string, string> = { pending: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', paid: '租赁已确认，等待开始', approved: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
   const deliveryBlock = deliveryBookings.length ? `<section class="panel" style="margin-top:20px"><h3>配送状态</h3><p class="form-text">配送状态由 Zoom2u 实时更新。</p>${deliveryBookings.map((booking: any) => { const trackingUrl = safeDeliveryTrackingUrl(booking.trackingUrl); return `<div class="delivery-status-row"><div><strong>${booking.direction === 'return' ? '回收' : '派送'}：${esc(booking.statusLabel)}</strong><p class="form-text">${esc(booking.statusDescription)}</p>${booking.providerReference ? `<small class="form-text">配送编号：${esc(booking.providerReference)}</small>` : ''}${booking.locked ? '<small class="delivery-lock-note">该状态下不能更新或取消配送订单。</small>' : ''}</div>${trackingUrl ? `<a class="button button-secondary" href="${esc(trackingUrl)}" target="_blank" rel="noopener noreferrer">查看追踪链接</a>` : ''}</div>` }).join('')}</section>` : ''
   const renderAdjustmentTransferCard = (method: 'bank_transfer' | 'alipay' | 'wechat') => {

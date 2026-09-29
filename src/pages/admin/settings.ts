@@ -5,50 +5,10 @@
 
 import { buildLayout, getSystemSettings } from '../../site';
 
-export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}, notify: any = {}, coupons: any[] = [], turnstile: any = {}, square: any = {}, tallyWebhookConfigured: boolean = false, delivery: any = {}, cloudinary: any = {}) {
+export function renderAdminSettings(user: any) {
   const settings = getSystemSettings(); // 获取当前系统设置
   const feedbackRewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, balanceAmountMin: 5, balanceAmountMax: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponDiscountValueMin: 5, couponDiscountValueMax: 5, couponMinimumOrderAmount: 0, couponExpiresDays: 30 };
   const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
-  const ts = {
-    configured: Boolean(turnstile.configured),
-    usingEnvFallback: Boolean(turnstile.usingEnvFallback),
-    siteKey: turnstile.siteKey || '',
-    secretKeyMasked: turnstile.secretKeyMasked || '',
-  };
-  const cy = {
-    configured: Boolean(cloudinary.configured),
-    usingEnvFallback: Boolean(cloudinary.usingEnvFallback),
-    cloudName: cloudinary.cloudName || '',
-    apiKeyMasked: cloudinary.apiKeyMasked || '',
-    apiSecretMasked: cloudinary.apiSecretMasked || '',
-  };
-  const nc = {
-    emailProvider: notify.emailProvider || 'resend',
-    resend: notify.resend || { from: '', apiKeyMasked: '', configured: false, usingEnvFallback: false },
-    brevo: notify.brevo || { from: '', apiKeyMasked: '', configured: false },
-    mailersend: notify.mailersend || { from: '', apiKeyMasked: '', configured: false },
-    webhook: notify.webhook || { enabled: false, urlMasked: '', configured: false },
-  };
-  const dc = {
-    configured: Boolean(delivery.configured),
-    adminConfigured: Boolean(delivery.adminConfigured),
-    webhookConfigured: Boolean(delivery.webhookConfigured),
-    apiTokenMasked: delivery.apiTokenMasked || '',
-    customerApiKeyMasked: delivery.customerApiKeyMasked || '',
-    webhookSecretMasked: delivery.webhookSecretMasked || '',
-    adminTokenMasked: delivery.adminTokenMasked || '',
-    webhookUrl: delivery.webhookUrl || 'https://rent-web.ydnw6zt6vj.workers.dev/api/delivery/webhooks/zoom2u',
-    apiBaseUrl: delivery.apiBaseUrl || 'https://api.zoom2u.com',
-    pickupAddress: delivery.pickupAddress || '',
-    pickupContactName: delivery.pickupContactName || '',
-    pickupEmail: delivery.pickupEmail || '',
-    pickupPhone: delivery.pickupPhone || '',
-    pickupNotes: delivery.pickupNotes || '',
-    deliverySpeed: delivery.deliverySpeed || 'Same day',
-    vehicleType: delivery.vehicleType || 'Car',
-    packageType: delivery.packageType || 'Box',
-  };
-
   const body = `
     <div class="panel">
       <div class="section-title"><h2>系统设置</h2><span class="section-note">配置邮件、公司资料、租赁规则、支付方式和推荐分成。</span></div>
@@ -82,7 +42,7 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">TALLY</span><div><h3>Tally 客户反馈与奖励</h3><p>请在 Tally 的 Share → Embed 中复制 <code>https://tally.so/embed/...</code> 地址。反馈表单必须添加名为 <code>feedbackToken</code> 的 Hidden field，并在 Tally 后台的 Webhook 设置中把地址指向 <code>/webhooks/tally</code>。当前 Webhook 密钥状态：<strong>${tallyWebhookConfigured ? '已配置（环境变量 TALLY_WEBHOOK_SECRET）' : '未配置 — 反馈提交后的 Webhook 会被拒绝，需在 Cloudflare Worker 环境变量中设置 TALLY_WEBHOOK_SECRET'}</strong>。</p></div></div>
+          <div class="form-section-title"><span class="mono">TALLY</span><div><h3>Tally 客户反馈与奖励</h3><p>请在 Tally 的 Share → Embed 中复制 <code>https://tally.so/embed/...</code> 地址。反馈表单必须添加名为 <code>feedbackToken</code> 的 Hidden field，并在 Tally 后台的 Webhook 设置中把地址指向 <code>/webhooks/tally</code>。Webhook 密钥由 Cloudflare Worker 环境变量 <code>TALLY_WEBHOOK_SECRET</code> 管理。</p></div></div>
           <div class="form-group"><label class="form-label" for="tallyFormUrl">Tally Embed URL</label><input class="form-control" type="url" id="tallyFormUrl" name="tallyFormUrl" value="${escAttr(settings.tallyFormUrl)}" placeholder="https://tally.so/embed/xxxxxxxx"><small class="form-text">保存后访问 <a href="/feedback" target="_blank" rel="noopener">/feedback</a> 预览（需已登录正式客户账号）。</small></div>
           <div class="checkbox-group"><input type="checkbox" id="feedbackRewardEnabled" ${feedbackRewards.enabled ? 'checked' : ''}><label for="feedbackRewardEnabled">提交反馈后自动发放奖励</label></div>
           <div class="grid grid-2">
@@ -94,64 +54,6 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             <div class="form-group"><label class="form-label" for="feedbackCouponExpiresDays">优惠码有效期（天）</label><input class="form-control" id="feedbackCouponExpiresDays" type="number" min="1" max="365" step="1" value="${feedbackRewards.couponExpiresDays}"></div>
           </div>
           <p class="form-text">礼品卡奖励不会调用 Square 发卡 API；请先在 <a href="/admin/feedback-gift-cards">礼品卡库存</a> 录入外部兑换码，系统按先进先出发放。发放记录（含失败原因和重试）请查看 <a href="/admin/feedback-rewards">反馈奖励记录</a>。</p>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-title"><span class="mono">BOT</span><div><h3>Cloudflare Turnstile 人机验证</h3><p>当前状态：${ts.configured ? (ts.usingEnvFallback ? '已配置（使用环境变量 TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY）' : '已配置') : '未配置'}。用于注册页拦截机器人。在 Cloudflare 控制台「Turnstile」中创建站点获取密钥。Secret Key 加密保存，留空表示保留原值。</p></div></div>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="turnstileSiteKey">Site Key</label><input class="form-control" id="turnstileSiteKey" name="turnstileSiteKey" value="${ts.siteKey}" placeholder="0x4AAAAAAA..."></div>
-            <div class="form-group"><label class="form-label" for="turnstileSecretKey">Secret Key</label><input class="form-control" type="password" id="turnstileSecretKey" name="turnstileSecretKey" placeholder="${ts.secretKeyMasked || '0x4AAAAAAA...'}" autocomplete="new-password"></div>
-          </div>
-          <div class="checkbox-group"><input type="checkbox" id="clearTurnstileConfig" name="clearTurnstileConfig"><label for="clearTurnstileConfig">清除已保存的 Turnstile 配置（改回使用环境变量）</label></div>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-title"><span class="mono">PUSH</span><div><h3>通知渠道</h3><p>邮件服务商用于发送所有系统邮件（验证、收据、合同、退款、协议更新等），Resend / Brevo / MailerSend 三选一，都提供免费额度。通用 Webhook 用于把发给员工和管理员的通知同步推送一份。所有密钥加密保存，留空表示保留原值。</p></div></div>
-          <div class="form-group">
-            <label class="form-label" for="emailProvider">当前生效的邮件服务商</label>
-            <select class="form-control" id="emailProvider">
-              <option value="resend" ${nc.emailProvider === 'resend' ? 'selected' : ''}>Resend（每月 3000 封 / 每天 100 封免费）</option>
-              <option value="brevo" ${nc.emailProvider === 'brevo' ? 'selected' : ''}>Brevo（每天 300 封免费）</option>
-              <option value="mailersend" ${nc.emailProvider === 'mailersend' ? 'selected' : ''}>MailerSend（每月 3000 封免费）</option>
-            </select>
-            <small class="form-text">下面三组凭据可以都填写，实际发信只会使用这里选中的服务商。</small>
-          </div>
-
-          <h4 class="form-subheading">Resend 邮件 API</h4>
-          <p class="form-text">当前状态：${nc.resend.configured ? (nc.resend.usingEnvFallback ? '已配置（使用环境变量 RESEND_API_KEY）' : '已配置') : '未配置'}</p>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="resendApiKey">Resend API Key</label><input class="form-control" type="password" id="resendApiKey" placeholder="${nc.resend.apiKeyMasked || 're_...'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="resendFrom">发件邮箱</label><input class="form-control" type="text" id="resendFrom" value="${nc.resend.from || ''}" placeholder="PC Rental &lt;noreply@example.com&gt;"></div>
-          </div>
-          <div class="checkbox-group"><input type="checkbox" id="resendClear"><label for="resendClear">清除已保存的 Resend API Key</label></div>
-
-          <h4 class="form-subheading">Brevo 邮件 API</h4>
-          <p class="form-text">当前状态：${nc.brevo.configured ? '已配置' : '未配置'}。在 Brevo 后台「SMTP & API」页面创建 API Key。</p>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="brevoApiKey">Brevo API Key</label><input class="form-control" type="password" id="brevoApiKey" placeholder="${nc.brevo.apiKeyMasked || 'xkeysib-...'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="brevoFrom">发件邮箱</label><input class="form-control" type="text" id="brevoFrom" value="${nc.brevo.from || ''}" placeholder="PC Rental &lt;noreply@example.com&gt;"></div>
-          </div>
-          <div class="checkbox-group"><input type="checkbox" id="brevoClear"><label for="brevoClear">清除已保存的 Brevo API Key</label></div>
-
-          <h4 class="form-subheading">MailerSend 邮件 API</h4>
-          <p class="form-text">当前状态：${nc.mailersend.configured ? '已配置' : '未配置'}。发件邮箱需先在 MailerSend 完成域名验证。</p>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="mailersendApiKey">MailerSend API Key</label><input class="form-control" type="password" id="mailersendApiKey" placeholder="${nc.mailersend.apiKeyMasked || 'mlsn....'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="mailersendFrom">发件邮箱</label><input class="form-control" type="text" id="mailersendFrom" value="${nc.mailersend.from || ''}" placeholder="PC Rental &lt;noreply@example.com&gt;"></div>
-          </div>
-          <div class="checkbox-group"><input type="checkbox" id="mailersendClear"><label for="mailersendClear">清除已保存的 MailerSend API Key</label></div>
-
-          <h4 class="form-subheading">通用 Webhook</h4>
-          <div class="checkbox-group"><input type="checkbox" id="webhookEnabled" ${nc.webhook.enabled ? 'checked' : ''}><label for="webhookEnabled">启用通用 Webhook</label></div>
-          <p class="form-text">当前状态：${nc.webhook.configured ? `已配置（${nc.webhook.urlMasked}）` : '未配置'}。支持 Discord / Slack / 钉钉 / 飞书 的机器人 Webhook，其他地址会收到通用 JSON。</p>
-          <div class="form-group"><label class="form-label" for="webhookUrl">Webhook 地址（HTTPS）</label><input class="form-control" type="password" id="webhookUrl" placeholder="${nc.webhook.urlMasked || 'https://...'}" autocomplete="new-password"></div>
-          <div class="checkbox-group"><input type="checkbox" id="webhookClear"><label for="webhookClear">清除 Webhook 配置</label></div>
-
-          <div class="form-actions" style="margin-top:16px;">
-            <button type="button" class="button button-secondary" id="notifyChannelsTest">发送测试推送</button>
-            <span class="form-text" id="notifyChannelsTestResult"></span>
-          </div>
-          <p class="form-text">请先保存配置再测试。</p>
         </section>
 
         <section class="form-section">
@@ -180,63 +82,6 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">API</span><div><h3>Stripe API 配置</h3><p>当前状态：${stripe.configured ? `已配置（${stripe.mode === 'live' ? '正式模式' : '测试模式'}）` : '未配置'}。Webhook 地址：<code>/webhooks/stripe</code>。私密密钥留空会保留现有值。</p></div></div>
-          <div class="form-group"><label class="form-label" for="stripePublishableKey">Publishable Key</label><input class="form-control" id="stripePublishableKey" name="stripePublishableKey" value="${stripe.publishableKey || ''}" placeholder="pk_test_... 或 pk_live_..."></div>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="stripeSecretKey">Secret Key</label><input class="form-control" type="password" id="stripeSecretKey" name="stripeSecretKey" placeholder="${stripe.secretKeyMasked || 'sk_test_...'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="stripeWebhookSecret">Webhook Signing Secret</label><input class="form-control" type="password" id="stripeWebhookSecret" name="stripeWebhookSecret" placeholder="${stripe.webhookSecretMasked || 'whsec_...'}" autocomplete="new-password"></div>
-          </div>
-          <div class="checkbox-group"><input type="checkbox" id="clearStripeConfig" name="clearStripeConfig"><label for="clearStripeConfig">清除已保存的 Stripe 配置</label></div>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-title"><span class="mono">SQUARE</span><div><h3>Square API 配置</h3><p>当前状态：${square.configured ? `已配置（${square.environment === 'production' ? '正式环境' : '沙盒环境'}）` : '未配置'}。用于 Square 礼品卡付款、客户资料和设备商品同步。Webhook 地址：<code>/webhooks/square</code>。</p></div></div>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="squareApplicationId">Application ID</label><input class="form-control" id="squareApplicationId" value="${escAttr(square.applicationId)}" placeholder="sq0idp-..."></div>
-            <div class="form-group"><label class="form-label" for="squareLocationId">Location ID</label><input class="form-control" id="squareLocationId" value="${escAttr(square.locationId)}" placeholder="L..."></div>
-            <div class="form-group"><label class="form-label" for="squareAccessToken">Access Token</label><input class="form-control" type="password" id="squareAccessToken" placeholder="${square.accessTokenMasked || '留空保留现有值'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="squareEnvironment">环境</label><select class="form-control" id="squareEnvironment"><option value="sandbox" ${square.environment !== 'production' ? 'selected' : ''}>Sandbox 沙盒</option><option value="production" ${square.environment === 'production' ? 'selected' : ''}>Production 正式</option></select></div>
-            <div class="form-group"><label class="form-label" for="squareWebhookUrl">Webhook URL</label><div style="display:flex;gap:8px;align-items:center"><input class="form-control" type="url" id="squareWebhookUrl" value="${escAttr(square.webhookUrl)}" readonly aria-describedby="squareWebhookUrlHelp"><button type="button" class="button button-secondary" id="copySquareWebhookUrl">复制</button></div><small class="form-text" id="squareWebhookUrlHelp">系统已自动生成，点击“复制”后粘贴到 Square Developer Console 的 Webhooks 设置。</small></div>
-            <div class="form-group"><label class="form-label" for="squareWebhookSignatureKey">Webhook Signature Key（可选）</label><input class="form-control" type="password" id="squareWebhookSignatureKey" placeholder="${square.webhookSignatureKeyMasked || '留空保留现有值'}" autocomplete="new-password"></div>
-          </div>
-          <p class="form-text">Square Web Payments SDK 只会把礼品卡令牌发送到本站；Access Token 和 Webhook Signature Key 会加密保存。</p>
-          <div class="checkbox-group"><input type="checkbox" id="clearSquareConfig"><label for="clearSquareConfig">清除已保存的 Square 配置</label></div>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-title"><span class="mono">MEDIA</span><div><h3>Cloudinary 图片上传</h3><p>当前状态：${cy.configured ? (cy.usingEnvFallback ? '已配置（使用环境变量）' : '已配置') : '未配置'}。用于付款凭证和设备损坏照片上传。请在 Cloudinary 控制台的 API Keys 页面填写 Cloud Name、API Key 和 API Secret；密钥会加密保存，留空表示保留原值。</p></div></div>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="cloudinaryCloudName">Cloud Name</label><input class="form-control" id="cloudinaryCloudName" value="${escAttr(cy.cloudName)}" placeholder="例如：dxxxxxxx"></div>
-            <div class="form-group"><label class="form-label" for="cloudinaryApiKey">API Key</label><input class="form-control" type="password" id="cloudinaryApiKey" placeholder="${cy.apiKeyMasked || '留空保留现有值'}" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label" for="cloudinaryApiSecret">API Secret</label><input class="form-control" type="password" id="cloudinaryApiSecret" placeholder="${cy.apiSecretMasked || '留空保留现有值'}" autocomplete="new-password"></div>
-          </div>
-          <small class="form-text">上传限制：JPG、PNG、WebP，单张最大 5MB；损坏照片最多 5 张。没有后台配置时仍可兼容读取旧的 Wrangler Secrets。</small>
-          <div class="checkbox-group"><input type="checkbox" id="clearCloudinaryConfig"><label for="clearCloudinaryConfig">清除后台保存的 Cloudinary 配置（改回使用环境变量）</label></div>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-title"><span class="mono">DELIVERY</span><div><h3>Zoom2u Integration</h3><p>按 Zoom2u「My Profile → Integration」的字段填写。当前状态：${dc.configured ? 'API 已配置' : 'API 未配置'}，Customer API key${dc.customerApiKeyMasked ? '已配置' : '未配置'}。密钥会使用 SETTINGS_ENCRYPTION_KEY 加密保存，留空表示保留原值。</p></div></div>
-          <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="zoom2uApiToken">Your Zoom2U API key</label><input class="form-control" type="password" id="zoom2uApiToken" placeholder="${dc.apiTokenMasked || 'Paste your Zoom2U API key'}" autocomplete="new-password"><small class="form-text">用于调用 Zoom2u quote、create、status 等 API。</small></div>
-            <div class="form-group"><label class="form-label" for="zoom2uCustomerApiKey">Your Customer API key</label><input class="form-control" type="password" id="zoom2uCustomerApiKey" placeholder="${dc.customerApiKeyMasked || 'Paste your Customer API key'}" autocomplete="new-password"><small class="form-text">用于 Zoom2u Webhook 回调识别；不是本站内部配送管理 Token。</small></div>
-            <div class="form-group"><label class="form-label" for="zoom2uWebhookUrl">Your Web Hook Url</label><div style="display:flex;gap:8px;align-items:center"><input class="form-control" type="url" id="zoom2uWebhookUrl" value="${escAttr(dc.webhookUrl)}" readonly aria-describedby="zoom2uWebhookUrlHelp"><button type="button" class="button button-secondary" id="copyZoom2uWebhookUrl">复制</button></div><small class="form-text" id="zoom2uWebhookUrlHelp">把这个完整地址粘贴到 Zoom2u 的 Web Hook Url 字段。</small></div>
-            <div class="form-group"><label class="form-label" for="zoom2uApiBaseUrl">Zoom2u API 地址（高级）</label><input class="form-control" type="url" id="zoom2uApiBaseUrl" value="${escAttr(dc.apiBaseUrl)}" placeholder="https://api.zoom2u.com"></div>
-            <div class="form-group"><label class="form-label" for="deliveryAdminToken">Internal delivery management token</label><input class="form-control" type="password" id="deliveryAdminToken" placeholder="${dc.adminTokenMasked || '仅供 rent 与官网 Worker 共用'}" autocomplete="new-password"><small class="form-text">这是本站内部 token，不是 Zoom2u API key；两个 Worker 必须使用同一个值。</small></div>
-            <div class="form-group"><label class="form-label" for="zoom2uWebhookSecret">Zoom2u Webhook Authorization Secret（高级）</label><input class="form-control" type="password" id="zoom2uWebhookSecret" placeholder="${dc.webhookSecretMasked || '留空表示保留现有值'}" autocomplete="new-password"><small class="form-text">Zoom2u 回调 Authorization: Basic ... 使用的密钥；如 Zoom2u 另行提供，请填这里。</small></div>
-            <div class="form-group"><label class="form-label" for="zoom2uPickupAddress">取货地址</label><input class="form-control" id="zoom2uPickupAddress" value="${escAttr(dc.pickupAddress)}" placeholder="完整街道地址"></div>
-            <div class="form-group"><label class="form-label" for="zoom2uPickupContactName">取货联系人</label><input class="form-control" id="zoom2uPickupContactName" value="${escAttr(dc.pickupContactName)}"></div>
-            <div class="form-group"><label class="form-label" for="zoom2uPickupEmail">取货联系人邮箱</label><input class="form-control" type="email" id="zoom2uPickupEmail" value="${escAttr(dc.pickupEmail)}"></div>
-            <div class="form-group"><label class="form-label" for="zoom2uPickupPhone">取货联系人电话</label><input class="form-control" id="zoom2uPickupPhone" value="${escAttr(dc.pickupPhone)}"></div>
-            <div class="form-group"><label class="form-label" for="zoom2uDeliverySpeed">配送速度</label><select class="form-control" id="zoom2uDeliverySpeed"><option value="Same day" ${dc.deliverySpeed === 'Same day' ? 'selected' : ''}>Same day</option><option value="3 hour" ${dc.deliverySpeed === '3 hour' ? 'selected' : ''}>3 hour</option><option value="VIP" ${dc.deliverySpeed === 'VIP' ? 'selected' : ''}>VIP</option></select></div>
-            <div class="form-group"><label class="form-label" for="zoom2uVehicleType">车辆类型</label><select class="form-control" id="zoom2uVehicleType"><option value="Bike" ${dc.vehicleType === 'Bike' ? 'selected' : ''}>Bike</option><option value="Car" ${dc.vehicleType === 'Car' ? 'selected' : ''}>Car</option><option value="Van" ${dc.vehicleType === 'Van' ? 'selected' : ''}>Van</option></select></div>
-            <div class="form-group"><label class="form-label" for="zoom2uPackageType">包裹类型</label><select class="form-control" id="zoom2uPackageType"><option value="Documents" ${dc.packageType === 'Documents' ? 'selected' : ''}>Documents</option><option value="Bag" ${dc.packageType === 'Bag' ? 'selected' : ''}>Bag</option><option value="Box" ${dc.packageType === 'Box' ? 'selected' : ''}>Box</option><option value="Custom" ${dc.packageType === 'Custom' ? 'selected' : ''}>Custom</option></select></div>
-          </div>
-          <div class="form-group"><label class="form-label" for="zoom2uPickupNotes">取货备注</label><textarea class="form-control" id="zoom2uPickupNotes" rows="2" placeholder="例如：请从前台取货">${escAttr(dc.pickupNotes)}</textarea></div>
-          <div class="checkbox-group"><input type="checkbox" id="clearDeliveryConfig"><label for="clearDeliveryConfig">清除已保存的配送配置</label></div>
-          <p class="form-text">配置保存到共享 D1 后，报价、派送和 Webhook 会由 geekslope-web 自动读取；不再需要在浏览器或代码中填写 API Key。</p>
-        </section>
-
-        <section class="form-section">
           <div class="form-section-title"><span class="mono">BANK</span><div><h3>银行转账账户信息</h3><p>客户选择银行转账时会看到这些账户信息，供其转账使用。</p></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label for="bankName" class="form-label">银行名称</label><input type="text" id="bankName" name="bankName" class="form-control" value="${settings.bankDetails.bankName}" placeholder="例如: Commonwealth Bank"></div>
@@ -247,10 +92,10 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">RMB</span><div><h3>人民币收款码</h3><p>请输入公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。</p></div></div>
+          <div class="form-section-title"><span class="mono">RMB</span><div><h3>人民币收款码</h3><p>可直接选择图片上传到 Cloudinary；也可以继续填写公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。</p></div></div>
           <div class="grid grid-2">
-            <div class="form-group"><label class="form-label" for="alipayQrUrl">支付宝收款码 URL</label><input class="form-control" id="alipayQrUrl" name="alipayQrUrl" type="url" value="${settings.rmbPayment.alipayQrUrl}" placeholder="https://.../alipay-qr.png"></div>
-            <div class="form-group"><label class="form-label" for="wechatQrUrl">微信收款码 URL</label><input class="form-control" id="wechatQrUrl" name="wechatQrUrl" type="url" value="${settings.rmbPayment.wechatQrUrl}" placeholder="https://.../wechat-qr.png"></div>
+            <div class="form-group"><label class="form-label" for="alipayQrFile">支付宝收款码图片</label><input class="form-control" id="alipayQrFile" type="file" accept="image/jpeg,image/png,image/webp"><label class="form-label" for="alipayQrUrl">支付宝收款码 URL（自动回填）</label><input class="form-control" id="alipayQrUrl" name="alipayQrUrl" type="url" value="${escAttr(settings.rmbPayment.alipayQrUrl)}" placeholder="https://.../alipay-qr.png"><small class="form-text">支持 JPG、PNG、WebP，单张不超过 5MB。</small></div>
+            <div class="form-group"><label class="form-label" for="wechatQrFile">微信收款码图片</label><input class="form-control" id="wechatQrFile" type="file" accept="image/jpeg,image/png,image/webp"><label class="form-label" for="wechatQrUrl">微信收款码 URL（自动回填）</label><input class="form-control" id="wechatQrUrl" name="wechatQrUrl" type="url" value="${escAttr(settings.rmbPayment.wechatQrUrl)}" placeholder="https://.../wechat-qr.png"><small class="form-text">支持 JPG、PNG、WebP，单张不超过 5MB。</small></div>
           </div>
         </section>
 
@@ -274,8 +119,32 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
         const form = document.getElementById('systemSettingsForm');
         if (!form || form.dataset.settingsReady === 'true') return;
         form.dataset.settingsReady = 'true';
-        form.addEventListener('submit', function(event) {
+        form.addEventListener('submit', async function(event) {
         event.preventDefault();
+
+        const uploadQrImage = async (fileId, kind, urlId) => {
+          const fileInput = document.getElementById(fileId);
+          const file = fileInput?.files?.[0];
+          if (!file) return;
+          const uploadData = new FormData();
+          uploadData.append('imageFile', file);
+          uploadData.append('kind', kind);
+          const response = await fetch('/admin/settings/upload-image', { method: 'POST', body: uploadData });
+          const rawText = await response.text();
+          let data = {};
+          try { data = rawText ? JSON.parse(rawText) : {}; } catch { data = { error: rawText || '图片上传失败' }; }
+          if (!response.ok || !data.success || !data.url) throw new Error(data.error || '图片上传失败');
+          document.getElementById(urlId).value = data.url;
+        };
+        try {
+          await Promise.all([
+            uploadQrImage('alipayQrFile', 'alipay', 'alipayQrUrl'),
+            uploadQrImage('wechatQrFile', 'wechat', 'wechatQrUrl'),
+          ]);
+        } catch (error) {
+          alert('收款码上传失败: ' + (error instanceof Error ? error.message : '请稍后重试'));
+          return;
+        }
 
         const formData = new FormData(this);
         const inputValue = (id) => document.getElementById(id)?.value || '';
@@ -291,49 +160,6 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             processingFeeRate: Number(formData.get('processingFeeRate') || 0) / 100,
             squareProcessingFeeRate: Number(formData.get('squareProcessingFeeRate') || 0) / 100,
           },
-          stripeConfig: {
-            publishableKey: formData.get('stripePublishableKey'),
-            secretKey: formData.get('stripeSecretKey'),
-            webhookSecret: formData.get('stripeWebhookSecret'),
-            clear: formData.has('clearStripeConfig'),
-          },
-          cloudinaryConfig: {
-            cloudName: inputValue('cloudinaryCloudName'),
-            apiKey: inputValue('cloudinaryApiKey'),
-            apiSecret: inputValue('cloudinaryApiSecret'),
-            clear: document.getElementById('clearCloudinaryConfig')?.checked || false,
-          },
-          squareConfig: {
-            applicationId: inputValue('squareApplicationId'),
-            locationId: inputValue('squareLocationId'),
-            accessToken: inputValue('squareAccessToken'),
-            environment: inputValue('squareEnvironment') || 'sandbox',
-            webhookUrl: inputValue('squareWebhookUrl'),
-            webhookSignatureKey: inputValue('squareWebhookSignatureKey'),
-            clear: document.getElementById('clearSquareConfig')?.checked || false,
-          },
-          deliveryConfig: {
-            apiToken: inputValue('zoom2uApiToken'),
-            customerApiKey: inputValue('zoom2uCustomerApiKey'),
-            webhookSecret: inputValue('zoom2uWebhookSecret'),
-            adminToken: inputValue('deliveryAdminToken'),
-            apiBaseUrl: inputValue('zoom2uApiBaseUrl'),
-            webhookUrl: inputValue('zoom2uWebhookUrl'),
-            pickupAddress: inputValue('zoom2uPickupAddress'),
-            pickupContactName: inputValue('zoom2uPickupContactName'),
-            pickupEmail: inputValue('zoom2uPickupEmail'),
-            pickupPhone: inputValue('zoom2uPickupPhone'),
-            pickupNotes: inputValue('zoom2uPickupNotes'),
-            deliverySpeed: inputValue('zoom2uDeliverySpeed'),
-            vehicleType: inputValue('zoom2uVehicleType'),
-            packageType: inputValue('zoom2uPackageType'),
-            clear: document.getElementById('clearDeliveryConfig')?.checked || false,
-          },
-          turnstileConfig: {
-            siteKey: formData.get('turnstileSiteKey'),
-            secretKey: formData.get('turnstileSecretKey'),
-            clear: formData.has('clearTurnstileConfig'),
-          },
           emailTransport: {
             host: inputValue('smtpHost'),
             port: inputValue('smtpPort'),
@@ -342,21 +168,6 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
             from: inputValue('smtpFrom'),
             encryption: inputValue('smtpEncryption') || 'tls',
             clear: document.getElementById('clearEmailTransport')?.checked || false,
-          },
-          notifyChannels: {
-            emailProvider: document.getElementById('emailProvider').value,
-            resendApiKey: document.getElementById('resendApiKey').value,
-            resendFrom: document.getElementById('resendFrom').value,
-            resendClear: document.getElementById('resendClear').checked,
-            brevoApiKey: document.getElementById('brevoApiKey').value,
-            brevoFrom: document.getElementById('brevoFrom').value,
-            brevoClear: document.getElementById('brevoClear').checked,
-            mailersendApiKey: document.getElementById('mailersendApiKey').value,
-            mailersendFrom: document.getElementById('mailersendFrom').value,
-            mailersendClear: document.getElementById('mailersendClear').checked,
-            webhookEnabled: document.getElementById('webhookEnabled').checked,
-            webhookUrl: document.getElementById('webhookUrl').value,
-            webhookClear: document.getElementById('webhookClear').checked,
           },
           registrationSettings: {
             requireEmailVerification: document.getElementById('requireEmailVerification').checked,
@@ -441,65 +252,6 @@ export function renderAdminSettings(user: any, stripe: any = {}, email: any = {}
           console.error('Error saving settings:', error);
           alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。'));
         });
-        });
-      })();
-    </script>
-    <script>
-      (function() {
-        const input = document.getElementById('zoom2uWebhookUrl');
-        const button = document.getElementById('copyZoom2uWebhookUrl');
-        if (!input || !button || button.dataset.ready === 'true') return;
-        button.dataset.ready = 'true';
-        button.addEventListener('click', async function() {
-          try { await navigator.clipboard.writeText(input.value); } catch (_) { input.focus(); input.select(); document.execCommand('copy'); }
-          const original = button.textContent;
-          button.textContent = '已复制';
-          window.setTimeout(() => { button.textContent = original || '复制'; }, 1500);
-        });
-      })();
-    </script>
-    <script>
-      (function() {
-        const input = document.getElementById('squareWebhookUrl');
-        const button = document.getElementById('copySquareWebhookUrl');
-        if (!input || !button || button.dataset.ready === 'true') return;
-        button.dataset.ready = 'true';
-        button.addEventListener('click', async function() {
-          try {
-            await navigator.clipboard.writeText(input.value);
-          } catch (_) {
-            input.focus();
-            input.select();
-            document.execCommand('copy');
-          }
-          const original = button.textContent;
-          button.textContent = '已复制';
-          window.setTimeout(() => { button.textContent = original || '复制'; }, 1500);
-        });
-      })();
-    </script>
-    <script>
-      (function() {
-        const button = document.getElementById('notifyChannelsTest');
-        if (!button || button.dataset.ready === 'true') return;
-        button.dataset.ready = 'true';
-        const result = document.getElementById('notifyChannelsTestResult');
-        button.addEventListener('click', function() {
-          button.disabled = true;
-          result.textContent = '发送中…';
-          fetch('/admin/notify-channels/test', { method: 'POST' })
-            .then(async function(response) {
-              const data = await response.json().catch(function() { return {}; });
-              if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
-              return data;
-            })
-            .then(function(data) {
-              const rows = (data.results || []);
-              if (!rows.length) { result.textContent = '没有已启用的推送渠道。'; return; }
-              result.textContent = rows.map(function(r) { return r.channel + ': ' + (r.ok ? 'OK' : '失败 (' + r.detail + ')'); }).join('　');
-            })
-            .catch(function(error) { result.textContent = '测试失败：' + error.message; })
-            .finally(function() { button.disabled = false; });
         });
       })();
     </script>

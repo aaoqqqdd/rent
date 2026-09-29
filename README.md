@@ -113,7 +113,7 @@ npx wrangler secret put SETTINGS_ENCRYPTION_KEY
 
 ### 配置图片上传（Cloudinary Free）
 
-付款凭证和设备损坏照片通过 Worker 服务端上传到 Cloudinary，D1 只保存返回的 HTTPS 图片地址。请在 Cloudinary 控制台的 API Keys 页面创建凭证，然后登录管理员后台的 `/admin/settings`，在「Cloudinary 图片上传」中填写 Cloud Name、API Key 和 API Secret。密钥会使用 `SETTINGS_ENCRYPTION_KEY` 加密保存；旧部署也可以继续使用 `CLOUDINARY_CLOUD_NAME`、`CLOUDINARY_API_KEY` 和 `CLOUDINARY_API_SECRET` Wrangler Secrets 作为回退。
+人民币支付宝 / 微信收款码、付款凭证和设备损坏照片通过 Worker 服务端上传到 Cloudinary，D1 只保存返回的 HTTPS 图片地址。请在 Cloudinary 控制台的 API Keys 页面创建凭证，然后登录管理员后台的 `/admin/settings`，在「Cloudinary 图片上传」中填写 Cloud Name、API Key 和 API Secret。密钥会使用 `SETTINGS_ENCRYPTION_KEY` 加密保存；旧部署也可以继续使用 `CLOUDINARY_CLOUD_NAME`、`CLOUDINARY_API_KEY` 和 `CLOUDINARY_API_SECRET` Wrangler Secrets 作为回退。
 
 应用限制单张图片不超过 5MB，仅接受 JPG、PNG 和 WebP。旧的公开图片链接仍可作为兼容输入，但新页面默认使用文件上传。
 

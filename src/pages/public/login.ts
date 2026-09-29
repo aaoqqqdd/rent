@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout } from '../../site';
+import { escapeHtml } from '../../lib/html';
 
 const escapeAttribute = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
 
@@ -28,7 +29,7 @@ export function renderLogin(errorMessage?: string, showTestAccounts = false, red
               <label class="form-check"><input type="checkbox" name="remember" /> 记住我</label>
               <a class="link-button" href="/forgot-password">忘记密码？</a>
             </div>
-            ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+            ${errorMessage ? `<div class="page-notification page-notification--error">${escapeHtml(errorMessage)}</div>` : ''}
             ${showTestAccounts ? `<div class="alert alert-info">
               <div>
                 <strong style="display:block; margin-bottom:6px;">测试账号</strong>

@@ -213,7 +213,8 @@ async function resolveFrom(c: Context, configured: string | undefined): Promise<
   try { return String(getSystemSettings().companyDetails.email || '').trim() } catch { return '' }
 }
 
-export interface OutgoingEmail { to: string | string[]; subject: string; text: string; html?: string }
+export interface EmailAttachment { filename: string; content: string; contentType?: string }
+export interface OutgoingEmail { to: string | string[]; subject: string; text: string; html?: string; attachments?: EmailAttachment[] }
 export interface EmailSendResult { ok: boolean; id: string | null; error: string | null }
 
 // 统一发信入口：按当前生效的邮件服务商拼装请求并发送，返回值统一归一化为
@@ -223,13 +224,18 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
   if (!apiKey || !from) return { ok: false, id: null, error: 'Email transport is not configured' }
   const recipients = Array.isArray(email.to) ? email.to : [email.to]
   const html = email.html || renderPlainTextEmailHtml(email.subject, email.text, getSystemSettings().companyDetails.name || 'PC Rental')
+  const attachments = email.attachments?.filter(attachment => attachment.filename && attachment.content).map(attachment => ({
+    filename: attachment.filename,
+    content: attachment.content,
+    contentType: attachment.contentType || 'application/octet-stream',
+  }))
 
   try {
     if (provider === 'brevo') {
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: { 'api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ sender: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, textContent: email.text, htmlContent: html }),
+        body: JSON.stringify({ sender: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, textContent: email.text, htmlContent: html, ...(attachments?.length ? { attachment: attachments.map(attachment => ({ name: attachment.filename, content: attachment.content })) } : {}) }),
       })
       const result = await response.json().catch(() => ({})) as any
       return { ok: response.ok, id: result?.messageId || null, error: response.ok ? null : String(result?.message || response.status) }
@@ -238,7 +244,7 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
       const response = await fetch('https://api.mailersend.com/v1/email', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ from: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, text: email.text, html }),
+        body: JSON.stringify({ from: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, text: email.text, html, ...(attachments?.length ? { attachments: attachments.map(attachment => ({ filename: attachment.filename, content: attachment.content, disposition: 'attachment' })) } : {}) }),
       })
       const messageId = response.headers.get('x-message-id')
       const ok = response.status === 202 || response.ok
@@ -250,7 +256,7 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: recipients, subject: email.subject, text: email.text, html }),
+      body: JSON.stringify({ from, to: recipients, subject: email.subject, text: email.text, html, ...(attachments?.length ? { attachments: attachments.map(attachment => ({ filename: attachment.filename, content: attachment.content, content_type: attachment.contentType })) } : {}) }),
     })
     const result = await response.json().catch(() => ({})) as any
     return { ok: response.ok, id: result?.id || null, error: response.ok ? null : String(result?.message || response.status) }

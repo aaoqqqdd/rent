@@ -69,6 +69,7 @@ import {
   releaseDeviceIfUnbooked,
   getContractById,
   getContractByOrderId,
+  isContractFinalized,
   getContractByContractNumber,
   ensureContractForOrder,
   updateContractTemplate,
@@ -122,7 +123,6 @@ import { getStripeConfigSummary } from './stripe'
 import { getSquareConfigSummary } from './square'
 import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteKey } from './turnstile'
 import { getDeliveryConfigSummary } from './deliveryConfig'
-import { getEmailConfigSummary } from './emailConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
@@ -135,6 +135,7 @@ import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthL
 import { runConnectivityProbes } from './services/connectivity'
 import { createAdminDeliveryBooking } from './services/deliveryAdmin'
 import { handleDeliveryStatusEmail } from './services/deliveryNotifications'
+import { buildTaxInvoiceDocument, sendTaxInvoiceEmail } from './services/notifications'
 import {
   styleSheetText as siteStyles,
   styleSheetVersion,
@@ -147,7 +148,9 @@ import { getTableColumns as getCachedTableColumns } from './db/client'
 import { createTallyFeedbackToken } from './lib/tally'
 import { parsePickupQrPayload } from './lib/pickupQr'
 import { readManualInspectionFields, renderManualInspectionFields, inspectionText } from './lib/inspection'
-import { getCloudinaryConfigSummary, getCloudinaryRuntimeConfig, uploadCloudinaryImages } from './lib/cloudinary'
+import { decryptSecret } from './lib/secretBox'
+import { migrateLegacyContractSecrets } from './services/secretMigration'
+import { getCloudinaryConfigSummary, getCloudinaryRuntimeConfig, uploadCloudinaryImage, uploadCloudinaryImages } from './lib/cloudinary'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
   const form: Record<string, string> = {}
@@ -210,17 +213,10 @@ async function sendPaymentReviewEmail(c: any, customer: any, subject: string, me
 }
 
 async function ensureDeviceCommandTables(db: any): Promise<void> {
-  await db.prepare(`CREATE TABLE IF NOT EXISTS device_commands (
-    id TEXT PRIMARY KEY NOT NULL, device_id TEXT NOT NULL, command_type TEXT NOT NULL,
-    payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL, claimed_at TEXT, completed_at TEXT
-  )`).run()
-  await db.prepare(`CREATE TABLE IF NOT EXISTS device_command_results (
-    id TEXT PRIMARY KEY NOT NULL, command_id TEXT NOT NULL UNIQUE, device_id TEXT NOT NULL,
-    success INTEGER NOT NULL DEFAULT 0, result_code TEXT NOT NULL, result_message TEXT,
-    executed_at TEXT NOT NULL, reported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`).run()
-  await db.prepare('CREATE INDEX IF NOT EXISTS idx_device_commands_poll ON device_commands(device_id, status, expires_at, created_at)').run()
+  // Schema is deployed exclusively through migrations/0073 and later. Do not
+  // grant request handlers DDL privileges or hide a failed deployment by
+  // silently creating a weaker legacy schema at request time.
+  void db
 }
 
 function requestHost(c: any): string {
@@ -300,6 +296,72 @@ app.get('/i18n.js', (c) => {
 
 const SYSTEM_STATUS_CACHE_KEY = 'https://rent.internal/api/system-status'
 const SYSTEM_STATUS_TTL_MS = 15_000
+
+const SEARCH_ORDER_STATUS_LABELS: Record<string, string> = {
+  pending_approval: '待审核', pending_payment: '待支付', approved: '已审核', awaiting_signature: '待签署',
+  paid: '已支付', pending_pickup: '待取货', active: '租赁中', extended: '已延期', overdue: '已逾期',
+  suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消'
+}
+
+app.get('/api/search', async (c) => {
+  const user = c.get('user') as any
+  if (!user) return c.json({ orders: [] }, 401)
+
+  const query = String(c.req.query('q') || '').trim().slice(0, 80)
+  if (query.length < 2) return c.json({ orders: [] }, 200, { 'Cache-Control': 'no-store' })
+
+  const escaped = query.toLowerCase().replace(/[\\%_]/g, (character) => `\\${character}`)
+  const like = `%${escaped}%`
+  const searchClauses = [
+    "LOWER(COALESCE(o.id, '')) LIKE ? ESCAPE '\\'",
+    "LOWER(COALESCE(o.orderNo, '')) LIKE ? ESCAPE '\\'",
+    "LOWER(COALESCE(u.name, '')) LIKE ? ESCAPE '\\'",
+    "LOWER(COALESCE(u.email, '')) LIKE ? ESCAPE '\\'",
+    "LOWER(COALESCE(d.name, '')) LIKE ? ESCAPE '\\'",
+    "LOWER(COALESCE(d.model, '')) LIKE ? ESCAPE '\\'",
+    "LOWER(COALESCE(o.status, '')) LIKE ? ESCAPE '\\'",
+    "LOWER(CASE o.status WHEN 'pending_approval' THEN '待审核' WHEN 'pending_payment' THEN '待支付' WHEN 'approved' THEN '已审核' WHEN 'awaiting_signature' THEN '待签署' WHEN 'paid' THEN '已支付' WHEN 'pending_pickup' THEN '待取货' WHEN 'active' THEN '租赁中' WHEN 'extended' THEN '已延期' WHEN 'overdue' THEN '已逾期' WHEN 'suspended' THEN '已暂停' WHEN 'pending_return' THEN '待归还' WHEN 'returned' THEN '已归还' WHEN 'completed' THEN '已完成' WHEN 'cancelled' THEN '已取消' ELSE o.status END) LIKE ? ESCAPE '\\'"
+  ]
+  const params: any[] = Array.from({ length: searchClauses.length }, () => like)
+  let accessClause = '1 = 1'
+  if (user.role === 'CUSTOMER') {
+    accessClause = 'o.userId = ?'
+    params.push(user.id)
+  } else if (user.role === 'STAFF') {
+    accessClause = 'u.staff_id = ?'
+    params.push(user.id)
+  } else if (user.role !== 'ADMIN') {
+    return c.json({ orders: [] }, 403)
+  }
+
+  const result = await c.env.RENT.prepare(`
+    SELECT o.id, o.orderNo, o.status, o.startDate, o.endDate,
+           u.name AS customerName, d.name AS deviceName, d.model AS deviceModel
+    FROM orders o
+    LEFT JOIN users u ON u.id = o.userId
+    LEFT JOIN devices d ON d.id = o.deviceId
+    WHERE (${searchClauses.join(' OR ')}) AND ${accessClause}
+    ORDER BY o.createdAt DESC
+    LIMIT 12
+  `).bind(...params).all() as any
+
+  const orders = ((result.results || []) as any[]).map((order) => ({
+    id: order.id,
+    orderNo: order.orderNo || order.id,
+    status: order.status,
+    statusLabel: SEARCH_ORDER_STATUS_LABELS[order.status] || order.status,
+    startDate: order.startDate,
+    endDate: order.endDate,
+    customerName: order.customerName || '未知客户',
+    deviceName: order.deviceName || order.deviceModel || '未知设备',
+    target: user.role === 'ADMIN'
+      ? `/admin/orders/${encodeURIComponent(order.id)}`
+      : user.role === 'STAFF'
+        ? staffOrderPath({ id: order.id, orderNo: order.orderNo })
+        : `/customer/orders/${encodeURIComponent(order.id)}`
+  }))
+  return c.json({ orders }, 200, { 'Cache-Control': 'no-store' })
+})
 
 app.get('/api/system-status', async (c) => {
   // 边缘缓存：MonitorFlare 每 15 分钟探测一次，每个页面又每 60 秒轮询一次，
@@ -553,6 +615,23 @@ function errorDetails(error: unknown) {
   }
 }
 
+function applySecurityHeaders(c: any): void {
+  c.header('X-Content-Type-Options', 'nosniff')
+  c.header('X-Frame-Options', 'DENY')
+  c.header('Referrer-Policy', 'no-referrer')
+  c.header('Permissions-Policy', `${c.req.path === '/staff/mobile/scan' ? 'camera=(self)' : 'camera=()'}, microphone=(), geolocation=()`)
+  c.header('Cross-Origin-Opener-Policy', 'same-origin')
+  c.header('Cross-Origin-Resource-Policy', 'same-origin')
+  c.header('X-Permitted-Cross-Domain-Policies', 'none')
+  if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  // Do not allow browsers or intermediary caches to retain authenticated
+  // pages, reset links, or contract signing pages containing credentials.
+  if (c.get('user') || c.req.path.startsWith('/admin/') || c.req.path.startsWith('/staff/') || c.req.path.startsWith('/customer/') || ['/login', '/forgot-password', '/reset-password', '/verify-email', '/contract/sign', '/sso/consume'].includes(c.req.path)) {
+    c.header('Cache-Control', 'private, no-store')
+  }
+  c.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com https://tally.so https://web.squarecdn.com https://sandbox.web.squarecdn.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com https://tally.so https://connect.squareup.com https://connect.squareupsandbox.com; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com https://tally.so; frame-ancestors 'none'; form-action 'self' https://app.squareup.com")
+}
+
 app.use('*', async (c, next) => {
   // 静态资源不需要鉴权，避免每次加载 CSS 都额外查询 D1 会话表。
   if (c.req.path === '/styles.css' || c.req.path === '/app.js' || c.req.path === '/i18n.js' || c.req.path === '/favicon.svg' || c.req.path === '/favicon.ico') return next()
@@ -586,22 +665,26 @@ app.use('*', async (c, next) => {
       return c.redirect('/login?error=guest_expired')
     }
     const path = c.req.path
-    const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result', '/notifications', '/notifications/unread'])
+    const allowedExact = new Set(['/customer/guest', '/customer/guest/upgrade', '/logout', '/payment/result', '/notifications', '/notifications/unread', '/api/search'])
     const orderMatch = path.match(/^\/customer\/orders\/([^/]+)(?:\/(?:stripe\/(?:checkout|intent)|square\/(?:config|payment)|bank-transfer-proof))?$/)
     const invoiceMatch = path.match(/^\/orders\/([^/]+)\/invoice$/)
+    const invoicePdfMatch = path.match(/^\/orders\/([^/]+)\/invoice\/pdf$/)
     if (orderMatch && orderMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
     if (invoiceMatch && invoiceMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
-    const permitted = allowedExact.has(path) || path.startsWith('/notifications/') || Boolean(orderMatch) || Boolean(invoiceMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css' || path === '/app.js' || path === '/i18n.js'
+    if (invoicePdfMatch && invoicePdfMatch[1] !== user.guestOrderId) return c.html(renderForbidden(), 403)
+    const permitted = allowedExact.has(path) || path.startsWith('/notifications/') || Boolean(orderMatch) || Boolean(invoiceMatch) || Boolean(invoicePdfMatch) || path.startsWith('/contract/view/') || path.startsWith('/contract/print/') || path.endsWith('/invoice/print') || path === '/styles.css' || path === '/app.js' || path === '/i18n.js'
     if (!permitted && path.startsWith('/customer/')) return c.redirect('/customer/guest')
   }
   await next()
 })
 
 app.use('*', async (c, next) => {
+  applySecurityHeaders(c)
   const contentLength = Number(c.req.header('Content-Length') || 0)
   const uploadPath = c.req.method === 'POST' && (
     c.req.path === '/contract/sign' ||
     c.req.path === '/customer/balance/top-up/transfer' ||
+    c.req.path === '/admin/settings/upload-image' ||
     /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ||
     /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path)
   )
@@ -612,7 +695,16 @@ app.use('*', async (c, next) => {
   if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) && !isPublicOrderLookup) {
     const origin = c.req.header('Origin')
     const fetchSite = c.req.header('Sec-Fetch-Site')
-    if ((origin && new URL(origin).host !== new URL(c.req.url).host) || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
+    const hasSessionCookie = /(?:^|;\s*)session=[^;]+/.test(c.req.header('cookie') || '')
+    let originValid = true
+    if (origin) {
+      try { originValid = new URL(origin).origin === new URL(c.req.url).origin } catch { originValid = false }
+    } else if (hasSessionCookie && fetchSite !== 'same-origin') {
+      // A browser session without an Origin header is not verifiably same
+      // origin. Reject it rather than accepting a forged cross-site form.
+      originValid = false
+    }
+    if (!originValid || fetchSite === 'cross-site') return c.text('Invalid request origin', 403)
   }
   if (isPublicOrderLookup && (c.req.method === 'POST' || c.req.method === 'OPTIONS')) {
     const origin = (c.req.header('Origin') || '').replace(/\/$/, '')
@@ -625,31 +717,29 @@ app.use('*', async (c, next) => {
     if (c.req.method === 'OPTIONS') return c.body(null, 204)
   }
   const ip = (c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0] || 'unknown').trim()
-  const rateRule = c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
+  const rateRule = c.req.path === '/login' && c.req.method === 'POST' ? ['login', 20, 900] as const
+    : c.req.path === '/register' && c.req.method === 'POST' ? ['register', 5, 3600] as const
+    : c.req.path === '/register/resend-verification' && c.req.method === 'POST' ? ['verification-resend', 5, 3600] as const
     : c.req.path === '/forgot-password' && c.req.method === 'POST' ? ['forgot', 5, 3600] as const
-      : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
-        : /^\/customer\/orders\/[^/]+\/stripe\/(?:checkout|intent)$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
-          : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
-            : /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path) ? ['inspection-upload', 10, 3600] as const
-              : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
-                : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
-                  : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
-                    : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
+    : c.req.path === '/reset-password' && c.req.method === 'POST' ? ['reset-password', 10, 900] as const
+    : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
+    : /^\/customer\/orders\/[^/]+\/stripe\/(?:checkout|intent)$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
+    : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
+    : /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path) ? ['inspection-upload', 10, 3600] as const
+    : c.req.path === '/admin/settings/upload-image' ? ['admin-settings-image', 10, 3600] as const
+    : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
+    : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
+    : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
+    : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
   const activeRateRule = rateRule || agentRegistrationRule
   if (activeRateRule && !await enforceRateLimit(c, activeRateRule[0], ip, activeRateRule[1], activeRateRule[2])) return c.text('请求过于频繁，请稍后再试', 429)
   await next()
-  c.header('X-Content-Type-Options', 'nosniff')
-  c.header('X-Frame-Options', 'DENY')
-  c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
-  c.header('Permissions-Policy', `${c.req.path === '/staff/mobile/scan' ? 'camera=(self)' : 'camera=()'}, microphone=(), geolocation=()`)
-  c.header('Cross-Origin-Opener-Policy', 'same-origin')
-  c.header('Cross-Origin-Resource-Policy', 'same-origin')
-  c.header('X-Permitted-Cross-Domain-Policies', 'none')
-  if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-  c.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com https://tally.so https://web.squarecdn.com https://sandbox.web.squarecdn.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com https://tally.so https://connect.squareup.com https://connect.squareupsandbox.com; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com https://tally.so; frame-ancestors 'none'; form-action 'self' https://app.squareup.com")
+  // Re-apply after the handler so route-specific responses cannot accidentally
+  // omit the baseline headers; the pre-handler application also covers errors.
+  applySecurityHeaders(c)
 });
 
 app.use('*', async (c, next) => {
@@ -1100,7 +1190,9 @@ const logout = async (c: any) => {
   return response
 }
 app.post('/logout', logout)
-app.get('/logout', logout)
+// Logout is intentionally POST-only. A GET logout endpoint is CSRFable from
+// any page that can embed or link to this site.
+app.get('/logout', (c) => c.redirect('/'))
 
 app.get('/customer/dashboard', async (c) => {
   const user = c.get('user')
@@ -1236,7 +1328,6 @@ app.post('/admin/users/:id/balance-adjust', async (c) => {
   const reason = String(form.reason || '').trim()
   if (!Number.isFinite(amount) || amount === 0) return c.text('余额变动金额必须不为 0', 400)
   if (!reason) return c.text('管理员调整余额必须填写原因', 400)
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount REAL NOT NULL, balance_after REAL NOT NULL, type TEXT NOT NULL, reason TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run()
   const result = await c.env.RENT.prepare('UPDATE users SET balance = ROUND(balance + ?, 2), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND ROUND(balance + ?, 2) >= 0 RETURNING balance').bind(amount, target.id, amount).first() as any
   if (!result) return c.text('扣减后余额不能小于 0，或余额已被其他操作更新，请重试', 409)
   const next = Number(result.balance)
@@ -3087,6 +3178,45 @@ app.get('/orders/:id/invoice', async (c) => {
   return c.html(await pages.renderInvoice(c, user, c.req.param('id')))
 })
 
+app.get('/orders/:id/invoice/pdf', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.redirect(`/login?redirect=${encodeURIComponent(`/orders/${c.req.param('id')}/invoice/pdf`)}`)
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || (user.role === 'CUSTOMER' && order.userId !== user.id)) return c.text('发票不存在或无权访问', 403)
+  const contract = await getContractByOrderId(c, order.id)
+  if (!isContractFinalized(contract)) return c.text('收据尚未生成', 409)
+  try {
+    const document = await buildTaxInvoiceDocument(c, order, contract)
+    if (!document) return c.text('Tax Invoice 尚未开具', 404)
+    return new Response(document.pdf as any, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="tax-invoice-${document.documentNumber}.pdf"`,
+        'Cache-Control': 'private, no-store',
+      },
+    })
+  } catch (error: any) {
+    console.error('Tax invoice PDF download failed:', error?.message || error)
+    return c.text('Tax Invoice 生成失败', 500)
+  }
+})
+
+app.post('/orders/:id/invoice/email', async (c) => {
+  const user = c.get('user')
+  if (!user) return c.redirect('/login')
+  const order = await getOrderById(c, c.req.param('id'))
+  if (!order || (user.role === 'CUSTOMER' && order.userId !== user.id)) return c.text('发票不存在或无权访问', 403)
+  const contract = await getContractByOrderId(c, order.id)
+  if (!isContractFinalized(contract)) return c.text('收据尚未生成', 409)
+  try {
+    await sendTaxInvoiceEmail(c, order, contract)
+    return c.redirect(`/orders/${encodeURIComponent(order.id)}/invoice?success=${encodeURIComponent(user.role === 'ADMIN' ? 'Tax Invoice 已发送给客户' : 'Tax Invoice 已发送到您的邮箱')}`)
+  } catch (error: any) {
+    console.error('Tax invoice email failed:', error?.message || error)
+    return c.redirect(`/orders/${encodeURIComponent(order.id)}/invoice?error=${encodeURIComponent('Tax Invoice 邮件发送失败')}`)
+  }
+})
+
 app.get('/orders/:id/invoice/print', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect(`/login?redirect=${encodeURIComponent(`/orders/${c.req.param('id')}/invoice/print`)}`)
@@ -4203,7 +4333,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   if (contract?.contract_data) {
     let contractData: any = {}
     try { contractData = JSON.parse(contract.contract_data) } catch (_) { }
-    const password = String(contractData.windows_password || '')
+    const password = await decryptSecret(c, contractData.windows_password)
     const username = String(contractData.windows_username || order.customer?.name || 'RentalUser')
     if (password && !contractData.windows_account_created) {
       await ensureDeviceCommandTables(c.env.RENT)
@@ -5140,7 +5270,36 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), Boolean(c.env.TALLY_WEBHOOK_SECRET), await getDeliveryConfigSummary(c), await getCloudinaryConfigSummary(c)))
+  return c.html(pages.renderAdminSettings(user))
+})
+
+app.get('/admin/api-settings', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await loadSystemSettingsFromDB(c)
+  return c.html(pages.renderAdminApiSettings(user, await getStripeConfigSummary(c), await getNotifyChannelsSummary(c), await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), await getDeliveryConfigSummary(c), await getCloudinaryConfigSummary(c)))
+})
+
+app.get('/admin/tax-invoice-template', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  await loadSystemSettingsFromDB(c)
+  return c.html(pages.renderAdminTaxInvoiceTemplate(user))
+})
+
+app.post('/admin/settings/upload-image', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限' }, 403)
+  const form = await c.req.parseBody()
+  const kind = String(form.kind || '')
+  const folder = kind === 'alipay' ? 'rent/rmb-payment-qr/alipay' : kind === 'wechat' ? 'rent/rmb-payment-qr/wechat' : ''
+  if (!folder) return c.json({ success: false, error: '不支持的收款码类型' }, 400)
+  try {
+    const url = await uploadCloudinaryImage(form.imageFile, await getCloudinaryRuntimeConfig(c), folder)
+    return c.json({ success: true, url })
+  } catch (error: any) {
+    return c.json({ success: false, error: error?.message || '图片上传失败' }, 400)
+  }
 })
 
 app.get('/admin/feedback-rewards', async (c) => {
@@ -5613,6 +5772,16 @@ app.post('/admin/settings/save', async (c) => {
   }
 })
 
+app.post('/admin/api-settings/save', async (c) => {
+  const user = await findUserBySession(c, c.req.header('cookie') ?? null)
+  if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限' }, 403)
+  try {
+    return await actions.handleSaveAdminSettings(c)
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message || '保存失败' }, 400)
+  }
+})
+
 app.get('/api/address/autocomplete', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.json({ error: '无权限查询地址' }, 403)
@@ -5827,7 +5996,7 @@ app.get('/api/device-agent/commands', async (c) => {
   const device = await getAgentDevice(c)
   if (!device) return c.json({ ok: false, error: 'Invalid device token' }, 401)
   await ensureDeviceCommandTables(c.env.RENT)
-  await c.env.RENT.prepare("UPDATE device_commands SET status = 'EXPIRED', completed_at = CURRENT_TIMESTAMP WHERE device_id = ? AND status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP").bind(device.id).run()
+  await c.env.RENT.prepare("UPDATE device_commands SET status = 'EXPIRED', payload = CASE WHEN command_type IN ('CREATE_RENTAL_USER', 'UPDATE_RENTAL_USER', 'DELETE_RENTAL_USER') THEN '{}' ELSE payload END, completed_at = CURRENT_TIMESTAMP WHERE device_id = ? AND status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'RUNNING') AND datetime(expires_at) <= CURRENT_TIMESTAMP").bind(device.id).run()
   // Return the camelCase contract expected by the Windows client. SQLite column
   // names use snake_case, and System.Text.Json does not translate underscores.
   const commands = (await c.env.RENT.prepare("SELECT id, device_id AS deviceId, command_type AS commandType, payload, status, created_at AS createdAt, expires_at AS expiresAt FROM device_commands WHERE device_id = ? AND status = 'QUEUED' AND datetime(expires_at) > CURRENT_TIMESTAMP ORDER BY created_at ASC LIMIT 10").bind(device.id).all()).results || []
@@ -5863,7 +6032,7 @@ app.post('/admin/devices/:id/commands/:cmdId/cancel', async (c) => {
   const cmd = await c.env.RENT.prepare('SELECT device_id, status, command_type FROM device_commands WHERE id = ? AND device_id = ?').bind(c.req.param('cmdId'), c.req.param('id')).first() as any
   if (!cmd) return c.text('命令不存在', 404)
   if (!canTransitionDeviceCommand(String(cmd.status), 'CANCELLED')) return c.text('命令已被认领或已结束，无法取消', 409)
-  const result = await c.env.RENT.prepare("UPDATE device_commands SET status = 'CANCELLED', completed_at = CURRENT_TIMESTAMP, error_message = COALESCE(error_message, '管理员取消') WHERE id = ? AND status = 'QUEUED'").bind(c.req.param('cmdId')).run() as any
+  const result = await c.env.RENT.prepare("UPDATE device_commands SET status = 'CANCELLED', payload = CASE WHEN command_type IN ('CREATE_RENTAL_USER', 'UPDATE_RENTAL_USER', 'DELETE_RENTAL_USER') THEN '{}' ELSE payload END, completed_at = CURRENT_TIMESTAMP, error_message = COALESCE(error_message, '管理员取消') WHERE id = ? AND status = 'QUEUED'").bind(c.req.param('cmdId')).run() as any
   if (!Number(result.meta?.changes ?? result.changes ?? 0)) return c.text('命令已被认领或已结束，无法取消', 409)
   await createAuditLog(c, { actor: user, action: 'REMOTE_COMMAND_CANCELLED', targetType: 'DEVICE', targetId: String(cmd.device_id), before: { status: cmd.status }, after: { status: 'CANCELLED', commandType: cmd.command_type } })
   return c.redirect(`/admin/devices/${encodeURIComponent(String(cmd.device_id))}/control?success=命令已取消`, 303)
@@ -5885,7 +6054,7 @@ app.post('/api/device-agent/command-results', async (c) => {
   const success = Boolean(payload.success)
   const executedAt = String(payload.executedAt || new Date().toISOString()).slice(0, 40)
   await c.env.RENT.batch([
-    c.env.RENT.prepare("UPDATE device_commands SET status = ?, completed_at = CURRENT_TIMESTAMP, error_message = ? WHERE id = ? AND device_id = ? AND status IN ('SENT', 'ACKNOWLEDGED', 'RUNNING')").bind(success ? 'SUCCESS' : 'FAILED', success ? null : String(payload.message || '').slice(0, 500), commandId, device.id),
+    c.env.RENT.prepare("UPDATE device_commands SET status = ?, payload = CASE WHEN command_type IN ('CREATE_RENTAL_USER', 'UPDATE_RENTAL_USER', 'DELETE_RENTAL_USER') THEN '{}' ELSE payload END, completed_at = CURRENT_TIMESTAMP, error_message = ? WHERE id = ? AND device_id = ? AND status IN ('SENT', 'ACKNOWLEDGED', 'RUNNING')").bind(success ? 'SUCCESS' : 'FAILED', success ? null : String(payload.message || '').slice(0, 500), commandId, device.id),
     c.env.RENT.prepare('INSERT OR IGNORE INTO device_command_results (id, command_id, device_id, success, result_code, result_message, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`result-${nanoid(12)}`, commandId, device.id, success ? 1 : 0, resultCode, String(payload.message || '').slice(0, 500), executedAt),
   ])
   if (success) {
@@ -5944,6 +6113,7 @@ export default {
         // every step queued after it in this tick from running (the previous
         // design wrapped the whole sequence in one try/catch).
         await runScheduledJob(c, 'ensure_device_command_tables', () => ensureDeviceCommandTables(env.RENT))
+        await runScheduledJob(c, 'migrate_legacy_contract_secrets', () => migrateLegacyContractSecrets(c))
 
         await runScheduledJob(c, 'mark_overdue_handovers', async () => {
           const handoverRows = (await env.RENT.prepare("SELECT id, rental_status, startDate FROM orders WHERE payment_status = 'PAID' AND rental_status = 'READY_FOR_PICKUP' AND startDate <= date('now')").all()).results || []
@@ -5963,10 +6133,11 @@ export default {
           for (const row of lifecycleRows as any[]) {
             let data: any = {}
             try { data = JSON.parse(row.contract_data || '{}') } catch (_) { }
-            if (!data.windows_password) continue
+            const windowsPassword = await decryptSecret(c, data.windows_password)
+            if (!windowsPassword) continue
             const username = data.windows_username || row.customer_name || 'RentalUser'
             if (['paid', 'active'].includes(String(row.status)) && String(row.startDate) <= today && !data.windows_account_created) {
-              await env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CREATE_RENTAL_USER', ?, NULL, datetime('now', '+7 days'))").bind(`cmd-${crypto.randomUUID()}`, row.deviceId, JSON.stringify({ username, password: data.windows_password })).run()
+              await env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CREATE_RENTAL_USER', ?, NULL, datetime('now', '+7 days'))").bind(`cmd-${crypto.randomUUID()}`, row.deviceId, JSON.stringify({ username, password: windowsPassword })).run()
               data.windows_account_created = true
               await env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), row.contract_id).run()
               touched++

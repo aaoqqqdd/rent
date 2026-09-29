@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout } from '../../site';
+import { escapeHtml } from '../../lib/html';
 
 export function renderRegister(errorMessage?: string, turnstileSiteKey = '', referralCode = '') {
   const countryCodes = [
@@ -25,7 +26,7 @@ export function renderRegister(errorMessage?: string, turnstileSiteKey = '', ref
           <div class="login-logo"><span class="logo-mark"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg></span>PC Rental</div>
           <p class="login-subtitle">创建您的专业设备租赁账户</p>
           <form method="POST" action="/register">
-            ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+            ${errorMessage ? `<div class="page-notification page-notification--error">${escapeHtml(errorMessage)}</div>` : ''}
             <div class="grid grid-2"><div><label class="form-label" for="firstName">名 / Given name</label><input class="form-control" id="firstName" name="firstName" autocomplete="given-name" required /></div><div><label class="form-label" for="lastName">姓 / Family name</label><input class="form-control" id="lastName" name="lastName" autocomplete="family-name" required /></div></div>
             <label class="form-label">邮箱地址</label>
             <input class="form-control" type="email" name="email" placeholder="name@example.com" required />

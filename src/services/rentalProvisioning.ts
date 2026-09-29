@@ -8,6 +8,7 @@
 
 import type { Context } from 'hono'
 import { recordBalanceTransaction, recordFinancialLedgerEntry } from './ledger'
+import { decryptSecret } from '../lib/secretBox'
 
 export async function recordExternalRentalFlow(c: Context, userId: string, amount: number, method: string, createdBy?: string | null, orderId?: string): Promise<void> {
   const value = Number(amount || 0)
@@ -23,9 +24,8 @@ export async function enqueueRentalUserCreation(c: Context, order: any): Promise
   if (!contract?.contract_data) return
   let data: any = {}
   try { data = JSON.parse(contract.contract_data) } catch (_) { }
-  const password = String(data.windows_password || '')
+  const password = await decryptSecret(c, data.windows_password)
   if (!password || data.windows_account_created) return
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, command_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, claimed_at TEXT, completed_at TEXT, expires_at TEXT NOT NULL)`).run()
   const username = String(data.windows_username || order.customer?.name || 'RentalUser')
   await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'CREATE_RENTAL_USER', ?, NULL, datetime('now', '+7 days'))").bind(`cmd-${crypto.randomUUID()}`, order.deviceId || order.device_id, JSON.stringify({ username, password })).run()
   data.windows_account_created = true
@@ -39,7 +39,6 @@ export async function enqueueRentalUserDeletion(c: Context, order: any): Promise
   try { data = JSON.parse(contract.contract_data) } catch (_) { }
   if (data.windows_account_deleted) return
   const username = String(data.windows_username || order.customer?.name || 'RentalUser')
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, command_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'PENDING', created_by TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, claimed_at TEXT, completed_at TEXT, expires_at TEXT NOT NULL)`).run()
   await c.env.RENT.prepare("INSERT INTO device_commands (id, device_id, command_type, payload, created_by, expires_at) VALUES (?, ?, 'DELETE_RENTAL_USER', ?, NULL, datetime('now', '+30 days'))").bind(`cmd-${crypto.randomUUID()}`, order.deviceId || order.device_id, JSON.stringify({ username })).run()
   data.windows_account_deleted = true
   await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(data), contract.id).run()

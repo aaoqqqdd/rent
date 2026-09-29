@@ -59,6 +59,7 @@ test('transactional email uses the request format required by each provider', as
         assert.equal(body.text, 'test body')
         assert.match(body.html, /PC Rental/)
         assert.match(body.html, /账户服务/)
+        assert.deepEqual(body.attachments, [{ filename: 'receipt.pdf', content: 'JVBERi0xLjQ=', content_type: 'application/pdf' }])
       },
     },
     {
@@ -72,6 +73,7 @@ test('transactional email uses the request format required by each provider', as
         assert.deepEqual(body.to, [{ email: 'recipient@example.com' }])
         assert.equal(body.textContent, 'test body')
         assert.match(body.htmlContent, /PC Rental/)
+        assert.deepEqual(body.attachment, [{ name: 'receipt.pdf', content: 'JVBERi0xLjQ=' }])
       },
     },
     {
@@ -85,6 +87,7 @@ test('transactional email uses the request format required by each provider', as
         assert.deepEqual(body.to, [{ email: 'recipient@example.com' }])
         assert.equal(body.text, 'test body')
         assert.match(body.html, /PC Rental/)
+        assert.deepEqual(body.attachments, [{ filename: 'receipt.pdf', content: 'JVBERi0xLjQ=', disposition: 'attachment' }])
       },
     },
   ] as const
@@ -102,7 +105,7 @@ test('transactional email uses the request format required by each provider', as
       const apiKey = await encrypt(`${item.provider}-key`)
       const result = await sendTransactionalEmail(
         context({ emailProvider: item.provider, [`${item.provider}ApiKey`]: apiKey, [`${item.provider}From`]: 'PC Rental <sender@example.com>' }),
-        { to: 'recipient@example.com', subject: 'test subject', text: 'test body' },
+        { to: 'recipient@example.com', subject: 'test subject', text: 'test body', attachments: [{ filename: 'receipt.pdf', content: 'JVBERi0xLjQ=', contentType: 'application/pdf' }] },
       )
       assert.equal(requestUrl, item.url)
       assert.equal(result.ok, true)

@@ -235,6 +235,182 @@
       });
     });
 
+    // 全局工作台搜索：功能入口来自当前角色可见的侧边栏，订单由权限受控的 API 返回。
+    document.addEventListener('DOMContentLoaded', function () {
+      const search = document.getElementById('global-search');
+      const input = document.getElementById('global-search-input');
+      const results = document.getElementById('global-search-results');
+      const meta = document.getElementById('global-search-meta');
+      const triggers = Array.from(document.querySelectorAll('[data-global-search-trigger]'));
+      if (!search || !input || !results || !meta || !triggers.length) return;
+
+      let activeIndex = -1;
+      let debounceTimer = null;
+      let requestToken = 0;
+      let resultLinks = [];
+      let previousFocus = null;
+
+      const getPageEntries = function () {
+        const seen = new Set();
+        return Array.from(document.querySelectorAll('.sidebar-section a')).map(function (link) {
+          const href = link.getAttribute('href') || '';
+          const label = (link.textContent || '').replace(/\s+/g, ' ').trim();
+          const group = link.closest('details')?.querySelector('summary')?.textContent.replace(/\s+/g, ' ').trim() || '导航';
+          const key = href + '|' + label;
+          if (!href || !label || seen.has(key)) return null;
+          seen.add(key);
+          return { href: href, label: label, group: group, icon: link.querySelector('.nav-icon')?.innerHTML || '' };
+        }).filter(Boolean);
+      };
+
+      const matches = function (entry, query) {
+        if (!query) return true;
+        const haystack = (entry.label + ' ' + entry.group + ' ' + entry.href).toLowerCase();
+        return haystack.indexOf(query.toLowerCase()) !== -1;
+      };
+
+      const appendHeading = function (label, count) {
+        const heading = document.createElement('div');
+        heading.className = 'global-search__section-title';
+        heading.textContent = label + (count ? ' · ' + count : '');
+        results.appendChild(heading);
+      };
+
+      const appendResult = function (item, type, index) {
+        const link = document.createElement('a');
+        link.className = 'global-search__result';
+        link.href = item.href;
+        link.id = 'global-search-option-' + index;
+        link.setAttribute('role', 'option');
+        link.setAttribute('aria-selected', 'false');
+        const icon = document.createElement('span');
+        icon.className = 'global-search__result-icon' + (type === 'order' ? ' is-order' : '');
+        if (item.icon) icon.innerHTML = item.icon;
+        else icon.textContent = type === 'order' ? 'OD' : '↗';
+        const copy = document.createElement('span');
+        copy.className = 'global-search__result-copy';
+        const title = document.createElement('strong');
+        title.textContent = item.title;
+        const detail = document.createElement('small');
+        detail.textContent = item.detail || '';
+        copy.append(title, detail);
+        const arrow = document.createElement('span');
+        arrow.className = 'global-search__result-arrow';
+        arrow.textContent = '↗';
+        link.append(icon, copy, arrow);
+        link.addEventListener('click', function () { close(); });
+        results.appendChild(link);
+        resultLinks.push(link);
+      };
+
+      const render = function (query, orders, loading) {
+        const normalizedQuery = query.trim();
+        const pages = getPageEntries().filter(function (entry) { return matches(entry, normalizedQuery); });
+        resultLinks = [];
+        activeIndex = -1;
+        results.replaceChildren();
+        input.removeAttribute('aria-activedescendant');
+
+        if (!normalizedQuery) {
+          const common = pages.filter(function (entry) { return entry.href.indexOf('/dashboard') !== -1 || entry.href.indexOf('/orders') !== -1 || entry.href.indexOf('/devices') !== -1; }).slice(0, 8);
+          appendHeading('常用功能', common.length);
+          common.forEach(function (entry) { appendResult({ href: entry.href, title: entry.label, detail: entry.group, icon: entry.icon }, 'page', resultLinks.length); });
+          meta.textContent = '输入名称、订单号或关键词开始搜索';
+        } else {
+          if (pages.length) {
+            appendHeading('功能入口', pages.length);
+            pages.forEach(function (entry) { appendResult({ href: entry.href, title: entry.label, detail: entry.group, icon: entry.icon }, 'page', resultLinks.length); });
+          }
+          if (loading) {
+            appendHeading('订单', '…');
+            const loadingRow = document.createElement('p');
+            loadingRow.className = 'global-search__empty';
+            loadingRow.textContent = '正在查找订单…';
+            results.appendChild(loadingRow);
+          } else if (orders.length) {
+            appendHeading('订单', orders.length);
+            orders.forEach(function (order) {
+              appendResult({ href: order.target, title: order.orderNo, detail: [order.customerName, order.deviceName, order.statusLabel].filter(Boolean).join(' · ') }, 'order', resultLinks.length);
+            });
+          }
+          if (!pages.length && !orders.length && !loading) {
+            const empty = document.createElement('p');
+            empty.className = 'global-search__empty';
+            empty.textContent = '没有找到匹配内容，试试订单号、客户名或功能名称。';
+            results.appendChild(empty);
+          }
+          meta.textContent = loading ? '正在搜索工作台…' : (pages.length + orders.length ? '找到 ' + (pages.length + orders.length) + ' 个结果' : '没有匹配结果');
+        }
+      };
+
+      const setActive = function (nextIndex) {
+        if (!resultLinks.length) return;
+        activeIndex = (nextIndex + resultLinks.length) % resultLinks.length;
+        resultLinks.forEach(function (link, index) {
+          const selected = index === activeIndex;
+          link.classList.toggle('is-selected', selected);
+          link.setAttribute('aria-selected', String(selected));
+        });
+        input.setAttribute('aria-activedescendant', resultLinks[activeIndex].id);
+      };
+
+      const open = function (event) {
+        if (event) event.preventDefault();
+        previousFocus = document.activeElement;
+        search.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('is-global-search-open');
+        document.body.classList.remove('is-nav-open');
+        document.querySelector('.mobile-nav-toggle')?.setAttribute('aria-expanded', 'false');
+        document.querySelector('.mobile-nav-scrim')?.setAttribute('aria-hidden', 'true');
+        render(input.value, [], false);
+        window.requestAnimationFrame(function () { input.focus(); input.select(); });
+      };
+
+      function close(event) {
+        if (event) event.preventDefault();
+        search.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('is-global-search-open');
+        if (previousFocus instanceof HTMLElement) previousFocus.focus();
+      }
+
+      triggers.forEach(function (trigger) { trigger.addEventListener('click', open); });
+      search.querySelectorAll('[data-global-search-close]').forEach(function (element) { element.addEventListener('click', close); });
+      document.addEventListener('click', function (event) {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest('.global-search__result') && search.getAttribute('aria-hidden') !== 'true') close();
+      }, true);
+      input.addEventListener('input', function () {
+        const query = input.value.trim();
+        window.clearTimeout(debounceTimer);
+        render(query, [], query.length >= 2);
+        if (query.length < 2) return;
+        const token = ++requestToken;
+        debounceTimer = window.setTimeout(function () {
+          fetch('/api/search?q=' + encodeURIComponent(query), { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+            .then(function (response) { return response.ok ? response.json() : Promise.reject(new Error('search failed')); })
+            .then(function (payload) {
+              if (token !== requestToken || input.value.trim() !== query) return;
+              render(query, Array.isArray(payload.orders) ? payload.orders : [], false);
+            })
+            .catch(function () {
+              if (token !== requestToken || input.value.trim() !== query) return;
+              render(query, [], false);
+              meta.textContent = '订单搜索暂时不可用，仍可使用功能入口';
+            });
+        }, 180);
+      });
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'ArrowDown') { event.preventDefault(); setActive(activeIndex + 1); }
+        else if (event.key === 'ArrowUp') { event.preventDefault(); setActive(activeIndex - 1); }
+        else if (event.key === 'Enter' && activeIndex >= 0 && resultLinks[activeIndex]) { event.preventDefault(); resultLinks[activeIndex].click(); }
+        else if (event.key === 'Escape') { close(event); }
+      });
+      document.addEventListener('keydown', function (event) {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); if (search.getAttribute('aria-hidden') === 'true') open(event); else close(event); }
+        else if (event.key === 'Escape' && search.getAttribute('aria-hidden') !== 'true') close(event);
+      });
+    });
+
     // 移动端导航抽屉：汉堡按钮滑出侧栏，点遮罩 / 链接 / Esc 关闭。
     document.addEventListener('DOMContentLoaded', function () {
       const body = document.body;

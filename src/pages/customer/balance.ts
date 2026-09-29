@@ -2,17 +2,6 @@ import { buildLayout, formatCurrency, formatMelbourneDateTime, getUserById } fro
 import type { Context } from 'hono'
 
 export async function renderCustomerBalance(c: Context, user: any) {
-  await c.env.RENT.prepare(`CREATE TABLE IF NOT EXISTS balance_transactions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    amount REAL NOT NULL,
-    balance_after REAL NOT NULL,
-    type TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    created_by TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`).run()
-  await c.env.RENT.prepare('CREATE INDEX IF NOT EXISTS idx_balance_transactions_user ON balance_transactions(user_id, created_at DESC)').run()
   const rows = (await c.env.RENT.prepare('SELECT * FROM balance_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').bind(user.id).all()).results as any[]
   const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
   const body = `<div class="entity-header"><div class="identity-strip mono"><span>ACCOUNT / LEDGER</span><span>AVAILABLE FUNDS</span></div><div class="entity-heading"><div><p class="section-code">WALLET / ACCOUNT LEDGER</p><h2>账户流水</h2><p>充值、租赁付款、押金退款、退款和余额调整都会记录在这里。</p></div><strong class="balance-hero-value">${formatCurrency(user.balance)}</strong></div></div>

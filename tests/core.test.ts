@@ -8,7 +8,9 @@ import assert from 'node:assert/strict'
 import styles from '../src/styles.css'
 import { buildLayout, canTransitionOrder, ensureOrderNumber, findUserBySession, getContractBySignToken, hashPassword, verifyPassword, isStrongPassword, generateTemporaryPassword, isContractExpired, isContractFinalized, renderContractVariables, renderSiteVariables, CONTRACT_VARIABLE_GROUPS, CONTRACT_VARIABLE_NAMES, validateHostedImageUrls, sanitizePlainText, sanitizeRichHtml, createPageBreakHtml, updateOrder, loadSystemSettingsFromDB, splitPersonName, canUseAccountBalance, getAccountTypeDisplay, getCustomerSigningUser, getContractCustomerSnapshot, cancelExpiredPendingBalanceTopUps } from '../src/site'
 import { generateWindowsPassword } from '../src/lib/password'
+import { decryptSecret, encryptSecret, isEncryptedSecret } from '../src/lib/secretBox'
 import { renderAdminSettings } from '../src/pages/admin/settings'
+import { renderAdminApiSettings } from '../src/pages/admin/apiSettings'
 import { renderAdminDeviceCalendar } from '../src/pages/admin/deviceCalendar'
 import { renderAdminContracts } from '../src/pages/admin/contracts'
 import { renderAdminDataRetention } from '../src/pages/admin/dataRetention'
@@ -42,6 +44,7 @@ import { extractInlineScripts } from './helpers'
 import { couponApplicableComponents, couponDiscountableBase } from '../src/actions/coupons'
 import { formatInvoicePaymentMethods } from '../src/pages/invoice'
 import { renderLogin } from '../src/pages/public/login'
+import { normalizeUserRow } from '../src/db/repositories'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = extractInlineScripts(html).map(script => script.trim()).filter(Boolean)
@@ -65,6 +68,17 @@ test('login preserves a safe internal redirect for protected pages', () => {
   assert.match(renderLogin(undefined, false, 'https://example.com/steal'), /name="redirect" value=""/)
 })
 
+test('normalised users never expose credential material', () => {
+  const user = normalizeUserRow({
+    id: 'u-1', name: '客户', email: 'customer@example.com', role: 'CUSTOMER', status: 'active', balance: 0,
+    commission_balance: 0, password_hash: 'pbkdf2$100000$salt$hash', password_salt: 'legacy', password: 'plaintext',
+  })
+  assert.equal('password_hash' in user, false)
+  assert.equal('password_salt' in user, false)
+  assert.equal('passwordHash' in user, false)
+  assert.equal('password' in user, false)
+})
+
 test('coupon fee components default to rental and support delivery/deposit selections', () => {
   assert.deepEqual([...couponApplicableComponents({ applicable_components: '' })], ['RENTAL_FEE'])
   assert.equal(couponDiscountableBase(
@@ -83,6 +97,15 @@ test('PBKDF2 passwords verify without storing plaintext', async () => {
   assert.equal(await verifyPassword('A-secure-password-123', hash), true)
   assert.equal(await verifyPassword('wrong-password', hash), false)
   assert.equal(await verifyPassword('A-secure-password-123', 'pbkdf2$210000$salt$hash'), false)
+})
+
+test('sensitive database values are encrypted at rest and legacy plaintext remains readable', async () => {
+  const context = { env: { SETTINGS_ENCRYPTION_KEY: 'test-settings-encryption-key' } } as any
+  const encrypted = await encryptSecret(context, 'Windows-Secret-42!')
+  assert.equal(isEncryptedSecret(encrypted), true)
+  assert.notEqual(encrypted, 'Windows-Secret-42!')
+  assert.equal(await decryptSecret(context, encrypted), 'Windows-Secret-42!')
+  assert.equal(await decryptSecret(context, 'legacy-secret'), 'legacy-secret')
 })
 
 test('only customer accounts are treated as contract signers', () => {
@@ -599,6 +622,11 @@ test('rich text editor pages emit valid browser JavaScript', async () => {
   const user = { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }
   const settingsHtml = renderAdminSettings(user)
   assertInlineScriptsParse(settingsHtml)
+  assert.doesNotMatch(settingsHtml, /Zoom2u API|Stripe API 配置|Cloudinary 图片上传|Turnstile 人机验证|Resend 邮件 API/)
+  const apiSettingsHtml = renderAdminApiSettings(user)
+  assertInlineScriptsParse(apiSettingsHtml)
+  assert.match(apiSettingsHtml, /Zoom2u API/)
+  assert.match(apiSettingsHtml, /Stripe API/)
   assert.doesNotMatch(settingsHtml, /id="userTermsEditor"/)
   assert.doesNotMatch(settingsHtml, /id="rentalTermsEditor"/)
   assert.match(settingsHtml, /href="\/admin\/templates"/)
