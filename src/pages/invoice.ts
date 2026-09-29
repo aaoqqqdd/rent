@@ -86,6 +86,7 @@ export async function renderInvoice(c: Context, user: any, orderId: string, prin
   // no new tab) while still avoiding the blank-page bug of printing the dashboard-
   // wrapped page directly.
   const printInvoke = `var f=document.createElement('iframe');f.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0';f.src='/orders/${order.id}/invoice/print';document.body.appendChild(f);f.onload=function(){var w=f.contentWindow,done=false,cleanup=function(){if(done)return;done=true;setTimeout(function(){f.parentNode&&f.parentNode.removeChild(f)},1000)};w.addEventListener('afterprint',cleanup);w.focus();w.print();setTimeout(cleanup,60000)}`
-  const controls = printPageFix + `<div class="contract-actions" style="margin-bottom:20px"><button class="button button-primary" type="button" onclick="${escape(printInvoke)}">打印 / 下载 PDF</button></div>`
+  const recipientActionLabel = user.role === 'ADMIN' ? '邮件发送给客户' : '邮件发送给我'
+  const controls = printPageFix + `<div class="contract-actions" style="margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap"><button class="button button-primary" type="button" onclick="${escape(printInvoke)}">打印 / 下载 PDF</button><a class="button button-secondary" href="/orders/${encodeURIComponent(order.id)}/invoice/pdf">下载 Tax Invoice PDF</a><form method="post" action="/orders/${encodeURIComponent(order.id)}/invoice/email" style="display:inline"><button class="button button-secondary" type="submit">${recipientActionLabel}</button></form></div>`
   return buildLayout('发票与付款收据', `<style>${docStyles}</style><div class="official-document-page">${controls}${documents}</div>`, user)
 }

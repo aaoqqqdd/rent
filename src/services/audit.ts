@@ -52,7 +52,7 @@ export async function logError(c: Context, level: ErrorLevel, message: string, e
     // 保存到数据库
     const redact = (value: any): any => {
       if (Array.isArray(value)) return value.map(redact)
-      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [/token|password|secret|signature|authorization/i.test(key) ? key : key, /token|password|secret|signature|authorization/i.test(key) ? '[REDACTED]' : redact(item)]))
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, /token|password|secret|signature|authorization/i.test(key) ? '[REDACTED]' : redact(item)]))
       return value
     }
     const contextJson = contextData ? JSON.stringify(redact(contextData)) : null

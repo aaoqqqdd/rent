@@ -38,6 +38,17 @@ function legacyDeviceStatusForLifecycle(status: DeviceLifecycleStatus): Device['
 // 将数据库行归一化为同时包含 snake_case 和 camelCase 字段的 User 对象
 export function normalizeUserRow(row: any): User {
   if (!row) return null as any
+  // Never let credential material escape the repository boundary. Login
+  // verification reads the raw row above this helper, while all other
+  // callers only need the public user profile and account fields.
+  const {
+    password,
+    passwordHash,
+    password_hash,
+    passwordSalt,
+    password_salt,
+    ...safeRow
+  } = row
   const account_number = row.account_number ?? row.accountNumber ?? row.account
   const accountNumber = row.accountNumber ?? row.account_number ?? row.account
 
@@ -65,7 +76,7 @@ export function normalizeUserRow(row: any): User {
   const squareCustomerId = row.squareCustomerId ?? row.square_customer_id ?? null
 
   return {
-    ...row,
+    ...safeRow,
     identityStatus,
     identity_status: identityStatus,
     stripeCustomerId,

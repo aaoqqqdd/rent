@@ -36,6 +36,12 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   await loadSystemSettingsFromDB(c)
 
   const currentFeedbackRewards = getSystemSettings().feedbackRewards
+  const currentTaxInvoiceTemplate = getSystemSettings().taxInvoiceTemplate
+  const taxInvoiceTemplateInput = payload.taxInvoiceTemplate && typeof payload.taxInvoiceTemplate === 'object' ? payload.taxInvoiceTemplate : {}
+  const taxInvoiceTemplate = Object.fromEntries(Object.keys(currentTaxInvoiceTemplate).map((key) => {
+    const value = String(taxInvoiceTemplateInput[key] ?? (currentTaxInvoiceTemplate as any)[key]).trim().slice(0, 200)
+    return [key, value || (currentTaxInvoiceTemplate as any)[key]]
+  })) as typeof currentTaxInvoiceTemplate
 
   const stripeConfigInput = payload.stripeConfig
   const shouldSaveStripeConfig = Boolean(
@@ -80,6 +86,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
         : getSystemSettings().companyDetails.deliveryAreas,
       deliveryNote: String(payload.companyDetails?.deliveryNote ?? getSystemSettings().companyDetails.deliveryNote).trim(),
     },
+    taxInvoiceTemplate,
     priceStrategy: payload.priceStrategy ?? getSystemSettings().priceStrategy,
     paymentMethods: {
       stripe: Boolean(payload.paymentMethods?.stripe),

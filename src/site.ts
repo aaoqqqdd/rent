@@ -149,6 +149,7 @@ export type { User, Device, DeviceLifecycleStatus, Order, Contract, ContractTemp
 import { systemSettings, getSystemSettings, rentalTerms } from './settings/systemSettings'
 import type { SystemSettingsKey } from './settings/systemSettings'
 import { normalizeTallyEmbedUrl } from './lib/tally'
+import { decryptSecret, encryptSecret } from './lib/secretBox'
 export { systemSettings, getSystemSettings, rentalTerms }
 export type { SystemSettingsKey }
 
@@ -869,6 +870,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const rmbPaymentValue = values.get('rmbPayment')
   const referralSettingsValue = values.get('referralSettings')
   const companyDetailsValue = values.get('companyDetails')
+  const taxInvoiceTemplateValue = values.get('taxInvoiceTemplate')
   const rentalRulesValue = values.get('rentalRules')
   const registrationSettingsValue = values.get('registrationSettings')
   const notificationSettingsValue = values.get('notificationSettings')
@@ -910,6 +912,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const parsedRmbPayment = safeJsonParse<typeof systemSettings.rmbPayment>(rmbPaymentValue)
   const parsedReferralSettings = safeJsonParse<typeof systemSettings.referralSettings>(referralSettingsValue)
   const parsedCompanyDetails = safeJsonParse<typeof systemSettings.companyDetails>(companyDetailsValue)
+  const parsedTaxInvoiceTemplate = safeJsonParse<typeof systemSettings.taxInvoiceTemplate>(taxInvoiceTemplateValue)
   const parsedRentalRules = safeJsonParse<typeof systemSettings.rentalRules>(rentalRulesValue)
   const parsedRegistrationSettings = safeJsonParse<typeof systemSettings.registrationSettings>(registrationSettingsValue)
   const parsedNotificationSettings = safeJsonParse<typeof systemSettings.notificationSettings>(notificationSettingsValue)
@@ -935,6 +938,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (parsedRmbPayment) systemSettings.rmbPayment = { ...systemSettings.rmbPayment, ...parsedRmbPayment }
   if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
   if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
+  if (parsedTaxInvoiceTemplate) systemSettings.taxInvoiceTemplate = { ...systemSettings.taxInvoiceTemplate, ...parsedTaxInvoiceTemplate }
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }
   if (parsedRegistrationSettings) systemSettings.registrationSettings = { ...systemSettings.registrationSettings, ...parsedRegistrationSettings }
   if (parsedNotificationSettings) systemSettings.notificationSettings = {
@@ -1044,6 +1048,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     ['rmbPayment', systemSettings.rmbPayment],
     ['referralSettings', systemSettings.referralSettings],
     ['companyDetails', systemSettings.companyDetails],
+    ['taxInvoiceTemplate', systemSettings.taxInvoiceTemplate],
     ['rentalRules', systemSettings.rentalRules],
     ['legalMetadata', systemSettings.legalMetadata],
     ['registrationSettings', systemSettings.registrationSettings],
@@ -1680,7 +1685,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/staff/contracts/new': '+', '/staff/contracts?status=pending_sign': '✍', '/staff/inspections': '◈', '/staff/mobile/scan': '▦', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
+    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/tax-invoice-template': '▣', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
     '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/referrals': 'gift',
     '/admin/order-review': '⚑', '/admin/orders/balance-topups': '↥', '/admin/feedback-rewards': '✦', '/admin/feedback-gift-cards': 'gift'
   }
@@ -1760,10 +1765,28 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     ? `<button class="mobile-nav-toggle" type="button" aria-label="打开导航菜单" aria-expanded="false" aria-controls="app-sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>`
     : ''
 
+  const searchTrigger = currentUser
+    ? `<button class="sidebar-search-trigger" type="button" data-global-search-trigger aria-controls="global-search"><span class="sidebar-search-trigger__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg></span><span>搜索工作台</span><kbd>⌘ K</kbd></button>`
+    : ''
+
+  const searchPanel = currentUser
+    ? `<aside class="global-search" id="global-search" aria-hidden="true">
+        <div class="global-search__scrim" data-global-search-close></div>
+        <section class="global-search__panel" role="dialog" aria-modal="true" aria-labelledby="global-search-title">
+          <div class="global-search__head"><div><span class="section-code">WORKSPACE SEARCH</span><h2 id="global-search-title">搜索工作台</h2></div><button class="global-search__close" type="button" data-global-search-close aria-label="关闭搜索">Esc</button></div>
+          <label class="global-search__input-wrap" for="global-search-input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg><input id="global-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="搜索订单号、客户、设备或功能" aria-controls="global-search-results" aria-autocomplete="list"></label>
+          <div class="global-search__meta" id="global-search-meta">从导航入口和订单中快速定位</div>
+          <div class="global-search__results" id="global-search-results" role="listbox" aria-label="搜索结果"></div>
+          <div class="global-search__foot"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> 关闭</span></div>
+        </section>
+      </aside>`
+    : ''
+
   const sidebar = currentUser
     ? `<aside class="sidebar ${currentUser.role === 'ADMIN' || currentUser.role === 'STAFF' ? 'sidebar--desktop' : ''}" id="${currentUser.role === 'ADMIN' || currentUser.role === 'STAFF' ? 'desktop-sidebar' : 'app-sidebar'}">
         <div class="sidebar-section">
           <h3>导航</h3>
+          ${searchTrigger}
           ${currentUser.role === 'CUSTOMER' ? `
             ${currentUser.accountType === 'guest' ? renderNavGroup('合同中心', [['/customer/guest', '访客合同中心'], ['/customer/guest/upgrade', '升级账户']]) : `
               ${renderNavLink('/customer/dashboard', '控制台')}
@@ -1788,7 +1811,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('营销增长', [['/admin/coupons', '优惠码管理'], ['/admin/marketing-emails', '营销邮件'], ['/admin/marketing-emails/data', '营销数据'], ['/admin/referrals', '推荐奖励管理'], ['/admin/feedback-rewards', '反馈奖励记录'], ['/admin/feedback-gift-cards', '礼品卡库存']])}
-            ${renderNavGroup('系统设置', [['/admin/email-templates', '邮件通知模板'], ['/admin/settings', '系统设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
+            ${renderNavGroup('系统设置', [['/admin/email-templates', '邮件通知模板'], ['/admin/tax-invoice-template', 'Tax Invoice PDF 模板'], ['/admin/settings', '系统设置'], ['/admin/api-settings', 'API 设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">
@@ -1804,6 +1827,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     ? `<aside class="sidebar sidebar--mobile" id="app-sidebar">
         <div class="sidebar-section">
           <h3>租赁操作</h3>
+          ${searchTrigger}
           ${mobileLinks.map(([href, text]) => renderNavLink(href, text)).join('')}
         </div>
         <div class="sidebar-footer">
@@ -1842,6 +1866,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     MOBILE_LABEL: mobileLabel,
     MOBILE_USER_BLOCK: mobileUserBlock,
     LANGUAGE_SWITCHER: languageSwitcher,
+    SEARCH: searchPanel,
     SIDEBAR: sidebar + mobileOperationsSidebar,
     CONTENT: body,
     FOOTER: footerHtml
@@ -1868,6 +1893,8 @@ export async function getOrCreateSignSession(c: Context, token: string, contract
 
     if (existingSession) {
       const sessionData = JSON.parse((existingSession as any).session_data)
+      if (sessionData.userInfo?.windowsPassword) sessionData.userInfo.windowsPassword = await decryptSecret(c, sessionData.userInfo.windowsPassword)
+      if (sessionData.guestPassword) sessionData.guestPassword = await decryptSecret(c, sessionData.guestPassword)
       const expiresAt = new Date((existingSession as any).expires_at)
 
       // 检查会话是否过期
@@ -1920,6 +1947,10 @@ export async function updateSignSession(c: Context, token: string, data: Record<
 
     const sessionData = JSON.parse((currentSession as any).session_data)
     const updatedSession = { ...sessionData, ...data }
+    if (updatedSession.userInfo?.windowsPassword) {
+      updatedSession.userInfo = { ...updatedSession.userInfo, windowsPassword: await encryptSecret(c, updatedSession.userInfo.windowsPassword) }
+    }
+    if (updatedSession.guestPassword) updatedSession.guestPassword = await encryptSecret(c, updatedSession.guestPassword)
 
     // 更新数据库中的会话 - 使用正确的snake_case列名匹配数据库schema
     await db.prepare(`

@@ -4,9 +4,15 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-07-10",
 	"observability": {
+		"enabled": true,
 		"logs": {
 			"enabled": true,
-			"invocation_logs": true
+			"invocation_logs": true,
+			"head_sampling_rate": 1
+		},
+		"traces": {
+			"enabled": true,
+			"head_sampling_rate": 0.1
 		}
 	},
 	"rules": [
@@ -47,12 +53,6 @@
 			"binding": "RENT",
 			"database_name": "rent",
 			"database_id": "65a5ded3-ffd8-4627-8ea4-9d8ced480b93"
-		},
-		{
-			"binding": "rent",
-			"database_name": "rent",
-			"database_id": "65a5ded3-ffd8-4627-8ea4-9d8ced480b93",
-			"remote": true
 		},
 	],
 	"triggers": {

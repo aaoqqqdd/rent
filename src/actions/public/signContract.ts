@@ -20,6 +20,8 @@ import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibi
 import { calculateRentalFee } from '../../domain/rentalPricing';
 import { generateWindowsPassword } from '../../lib/password';
 import { getCloudinaryRuntimeConfig } from '../../lib/cloudinary';
+import { escapeHtml } from '../../lib/html';
+import { encryptSecret } from '../../lib/secretBox';
 
 function isTimeSlotPassed(date: string, slot: string): boolean {
   const melbourneDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -39,7 +41,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
   // 记录进入签约流程的日志
   await logError(c, 'DEBUG', `Entering contract signing process`, undefined, {
-    identifier: token, // 使用明确定义的 token
+    token,
     step,
     requestBody: Object.keys(body)
   });
@@ -288,8 +290,26 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
 
         // 保存用户信息到会话
         const windowsPassword = String(signSession.windowsPassword || generateWindowsPassword())
-        await updateSignSession(c, token, { windowsPassword,
-          userInfo: { ...body, windowsPassword, firstName: cleanFirstName, lastName: cleanLastName, name, email, createAccount, accountMode: selectedAccountMode, phone: phoneToValidate, fullPhone, ...(signature ? { esignSignature: signature } : {}) }
+        const passwordHash = !currentUser && createAccount ? await hashPassword(String(password)) : ''
+        await updateSignSession(c, token, {
+          windowsPassword,
+          // Do not persist the submitted password or the full request body in
+          // sign_sessions. A PBKDF2 verifier is sufficient for the final user
+          // creation step and cannot be used as the plaintext password.
+          userInfo: {
+            firstName: cleanFirstName,
+            lastName: cleanLastName,
+            name,
+            email,
+            createAccount,
+            accountMode: selectedAccountMode,
+            phone: phoneToValidate,
+            fullPhone,
+            referrer: String(referrer || '').trim().toUpperCase().slice(0, 64),
+            ...(signature ? { esignSignature: signature } : {}),
+            ...(passwordHash ? { passwordHash } : {}),
+            windowsPassword,
+          },
         });
         await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
 
@@ -431,6 +451,15 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           // }
 
           const isGuest = userInfo.accountMode === 'guest'
+          // Migrate an in-flight session created before passwordHash was stored.
+          // New sessions never contain the raw password.
+          if (!isGuest && !userInfo.passwordHash && userInfo.password) {
+            userInfo.passwordHash = await hashPassword(String(userInfo.password))
+            delete userInfo.password
+            delete userInfo.passwordConfirm
+            await updateSignSession(c, token, { userInfo })
+          }
+          if (!isGuest && !userInfo.passwordHash) throw new Error('正式账户密码信息已失效，请返回上一步重新设置。')
           if (isGuest && !guestPassword) {
             guestPassword = generateTemporaryPassword()
             await updateSignSession(c, token, { guestPassword })
@@ -439,7 +468,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             id: newUserId,
             name: userInfo.name,
             email: userInfo.email,
-            password: isGuest ? guestPassword : userInfo.password,
+            password: isGuest ? guestPassword : undefined,
+            passwordHash: isGuest ? undefined : userInfo.passwordHash,
             // password_hash: password_hash ?? undefined,
             role: 'CUSTOMER',
             phone: userInfo.fullPhone,
@@ -653,12 +683,9 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const signedData = {
           ...existingData,
           windows_username: String(userInfo.name || '').trim(),
-          // Windows 账户密码需要由设备代理和订单详情重复读取，按需求保留为可读取值；
-          // 该字段不参与网站登录认证，只对订单所有者展示。
-          windows_password: String(userInfo.windowsPassword || '').trim(),
-          // 访客临时密码：sign_sessions 会在签约完成后立即删除，无法再从会话读取；
-          // 网站登录密码本身已哈希存储不可逆，这里保留明文副本供重新访问已完成合同页时展示。
-          guest_password: guestPassword || existingData.guest_password || '',
+          // 密码只以 AES-GCM 密文写入 D1；页面/设备命令在授权路径上临时解密。
+          windows_password: await encryptSecret(c, String(userInfo.windowsPassword || '').trim()),
+          guest_password: await encryptSecret(c, guestPassword || existingData.guest_password || ''),
           signer_name: signerName,
           customer_initials: existingData.customer_initials || customerInitials,
           esign_signature: userInfo.esignSignature,
@@ -729,7 +756,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (guestPassword) {
           const paymentUrl = noPayment ? `/customer/orders/${encodeURIComponent(contract.rentalId)}` : `/payment/result?orderId=${encodeURIComponent(contract.rentalId)}`
           const guestActionText = noPayment ? '查看订单详情' : '查看付款结果'
-          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${userInfo.email}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${guestPassword}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${guestActionText}</a></div></div>`
+          const guestPage = `<div class="entity-header"><div class="identity-strip mono"><span>GUEST ACCESS / READY</span><span>有效至 ${order.endDate}</span></div><div class="entity-heading"><div><p class="section-code">TEMPORARY ACCOUNT</p><h2>合同已完成签署</h2><p>请立即保存以下临时登录资料。为保护账户安全，密码离开本页后不再显示。</p></div><span class="badge badge-warning">访客账户</span></div></div><div class="panel guest-credential-card"><div class="grid grid-2"><div><span class="section-note">登录账号</span><strong class="guest-credential-value">${escapeHtml(userInfo.email)}</strong></div><div><span class="section-note">临时密码</span><strong class="guest-credential-value mono">${escapeHtml(guestPassword)}</strong></div></div><div class="alert" style="margin-top:18px">该账户只可查看和下载本次合同、订单与收据，并将在租期结束后自动失效。登录后可设置新密码升级为正式账户。</div><div class="record-actions"><a class="button button-secondary" href="/login">访客登录</a><a class="button" href="${paymentUrl}">${guestActionText}</a></div></div>`
           const response = c.html(buildLayout('保存访客登录资料', guestPage))
           response.headers.append('Set-Cookie', draftCookie)
           const session = await createAuthSession(c, userId)

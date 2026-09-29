@@ -60,6 +60,8 @@ export * from './admin/deviceEdit';
 export * from './admin/deviceControl';
 export * from './admin/deviceAccept';
 export * from './admin/settings';
+export * from './admin/apiSettings';
+export * from './admin/taxInvoiceTemplate';
 export * from './admin/feedbackGiftCards';
 export * from './admin/feedbackRewards';
 export * from './admin/templates';

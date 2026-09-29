@@ -11,7 +11,9 @@ import { escapeHtml, renderEmailNotificationHtml, sanitizePlainText } from '../l
 import { safeJsonParse } from '../lib/json'
 import { getSystemSettings } from '../settings/systemSettings'
 import { resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from '../notifyChannels'
+import type { EmailAttachment } from '../notifyChannels'
 import { buildPickupQrPayload } from '../lib/pickupQr'
+import { buildReceiptPdf, bytesToBase64 } from './receiptPdf'
 
 const STAFF_ROLES = new Set(['ADMIN', 'MANAGER', 'STAFF'])
 
@@ -24,6 +26,10 @@ const SITE_NOTIFICATION_TEMPLATE_NAME = '站内通知（自动邮件）'
 const SITE_NOTIFICATION_TEMPLATE_SUBJECT = '{title}'
 const SITE_NOTIFICATION_TEMPLATE_BODY = '<h2>{title}</h2><p>您好 {customer_name}：</p><p>{message}</p>'
 const SKIP_AUTO_EMAIL_TYPES = new Set(['announcement', 'manual'])
+const TAX_INVOICE_TEMPLATE_ID = 'tax_invoice_issued'
+const TAX_INVOICE_TEMPLATE_NAME = 'Tax invoice issued'
+const TAX_INVOICE_TEMPLATE_SUBJECT = 'Tax invoice for order {order_number}'
+const TAX_INVOICE_TEMPLATE_BODY = '<h2>Tax invoice issued</h2><p>Hello {customer_name},</p><p>Your tax invoice for order <strong>{order_number}</strong> is attached to this email.</p><h3>Invoice details</h3><table style="width:100%; border-collapse:collapse;"><tbody><tr><td style="padding:8px 0; color:#666;">Invoice number</td><td style="padding:8px 0;"><strong>{invoice_number}</strong></td></tr><tr><td style="padding:8px 0; color:#666;">Order number</td><td style="padding:8px 0;">{order_number}</td></tr><tr><td style="padding:8px 0; color:#666;">Amount paid</td><td style="padding:8px 0;"><strong>{total_amount}</strong></td></tr></tbody></table><p>Please keep the attached PDF for your records. If you have any questions, contact <a href="mailto:{company_email}">{company_email}</a>.</p>'
 
 let siteNotificationTemplateReady: Promise<void> | null = null
 
@@ -36,6 +42,11 @@ async function ensureSiteNotificationEmailTemplate(c: Context): Promise<void> {
       .bind(SITE_NOTIFICATION_TEMPLATE_ID, SITE_NOTIFICATION_TEMPLATE_NAME, SITE_NOTIFICATION_TEMPLATE_SUBJECT, SITE_NOTIFICATION_TEMPLATE_BODY).run()
   })()
   try { await siteNotificationTemplateReady } catch (error) { siteNotificationTemplateReady = null; throw error }
+}
+
+async function ensureTaxInvoiceEmailTemplate(c: Context): Promise<void> {
+  await c.env.RENT.prepare('INSERT OR IGNORE INTO email_templates (id, name, subject, body, format) VALUES (?, ?, ?, ?, \'html\')')
+    .bind(TAX_INVOICE_TEMPLATE_ID, TAX_INVOICE_TEMPLATE_NAME, TAX_INVOICE_TEMPLATE_SUBJECT, TAX_INVOICE_TEMPLATE_BODY).run()
 }
 
 async function sendPickupReminderEmail(c: Context, notification: { recipientId: string; orderId?: string }, recipient: any, email: string): Promise<void> {
@@ -303,19 +314,26 @@ export async function createNotification(c: Context, notification: { recipientId
   return inserted
 }
 
-// 「付款成功」邮件：套用后台可编辑的 payment_completed 模板，只在 issueInvoice
-// 第一次为某订单开票时调用一次（见 services/invoice.ts）。尽力而为——任何一步
-// 失败都不影响开票本身，调用方已经 catch 掉。
-export async function sendPaymentCompletedEmail(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<void> {
-  const { apiKey, from } = await resolveEmailCredentials(c)
-  if (!apiKey || !from) return
-  const customer = await c.env.RENT.prepare('SELECT name, email FROM users WHERE id = ?').bind(order.userId).first() as any
+type PaymentEmailContext = {
+  customer: any
+  email: string
+  device: any
+  companyDetails: any
+  vars: Record<string, string>
+  fill: (value: string) => string
+}
+
+export type TaxInvoiceDocument = {
+  invoice: any
+  invoiceVars: Record<string, string>
+  documentNumber: string
+  pdf: Uint8Array
+}
+
+async function getPaymentEmailContext(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<PaymentEmailContext | null> {
+  const customer = await c.env.RENT.prepare('SELECT name, email, phone FROM users WHERE id = ?').bind(order.userId).first() as any
   const email = String(customer?.email || '').trim()
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith('@invalid.local')) return
-
-  const template = await c.env.RENT.prepare("SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = 'payment_completed'").first() as any
-  if (!template || template.enabled === 0) return
-
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith('@invalid.local')) return null
   const device = order.deviceId ? await c.env.RENT.prepare('SELECT name FROM devices WHERE id = ?').bind(order.deviceId).first() as any : null
   const companyDetails = getSystemSettings().companyDetails || ({} as any)
   const vars: Record<string, string> = {
@@ -334,9 +352,110 @@ export async function sendPaymentCompletedEmail(c: Context, order: any, contract
     company_email: String(companyDetails.email || ''),
   }
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
-  const subject = fill(String(template.subject || '付款成功 - {order_number}'))
-  const html = renderEmailNotificationHtml(subject, fill(String(template.body || '')), vars.company_name, template.theme_color || '#f0a35b')
-  await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(`您好 ${vars.customer_name}：您的订单 ${vars.order_number} 已完成付款。`, 2000), html })
+  return { customer, email, device, companyDetails, vars, fill }
+}
+
+export async function buildTaxInvoiceDocument(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<TaxInvoiceDocument | null> {
+  const context = await getPaymentEmailContext(c, order, contract)
+  if (!context) return null
+  const invoice = await c.env.RENT.prepare("SELECT * FROM invoices WHERE order_id = ? AND type = 'invoice' ORDER BY issued_at DESC LIMIT 1").bind(order.id).first() as any
+  if (!invoice) return null
+  const payment = await c.env.RENT.prepare("SELECT paid_at, payment_method, payment_provider, transaction_id, stripe_payment_intent_id, square_payment_id FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
+  const documentNumber = String(invoice.invoice_number || invoice.receipt_number || order.orderNo || order.id)
+  const pdf = buildReceiptPdf({
+    companyName: String(context.companyDetails.name || 'PC Rental'),
+    companyAbn: String(context.companyDetails.abn || ''),
+    companyEmail: String(context.companyDetails.email || ''),
+    companyPhone: String(context.companyDetails.phone || ''),
+    companyAddress: String(context.companyDetails.address || ''),
+    customerName: String(context.customer?.name || ''),
+    customerEmail: context.email,
+    customerPhone: String(context.customer?.phone || ''),
+    orderNumber: String(order.orderNo || order.id),
+    contractNumber: String(contract?.contractNumber || ''),
+    documentNumber,
+    invoiceNumber: String(invoice.invoice_number || ''),
+    issuedAt: String(invoice.issued_at || ''),
+    paidAt: String(payment?.paid_at || ''),
+    paymentMethod: payment?.payment_provider === 'square' ? 'Gift card' : String(payment?.payment_method || order.paymentMethod || ''),
+    transactionId: String(payment?.transaction_id || payment?.stripe_payment_intent_id || payment?.square_payment_id || ''),
+    deviceName: String(context.device?.name || order.deviceName || 'Rental device'),
+    startDate: String(order.startDate || ''),
+    endDate: String(order.endDate || ''),
+    rentalPeriod: Number(order.rentalPeriod || 0),
+    subtotal: Number(invoice.subtotal || 0),
+    gstAmount: Number(invoice.gst_amount || 0),
+    depositAmount: Number(invoice.deposit_amount || 0),
+    processingFee: Number(invoice.processing_fee || 0),
+    discountAmount: Math.max(0, Number(order.discountAmount || order.discount_amount || 0)),
+    totalAmount: Number(invoice.total_amount || order.totalAmount || 0),
+    currency: String(invoice.currency || 'AUD'),
+    documentId: String(invoice.id || ''),
+    template: getSystemSettings().taxInvoiceTemplate,
+  })
+  return {
+    invoice,
+    invoiceVars: { ...context.vars, invoice_number: String(invoice.invoice_number || ''), receipt_number: String(invoice.receipt_number || '') },
+    documentNumber,
+    pdf,
+  }
+}
+
+function taxInvoiceAttachment(document: TaxInvoiceDocument): EmailAttachment {
+  return { filename: `tax-invoice-${document.documentNumber}.pdf`, content: bytesToBase64(document.pdf), contentType: 'application/pdf' }
+}
+
+// 「付款成功」邮件：套用后台可编辑的 payment_completed 模板，并附加 A4 Tax Invoice PDF。
+export async function sendPaymentCompletedEmail(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<void> {
+  const { apiKey, from } = await resolveEmailCredentials(c)
+  if (!apiKey || !from) return
+  const context = await getPaymentEmailContext(c, order, contract)
+  if (!context) return
+  const template = await c.env.RENT.prepare("SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = 'payment_completed'").first() as any
+  if (!template || template.enabled === 0) return
+  const subject = context.fill(String(template.subject || '付款成功 - {order_number}'))
+  const html = renderEmailNotificationHtml(subject, context.fill(String(template.body || '')), context.vars.company_name, template.theme_color || '#f0a35b')
+  let attachments: EmailAttachment[] = []
+  try {
+    const document = await buildTaxInvoiceDocument(c, order, contract)
+    if (document) attachments = [taxInvoiceAttachment(document)]
+  } catch (error: any) {
+    console.error('Tax invoice PDF generation failed:', error?.message || error)
+  }
+  await sendTransactionalEmail(c, { to: context.email, subject, text: sanitizePlainText(`您好 ${context.vars.customer_name}：您的订单 ${context.vars.order_number} 已完成付款。`, 2000), html, attachments })
+}
+
+// 用户或管理员主动点击「邮件发送」时，使用独立的 tax_invoice_issued 模板发送 A4 PDF。
+export async function sendTaxInvoiceEmail(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<void> {
+  const { apiKey, from } = await resolveEmailCredentials(c)
+  if (!apiKey || !from) return
+  const context = await getPaymentEmailContext(c, order, contract)
+  if (!context) return
+  await ensureTaxInvoiceEmailTemplate(c)
+  const template = await c.env.RENT.prepare('SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = ?').bind(TAX_INVOICE_TEMPLATE_ID).first() as any
+  if (!template || template.enabled === 0) return
+
+  let document: TaxInvoiceDocument | null = null
+  try {
+    document = await buildTaxInvoiceDocument(c, order, contract)
+  } catch (error: any) {
+    console.error('Tax invoice PDF generation failed:', error?.message || error)
+    return
+  }
+
+  if (!document) return
+  const invoiceVars = document.invoiceVars
+  const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => invoiceVars[key] ?? '')
+  const subject = fill(String(template.subject || TAX_INVOICE_TEMPLATE_SUBJECT))
+  const html = renderEmailNotificationHtml(subject, fill(String(template.body || TAX_INVOICE_TEMPLATE_BODY)), invoiceVars.company_name, template.theme_color || '#f0a35b')
+  const text = `Hello ${invoiceVars.customer_name}: your tax invoice ${invoiceVars.invoice_number || invoiceVars.order_number} for order ${invoiceVars.order_number} is attached.`
+  await sendTransactionalEmail(c, {
+    to: context.email,
+    subject,
+    text: sanitizePlainText(text, 2000),
+    html,
+    attachments: [taxInvoiceAttachment(document)],
+  })
 }
 
 export async function deleteRentalApplicationNotifications(c: Context, orderId: string): Promise<void> {
