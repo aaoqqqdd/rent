@@ -809,6 +809,10 @@ app.get('/feedback', async (c) => {
   return c.html(pages.renderTallyForm(getSystemSettings().tallyFormUrl, feedbackToken))
 })
 
+app.get('/feedback/thanks', (c) => {
+  return c.html(pages.renderTallyFeedbackThanks())
+})
+
 app.post('/login', async (c) => {
   const form = await c.req.parseBody()
   const account = form.account?.trim()
