@@ -125,7 +125,7 @@ import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteK
 import { getDeliveryConfigSummary } from './deliveryConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer, expireMissedPickupOrders } from './actions/stripePayments'
 import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
@@ -698,7 +698,10 @@ app.use('*', async (c, next) => {
     const hasSessionCookie = /(?:^|;\s*)session=[^;]+/.test(c.req.header('cookie') || '')
     let originValid = true
     if (origin) {
-      try { originValid = new URL(origin).origin === new URL(c.req.url).origin } catch { originValid = false }
+      // TLS may terminate at a proxy before the request reaches the Worker.
+      // Compare the authority, including any non-default port, so a same-site
+      // HTTPS browser request forwarded as HTTP is not rejected.
+      try { originValid = new URL(origin).host === new URL(c.req.url).host } catch { originValid = false }
     } else if (hasSessionCookie && fetchSite !== 'same-origin') {
       // A browser session without an Origin header is not verifiably same
       // origin. Reject it rather than accepting a forged cross-site form.
@@ -1775,7 +1778,7 @@ app.post('/admin/email-templates/send', async (c) => {
   vars.company_name = vars.company_name || String(companyDetails.name || 'PC Rental')
   vars.company_email = vars.company_email || String(companyDetails.email || '')
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
-  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: fill(template.body) })
+  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: fill(template.body), notifyByEmail: false })
   if (['email', 'both'].includes(channel)) {
     const { apiKey, from } = await resolveEmailCredentials(c)
     if (!apiKey || !from) return c.text('尚未配置邮件服务：请在后台「通知渠道」配置 Resend / Brevo / MailerSend 之一，或设置 RESEND_API_KEY / EMAIL_FROM', 503)
@@ -6092,6 +6095,8 @@ export default {
       get: (key: string) => undefined,
       set: () => { },
       req: { url: 'https://scheduled-event' },
+      text: (body: string, status = 200) => new Response(body, { status }),
+      redirect: (url: string, status = 302) => new Response(null, { status, headers: { Location: url } }),
       // Expose getDB function that the site.ts functions expect
       ...(() => {
         const getDB = () => env.RENT
@@ -6101,6 +6106,11 @@ export default {
 
     // Import and run the cleanup function
     const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob, deliverPendingAgreementUpdates } = await import('./site')
+
+    if (event.cron === '*/15 * * * *') {
+      ctx.waitUntil(runScheduledJob(c, 'expire_missed_pickups', () => expireMissedPickupOrders(c)))
+      return
+    }
 
     // The hourly cron ("0 * * * *") only enforces the 24h unpaid-order
     // cancellation SLA — running the rest of the daily batch (notifications,

@@ -75,3 +75,19 @@ test('device agent state endpoint also supports the Monitorflare token', async (
   assert.equal(body.boundDevices, 2)
   assert.match(body.checkedAt, /^\d{4}-\d{2}-\d{2}T/)
 })
+
+test('same-host POSTs remain valid when TLS terminates before the Worker', async () => {
+  const env = { RENT: {} } as any
+  const proxiedRequest = await worker.fetch(new Request('http://rent.example/admin/email-templates', {
+    method: 'POST',
+    headers: { Origin: 'https://rent.example', 'Sec-Fetch-Site': 'same-origin' },
+  }), env)
+  assert.notEqual(proxiedRequest.status, 403)
+
+  const crossSiteRequest = await worker.fetch(new Request('http://rent.example/admin/email-templates', {
+    method: 'POST',
+    headers: { Origin: 'https://attacker.example', 'Sec-Fetch-Site': 'cross-site' },
+  }), env)
+  assert.equal(crossSiteRequest.status, 403)
+  assert.equal(await crossSiteRequest.text(), 'Invalid request origin')
+})

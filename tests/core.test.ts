@@ -40,6 +40,7 @@ import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedbac
 import { renderStaffInspection } from '../src/pages/staff/inspection'
 import { renderGuestAccount } from '../src/pages/customer/guestAccount'
 import { depositAuthorizationWindowDays, depositPaymentModeForRental, normalizeSecurityDepositMethod } from '../src/domain/paymentPlan'
+import { isPickupHoldExpired } from '../src/domain/pickupHold'
 import { extractInlineScripts } from './helpers'
 import { couponApplicableComponents, couponDiscountableBase } from '../src/actions/coupons'
 import { formatInvoicePaymentMethods } from '../src/pages/invoice'
@@ -60,6 +61,14 @@ test('receipt payment summary includes every paid payment method', () => {
   ]), '信用卡 + 账户余额')
   assert.equal(formatInvoicePaymentMethods([{ payment_method: 'card', payment_provider: 'square' }]), '礼品卡')
   assert.equal(formatInvoicePaymentMethods([{ payment_method: 'wechat' }]), '微信支付')
+})
+
+test('store pickup holds expire two Melbourne hours after the scheduled exact time', () => {
+  const order = { startDate: '2026-10-05', pickupTimeSlot: '09:30', deliveryMethod: 'Pickup' }
+  assert.equal(isPickupHoldExpired(order, new Date('2026-10-05T00:29:00Z')), false) // 11:29 AEDT
+  assert.equal(isPickupHoldExpired(order, new Date('2026-10-05T00:30:00Z')), true) // 11:30 AEDT
+  assert.equal(isPickupHoldExpired({ startDate: '2026-10-05', pickupTimeSlot: '23:30' }, new Date('2026-10-05T14:30:00Z')), true)
+  assert.equal(isPickupHoldExpired({ ...order, deliveryMethod: 'Delivery' }, new Date('2026-10-05T00:30:00Z')), false)
 })
 
 test('login preserves a safe internal redirect for protected pages', () => {

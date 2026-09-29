@@ -22,6 +22,7 @@ import { generateWindowsPassword } from '../../lib/password';
 import { getCloudinaryRuntimeConfig } from '../../lib/cloudinary';
 import { escapeHtml } from '../../lib/html';
 import { encryptSecret } from '../../lib/secretBox';
+import { isUnavailablePickupTime, legacyPickupSlot, pickupTimeMode, serviceFeeRate } from '../../domain/pickupTimeSlots';
 
 function isTimeSlotPassed(date: string, slot: string): boolean {
   const melbourneDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -29,7 +30,8 @@ function isTimeSlotPassed(date: string, slot: string): boolean {
   const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0)
   const minutes = (hour === 24 ? 0 : hour) * 60 + Number(parts.find((part) => part.type === 'minute')?.value || 0)
   const endMinutes: Record<string, number> = { morning_service: 8 * 60, morning: 12 * 60, afternoon: 20 * 60, evening_service: 23 * 60, delivery_morning: 12 * 60, delivery_afternoon: 19 * 60 }
-  return date === melbourneDate && minutes >= (endMinutes[slot] || 24 * 60)
+  const exactMinutes = /^([01]\d|2[0-3]):(?:00|30)$/.test(slot) ? Number(slot.slice(0, 2)) * 60 + Number(slot.slice(3)) : 0
+  return date === melbourneDate && minutes >= (exactMinutes || endMinutes[slot] || 24 * 60)
 }
 
 export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, any>): Promise<Response> {
@@ -352,14 +354,16 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const depositMethod = normalizeSecurityDepositMethod(depositCardSelected ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
-        const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
-        const pickupTimeSlot = allowedTimeSlots.includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
-        const returnTimeSlot = allowedTimeSlots.includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
-        const unavailableTimeSlots = (await getDeviceRentalRules(c, order.deviceId)).unavailableTimeSlots || {}
-        if (!pickupTimeSlot || !returnTimeSlot || isTimeSlotPassed(order.startDate, pickupTimeSlot) || isTimeSlotPassed(order.endDate, returnTimeSlot) || (unavailableTimeSlots[order.startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[order.endDate] || []).includes(returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
+        const rentalRules = await getDeviceRentalRules(c, order.deviceId)
+        const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : []
+        const pickupTimeSlot = (isDelivery ? allowedTimeSlots.includes(String(body.pickupTimeSlot)) : Boolean(pickupTimeMode(String(body.pickupTimeSlot), rentalRules))) ? String(body.pickupTimeSlot) : ''
+        const returnTimeSlot = (isDelivery ? allowedTimeSlots.includes(String(body.returnTimeSlot)) : Boolean(pickupTimeMode(String(body.returnTimeSlot), rentalRules))) ? String(body.returnTimeSlot) : ''
+        const unavailableTimeSlots = rentalRules.unavailableTimeSlots || {}
+        const unavailable = (date: string, slot: string) => isUnavailablePickupTime(slot, date, rentalRules) || (unavailableTimeSlots[date] || []).includes(slot) || (unavailableTimeSlots[date] || []).includes(legacyPickupSlot(slot, rentalRules))
+        if (!pickupTimeSlot || !returnTimeSlot || isTimeSlotPassed(order.startDate, pickupTimeSlot) || isTimeSlotPassed(order.endDate, returnTimeSlot) || unavailable(order.startDate, pickupTimeSlot) || unavailable(order.endDate, returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
         const deliveryMethod = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup')
-        const serviceSlots = deliveryMethod === 'Delivery' ? 0 : [pickupTimeSlot, returnTimeSlot].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length
-        const serviceFee = Number((Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0)) * 0.1 * serviceSlots).toFixed(2))
+        const serviceSlots = deliveryMethod === 'Delivery' ? 0 : [pickupTimeSlot, returnTimeSlot].filter(slot => pickupTimeMode(slot, rentalRules) === 'non_business').length
+        const serviceFee = Number((Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0)) * serviceFeeRate(rentalRules) * serviceSlots).toFixed(2))
         const previousServiceFee = Number((order as any).serviceFee || (order as any).service_fee || 0)
         if (serviceFee !== previousServiceFee) {
           const adjustedTotal = Number((Number(order.totalAmount) + serviceFee - previousServiceFee).toFixed(2))
