@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot, getCustomerRiskAssessment
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, validateHostedImageUrls, uploadCloudinaryImage, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot, getCustomerRiskAssessment
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -19,6 +19,7 @@ import { getSquareRuntimeConfig } from '../../square';
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, clearPreviewCouponFromOrder } from '../coupons';
 import { calculateRentalFee } from '../../domain/rentalPricing';
 import { generateWindowsPassword } from '../../lib/password';
+import { getCloudinaryRuntimeConfig } from '../../lib/cloudinary';
 
 function isTimeSlotPassed(date: string, slot: string): boolean {
   const melbourneDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -29,7 +30,7 @@ function isTimeSlotPassed(date: string, slot: string): boolean {
   return date === melbourneDate && minutes >= (endMinutes[slot] || 24 * 60)
 }
 
-export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, string>): Promise<Response> {
+export async function handleSignContractStep(c: Context, identifier: string, step: number, body: Record<string, any>): Promise<Response> {
   const token = identifier; // 明确定义 token
   const viewerUser = c.get('user') || await findUserBySession(c, c.req.header('cookie') ?? null)
   const currentUser = getCustomerSigningUser(viewerUser)
@@ -377,7 +378,11 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
         if (['bank_transfer', 'alipay', 'wechat'].includes(paymentMethod)) {
           if (!transferReference) throw new Error('请填写付款 Reference')
-          try { transferProofUrl = validateHostedImageUrls(body.transferProofUrl, 1)[0] } catch (error: any) { throw new Error(error.message || '请填写有效的公开 HTTPS 凭证截图链接') }
+          try {
+            transferProofUrl = body.transferProofFile
+              ? await uploadCloudinaryImage(body.transferProofFile, await getCloudinaryRuntimeConfig(c), 'rent/payment-proofs')
+              : validateHostedImageUrls(body.transferProofUrl, 1)[0]
+          } catch (error: any) { throw new Error(error.message || '请上传有效的付款凭证图片') }
         }
 
         if (depositMethod === 'card_hold' && !depositCardSelected) throw new Error('信用卡预授权押金需要先验证信用卡')

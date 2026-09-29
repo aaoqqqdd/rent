@@ -147,6 +147,7 @@ import { getTableColumns as getCachedTableColumns } from './db/client'
 import { createTallyFeedbackToken } from './lib/tally'
 import { parsePickupQrPayload } from './lib/pickupQr'
 import { readManualInspectionFields, renderManualInspectionFields, inspectionText } from './lib/inspection'
+import { getCloudinaryConfigSummary, getCloudinaryRuntimeConfig, uploadCloudinaryImages } from './lib/cloudinary'
 
 function parseFormBody(body: string | null | undefined): Record<string, string> {
   const form: Record<string, string> = {}
@@ -242,6 +243,15 @@ async function getTableColumns(c: any, tableName: string): Promise<string[]> {
 }
 
 const app = new Hono()
+
+async function resolveImageUrls(fileValue: unknown, legacyUrl: unknown, c: any, folder: string, maxFiles = 1): Promise<string[]> {
+  if (fileValue) {
+    const uploaded = await uploadCloudinaryImages(fileValue, await getCloudinaryRuntimeConfig(c), folder, maxFiles)
+    if (uploaded.length) return uploaded
+  }
+  if (String(legacyUrl || '').trim()) return validateHostedImageUrls(legacyUrl, maxFiles)
+  return []
+}
 
 app.get('/styles.css', (c) => {
   c.header('Content-Type', 'text/css; charset=utf-8')
@@ -589,7 +599,13 @@ app.use('*', async (c, next) => {
 
 app.use('*', async (c, next) => {
   const contentLength = Number(c.req.header('Content-Length') || 0)
-  const maxBody = ['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) ? 512 * 1024 : 128 * 1024
+  const uploadPath = c.req.method === 'POST' && (
+    c.req.path === '/contract/sign' ||
+    c.req.path === '/customer/balance/top-up/transfer' ||
+    /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ||
+    /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path)
+  )
+  const maxBody = ['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) ? 512 * 1024 : uploadPath ? 6 * 1024 * 1024 : 128 * 1024
   if (contentLength > maxBody) return c.text('Request body too large', 413)
   const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
   const isPublicOrderLookup = c.req.path === '/public/order-lookup'
@@ -614,10 +630,11 @@ app.use('*', async (c, next) => {
       : c.req.path === '/contract/sign' ? ['contract-sign', 60, 900] as const
         : /^\/customer\/orders\/[^/]+\/stripe\/(?:checkout|intent)$/.test(c.req.path) ? ['stripe-checkout', 10, 600] as const
           : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
-            : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
-              : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
-                : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
-                  : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
+            : /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path) ? ['inspection-upload', 10, 3600] as const
+              : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
+                : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
+                  : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
+                    : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
@@ -1192,7 +1209,8 @@ app.post('/customer/balance/top-up/transfer', async (c) => {
   const topup = await c.env.RENT.prepare("SELECT * FROM balance_topups WHERE id = ? AND user_id = ? AND status = 'awaiting_transfer'").bind(id, user.id).first() as any
   if (!topup || !reference) return c.text('充值记录或 Reference 无效', 400)
   let imageUrl = ''
-  if (form.imageUrl) { try { imageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) } }
+  try { imageUrl = (await resolveImageUrls(form.imageFile, form.imageUrl, c, 'rent/balance-proofs', 1))[0] || '' } catch (error: any) { return c.text(error.message, 400) }
+  if (!imageUrl) return c.text('请上传付款凭证图片', 400)
   await c.env.RENT.prepare("UPDATE balance_topups SET reference = ?, note = ?, proof_image_url = ?, status = 'submitted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(reference, String(form.note || '').trim(), imageUrl || null, id).run()
   return c.redirect('/customer/balance')
 })
@@ -2621,9 +2639,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   let inspectionSnapshot: Record<string, any> = {}
   try { inspectionSnapshot = JSON.parse(beforeInspection?.snapshot_json || '{}') } catch (_) { }
   let damagePhotos = ''
-  if (String(form.damagePhotos || '').trim()) {
-    try { damagePhotos = validateHostedImageUrls(form.damagePhotos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
-  }
+  try { damagePhotos = (await resolveImageUrls(form.damagePhotoFiles, form.damagePhotos, c, 'rent/damage-photos', 5)).join('\n') } catch (error: any) { return c.text(error.message, 400) }
   if (damageDescription && !damagePhotos) return c.text('记录损坏时必须提供至少一张损坏照片链接', 400)
   try {
     await refundUnusedRentalDays(c, user, order, now.slice(0, 10))
@@ -3186,7 +3202,8 @@ app.post('/customer/orders/:id/bank-transfer-proof', async (c) => {
   const reference = String(form.referenceNumber || '').trim().slice(0, 100)
   const note = String(form.note || '').trim().slice(0, 500)
   let proofImageUrl = ''
-  try { proofImageUrl = validateHostedImageUrls(form.imageUrl, 1)[0] } catch (error: any) { return c.text(error.message, 400) }
+  try { proofImageUrl = (await resolveImageUrls(form.imageFile, form.imageUrl, c, 'rent/payment-proofs', 1))[0] || '' } catch (error: any) { return c.text(error.message, 400) }
+  if (!proofImageUrl) return c.text('请上传付款凭证图片', 400)
   if (!reference) return c.text('请填写付款 Reference', 400)
   const isAdjustment = String(form.priceAdjustment || '') === '1'
   const isDepositProof = String(form.depositProof || '') === '1'
@@ -5123,7 +5140,7 @@ app.get('/admin/settings', async (c) => {
     return c.redirect('/login')
   }
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), Boolean(c.env.TALLY_WEBHOOK_SECRET), await getDeliveryConfigSummary(c)))
+  return c.html(pages.renderAdminSettings(user, await getStripeConfigSummary(c), await getEmailConfigSummary(c), await getNotifyChannelsSummary(c), [], await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), Boolean(c.env.TALLY_WEBHOOK_SECRET), await getDeliveryConfigSummary(c), await getCloudinaryConfigSummary(c)))
 })
 
 app.get('/admin/feedback-rewards', async (c) => {

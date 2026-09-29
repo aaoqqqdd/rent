@@ -100,16 +100,22 @@ npm run deploy
 
 ### 配置加密主密钥
 
-Stripe Secret Key 和 Webhook Signing Secret 会使用 AES-GCM 加密后存入 D1。生产环境必须设置独立的加密主密钥：
+Stripe、Cloudinary 以及其他后台密钥会使用 AES-GCM 加密后存入 D1。生产环境必须设置独立的加密主密钥：
 
 ```bash
 openssl rand -base64 32
 npx wrangler secret put SETTINGS_ENCRYPTION_KEY
 ```
 
-请安全备份该值。主密钥丢失后，已有的 Stripe 加密配置无法恢复，需要清除并重新填写。
+请安全备份该值。主密钥丢失后，已有的加密配置无法恢复，需要清除并重新填写。
 
 不要将 `.dev.vars`、Stripe 密钥、Cloudflare API Token 或 `SETTINGS_ENCRYPTION_KEY` 提交到版本控制。
+
+### 配置图片上传（Cloudinary Free）
+
+付款凭证和设备损坏照片通过 Worker 服务端上传到 Cloudinary，D1 只保存返回的 HTTPS 图片地址。请在 Cloudinary 控制台的 API Keys 页面创建凭证，然后登录管理员后台的 `/admin/settings`，在「Cloudinary 图片上传」中填写 Cloud Name、API Key 和 API Secret。密钥会使用 `SETTINGS_ENCRYPTION_KEY` 加密保存；旧部署也可以继续使用 `CLOUDINARY_CLOUD_NAME`、`CLOUDINARY_API_KEY` 和 `CLOUDINARY_API_SECRET` Wrangler Secrets 作为回退。
+
+应用限制单张图片不超过 5MB，仅接受 JPG、PNG 和 WebP。旧的公开图片链接仍可作为兼容输入，但新页面默认使用文件上传。
 
 ### 管理员配送管理
 
