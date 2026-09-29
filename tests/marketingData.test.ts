@@ -6,6 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { renderAdminMarketingData } from '../src/pages/admin/marketingData'
+import { renderAdminMarketingEmails } from '../src/pages/admin/marketingEmails'
 
 test('marketing data page shows opted-out customers and campaign delivery metrics', () => {
   const html = renderAdminMarketingData({ id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }, {
@@ -18,4 +19,13 @@ test('marketing data page shows opted-out customers and campaign delivery metric
   assert.match(html, /opted@example.com/)
   assert.match(html, /春季活动/)
   assert.match(html, /90\.0%/)
+})
+
+test('marketing page includes Tally feedback and rewards settings', () => {
+  const html = renderAdminMarketingEmails({ id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }, {
+    templates: [], campaigns: [], coupons: [], customers: [], optedOutCount: 0,
+  })
+  assert.match(html, /Tally 客户反馈与奖励/)
+  assert.match(html, /\/admin\/marketing\/feedback-settings/)
+  assert.match(html, /反馈奖励记录/)
 })

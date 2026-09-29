@@ -13,7 +13,7 @@ import { getSystemSettings } from '../settings/systemSettings'
 import { resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from '../notifyChannels'
 import type { EmailAttachment } from '../notifyChannels'
 import { buildPickupQrPayload } from '../lib/pickupQr'
-import { buildReceiptPdf, bytesToBase64 } from './receiptPdf'
+import { buildReceiptPdf, bytesToBase64, DEFAULT_RECEIPT_PDF_TEMPLATE } from './receiptPdf'
 
 const STAFF_ROLES = new Set(['ADMIN', 'MANAGER', 'STAFF'])
 
@@ -431,12 +431,32 @@ async function getPaymentEmailContext(c: Context, order: any, contract?: { contr
 }
 
 export async function buildTaxInvoiceDocument(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<TaxInvoiceDocument | null> {
+  return buildFinancialDocument(c, order, contract, 'tax-invoice')
+}
+
+export async function buildPaymentReceiptDocument(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<TaxInvoiceDocument | null> {
+  return buildFinancialDocument(c, order, contract, 'payment-receipt')
+}
+
+async function buildFinancialDocument(c: Context, order: any, contract: { contractNumber?: string } | null | undefined, kind: 'tax-invoice' | 'payment-receipt'): Promise<TaxInvoiceDocument | null> {
   const context = await getPaymentEmailContext(c, order, contract)
   if (!context) return null
   const invoice = await c.env.RENT.prepare("SELECT * FROM invoices WHERE order_id = ? AND type = 'invoice' ORDER BY issued_at DESC LIMIT 1").bind(order.id).first() as any
   if (!invoice) return null
   const payment = await c.env.RENT.prepare("SELECT paid_at, payment_method, payment_provider, transaction_id, stripe_payment_intent_id, square_payment_id FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
-  const documentNumber = String(invoice.invoice_number || invoice.receipt_number || order.orderNo || order.id)
+  const documentNumber = kind === 'payment-receipt'
+    ? String(invoice.receipt_number || invoice.invoice_number || order.orderNo || order.id)
+    : String(invoice.invoice_number || invoice.receipt_number || order.orderNo || order.id)
+  const template = kind === 'payment-receipt'
+    ? {
+      ...DEFAULT_RECEIPT_PDF_TEMPLATE,
+      title: 'PAYMENT RECEIPT',
+      documentNumberLabel: 'RECEIPT NO.',
+      invoiceMessage: 'Payment received for your rental order.',
+      thankYouText: 'Thank you for your payment.',
+      recordNote: 'Please keep this payment receipt for your records.',
+    }
+    : getSystemSettings().taxInvoiceTemplate
   const pdf = buildReceiptPdf({
     companyName: String(context.companyDetails.name || 'PC Rental'),
     companyAbn: String(context.companyDetails.abn || ''),
@@ -446,6 +466,7 @@ export async function buildTaxInvoiceDocument(c: Context, order: any, contract?:
     customerName: String(context.customer?.name || ''),
     customerEmail: context.email,
     customerPhone: String(context.customer?.phone || ''),
+    customerAddress: String(safeJsonParse<any>((contract as any)?.contract_data)?.customer_address || order.deliveryAddress || ''),
     orderNumber: String(order.orderNo || order.id),
     contractNumber: String(contract?.contractNumber || ''),
     documentNumber,
@@ -466,7 +487,7 @@ export async function buildTaxInvoiceDocument(c: Context, order: any, contract?:
     totalAmount: Number(invoice.total_amount || order.totalAmount || 0),
     currency: String(invoice.currency || 'AUD'),
     documentId: String(invoice.id || ''),
-    template: getSystemSettings().taxInvoiceTemplate,
+    template,
   })
   return {
     invoice,
@@ -480,7 +501,11 @@ function taxInvoiceAttachment(document: TaxInvoiceDocument): EmailAttachment {
   return { filename: `tax-invoice-${document.documentNumber}.pdf`, content: bytesToBase64(document.pdf), contentType: 'application/pdf' }
 }
 
-// 「付款成功」邮件：套用后台可编辑的 payment_completed 模板，并附加 A4 Tax Invoice PDF。
+function paymentReceiptAttachment(document: TaxInvoiceDocument): EmailAttachment {
+  return { filename: `payment-receipt-${document.documentNumber}.pdf`, content: bytesToBase64(document.pdf), contentType: 'application/pdf' }
+}
+
+// 「付款成功」邮件：套用后台可编辑的 payment_completed 模板，并附加独立的付款收据 PDF。
 export async function sendPaymentCompletedEmail(c: Context, order: any, contract?: { contractNumber?: string } | null): Promise<void> {
   const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) return
@@ -492,10 +517,10 @@ export async function sendPaymentCompletedEmail(c: Context, order: any, contract
   const html = renderEmailNotificationHtml(subject, context.fill(String(template.body || '')), context.vars.company_name, template.theme_color || '#f0a35b')
   let attachments: EmailAttachment[] = []
   try {
-    const document = await buildTaxInvoiceDocument(c, order, contract)
-    if (document) attachments = [taxInvoiceAttachment(document)]
+    const document = await buildPaymentReceiptDocument(c, order, contract)
+    if (document) attachments = [paymentReceiptAttachment(document)]
   } catch (error: any) {
-    console.error('Tax invoice PDF generation failed:', error?.message || error)
+    console.error('Payment receipt PDF generation failed:', error?.message || error)
   }
   await sendTransactionalEmail(c, { to: context.email, subject, text: sanitizePlainText(`您好 ${context.vars.customer_name}：您的订单 ${context.vars.order_number} 已完成付款。`, 2000), html, attachments })
 }

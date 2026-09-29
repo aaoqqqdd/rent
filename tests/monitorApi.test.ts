@@ -91,3 +91,13 @@ test('same-host POSTs remain valid when TLS terminates before the Worker', async
   assert.equal(crossSiteRequest.status, 403)
   assert.equal(await crossSiteRequest.text(), 'Invalid request origin')
 })
+
+test('same-host POSTs use the client-facing Host header behind a proxy', async () => {
+  const env = { RENT: {} } as any
+  const proxiedRequest = await worker.fetch(new Request('https://internal-worker.example/admin/email-templates', {
+    method: 'POST',
+    headers: { Host: 'rent.example', Origin: 'https://rent.example', 'Sec-Fetch-Site': 'same-origin' },
+  }), env)
+
+  assert.notEqual(proxiedRequest.status, 403)
+})

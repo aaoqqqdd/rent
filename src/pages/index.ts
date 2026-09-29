@@ -66,6 +66,7 @@ export * from './admin/feedbackGiftCards';
 export * from './admin/feedbackRewards';
 export * from './admin/templates';
 export * from './admin/emailTemplates';
+export * from './admin/inAppNotificationTemplates';
 export * from './admin/marketingEmails';
 export * from './admin/marketingData';
 export * from './admin/notificationSettings';

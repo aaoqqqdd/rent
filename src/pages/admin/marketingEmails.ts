@@ -1,4 +1,4 @@
-import { buildLayout, sanitizePlainText } from '../../site'
+import { buildLayout, getSystemSettings, sanitizePlainText } from '../../site'
 
 const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x] || x))
 
@@ -86,6 +86,26 @@ function composeForm(templates: any[], coupons: any[], customers: any[]): string
   })();</script>`
 }
 
+function feedbackRewardsSettings(): string {
+  const settings = getSystemSettings()
+  const rewards = settings.feedbackRewards || { enabled: false, rewardType: 'BALANCE', balanceAmount: 5, balanceAmountMin: 5, balanceAmountMax: 5, couponDiscountType: 'fixed', couponDiscountValue: 5, couponDiscountValueMin: 5, couponDiscountValueMax: 5, couponMinimumOrderAmount: 0, couponExpiresDays: 30 }
+  const escapeAttribute = (value: unknown) => esc(value)
+  return `<section class="panel" id="feedbackRewards"><div class="section-title"><div><p class="section-code">TALLY / CUSTOMER INSIGHTS</p><h3>Tally 客户反馈与奖励</h3><p>通过反馈收集客户意见，并以余额、优惠码或礼品卡回馈参与者。</p></div><div class="record-actions"><a class="button button-sm button-secondary" href="/admin/feedback-rewards">奖励记录</a><a class="button button-sm button-secondary" href="/admin/feedback-gift-cards">礼品卡库存</a></div></div>
+  <form id="feedbackRewardsForm" class="form-grid">
+    <div style="grid-column:1/-1"><p class="form-text">请在 Tally 的 Share → Embed 中复制 <code>https://tally.so/embed/...</code> 地址。反馈表单必须添加名为 <code>feedbackToken</code> 的 Hidden field，并在 Tally 后台把 Webhook 地址设为 <code>/webhooks/tally</code>。Webhook 密钥由环境变量 <code>TALLY_WEBHOOK_SECRET</code> 管理。</p></div>
+    <div style="grid-column:1/-1"><label class="form-label" for="tallyFormUrl">Tally Embed URL</label><input class="form-control" type="url" id="tallyFormUrl" value="${escapeAttribute(settings.tallyFormUrl)}" placeholder="https://tally.so/embed/xxxxxxxx"><small class="form-text">保存后访问 <a href="/feedback" target="_blank" rel="noopener">/feedback</a> 预览（需已登录正式客户账号）。</small></div>
+    <div class="checkbox-group" style="grid-column:1/-1"><input type="checkbox" id="feedbackRewardEnabled" ${rewards.enabled ? 'checked' : ''}><label for="feedbackRewardEnabled">提交反馈后自动发放奖励</label></div>
+    <div class="form-group"><label class="form-label" for="feedbackRewardType">奖励类型</label><select class="form-control" id="feedbackRewardType"><option value="BALANCE" ${rewards.rewardType === 'BALANCE' ? 'selected' : ''}>账户余额</option><option value="COUPON" ${rewards.rewardType === 'COUPON' ? 'selected' : ''}>一次性优惠码</option><option value="GIFT_CARD" ${rewards.rewardType === 'GIFT_CARD' ? 'selected' : ''}>外部礼品卡兑换码</option></select></div>
+    <div class="form-group"><label class="form-label" for="feedbackBalanceAmountMin">余额奖励范围（AUD）</label><div class="grid grid-2"><input class="form-control" id="feedbackBalanceAmountMin" type="number" min="0.01" max="10000" step="0.01" value="${rewards.balanceAmountMin ?? rewards.balanceAmount}" placeholder="最低金额"><input class="form-control" id="feedbackBalanceAmountMax" type="number" min="0.01" max="10000" step="0.01" value="${rewards.balanceAmountMax ?? rewards.balanceAmount}" placeholder="最高金额"></div></div>
+    <div class="form-group"><label class="form-label" for="feedbackCouponDiscountType">优惠码类型</label><select class="form-control" id="feedbackCouponDiscountType"><option value="fixed" ${rewards.couponDiscountType === 'fixed' ? 'selected' : ''}>固定金额</option><option value="percent" ${rewards.couponDiscountType === 'percent' ? 'selected' : ''}>百分比</option></select></div>
+    <div class="form-group"><label class="form-label" for="feedbackCouponDiscountValueMin">优惠值范围</label><div class="grid grid-2"><input class="form-control" id="feedbackCouponDiscountValueMin" type="number" min="0.01" max="10000" step="0.01" value="${rewards.couponDiscountValueMin ?? rewards.couponDiscountValue}" placeholder="最低优惠"><input class="form-control" id="feedbackCouponDiscountValueMax" type="number" min="0.01" max="10000" step="0.01" value="${rewards.couponDiscountValueMax ?? rewards.couponDiscountValue}" placeholder="最高优惠"></div></div>
+    <div class="form-group"><label class="form-label" for="feedbackCouponMinimumOrderAmount">最低使用金额（AUD）</label><input class="form-control" id="feedbackCouponMinimumOrderAmount" type="number" min="0" max="1000000" step="0.01" value="${rewards.couponMinimumOrderAmount || 0}"><small class="form-text">填 0 表示不限制最低订单金额。</small></div>
+    <div class="form-group"><label class="form-label" for="feedbackCouponExpiresDays">优惠码有效期（天）</label><input class="form-control" id="feedbackCouponExpiresDays" type="number" min="1" max="365" step="1" value="${rewards.couponExpiresDays}"></div>
+    <div class="form-actions form-actions-right" style="grid-column:1/-1"><button class="button button-primary" type="submit">保存反馈与奖励设置</button></div>
+  </form>
+  <script>(()=>{const form=document.getElementById('feedbackRewardsForm');if(!form||form.dataset.ready==='true')return;form.dataset.ready='true';const value=id=>document.getElementById(id)?.value||'';form.addEventListener('submit',async event=>{event.preventDefault();const button=form.querySelector('button[type="submit"]');if(button)button.disabled=true;try{const response=await fetch('/admin/marketing/feedback-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tallyFormUrl:value('tallyFormUrl'),feedbackRewards:{enabled:document.getElementById('feedbackRewardEnabled')?.checked||false,rewardType:value('feedbackRewardType'),balanceAmountMin:Number(value('feedbackBalanceAmountMin')||0),balanceAmountMax:Number(value('feedbackBalanceAmountMax')||0),couponDiscountType:value('feedbackCouponDiscountType'),couponDiscountValueMin:Number(value('feedbackCouponDiscountValueMin')||0),couponDiscountValueMax:Number(value('feedbackCouponDiscountValueMax')||0),couponMinimumOrderAmount:Number(value('feedbackCouponMinimumOrderAmount')||0),couponExpiresDays:Number(value('feedbackCouponExpiresDays')||30)}})});const data=await response.json().catch(()=>({}));if(!response.ok||!data.success)throw new Error(data.error||'保存失败');alert('Tally 客户反馈与奖励已保存。');window.location.reload();}catch(error){alert('保存失败: '+(error instanceof Error?error.message:'请稍后重试'));}finally{if(button)button.disabled=false;}});})();</script></section>`
+}
+
 function statusLabel(status: string): string {
   return ({ SENDING: '发送中', SENT: '已发送', FAILED: '失败' } as Record<string, string>)[status] || status
 }
@@ -113,6 +133,7 @@ export function renderAdminMarketingEmails(user: any, data: { templates: any[]; 
   const optedOutNote = data.optedOutCount ? `<p class="form-text">另有 ${data.optedOutCount} 位客户已取消订阅营销邮件，未在下方收件人列表中显示。<a href="/admin/marketing-emails/data">查看营销数据</a></p>` : `<p class="form-text"><a href="/admin/marketing-emails/data">查看营销数据和退订客户</a></p>`
   const body = `<div class="entity-header"><div class="identity-strip mono"><span>MARKETING / CAMPAIGNS</span><span>${data.customers.length} ACTIVE CUSTOMERS</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER OUTREACH</p><h2>营销邮件</h2><p>创建可复用的营销模板，向客户群发促销邮件，并可选择性地为每位收件人生成专属一次性优惠码。</p>${optedOutNote}</div></div></div>
   ${composeForm(data.templates, data.coupons, data.customers)}
+  ${feedbackRewardsSettings()}
   <div class="panel"><div class="section-title"><h3>营销模板库</h3><span class="section-note">共 ${data.templates.length} 个</span></div>${templateManager(data.templates)}</div>
   ${history(data.campaigns)}`
   return buildLayout('营销邮件 - 电脑租赁管理系统', body, user)

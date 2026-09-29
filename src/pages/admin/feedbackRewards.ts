@@ -31,7 +31,7 @@ export function renderAdminFeedbackRewards(user: any, rewards: any[] = []) {
     <div class="stat-card"><h3>全部记录</h3><div class="value">${rewards.length}</div></div>
   </div>
   <div class="panel">
-    <div class="section-title"><h3>反馈奖励记录</h3><a class="button button-sm button-secondary" href="/admin/settings">前往配置</a></div>
+    <div class="section-title"><h3>反馈奖励记录</h3><a class="button button-sm button-secondary" href="/admin/marketing-emails#feedbackRewards">前往配置</a></div>
     ${rows ? `<div class="table-wrapper"><table><thead><tr><th>客户</th><th>奖励类型</th><th>状态</th><th>金额</th><th>失败原因</th><th>发放时间</th><th>提交时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty-state">暂无反馈奖励记录</div>'}
   </div>`
   return buildLayout('客户反馈奖励记录 - PC Rental', body, user)
