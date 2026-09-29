@@ -12,6 +12,7 @@ import { squareRequest } from '../square'
 import { releaseCouponForOrder } from './coupons'
 import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
 import { computeOrderSettlementStatus } from '../domain/orderSettlement'
+import { isPickupHoldExpired } from '../domain/pickupHold'
 
 function cents(value: number): number {
   return Math.round(Number(value) * 100)
@@ -1419,9 +1420,10 @@ export async function cancelPendingPaymentOrderByCustomer(c: Context, user: any,
   await revokeReferralRewardForOrder(c, order.id, '客户取消待支付订单')
 }
 
-export async function cancelAndRefund(c: Context, admin: any, orderId: string, reason?: string): Promise<Response> {
+export async function cancelAndRefund(c: Context, admin: any, orderId: string, reason?: string, options: { deductionAmount?: number; deductionReason?: string; allowedStatuses?: string[] } = {}): Promise<Response> {
   const order = await getOrderById(c, orderId)
   if (!order) return c.text('订单不存在', 404)
+  if (options.allowedStatuses?.length && !options.allowedStatuses.includes(String(order.status))) return c.text('订单状态已变化，不能自动取消', 409)
   const mayReleasePendingAuthorization = order.status === 'pending_payment' && String((order as any).deposit_payment_mode || '') === 'PREAUTH'
   const canCancelBeforeHandover = !order.handover_completed_at && !['cancelled', 'completed', 'returned', 'pending_return'].includes(String(order.status))
   if (!canCancelBeforeHandover && !mayReleasePendingAuthorization) return c.text('只有尚未交付的订单可取消', 409)
@@ -1450,14 +1452,17 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string, r
     return c.redirect(`/admin/orders/${order.id}`, 303)
   }
   if (channel === 'bank_transfer' && (!order.refundBsb || !order.refundAccountNumber || !order.refundAccountName)) return c.text('订单缺少银行退款账户信息', 409)
-  const refundAmount = Number(payment.amount || 0)
-  if (!Number.isFinite(refundAmount) || refundAmount <= 0) return c.text('原始付款金额无效，不能自动退款', 409)
-  const refundedProcessingFee = Math.max(0, Number(payment.processing_fee || 0))
+  const refundableAmount = Number(payment.amount || 0)
+  if (!Number.isFinite(refundableAmount) || refundableAmount <= 0) return c.text('原始付款金额无效，不能自动退款', 409)
+  const deductionAmount = Number(Math.min(refundableAmount, Math.max(0, Number(options.deductionAmount || 0))).toFixed(2))
+  const refundAmount = Number((refundableAmount - deductionAmount).toFixed(2))
+  const deductionReason = deductionAmount > 0 ? String(options.deductionReason || '取消订单操作手续费') : null
+  const refundedProcessingFee = Math.min(refundAmount, Math.max(0, Number(payment.processing_fee || 0)))
 
   if (channel === 'bank_transfer') {
     await c.env.RENT.batch([
-      c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, ?, 'cancellation', ?, ?, 0, 'pending', ?, 'bank_transfer', ?, ?, ?, '租前取消，等待管理员银行转账')`)
-        .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, refundAmount, refundAmount, admin.id, order.refundBsb, order.refundAccountNumber, order.refundAccountName),
+      c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, deduction_amount, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name, deduction_reason) VALUES (?, ?, ?, ?, 'cancellation', ?, ?, ?, 'pending', ?, 'bank_transfer', ?, ?, ?, ?)`)
+        .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, refundableAmount, refundAmount, deductionAmount, admin.id, order.refundBsb, order.refundAccountNumber, order.refundAccountName, deductionReason || '租前取消，等待管理员银行转账'),
       c.env.RENT.prepare("UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(payment.id),
       c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
       c.env.RENT.prepare("UPDATE contracts SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE orderId = ? AND status IN ('draft', 'pending_sign', 'signed')").bind(order.id),
@@ -1465,12 +1470,12 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string, r
     ])
     await releaseCouponForOrder(c, order.id)
     await revokeReferralRewardForOrder(c, order.id, '订单取消并退款')
-    await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已取消，退款将通过银行转账处理${reason ? `，原因：${reason}` : ''}。`, orderId: order.id })
+    await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已取消，退款将通过银行转账处理${deductionAmount ? `，已扣除 AUD ${deductionAmount.toFixed(2)} 操作手续费` : ''}${reason ? `，原因：${reason}` : ''}。`, orderId: order.id })
     return c.redirect(`/admin/orders/${order.id}`, 303)
   }
 
   let stripeRefundId: string | null = null
-  if (channel === 'stripe') {
+  if (channel === 'stripe' && refundAmount > 0) {
     const params = new URLSearchParams({ payment_intent: payment.stripe_payment_intent_id, amount: String(cents(refundAmount)), 'metadata[order_id]': order.id, 'metadata[type]': 'cancellation' })
     const refund = await stripeRequest(c, 'refunds', params, `cancellation-refund-${order.id}`)
     if (refund.status !== 'succeeded') return c.text('Stripe 全额退款尚未成功，请稍后重试', 502)
@@ -1478,8 +1483,8 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string, r
   }
 
   await c.env.RENT.batch([
-    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'cancellation', ?, ?, ?, 0, ?, 'succeeded', ?, ?, ?, ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, refundAmount, refundAmount, refundedProcessingFee, stripeRefundId, admin.id, channel, null, null, null),
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_reason, stripe_refund_id, status, processed_by, refund_method, refund_bsb, refund_account_number, refund_account_name) VALUES (?, ?, ?, ?, 'cancellation', ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?, ?)`)
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, refundableAmount, refundAmount, refundedProcessingFee, deductionAmount, deductionReason, stripeRefundId, admin.id, channel, null, null, null),
     ...(channel === 'balance' ? [c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(refundAmount, order.userId)] : []),
     c.env.RENT.prepare("UPDATE payments SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(payment.id),
     c.env.RENT.prepare("UPDATE orders SET status = 'cancelled', updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(order.id),
@@ -1488,13 +1493,36 @@ export async function cancelAndRefund(c: Context, admin: any, orderId: string, r
   ])
   await releaseCouponForOrder(c, order.id)
   await revokeReferralRewardForOrder(c, order.id, '订单取消并退款')
-  if (channel === 'balance') await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '取消订单全额退款', admin.id)
-  await issueCreditNoteSafely(c, order.id, Math.max(0, refundAmount - refundedProcessingFee), refundedProcessingFee, `cancellation-${nanoid(12)}`, 'cancelAndRefund')
+  if (channel === 'balance' && refundAmount > 0) await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', deductionAmount ? '取消订单退款（已扣操作手续费）' : '取消订单全额退款', admin.id)
+  if (refundAmount > 0) await issueCreditNoteSafely(c, order.id, Math.max(0, refundAmount - refundedProcessingFee), refundedProcessingFee, `cancellation-${nanoid(12)}`, 'cancelAndRefund')
   await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status, deviceId: order.deviceId }), JSON.stringify({ status: 'cancelled', deviceReleased: true }), reason || '取消订单并退款', admin.id).run()
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-  if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -refundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '取消订单全额退款', createdBy: admin.id, metadata: { channel, refundedProcessingFee } })
-  await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已取消并退款 ${refundAmount.toFixed(2)} AUD${reason ? `，原因：${reason}` : ''}。`, orderId: order.id })
+  if (refund && refundAmount > 0) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -refundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: deductionAmount ? '取消订单退款（已扣操作手续费）' : '取消订单全额退款', createdBy: admin.id, metadata: { channel, refundedProcessingFee, deductionAmount } })
+  await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'refund_completed', title: refundAmount > 0 ? '订单已取消并退款' : '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已取消${refundAmount > 0 ? `并退款 ${refundAmount.toFixed(2)} AUD` : ''}${deductionAmount ? `，已扣除 AUD ${deductionAmount.toFixed(2)} 操作手续费` : ''}${reason ? `，原因：${reason}` : ''}。`, orderId: order.id })
   return c.redirect(`/admin/orders/${order.id}`, 303)
+}
+
+export async function expireMissedPickupOrders(c: Context, now = new Date()): Promise<{ expired: number; failed: number }> {
+  const administrator = await c.env.RENT.prepare("SELECT id FROM users WHERE role = 'ADMIN' AND COALESCE(status, 'active') = 'active' ORDER BY created_at ASC LIMIT 1").first() as any
+  if (!administrator?.id) throw new Error('没有可用于处理逾期取货退款的管理员账户')
+  const candidates = ((await c.env.RENT.prepare("SELECT * FROM orders WHERE status IN ('paid', 'pending_pickup') AND handover_completed_at IS NULL AND COALESCE(deliveryMethod, 'Pickup') <> 'Delivery'").all()).results || []) as any[]
+  let expired = 0
+  let failed = 0
+  for (const order of candidates) {
+    if (!isPickupHoldExpired(order, now)) continue
+    const response = await cancelAndRefund(c, administrator, String(order.id), '超过预约取货时间 2 小时，设备已释放', {
+      deductionAmount: 25,
+      deductionReason: '超过预约取货时间 2 小时操作手续费',
+      allowedStatuses: ['paid', 'pending_pickup'],
+    })
+    if (response.status >= 400) {
+      failed++
+      await logError(c, 'ERROR', '自动取消逾期未取货订单失败', new Error(`退款响应 ${response.status}`), { orderId: order.id })
+    } else {
+      expired++
+    }
+  }
+  return { expired, failed }
 }
 
 // 补救：订单已经进入 cancelled，但当初的自动退款（Stripe/余额）没有成功写入
@@ -1546,7 +1574,7 @@ export async function retryCancellationRefund(c: Context, admin: any, orderId: s
   await c.env.RENT.prepare("INSERT INTO order_change_history (id, order_id, change_type, before_json, after_json, reason, changed_by) VALUES (?, ?, 'CANCELLATION', ?, ?, ?, ?)").bind(`och-${nanoid(12)}`, order.id, JSON.stringify({ status: order.status }), JSON.stringify({ status: 'cancelled', refundRetried: true }), '重试取消订单退款', admin.id).run()
   const refund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'cancellation' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   if (refund) await recordFinancialLedgerEntry(c, { entryType: 'REFUND', amount: -refundAmount, customerId: order.userId, orderId: order.id, sourceType: 'PAYMENT_REFUND', sourceId: refund.id, description: '取消订单全额退款（重试）', createdBy: admin.id, metadata: { channel, refundedProcessingFee } })
-  await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'rental_cancelled', title: '订单已退款', message: `您的订单 ${order.orderNo || order.id} 已退款 ${refundAmount.toFixed(2)} AUD。`, orderId: order.id })
+  await createNotification(c, { recipientId: order.userId, senderId: admin.id, type: 'refund_completed', title: '订单已退款', message: `您的订单 ${order.orderNo || order.id} 已退款 ${refundAmount.toFixed(2)} AUD。`, orderId: order.id })
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
 

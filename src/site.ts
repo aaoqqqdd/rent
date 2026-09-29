@@ -1685,7 +1685,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     '/staff/contracts/new': '+', '/staff/contracts?status=pending_sign': '✍', '/staff/inspections': '◈', '/staff/mobile/scan': '▦', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
     '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/tax-invoice-template': '▣', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
+    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/in-app-notification-templates': '▤', '/admin/tax-invoice-template': '▣', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
     '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/referrals': 'gift',
     '/admin/order-review': '⚑', '/admin/orders/balance-topups': '↥', '/admin/feedback-rewards': '✦', '/admin/feedback-gift-cards': 'gift'
   }
@@ -1833,7 +1833,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('营销增长', [['/admin/coupons', '优惠码管理'], ['/admin/marketing-emails', '营销邮件'], ['/admin/marketing-emails/data', '营销数据'], ['/admin/referrals', '推荐奖励管理'], ['/admin/feedback-rewards', '反馈奖励记录'], ['/admin/feedback-gift-cards', '礼品卡库存']])}
-            ${renderNavGroup('系统设置', [['/admin/email-templates', '邮件通知模板'], ['/admin/tax-invoice-template', 'Tax Invoice PDF 模板'], ['/admin/settings', '系统设置'], ['/admin/api-settings', 'API 设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
+            ${renderNavGroup('系统设置', [['/admin/email-templates', '邮件通知模板'], ['/admin/in-app-notification-templates', '站内通知模板'], ['/admin/tax-invoice-template', 'Tax Invoice PDF 模板'], ['/admin/settings', '系统设置'], ['/admin/api-settings', 'API 设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}
           ` : ''}
         </div>
         <div class="sidebar-footer">

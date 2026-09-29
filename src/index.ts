@@ -125,8 +125,9 @@ import { getSquareConfigSummary } from './square'
 import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteKey } from './turnstile'
 import { getDeliveryConfigSummary } from './deliveryConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
+import { ensureInAppNotificationTemplates } from './services/inAppNotificationTemplates'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer, expireMissedPickupOrders } from './actions/stripePayments'
 import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
@@ -712,8 +713,11 @@ app.use('*', async (c, next) => {
     const hasSessionCookie = /(?:^|;\s*)session=[^;]+/.test(c.req.header('cookie') || '')
     let originValid = true
     if (origin) {
-      try { originValid = new URL(origin).origin === new URL(c.req.url).origin } catch { originValid = false }
-    } else if (hasSessionCookie && fetchSite !== 'same-origin' && !sameOriginAjax) {
+      // TLS may terminate at a proxy before the request reaches the Worker.
+      // Compare the authority, including any non-default port, so a same-site
+      // HTTPS browser request forwarded as HTTP is not rejected.
+      try { originValid = new URL(origin).host === new URL(c.req.url).host } catch { originValid = false }
+    } else if (hasSessionCookie && fetchSite !== 'same-origin') {
       // A browser session without an Origin header is not verifiably same
       // origin. Reject it rather than accepting a forged cross-site form.
       originValid = false
@@ -821,6 +825,10 @@ app.get('/feedback', async (c) => {
     ? await createTallyFeedbackToken(String(c.env.SETTINGS_ENCRYPTION_KEY || ''), user.id)
     : ''
   return c.html(pages.renderTallyForm(getSystemSettings().tallyFormUrl, feedbackToken))
+})
+
+app.get('/feedback/thanks', (c) => {
+  return c.html(pages.renderTallyFeedbackThanks())
 })
 
 app.post('/login', async (c) => {
@@ -1630,15 +1638,15 @@ app.get('/notifications', async (c) => {
   // 通告历史单独放在 /admin/announcements，通知中心只显示收件通知。
   const sentAnnouncements: any[] = []
   const recipients = user.role === 'ADMIN' || user.role === 'STAFF' ? (await getUsers(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive') : []
-  if (user.role === 'ADMIN' || user.role === 'STAFF') await c.env.RENT.prepare('CREATE TABLE IF NOT EXISTS email_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)').run()
-  const emailTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM email_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
-  const emailTemplateOptions = `<option value="custom">自定义通知</option>${emailTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
+  if (user.role === 'ADMIN' || user.role === 'STAFF') await ensureInAppNotificationTemplates(c)
+  const inAppNotificationTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM in_app_notification_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
+  const inAppNotificationTemplateOptions = `<option value="custom">自定义通知</option>${inAppNotificationTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
   const recipientOptions = recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')
   const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 HTML）</label><textarea class="form-control html-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 HTML，自定义通知时必填）</label><textarea class="form-control html-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount'),template=document.getElementById('notificationTemplate'),title=document.getElementById('notificationTitle'),message=document.getElementById('notificationMessage');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};const syncTemplateFields=()=>{const custom=!template||template.value==='custom';[title,message].forEach(field=>{if(!field)return;field.required=custom;field.setAttribute('aria-required',String(custom));});};search.addEventListener('input',update);select.addEventListener('change',update);template?.addEventListener('change',syncTemplateFields);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();syncTemplateFields();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" onsubmit="return confirm('确定删除这条通告及其历史记录吗？')"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<a class="notification-item ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><div><strong>${sanitizePlainText(item.title, 200)}</strong><div class="notification-message">${renderNotificationMarkdown(notificationListMessage(item))}</div><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div>${item.order_id ? `<span class="button button-sm button-secondary">查看订单</span>` : ''}</a>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
   const pagination = pageCount > 1 ? `<nav class="pagination" aria-label="通知分页">${Array.from({ length: pageCount }, (_, index) => `<a class="button button-sm ${index + 1 === page ? 'button-primary' : 'button-secondary'}" href="/notifications?page=${index + 1}">${index + 1}</a>`).join('')}</nav>` : ''
   const bodyWithAnnouncementExpiry = body.replace('name="message" maxlength="2000" required></textarea>', 'name="message" maxlength="2000" required></textarea><div class="form-group"><label class="form-label" for="announcementExpiresAt">下架日期和时间（选填）</label><input class="form-control" id="announcementExpiresAt" name="expiresAt" type="datetime-local"><small class="form-text">到时间后，所有用户都不会再看到这条通告。</small></div>')
   const bodyWithSendAnchor = bodyWithAnnouncementExpiry.replace('<form method="post" action="/notifications/send" class="panel notification-compose">', '<form id="send-notification" method="post" action="/notifications/send" class="panel notification-compose">')
-  const bodyWithTemplateChoice = bodyWithSendAnchor.replace('<div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>', `<div class="form-group"><label class="form-label" for="notificationTemplate">发送内容</label><select class="form-control" id="notificationTemplate" name="templateId">${emailTemplateOptions}</select></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>`)
+  const bodyWithTemplateChoice = bodyWithSendAnchor.replace('<div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>', `<div class="form-group"><label class="form-label" for="notificationTemplate">发送内容</label><select class="form-control" id="notificationTemplate" name="templateId">${inAppNotificationTemplateOptions}</select><small class="form-text">管理模板：<a href="/admin/in-app-notification-templates">站内通知模板</a></small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label>`)
   const bodyWithArchiveLink = user.role === 'ADMIN' ? bodyWithTemplateChoice.replace('<h3>发布通告</h3>', '<div class="section-title"><h3>发布通告</h3><a class="link-button" href="/admin/announcements">历史通告 →</a></div>') : bodyWithTemplateChoice
   return c.html(buildLayout('通知中心', bodyWithArchiveLink + pagination, user))
 })
@@ -1786,7 +1794,7 @@ app.post('/admin/email-templates/send', async (c) => {
   vars.company_name = vars.company_name || String(companyDetails.name || 'PC Rental')
   vars.company_email = vars.company_email || String(companyDetails.email || '')
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
-  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: fill(template.body) })
+  if (['site', 'both'].includes(channel)) await createNotification(c, { recipientId, senderId: user.id, type: 'manual', title: notificationPlainText(fill(template.subject)), message: fill(template.body), notifyByEmail: false })
   if (['email', 'both'].includes(channel)) {
     const { apiKey, from } = await resolveEmailCredentials(c)
     if (!apiKey || !from) return c.text('尚未配置邮件服务：请在后台「通知渠道」配置 Resend / Brevo / MailerSend 之一，或设置 RESEND_API_KEY / EMAIL_FROM', 503)
@@ -1821,6 +1829,47 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
   if (!id.startsWith('custom_')) return c.text('内置模板不能删除', 400)
   await c.env.RENT.prepare('DELETE FROM email_templates WHERE id = ?').bind(id).run()
   return c.redirect('/admin/email-templates')
+})
+
+app.get('/admin/in-app-notification-templates', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  return c.html(await pages.renderAdminInAppNotificationTemplates(c, user))
+})
+
+app.post('/admin/in-app-notification-templates', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const name = sanitizePlainText(String(form.name || '').trim(), 80)
+  const title = sanitizePlainText(String(form.title || '').trim(), 120)
+  const message = sanitizeRichHtml(String(form.message || '').trim()).slice(0, 10000)
+  if (!name || !title || !message) return c.text('模板名称、通知标题和正文不能为空', 400)
+  await ensureInAppNotificationTemplates(c)
+  await c.env.RENT.prepare('INSERT INTO in_app_notification_templates (id, name, title, message) VALUES (?, ?, ?, ?)').bind(`custom_${nanoid(12)}`, name, title, message).run()
+  return c.redirect('/admin/in-app-notification-templates')
+})
+
+app.post('/admin/in-app-notification-templates/:id', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const form = await c.req.parseBody()
+  const title = sanitizePlainText(String(form.title || '').trim(), 120)
+  const message = sanitizeRichHtml(String(form.message || '').trim()).slice(0, 10000)
+  if (!title || !message) return c.text('通知标题和正文不能为空', 400)
+  await ensureInAppNotificationTemplates(c)
+  await c.env.RENT.prepare('UPDATE in_app_notification_templates SET title = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(title, message, c.req.param('id')).run()
+  return c.redirect('/admin/in-app-notification-templates')
+})
+
+app.post('/admin/in-app-notification-templates/:id/delete', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.redirect('/login')
+  const id = c.req.param('id')
+  if (!id.startsWith('custom_')) return c.text('内置模板不能删除', 400)
+  await ensureInAppNotificationTemplates(c)
+  await c.env.RENT.prepare('DELETE FROM in_app_notification_templates WHERE id = ?').bind(id).run()
+  return c.redirect('/admin/in-app-notification-templates')
 })
 
 async function ensureMarketingEmailTables(db: any): Promise<void> {
@@ -2244,10 +2293,11 @@ app.post('/notifications/send', async (c) => {
   let title = String(form.title || '').trim().slice(0, 120)
   let message = String(form.message || '').trim().slice(0, 1000)
   if (templateId !== 'custom') {
-    const template = await c.env.RENT.prepare('SELECT subject, body FROM email_templates WHERE id = ? AND enabled = 1').bind(templateId).first() as any
+    await ensureInAppNotificationTemplates(c)
+    const template = await c.env.RENT.prepare('SELECT title, message FROM in_app_notification_templates WHERE id = ? AND enabled = 1').bind(templateId).first() as any
     if (!template) return c.text('通知模板不存在或已停用', 400)
-    title = String(template.subject || '').trim().slice(0, 120)
-    message = String(template.body || '').trim().slice(0, 1000)
+    title = String(template.title || '').trim().slice(0, 120)
+    message = String(template.message || '').trim().slice(0, 1000)
   }
   const allowedRecipients = (await getUsers(c)).filter((recipient: any) =>
     recipientIds.includes(recipient.id) &&
@@ -6133,6 +6183,8 @@ export default {
       get: (key: string) => undefined,
       set: () => { },
       req: { url: 'https://scheduled-event' },
+      text: (body: string, status = 200) => new Response(body, { status }),
+      redirect: (url: string, status = 302) => new Response(null, { status, headers: { Location: url } }),
       // Expose getDB function that the site.ts functions expect
       ...(() => {
         const getDB = () => env.RENT
@@ -6142,6 +6194,11 @@ export default {
 
     // Import and run the cleanup function
     const { cleanupExpiredAndCancelledContracts, cleanupExpiredGuestAccounts, cancelExpiredPendingPaymentOrders, notifyOverduePaymentProofs, runDataConsistencyChecks, releaseQualifiedReferralRewards, runMonitoringSweep, runScheduledJob, deliverPendingAgreementUpdates } = await import('./site')
+
+    if (event.cron === '*/15 * * * *') {
+      ctx.waitUntil(runScheduledJob(c, 'expire_missed_pickups', () => expireMissedPickupOrders(c)))
+      return
+    }
 
     // The hourly cron ("0 * * * *") only enforces the 24h unpaid-order
     // cancellation SLA — running the rest of the daily batch (notifications,

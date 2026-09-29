@@ -41,9 +41,10 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     ...getSystemSettings().rentalRules,
     serviceFeeHours: payload.rentalRules?.serviceFeeHours ?? getSystemSettings().rentalRules.serviceFeeHours,
     businessHours: payload.rentalRules?.businessHours ?? getSystemSettings().rentalRules.businessHours,
+    unavailablePickupHours: payload.rentalRules?.unavailablePickupHours ?? getSystemSettings().rentalRules.unavailablePickupHours,
   })
   const serviceFeeRate = Number(payload.rentalRules?.serviceFeeRate ?? getSystemSettings().rentalRules.serviceFeeRate ?? 0.1)
-  if (!hasValidPickupTimeSettings(pickupHours)) throw new Error('服务费时段与营业时段必须依次排列，且每段的结束时间要晚于开始时间')
+  if (!hasValidPickupTimeSettings(pickupHours)) throw new Error('服务费时段与营业时段必须依次排列，且每段结束时间要晚于开始时间')
   if (!Number.isFinite(serviceFeeRate) || serviceFeeRate < 0 || serviceFeeRate > 1) throw new Error('时段服务费比例必须在 0% 到 100% 之间')
   const currentTaxInvoiceTemplate = getSystemSettings().taxInvoiceTemplate
   const taxInvoiceTemplateInput = payload.taxInvoiceTemplate && typeof payload.taxInvoiceTemplate === 'object' ? payload.taxInvoiceTemplate : {}
@@ -126,12 +127,11 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       unavailableDates: Array.isArray(payload.rentalRules?.unavailableDates)
         ? payload.rentalRules.unavailableDates.map((value: unknown) => String(value).trim()).filter((value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)).slice(0, 366)
         : getSystemSettings().rentalRules.unavailableDates,
-      unavailableTimeSlots: payload.rentalRules?.unavailableTimeSlots && typeof payload.rentalRules.unavailableTimeSlots === 'object' && !Array.isArray(payload.rentalRules.unavailableTimeSlots)
-        ? Object.fromEntries(Object.entries(payload.rentalRules.unavailableTimeSlots).filter(([date, slots]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Array.isArray(slots)).slice(0, 366).map(([date, slots]) => [date, (slots as unknown[]).filter(value => ['morning_service', 'morning', 'afternoon', 'evening_service'].includes(String(value))).slice(0, 4)]).filter(([, slots]) => (slots as unknown[]).length > 0))
-        : getSystemSettings().rentalRules.unavailableTimeSlots,
+      unavailableTimeSlots: {},
       serviceFeeHours: pickupHours.serviceFeeHours,
-      serviceFeeRate,
       businessHours: pickupHours.businessHours,
+      unavailablePickupHours: pickupHours.unavailablePickupHours,
+      serviceFeeRate,
       minimumRentalDays: Math.max(1, Math.floor(Number(payload.rentalRules?.minimumRentalDays ?? getSystemSettings().rentalRules.minimumRentalDays) || 1)),
       bufferDays: Math.max(0, Math.floor(Number(payload.rentalRules?.bufferDays ?? getSystemSettings().rentalRules.bufferDays) || 0)),
     },

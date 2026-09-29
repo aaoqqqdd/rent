@@ -9,7 +9,7 @@ import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
 import { decryptSecret } from '../../lib/secretBox';
-import { pickupTimeSlotEndMinutes, pickupTimeSlots, serviceFeeRate } from '../../domain/pickupTimeSlots';
+import { legacyPickupSlot, pickupTimeOptions, pickupTimeSlotEndMinutes, pickupTimeSlots, serviceFeeRate } from '../../domain/pickupTimeSlots';
 
 function isTimeSlotPassed(date: string, slot: string, rentalRules: any): boolean {
   const melbourneDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -18,6 +18,14 @@ function isTimeSlotPassed(date: string, slot: string, rentalRules: any): boolean
   const minutes = (hour === 24 ? 0 : hour) * 60 + Number(parts.find((part) => part.type === 'minute')?.value || 0)
   return date === melbourneDate && minutes >= pickupTimeSlotEndMinutes(slot, rentalRules)
 }
+
+function pickupTimeSelector(rules: any, date: string, id: string, label: string): string {
+  const blocked = rules.unavailableTimeSlots?.[date] || []
+  const times = (mode: 'business' | 'non_business') => pickupTimeOptions(rules, date, mode).filter(time => !blocked.includes(time) && !blocked.includes(legacyPickupSlot(time, rules)) && !isTimeSlotPassed(date, time, rules))
+  return `<div class="form-group pickup-mode-selector" data-pickup-mode-selector data-business='${JSON.stringify(times('business'))}' data-non-business='${JSON.stringify(times('non_business'))}'><label class="form-label" for="${id}Mode">${label}</label><select class="form-control" id="${id}Mode" data-pickup-mode required><option value="">先选择时段类型</option><option value="business">营业时段（免服务费）</option><option value="non_business">非营业时段（需服务费）</option></select><select class="form-control" id="${id}" name="${id}" data-pickup-time disabled required><option value="">请先选择时段类型</option></select></div>`
+}
+
+const pickupTimeSelectorScript = `<script>(()=>{document.querySelectorAll('[data-pickup-mode-selector]').forEach(box=>{const mode=box.querySelector('[data-pickup-mode]'),time=box.querySelector('[data-pickup-time]');mode.addEventListener('change',()=>{const values=JSON.parse(box.dataset[mode.value==='business'?'business':'nonBusiness']||'[]');time.innerHTML=values.length?'<option value="">选择具体时间</option>'+values.map(value=>'<option value="'+value+'">'+value+'</option>').join(''):'<option value="">该时段暂无可选时间</option>';time.disabled=!mode.value||!values.length;});});})();</script>`
 
 export function readContractSignDraft(cookieHeader: string | undefined, token: string): Record<string, string> {
   const encoded = cookieHeader?.match(/(?:^|;\s*)contract_sign_draft=([^;]*)/)?.[1]
@@ -305,19 +313,18 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
     case 3:
       title = `步骤 3/${isWebsiteOrderContract ? 3 : 4}: 电子签名`;
       const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
-      const unavailable = rentalRules.unavailableTimeSlots || {}
-      const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : pickupTimeSlots(rentalRules)
-      const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value) && !isTimeSlotPassed(date, value, rentalRules))
-      const timeSlotFields = `<div class="grid grid-2" style="margin: 20px 0;"><div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}"${value === order.pickupTimeSlot ? ' selected' : ''}>${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}"${value === order.returnTimeSlot ? ' selected' : ''}>${label}</option>`).join('')}</select></div></div>`
+      const timeSlotFields = isDelivery
+        ? `<div class="grid grid-2" style="margin:20px 0"><div class="form-group"><label class="form-label" for="pickupTimeSlot">送货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required><option value="delivery_morning">9:00–12:00</option><option value="delivery_afternoon">13:00–19:00</option></select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required><option value="delivery_morning">9:00–12:00</option><option value="delivery_afternoon">13:00–19:00</option></select></div></div>`
+        : `<div class="grid grid-2" style="margin:20px 0">${pickupTimeSelector(rentalRules, order.startDate, 'pickupTimeSlot', '取货时间')}${pickupTimeSelector(rentalRules, order.endDate, 'returnTimeSlot', '归还时间')}</div>${pickupTimeSelectorScript}`
       content = `<div class="panel">${progressBar}<div class="contract-toolbar"><button class="button button-secondary" type="button" onclick="document.getElementById('esignSignature')?.focus();document.getElementById('signatureCanvas')?.scrollIntoView({behavior:'smooth',block:'center'})">开始签署</button><button class="button button-danger" type="button" onclick="location.href='/contract/sign?token=${token}&step=1'">拒绝</button><span class="section-note">签名后点击完成签署</span></div><h2>${title}</h2>${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}<p class="section-note">可输入姓名，或在签名板上手写签名。${isWebsiteOrderContract ? '签署完成后合同将立即确认，无需付款。' : ''}</p><form method="POST" action="/contract/sign?token=${token}&step=3" id="signature-form">${isWebsiteOrderContract ? '<input type="hidden" name="noPayment" value="1">' : ''}<div class="form-group"><label class="form-label" for="esignSignature">输入姓名签名</label><input id="esignSignature" name="esignSignature" class="form-control" autocomplete="name"><small class="form-text">输入时必须与步骤2填写的完整姓名一致。</small></div><div class="form-group"><label class="form-label" for="signatureCanvas">手写签名</label><canvas id="signatureCanvas" class="signature-pad" width="700" height="180" aria-label="手写签名区域"></canvas><input type="hidden" id="handSignature" name="handSignature"><button class="button button-secondary button-sm" type="button" id="clearSignature">清除手写签名</button></div>${isWebsiteOrderContract ? timeSlotFields : ''}<div class="record-actions"><a href="/contract/sign?token=${token}&step=2" class="button button-secondary">返回上一步</a><button class="button" type="submit">${isWebsiteOrderContract ? '完成签署' : '完成签署并进入付款'}</button></div></form><script>(()=>{const canvas=document.getElementById('signatureCanvas'), hidden=document.getElementById('handSignature'), input=document.getElementById('esignSignature'), clear=document.getElementById('clearSignature');if(!canvas)return;const ctx=canvas.getContext('2d');ctx.lineWidth=2;ctx.lineCap='round';let drawing=false;const point=e=>{const r=canvas.getBoundingClientRect(),t=e.touches?.[0]||e;return{x:(t.clientX-r.left)*canvas.width/r.width,y:(t.clientY-r.top)*canvas.height/r.height}};const finish=()=>{if(drawing)hidden.value=canvas.toDataURL('image/png');drawing=false};const start=e=>{drawing=true;ctx.beginPath();ctx.moveTo(point(e).x,point(e).y);e.preventDefault()};const move=e=>{if(!drawing)return;const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke();e.preventDefault()};['mousedown','touchstart'].forEach(x=>canvas.addEventListener(x,start,{passive:false}));['mousemove','touchmove'].forEach(x=>canvas.addEventListener(x,move,{passive:false}));['mouseup','mouseleave','touchend'].forEach(x=>canvas.addEventListener(x,finish));clear.addEventListener('click',()=>{ctx.clearRect(0,0,canvas.width,canvas.height);hidden.value='';});document.getElementById('signature-form').addEventListener('submit',e=>{if(!input.value.trim()&&!hidden.value){e.preventDefault();input.focus();}});setTimeout(()=>document.getElementById('esignSignature')?.focus(),100)})();</script></div>`;
       break;
     case 4:
       title = isWebsiteOrderContract ? '步骤 2/2: 确认取还时间并完成签约' : '步骤 3/3: 选择支付方式';
       if (isWebsiteOrderContract) {
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
-        const unavailable = rentalRules.unavailableTimeSlots || {}
-        const slots = isDelivery ? [['delivery_morning', '9:00–12:00'], ['delivery_afternoon', '13:00–19:00']] : pickupTimeSlots(rentalRules)
-        const options = (date: string) => slots.filter(([value]) => !(unavailable[date] || []).includes(value) && !isTimeSlotPassed(date, value, rentalRules))
+        const timeSlots = isDelivery
+          ? `<div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required><option value="delivery_morning">9:00–12:00</option><option value="delivery_afternoon">13:00–19:00</option></select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required><option value="delivery_morning">9:00–12:00</option><option value="delivery_afternoon">13:00–19:00</option></select></div>`
+          : `${pickupTimeSelector(rentalRules, order.startDate, 'pickupTimeSlot', '取货时间')}${pickupTimeSelector(rentalRules, order.endDate, 'returnTimeSlot', '归还时间')}${pickupTimeSelectorScript}`
         content = `
           <div class="panel">
             ${progressBar}
@@ -327,8 +334,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             <form method="POST" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4">
               <input type="hidden" name="noPayment" value="1">
               <div class="grid grid-2" style="margin: 20px 0;">
-                <div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select class="form-control" id="pickupTimeSlot" name="pickupTimeSlot" required>${options(order.startDate).map(([value, label]) => `<option value="${value}"${value === order.pickupTimeSlot ? ' selected' : ''}>${label}</option>`).join('')}</select></div>
-                <div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select class="form-control" id="returnTimeSlot" name="returnTimeSlot" required>${options(order.endDate).map(([value, label]) => `<option value="${value}"${value === order.returnTimeSlot ? ' selected' : ''}>${label}</option>`).join('')}</select></div>
+                ${timeSlots}
               </div>
               <div class="record-actions"><a href="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=2" class="button button-secondary">返回上一步</a><button class="button" type="submit">确认并完成签约</button></div>
             </form>

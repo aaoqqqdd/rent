@@ -22,7 +22,7 @@ import { generateWindowsPassword } from '../../lib/password';
 import { getCloudinaryRuntimeConfig } from '../../lib/cloudinary';
 import { escapeHtml } from '../../lib/html';
 import { encryptSecret } from '../../lib/secretBox';
-import { pickupTimeSlotEndMinutes, serviceFeeRate } from '../../domain/pickupTimeSlots';
+import { isUnavailablePickupTime, legacyPickupSlot, pickupTimeMode, pickupTimeSlotEndMinutes, serviceFeeRate } from '../../domain/pickupTimeSlots';
 
 function isTimeSlotPassed(date: string, slot: string, rentalRules: any): boolean {
   const melbourneDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -352,14 +352,15 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const depositMethod = normalizeSecurityDepositMethod(depositCardSelected ? 'card_hold' : 'bank_transfer')
         const enteredCouponCode = String(body.couponCode || '').trim().toUpperCase().slice(0, 40)
         const isDelivery = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup') === 'Delivery'
-        const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : ['morning_service', 'morning', 'afternoon', 'evening_service']
-        const pickupTimeSlot = allowedTimeSlots.includes(String(body.pickupTimeSlot)) ? String(body.pickupTimeSlot) : ''
-        const returnTimeSlot = allowedTimeSlots.includes(String(body.returnTimeSlot)) ? String(body.returnTimeSlot) : ''
         const rentalRules = await getDeviceRentalRules(c, order.deviceId)
+        const allowedTimeSlots = isDelivery ? ['delivery_morning', 'delivery_afternoon'] : []
+        const pickupTimeSlot = (isDelivery ? allowedTimeSlots.includes(String(body.pickupTimeSlot)) : Boolean(pickupTimeMode(String(body.pickupTimeSlot), rentalRules))) ? String(body.pickupTimeSlot) : ''
+        const returnTimeSlot = (isDelivery ? allowedTimeSlots.includes(String(body.returnTimeSlot)) : Boolean(pickupTimeMode(String(body.returnTimeSlot), rentalRules))) ? String(body.returnTimeSlot) : ''
         const unavailableTimeSlots = rentalRules.unavailableTimeSlots || {}
-        if (!pickupTimeSlot || !returnTimeSlot || isTimeSlotPassed(order.startDate, pickupTimeSlot, rentalRules) || isTimeSlotPassed(order.endDate, returnTimeSlot, rentalRules) || (unavailableTimeSlots[order.startDate] || []).includes(pickupTimeSlot) || (unavailableTimeSlots[order.endDate] || []).includes(returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
+        const unavailable = (date: string, slot: string) => isUnavailablePickupTime(slot, date, rentalRules) || (unavailableTimeSlots[date] || []).includes(slot) || (unavailableTimeSlots[date] || []).includes(legacyPickupSlot(slot, rentalRules))
+        if (!pickupTimeSlot || !returnTimeSlot || isTimeSlotPassed(order.startDate, pickupTimeSlot, rentalRules) || isTimeSlotPassed(order.endDate, returnTimeSlot, rentalRules) || unavailable(order.startDate, pickupTimeSlot) || unavailable(order.endDate, returnTimeSlot)) throw new Error('请选择可用的取货和归还时间')
         const deliveryMethod = String((order as any).deliveryMethod || (order as any).delivery_method || 'Pickup')
-        const serviceSlots = deliveryMethod === 'Delivery' ? 0 : [pickupTimeSlot, returnTimeSlot].filter(slot => ['morning_service', 'evening_service'].includes(slot)).length
+        const serviceSlots = deliveryMethod === 'Delivery' ? 0 : [pickupTimeSlot, returnTimeSlot].filter(slot => pickupTimeMode(slot, rentalRules) === 'non_business').length
         const previousServiceFee = Number((order as any).serviceFee || (order as any).service_fee || 0)
         const rentalAmount = Math.max(0, Number(order.totalAmount) - Number(order.depositAmount || 0) - previousServiceFee)
         const serviceFee = Number((rentalAmount * serviceFeeRate(rentalRules) * serviceSlots).toFixed(2))
@@ -413,8 +414,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           : 'PAID'
         await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ?, deposit_status = CASE WHEN depositAmount > 0 THEN ? ELSE \'NOT_REQUIRED\' END WHERE id = ?')
           .bind(depositMethod, selectedDepositMode, selectedDepositMode === 'PAID' ? 'PENDING' : 'NOT_REQUIRED', contract.rentalId).run()
-        ; (order as any).deposit_method = depositMethod
-        ; (order as any).deposit_payment_mode = selectedDepositMode
+          ; (order as any).deposit_method = depositMethod
+          ; (order as any).deposit_payment_mode = selectedDepositMode
 
         // **核心签约逻辑**
         const userInfo = signSession.userInfo;

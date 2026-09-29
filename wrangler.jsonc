@@ -57,9 +57,9 @@
 	],
 	"triggers": {
 		// "0 0 * * *" runs the full daily maintenance batch; "0 * * * *" only
-		// cancels expired pending payments so the 24h SLA isn't stretched
-		// to ~48h by the once-a-day sweep (see scheduled() in src/index.ts).
-		"crons": ["0 0 * * *", "0 * * * *"]
+		// cancels expired pending payments. The 15-minute sweep releases store
+		// pickups that remain uncollected for two hours.
+		"crons": ["0 0 * * *", "0 * * * *", "*/15 * * * *"]
 	},
 	// "ai": {
 	//   "binding": "AI"
