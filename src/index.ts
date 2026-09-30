@@ -256,11 +256,26 @@ const app = new Hono()
 
 async function resolveImageUrls(fileValue: unknown, legacyUrl: unknown, c: any, folder: string, maxFiles = 1): Promise<string[]> {
   if (fileValue) {
-    const uploaded = await uploadCloudinaryImages(fileValue, await getCloudinaryRuntimeConfig(c), folder, maxFiles)
+    const uploaded = await uploadCloudinaryImages(fileValue, await getCloudinaryRuntimeConfig(c), folder, maxFiles, { watermark: true })
     if (uploaded.length) return uploaded
   }
-  if (String(legacyUrl || '').trim()) return validateHostedImageUrls(legacyUrl, maxFiles)
+  if (String(legacyUrl || '').trim()) throw new Error('请直接上传图片，系统会自动添加上传日期和唯一编号水印')
   return []
+}
+
+async function parseFormBodyForRequest(c: any): Promise<Record<string, any>> {
+  return String(c.req.header('content-type') || '').toLowerCase().includes('multipart/form-data')
+    ? await c.req.parseBody()
+    : parseFormBody(await c.req.text())
+}
+
+async function addWatermarkedContractDamagePhotos(c: any, form: Record<string, any>, submittedData: Record<string, string>): Promise<void> {
+  if (submittedData.damage_photos === undefined && !form.damagePhotoFiles) return
+  const existing = submittedData.damage_photos
+    ? validateHostedImageUrls(submittedData.damage_photos).join('\n')
+    : ''
+  const uploaded = await uploadCloudinaryImages(form.damagePhotoFiles, await getCloudinaryRuntimeConfig(c), 'rent/damage-photos', 5, { watermark: true })
+  submittedData.damage_photos = [existing, ...uploaded].filter(Boolean).join('\n')
 }
 
 app.get('/styles.css', (c) => {
@@ -1007,7 +1022,7 @@ for (const { paths, title, key, keyEn, code, metaKey, varPrefix } of PUBLIC_LEGA
     }
     const content = renderSiteVariables(String((settings as any)[key] ?? ''), currentUser, templateVars)
     const contentEn = renderSiteVariables(String((settings as any)[keyEn] ?? ''), currentUser, templateVars)
-    const body = `<div class="legal-document__content legal-lang" data-lang="zh">${content}</div>
+    const body = `<div class="legal-document__content legal-lang" data-lang="zh" data-i18n-ignore>${content}</div>
 <div class="legal-document__content legal-lang" data-lang="en" data-i18n-ignore hidden>
 <p class="legal-disclaimer">⚠️ Unofficial machine-translated version for reference only — the Chinese original is the legally governing text.</p>
 ${contentEn || '<p>An English version of this document has not been provided yet. Please refer to the Chinese original above.</p>'}
@@ -1037,7 +1052,7 @@ app.on('GET', ['/rental-terms', '/rental-agreement'], async (c) => {
   const content = neutralizeTemplateTokens(renderSiteVariables(String(settings.rentalTerms ?? ''), currentUser, templateVars))
   const contentEn = neutralizeTemplateTokens(renderSiteVariables(String(settings.rentalTermsEn ?? ''), currentUser, templateVars))
   const notice = '<p class="section-note">以下为标准《设备租赁协议》范本，供签署前查阅。带 —— 的位置将在您下单后按实际合同数据填写；最终以您签署的租赁合同为准。</p>'
-  const body = `<div class="legal-document__content legal-lang" data-lang="zh">${content}</div>
+  const body = `<div class="legal-document__content legal-lang" data-lang="zh" data-i18n-ignore>${content}</div>
 <div class="legal-document__content legal-lang" data-lang="en" data-i18n-ignore hidden>
 <p class="legal-disclaimer">⚠️ Unofficial machine-translated version for reference only — the Chinese original is the legally governing text.</p>
 ${contentEn || '<p>An English version of this document has not been provided yet. Please refer to the Chinese original above.</p>'}
@@ -3076,14 +3091,14 @@ app.post('/staff/contracts/:id/data', async (c) => {
   const contract = await getContractById(c, c.req.param('id'))
   if (!contract || (user.role !== 'ADMIN' && (contract.createdBy || contract.created_by) !== user.id)) return c.html(renderForbidden(), 403)
   if (isContractExpired(contract) || ['completed', 'cancelled'].includes(contract.status)) return c.html(renderForbidden(), 403)
-  const form = parseFormBody(await c.req.text())
+  const form = await parseFormBodyForRequest(c)
   const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
   const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
   // 已签署字段直接忽略，不报错；签署记录始终保持原值。
   const submitted = Object.entries(form).filter(([name]) => allowed.has(name as any) && !(contract.status === 'signed' && CONTRACT_SIGNED_FIELDS.has(name))).map(([name, value]) => [name, String(value).trim().slice(0, 4000)])
   const submittedData = Object.fromEntries(submitted)
-  if (submittedData.damage_photos) {
-    try { submittedData.damage_photos = validateHostedImageUrls(submittedData.damage_photos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
+  if (allowed.has('damage_photos') && !(contract.status === 'signed' && CONTRACT_SIGNED_FIELDS.has('damage_photos'))) {
+    try { await addWatermarkedContractDamagePhotos(c, form, submittedData) } catch (error: any) { return c.text(error.message, 400) }
   }
   await c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(JSON.stringify({ ...existing, ...submittedData }), contract.id).run()
   return c.redirect(`/staff/contracts/${contract.id}/data`)
@@ -4229,14 +4244,14 @@ app.post('/admin/contracts/:id/data', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const contract = await getContractById(c, c.req.param('id'))
   if (!contract) return c.notFound()
-  const form = parseFormBody(await c.req.text())
+  const form = await parseFormBodyForRequest(c)
   const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
   const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
   // 已签署字段直接忽略，不报错；签署记录始终保持原值。
   const submitted = Object.entries(form).filter(([name]) => allowed.has(name as any) && !(contract.status === 'signed' && CONTRACT_SIGNED_FIELDS.has(name))).map(([name, value]) => [name, String(value).trim().slice(0, 4000)])
   const submittedData = Object.fromEntries(submitted)
-  if (submittedData.damage_photos) {
-    try { submittedData.damage_photos = validateHostedImageUrls(submittedData.damage_photos).join('\n') } catch (error: any) { return c.text(error.message, 400) }
+  if (allowed.has('damage_photos') && !(contract.status === 'signed' && CONTRACT_SIGNED_FIELDS.has('damage_photos'))) {
+    try { await addWatermarkedContractDamagePhotos(c, form, submittedData) } catch (error: any) { return c.text(error.message, 400) }
   }
   for (const name of ['delivery_fee', 'discount', 'replacement_cost', 'repair_cost', 'battery_cycles', 'insurance_fee']) {
     const value = submittedData[name]

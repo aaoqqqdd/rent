@@ -3,9 +3,9 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// The site is server-rendered in Chinese. Keeping this small client-side layer
-// in one place lets every current and future page share the same language
-// preference without duplicating page templates or persisting UI state in D1.
+// The site is server-rendered in Chinese. This client-side layer keeps the
+// language preference consistent across all pages without duplicating page
+// templates or persisting presentation state in D1.
 export const languageScript = String.raw`
 (function () {
   'use strict';
@@ -401,10 +401,98 @@ export const languageScript = String.raw`
     'GST 已包含在适用项目中。': 'GST is included in the applicable items.', '本凭证记录：': 'This document records: ',
     '退款项目': 'Refund item', '取消订单退款': 'Order cancellation refund', '订单退款': 'Order refund',
     '退款记录': 'Refund records', '退款号': 'Refund No.', '扣除': 'Deducted', '退款后净额': 'Net amount after refund',
-    '至': 'to'
+    '至': 'to',
+    // 后台新增页面与状态标签。这里优先提供完整短语，避免依赖短词拼接。
+    '代理计划': 'Agent program', '暂无代理记录': 'No agent records yet', '异常订单审核': 'Anomalous order review',
+    '待审核异常订单': 'Anomalous orders awaiting review', '审核历史': 'Review history', '审核队列': 'Review queue',
+    'API 设置': 'API settings', 'API 设置已保存': 'API settings saved', '清除已保存的': 'Clear saved',
+    '当前生效的邮件服务商': 'Currently active email provider', '发件邮箱': 'Sender email', '发送测试推送': 'Send test notification',
+    '取货地址': 'Pickup address', '取货联系人': 'Pickup contact', '取货联系人邮箱': 'Pickup contact email', '取货联系人电话': 'Pickup contact phone',
+    '配送速度': 'Delivery speed', '车辆类型': 'Vehicle type', '包裹类型': 'Package type', '取货备注': 'Pickup notes',
+    '待支付': 'Awaiting payment', '已支付': 'Paid', '已归还待验收': 'Returned — awaiting inspection', '归还验机中': 'Return inspection in progress',
+    '状态筛选': 'Filter by status', '客户筛选': 'Filter by customer', '总充值订单': 'Total top-up orders',
+    '待审核（已提交凭证）': 'Awaiting review (proof submitted)', '待客户提交凭证': 'Awaiting customer proof', '已入账金额': 'Credited amount',
+    '通过并入账': 'Approve and credit', '暂无充值记录': 'No top-up records yet', '没有符合筛选条件的余额充值订单': 'No top-up orders match the selected filters',
+    '配送员已接受订单。': 'The delivery driver has accepted the order.', '配送员正在前往取货地点。': 'The delivery driver is heading to the pickup location.',
+    '设备已由配送员取走。': 'The device has been collected by the delivery driver.', '设备正在送往客户地址。': 'The device is being delivered to the customer address.',
+    '设备已送达客户地址。': 'The device has been delivered to the customer address.', '该配送订单已取消。': 'This delivery order has been cancelled.',
+    '设备正在退回取货地点。': 'The device is being returned to the pickup location.', '设备已回收到取货地点。': 'The device has been returned to the pickup location.',
+    '配送订单已暂停，请联系配送服务。': 'The delivery order is suspended. Please contact the delivery service.', '未创建': 'Not created',
+    '尚未创建派送单': 'Delivery booking not created yet', '已创建派送，等待送达': 'Delivery booking created; awaiting delivery',
+    '送达后等待创建 / 完成回收': 'Awaiting collection booking after delivery', '送货与回收均已完成': 'Delivery and collection completed',
+    '设备验收': 'Device acceptance', '客户端已安装': 'Client installed', '客户端版本': 'Client version',
+    '归还前十项验证': 'Pre-return ten-point inspection', '状况良好可一次性提交；十项全部通过后设备立即变为可用': 'Submit once if the condition is good; the device becomes available after all ten checks pass',
+    '验收人（选填）': 'Inspector (optional)', '合同变量数据': 'Contract variable data', '返回合同列表': 'Back to contracts',
+    '合同详情': 'Contract details', '合同已过期': 'Contract expired', '该合同已超过签署有效期，无法查看或签署。': 'This contract is past its signing deadline and cannot be viewed or signed.',
+    '模板内容（支持 HTML 编辑）': 'Template content (HTML editing supported)', '已保存': 'Saved', '保存中…': 'Saving…',
+    '付款结果轮询': 'Payment result polling', '地址服务': 'Address service', '设备通讯': 'Device communication', '支付与汇率': 'Payments & exchange rates',
+    '页面底部轻量状态检查': 'Lightweight footer status check', '执行本页只读通讯检测': 'Run the read-only connectivity checks on this page',
+    '命令确认': 'Command confirmation', 'Google 地点详情': 'Google place details', '设备状态读取': 'Device status read',
+    '设备首次绑定': 'Initial device binding', '旧版注册码': 'Legacy registration code', '旧版设备首次绑定': 'Legacy initial device binding',
+    '设备心跳': 'Device heartbeat', '设备检查上报': 'Device inspection report', 'Windows 客户端更新': 'Windows client update',
+    'Stripe 付款事件回调': 'Stripe payment event webhook', '清除后台保存的': 'Clear settings saved in the admin panel',
+    '数据清除方式': 'Data wipe method', '维修说明': 'Repair notes', '维护生命周期': 'Maintenance lifecycle', '维护类型': 'Maintenance type',
+    '归还准备': 'Return preparation', '数据清除': 'Data wipe', '系统重置': 'System reset',
+    '订单编号': 'Order number', '查看订单详情': 'View order details', '名 / Given name': 'Given name', '姓 / Family name': 'Family name',
+    '查看订单': 'View order', '创建时间': 'Created at', '驳回': 'Reject', '保存修改': 'Save changes', '网站法务': 'Website legal',
+    '返回上一页': 'Back to previous page', '返回合同管理': 'Back to contract management', '已退役': 'Retired', '访客/临时账户': 'Guest/temporary account',
+    '编辑政策': 'Edit policy', '订单 / 客户': 'Orders / customers', '客户信息': 'Customer information',
+    '该状态下不能更新或取消配送订单。': 'Delivery orders cannot be updated or cancelled in this status.', '设备分类': 'Device category',
+    '周租折扣（%）': 'Weekly rental discount (%)', '月租折扣（%）': 'Monthly rental discount (%)', '邮箱地址': 'Email address', '开始': 'Start',
+    '配送状态': 'Delivery status', '退回账户余额': 'Refund to account balance', '退款方式': 'Refund method', '银行账号': 'Bank account number',
+    '全站右下角': 'Bottom-right corner of every page', '付款 Reference': 'Payment reference', '银行名称:': 'Bank name:', '账号:': 'Account:',
+    '信用卡支付（Stripe）': 'Credit card payment (Stripe)', '复制': 'Copy', '支付方式': 'Payment method', '打印 / 下载 PDF': 'Print / download PDF',
+    '租赁详情': 'Rental details', '保存模板': 'Save template', '返回财务总览': 'Back to finance overview', '启用': 'Enable', '停用': 'Disable',
+    '百分比折扣': 'Percentage discount', '固定金额折扣': 'Fixed amount discount', '技师': 'Technician', '您请求的设备不存在。': 'The device you requested does not exist.',
+    '返回设备列表': 'Back to devices', '资产编号': 'Asset number', '维修中': 'Under repair', '账户信息': 'Account information',
+    '删除模板': 'Delete template', '礼品卡库存': 'Gift card inventory', '奖励类型': 'Reward type', '净收入': 'Net revenue', '退款处理': 'Refund processing',
+    '账户状态': 'Account status', '查看追踪链接': 'View tracking link', '查看发票 / 收据': 'View invoice / receipt', '全部订单': 'All orders',
+    '客户自取': 'Customer pickup', '送货上门': 'Home delivery', '配送费（AUD）': 'Delivery fee (AUD)', '结束': 'End',
+    '支持 JPG、PNG、WebP，单张不超过 5MB。': 'Supports JPG, PNG, and WebP; max 5 MB per image.', '编辑协议': 'Edit agreement',
+    '占位翻译': 'Placeholder translation', '返回用户列表': 'Back to users', '基本信息': 'Basic information', '绑定员工': 'Assigned staff',
+    '角色': 'Role', '查看/下载合同': 'View/download contract', '银行 Reference': 'Bank reference', '注册日期': 'Registration date',
+    '请重新申请密码重置链接。': 'Please request a new password reset link.', '标题（自定义通知时必填）': 'Title (required for custom notifications)',
+    '返回绑定设备': 'Back to device bindings', '配送管理': 'Delivery management', '余额充值订单': 'Balance top-up orders', '全部客户': 'All customers',
+    '重置': 'Reset', '提交时间': 'Submitted at', '管理': 'Manage', '请选择': 'Please select', '指定的合同不存在。': 'The specified contract does not exist.',
+    '租赁合同': 'Rental contract', '合同内容': 'Contract content', '打印/下载PDF': 'Print/download PDF', '← 返回协议与模板': '← Back to agreements & templates',
+    '最后更新日期': 'Last updated', '创建优惠码': 'Create coupon', '草稿（暂不生效）': 'Draft (not active)', '仅限新客户使用': 'For new customers only',
+    '允许与其他优惠叠加': 'Can be combined with other discounts', '订单取消后恢复使用次数': 'Restore usage after order cancellation', '返回系统设置': 'Back to system settings',
+    '验证项': 'Check', '结果': 'Result', '通过': 'Passed', '不通过': 'Failed', '一': 'Monday', '二': 'Tuesday', '三': 'Wednesday', '四': 'Thursday', '五': 'Friday', '六': 'Saturday', '日': 'Sunday',
+    '维修成本': 'Repair cost', '服务商': 'Service provider', '更换部件': 'Replacement parts', 'Windows 客户端管理': 'Windows client management',
+    '设备身份': 'Device identity', '已出租': 'Rented', '硬件配置': 'Hardware configuration', '操作系统': 'Operating system', '补充描述': 'Additional description',
+    '日租金（AUD）': 'Daily rate (AUD)', '押金（AUD）': 'Deposit (AUD)', '每满 7 天适用；填写 0 表示不打折。': 'Applies per full 7-day period; enter 0 for no discount.',
+    '每满 30 天适用；月租优先于周租。': 'Applies per full 30-day period; monthly rental takes priority over weekly rental.', '留空表示跟随系统设置。': 'Leave blank to follow the system setting.',
+    '设备周转缓冲天数': 'Device turnaround buffer days', '注册时间': 'Registration time', '添加入库设备': 'Add device to inventory', '游戏笔记本': 'Gaming laptop',
+    '轻薄商务本': 'Thin-and-light business laptop', '台式工作站': 'Desktop workstation', '普通笔记本': 'Standard laptop', '链接有效期': 'Link validity',
+    '24 小时': '24 hours', '订单已创建': 'Order created', '付款截止': 'Payment deadline', '正文（HTML）': 'Body (HTML)', '主题': 'Subject',
+    '全部记录': 'All records', '反馈奖励记录': 'Feedback reward records', '失败原因': 'Failure reason', '总收入（已支付/租赁中/已完成）': 'Total revenue (paid / active / completed)',
+    '通知标题': 'Notification title', '通知正文': 'Notification body', '支持安全 HTML': 'Safe HTML supported', '站内通知模板': 'In-app notification templates',
+    '已选 0 人': '0 people selected', '一次性优惠码': 'One-time coupon', '外部礼品卡兑换码': 'External gift card redemption code', '固定金额': 'Fixed amount', '百分比': 'Percentage',
+    '押金待结算': 'Deposit awaiting settlement', '记录交付并开始租赁': 'Record handover and start rental', '订单修改历史': 'Order change history', '变更内容': 'Changes', '操作人': 'Performed by',
+    '下单日期': 'Order date', '订单修改': 'Order change', '修改原因（必填）': 'Reason for change (required)', '批准提前归还': 'Approve early return',
+    '恢复租赁': 'Resume rental', '暂停租赁（仅管理员）': 'Suspend rental (admin only)', '申请时间': 'Requested at', '拒绝订单': 'Reject order', '总金额': 'Total amount', '撤销': 'Revoke'
   };
 
   var keys = Object.keys(translations).sort(function (a, b) { return b.length - a.length; });
+  var containsChinese = function (value) { return /[\u3400-\u9fff]/.test(value); };
+  var replaceSafeFragment = function (text, key) {
+    var offset = 0;
+    var position;
+    while ((position = text.indexOf(key, offset)) !== -1) {
+      var left = position ? text.charAt(position - 1) : '';
+      var right = text.charAt(position + key.length);
+      // Only replace a fragment at a non-Chinese boundary. This prevents
+      // "待支付" becoming "待Payment" and "设备状态" becoming "Device状态".
+      if (!containsChinese(left) && !containsChinese(right)) {
+        text = text.slice(0, position) + translations[key] + text.slice(position + key.length);
+        offset = position + translations[key].length;
+      } else {
+        offset = position + key.length;
+      }
+    }
+    return text;
+  };
+  var fragmentKeys = keys.filter(function (key) { return key.length >= 2; });
   var readLanguage = function () {
     try {
       var stored = localStorage.getItem(storageKey);
@@ -428,7 +516,10 @@ export const languageScript = String.raw`
       return leading + '🎉A new offer is now live!\n\nUse promo code **' + couponNotice[1] + '** to get **' + couponNotice[2].replace(' 的折扣', ' off').replace(' 的优惠', ' off') + '** on your next rental.\n\nValid until **' + expiryText + '**' + trailing;
     }
     if (Object.prototype.hasOwnProperty.call(translations, core)) return leading + translations[core] + trailing;
-    keys.forEach(function (key) { if (core.indexOf(key) !== -1) core = core.split(key).join(translations[key]); });
+    // Pure Chinese text is either an exact phrase or intentionally untranslated.
+    // Never turn an unknown phrase into a misleading Chinese/English mixture.
+    if (!/[A-Za-z0-9]/.test(core)) return leading + core + trailing;
+    fragmentKeys.forEach(function (key) { if (core.indexOf(key) !== -1) core = replaceSafeFragment(core, key); });
     return leading + core + trailing;
   };
   var sourceFor = function (node, value) {
@@ -442,6 +533,12 @@ export const languageScript = String.raw`
   var apply = function (root) {
     var language = readLanguage();
     document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
+    document.documentElement.dataset.language = language;
+    document.querySelectorAll('.legal-lang').forEach(function (element) {
+      var visible = element.getAttribute('data-lang') === language;
+      element.hidden = !visible;
+      element.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    });
     if (document.title && /[\u4e00-\u9fff]/.test(document.title)) originalTitle = document.title;
     if (originalTitle) {
       var titleNode = { __rentI18nSource: originalTitle.replace(/ - (?:电脑租赁管理系统|PC Rental)$/, '') };

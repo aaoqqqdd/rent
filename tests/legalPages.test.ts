@@ -6,6 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { neutralizeTemplateTokens, renderSiteVariables, systemSettings } from '../src/site'
+import { languageScript } from '../src/lib/i18n'
 
 test('neutralizeTemplateTokens replaces unfilled contract placeholders', () => {
   const out = neutralizeTemplateTokens('<p>承租方：{signer_name}，设备 ${device_name}。</p>')
@@ -54,4 +55,10 @@ test('renderSiteVariables exposes built-in metadata defaults for the new pages w
   const html = renderSiteVariables('<p>{cookie_policy_version}/{consumer_rights_version}</p>')
   assert.ok(html.includes(systemSettings.legalMetadata.cookie.version))
   assert.ok(html.includes(systemSettings.legalMetadata.consumer.version))
+})
+
+test('language script switches legal language blocks and keeps legal HTML untouched', () => {
+  assert.match(languageScript, /querySelectorAll\('\.legal-lang'\)/)
+  assert.match(languageScript, /element\.hidden = !visible/)
+  assert.match(languageScript, /data-i18n-ignore/)
 })

@@ -11,6 +11,10 @@ export interface CloudinaryEnv {
   CLOUDINARY_API_SECRET?: string
 }
 
+export interface CloudinaryUploadOptions {
+  watermark?: boolean
+}
+
 type StoredCloudinaryConfig = {
   cloudName: string
   apiKey: string
@@ -35,6 +39,26 @@ function toHex(bytes: ArrayBuffer): string {
 
 async function sha1(value: string): Promise<string> {
   return toHex(await crypto.subtle.digest('SHA-1', new TextEncoder().encode(value)))
+}
+
+function melbourneDate(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Melbourne',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const year = parts.find(part => part.type === 'year')?.value || '0000'
+  const month = parts.find(part => part.type === 'month')?.value || '00'
+  const day = parts.find(part => part.type === 'day')?.value || '00'
+  return `${year}-${month}-${day}`
+}
+
+function buildWatermarkTransformation(publicId: string): string {
+  const watermark = `UPLOAD_${melbourneDate()}_ID_${publicId.slice(0, 12).toUpperCase()}`
+  // Incoming transformations are applied before Cloudinary stores the asset,
+  // so the URL returned below points to the watermarked asset itself.
+  return `co_rgb:ffffff,b_rgb:000000,l_text:Arial_20_bold:${watermark}/fl_layer_apply,g_south_east,x_16,y_16`
 }
 
 function requireCloudinaryEnv(env: CloudinaryEnv): Required<CloudinaryEnv> {
@@ -163,14 +187,14 @@ export async function getCloudinaryRuntimeConfig(c: Context): Promise<Cloudinary
   }
 }
 
-export async function uploadCloudinaryImages(value: unknown, env: CloudinaryEnv, folder: string, maxFiles = 5): Promise<string[]> {
+export async function uploadCloudinaryImages(value: unknown, env: CloudinaryEnv, folder: string, maxFiles = 5, options: CloudinaryUploadOptions = {}): Promise<string[]> {
   const files = getUploadFiles(value)
   if (!files.length) return []
   if (files.length > maxFiles) throw new Error(`最多上传 ${maxFiles} 张图片`)
-  return Promise.all(files.map(file => uploadCloudinaryImage(file, env, folder)))
+  return Promise.all(files.map(file => uploadCloudinaryImage(file, env, folder, options)))
 }
 
-export async function uploadCloudinaryImage(value: unknown, env: CloudinaryEnv, folder: string): Promise<string> {
+export async function uploadCloudinaryImage(value: unknown, env: CloudinaryEnv, folder: string, options: CloudinaryUploadOptions = {}): Promise<string> {
   const files = getUploadFiles(value)
   if (files.length !== 1) throw new Error('请上传一张图片')
   const file = files[0]
@@ -180,13 +204,17 @@ export async function uploadCloudinaryImage(value: unknown, env: CloudinaryEnv, 
   const config = requireCloudinaryEnv(env)
   const timestamp = Math.floor(Date.now() / 1000)
   const publicId = crypto.randomUUID().replace(/-/g, '')
-  const signature = await sha1(`folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${config.CLOUDINARY_API_SECRET}`)
+  const transformation = options.watermark ? buildWatermarkTransformation(publicId) : ''
+  const signedFields = [`folder=${folder}`, `public_id=${publicId}`, `timestamp=${timestamp}`]
+  if (transformation) signedFields.push(`transformation=${transformation}`)
+  const signature = await sha1(`${signedFields.join('&')}${config.CLOUDINARY_API_SECRET}`)
   const payload = new FormData()
   payload.append('file', file, file.name || `${publicId}.img`)
   payload.append('api_key', config.CLOUDINARY_API_KEY)
   payload.append('timestamp', String(timestamp))
   payload.append('folder', folder)
   payload.append('public_id', publicId)
+  if (transformation) payload.append('transformation', transformation)
   payload.append('signature', signature)
 
   const response = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(config.CLOUDINARY_CLOUD_NAME)}/image/upload`, {

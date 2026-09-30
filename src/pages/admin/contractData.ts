@@ -24,6 +24,7 @@ export async function renderAdminContractData(c: Context, user: any, contractId:
   }
   const renderField = ([name, label]: typeof CONTRACT_OPERATIONAL_FIELDS[number]) => {
     const value = escape((data as any)[name])
+    if (name === 'damage_photos') return `<div class="form-group"><label class="form-label" for="${name}">${label} <code>\${${name}}</code></label><textarea class="form-control" id="${name}" name="${name}" rows="3" readonly>${value}</textarea><input class="form-control" type="file" name="damagePhotoFiles" accept="image/jpeg,image/png,image/webp" multiple><small class="form-text">可追加上传损坏照片；新照片会自动添加上传日期和唯一编号水印。</small></div>`
     if (options[name]) return `<div class="form-group"><label class="form-label" for="${name}">${label} <code>\${${name}}</code></label><select class="form-control" id="${name}" name="${name}"><option value="">请选择</option>${options[name].map(option => `<option value="${option}" ${value === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>`
     if (longFields.has(name)) return `<div class="form-group"><label class="form-label" for="${name}">${label} <code>\${${name}}</code></label><textarea class="form-control" id="${name}" name="${name}" rows="3">${value}</textarea></div>`
     const type = dateFields.has(name) ? 'date' : numberFields.has(name) ? 'number' : 'text'

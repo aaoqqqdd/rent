@@ -9,7 +9,8 @@
       var proofInput = form.querySelector('input[name="imageUrl"]');
       var contractProofInput = form.querySelector('input[name="transferProofUrl"]');
       var damageInput = form.querySelector('textarea[name="damagePhotos"]');
-      if (!proofInput && !contractProofInput && !damageInput) return;
+      var damageFileInput = form.querySelector('input[name="damagePhotoFiles"]');
+      if (!proofInput && !contractProofInput && !damageInput && !damageFileInput) return;
       form.enctype = 'multipart/form-data';
       var input = proofInput || contractProofInput;
       if (input) {
@@ -18,7 +19,7 @@
         input.accept = 'image/jpeg,image/png,image/webp';
         input.removeAttribute('placeholder');
         var label = input.previousElementSibling;
-        if (label && label.tagName === 'LABEL') label.textContent = '付款凭证图片';
+        if (label && label.tagName === 'LABEL') label.textContent = '付款凭证图片（自动添加防伪水印）';
       }
       if (damageInput) {
         var fileInput = document.createElement('input');
@@ -29,7 +30,7 @@
         fileInput.multiple = true;
         damageInput.replaceWith(fileInput);
         var damageLabel = fileInput.previousElementSibling;
-        if (damageLabel && damageLabel.tagName === 'LABEL') damageLabel.textContent = '损坏照片';
+        if (damageLabel && damageLabel.tagName === 'LABEL') damageLabel.textContent = '损坏照片（自动添加防伪水印）';
       }
     });
   }
