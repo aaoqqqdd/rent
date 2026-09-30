@@ -84,6 +84,30 @@ export function pickupTimeOptions(rules: any, date: string, mode: 'business' | '
   return HALF_HOUR_TIME_OPTIONS.filter(time => pickupTimeMode(time, rules) === mode && !isUnavailablePickupTime(time, date, rules))
 }
 
-export function pickupTimeSlotEndMinutes(slot: string, _rules: any): number {
-  return HALF_HOUR_TIME_OPTIONS.includes(slot) ? minutes(slot) : 24 * 60
+export function pickupTimeSlotEndMinutes(slot: string, rules: any): number {
+  if (HALF_HOUR_TIME_OPTIONS.includes(slot)) return minutes(slot)
+  const settings = pickupTimeSettings(rules)
+  const endTimes: Record<string, string> = {
+    morning_service: settings.serviceFeeHours[0]?.end || '08:00',
+    morning: '12:00',
+    afternoon: settings.businessHours.end,
+    evening_service: settings.serviceFeeHours[1]?.end || '23:00',
+    delivery_morning: '12:00',
+    delivery_afternoon: '19:00',
+  }
+  return endTimes[slot] ? minutes(endTimes[slot]) : 24 * 60
+}
+
+// Keep the legacy half-day values used by existing customer forms and orders
+// while the newer settings page exposes exact half-hour options.
+export function pickupTimeSlots(rules: any): Array<[string, string]> {
+  const settings = pickupTimeSettings(rules)
+  const feePercent = Number((serviceFeeRate(rules) * 100).toFixed(2))
+  const displayTime = (value: string) => value.replace(/^0/, '')
+  return [
+    ['morning_service', `${displayTime(settings.serviceFeeHours[0]?.start || '07:00')}–${displayTime(settings.serviceFeeHours[0]?.end || '08:00')}（早间服务费 ${feePercent}%）`],
+    ['morning', `${displayTime(settings.businessHours.start)}–12:00（无服务费）`],
+    ['afternoon', `13:00–${displayTime(settings.businessHours.end)}（无服务费）`],
+    ['evening_service', `${displayTime(settings.serviceFeeHours[1]?.start || '21:00')}–${displayTime(settings.serviceFeeHours[1]?.end || '23:00')}（晚间服务费 ${feePercent}%）`],
+  ]
 }

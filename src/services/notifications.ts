@@ -443,7 +443,7 @@ async function buildFinancialDocument(c: Context, order: any, contract: { contra
   if (!context) return null
   const invoice = await c.env.RENT.prepare("SELECT * FROM invoices WHERE order_id = ? AND type = 'invoice' ORDER BY issued_at DESC LIMIT 1").bind(order.id).first() as any
   if (!invoice) return null
-  const payment = await c.env.RENT.prepare("SELECT paid_at, payment_method, payment_provider, transaction_id, stripe_payment_intent_id, square_payment_id FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
+  const payment = await c.env.RENT.prepare("SELECT paid_at, payment_method, payment_provider, transaction_id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   const documentNumber = kind === 'payment-receipt'
     ? String(invoice.receipt_number || invoice.invoice_number || order.orderNo || order.id)
     : String(invoice.invoice_number || invoice.receipt_number || order.orderNo || order.id)
@@ -474,7 +474,7 @@ async function buildFinancialDocument(c: Context, order: any, contract: { contra
     issuedAt: String(invoice.issued_at || ''),
     paidAt: String(payment?.paid_at || ''),
     paymentMethod: payment?.payment_provider === 'square' ? 'Gift card' : String(payment?.payment_method || order.paymentMethod || ''),
-    transactionId: String(payment?.transaction_id || payment?.stripe_payment_intent_id || payment?.square_payment_id || ''),
+    transactionId: String(payment?.transaction_id || payment?.stripe_payment_intent_id || ''),
     deviceName: String(context.device?.name || order.deviceName || 'Rental device'),
     startDate: String(order.startDate || ''),
     endDate: String(order.endDate || ''),

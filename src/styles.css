@@ -2032,7 +2032,7 @@ body.is-navigating {
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-secondary);
+  background: var(--surface-secondary);
 }
 
 .time-clock-row {
@@ -2060,7 +2060,7 @@ body.is-navigating {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-primary);
+  background: var(--surface-strong);
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 0.88rem;
@@ -2082,12 +2082,12 @@ body.is-navigating {
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-primary);
+  background: var(--surface-strong);
   box-shadow: var(--shadow-lg);
 }
 
 .time-clock-face { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
-.time-clock-face button { min-height: 32px; padding: 0; border: 1px solid transparent; border-radius: 999px; background: var(--bg-secondary); color: var(--text); font-family: var(--font-mono); font-size: 0.71rem; cursor: pointer; }
+.time-clock-face button { min-height: 32px; padding: 0; border: 1px solid transparent; border-radius: 999px; background: var(--surface-secondary); color: var(--text); font-family: var(--font-mono); font-size: 0.71rem; cursor: pointer; }
 .time-clock-face button:hover { border-color: var(--primary); }.time-clock-face button.is-selected { border-color: var(--primary); background: var(--primary); color: #fff; }
 .pickup-range-list { display: grid; gap: 8px; margin-top: 8px; }.pickup-range-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px; gap: 6px; align-items: end; }.pickup-range-row[data-range-row='unavailable'] { grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr) 30px; }.pickup-range-row > div > span { display: block; margin-bottom: 5px; color: var(--text-tertiary); font-size: .7rem; }.pickup-range-row .form-control { min-height: 42px; padding: 8px; }.pickup-range-remove { min-width: 30px; min-height: 42px; padding: 0; font-size: 1.1rem; line-height: 1; }.pickup-range-add { width: 100%; margin-top: 10px; }
 

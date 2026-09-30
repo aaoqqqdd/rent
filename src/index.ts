@@ -721,7 +721,10 @@ app.use('*', async (c, next) => {
         const originHost = new URL(origin).host
         const requestHost = c.req.header('Host')
         const publicHost = requestHost ? new URL(`http://${requestHost}`).host : new URL(c.req.url).host
-        originValid = originHost === publicHost
+        // Some edge/proxy paths preserve the browser's same-origin fetch
+        // metadata while rewriting the Host header to an upstream hostname.
+        // In that case Sec-Fetch-Site is the client-facing origin signal.
+        originValid = originHost === publicHost || fetchSite === 'same-origin'
       } catch { originValid = false }
     } else if (hasSessionCookie && fetchSite !== 'same-origin') {
       // A browser session without an Origin header is not verifiably same
@@ -6194,8 +6197,6 @@ export default {
       get: (key: string) => undefined,
       set: () => { },
       req: { url: 'https://scheduled-event' },
-      text: (body: string, status = 200) => new Response(body, { status }),
-      redirect: (url: string, status = 302) => new Response(null, { status, headers: { Location: url } }),
       text: (body: string, status = 200) => new Response(body, { status }),
       redirect: (url: string, status = 302) => new Response(null, { status, headers: { Location: url } }),
       // Expose getDB function that the site.ts functions expect

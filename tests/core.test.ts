@@ -46,6 +46,7 @@ import { couponApplicableComponents, couponDiscountableBase } from '../src/actio
 import { formatInvoicePaymentMethods } from '../src/pages/invoice'
 import { renderLogin } from '../src/pages/public/login'
 import { normalizeUserRow } from '../src/db/repositories'
+import { pickupTimeSlotEndMinutes, pickupTimeSlots } from '../src/domain/pickupTimeSlots'
 
 function assertInlineScriptsParse(html: string) {
   const scripts = extractInlineScripts(html).map(script => script.trim()).filter(Boolean)
@@ -61,6 +62,18 @@ test('receipt payment summary includes every paid payment method', () => {
   ]), '信用卡 + 账户余额')
   assert.equal(formatInvoicePaymentMethods([{ payment_method: 'card', payment_provider: 'square' }]), '礼品卡')
   assert.equal(formatInvoicePaymentMethods([{ payment_method: 'wechat' }]), '微信支付')
+})
+
+test('legacy pickup slots remain available after exact-time settings are enabled', () => {
+  const rules = {
+    businessHours: { start: '09:00', end: '20:00' },
+    serviceFeeHours: [{ start: '07:00', end: '08:00' }, { start: '21:00', end: '23:00' }],
+    serviceFeeRate: 0.1,
+  }
+  assert.deepEqual(pickupTimeSlots(rules).map(([value]) => value), ['morning_service', 'morning', 'afternoon', 'evening_service'])
+  assert.equal(pickupTimeSlotEndMinutes('morning_service', rules), 8 * 60)
+  assert.equal(pickupTimeSlotEndMinutes('afternoon', rules), 20 * 60)
+  assert.equal(pickupTimeSlotEndMinutes('19:30', rules), 19 * 60 + 30)
 })
 
 test('store pickup holds expire two Melbourne hours after the scheduled exact time', () => {

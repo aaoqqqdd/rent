@@ -101,3 +101,13 @@ test('same-host POSTs use the client-facing Host header behind a proxy', async (
 
   assert.notEqual(proxiedRequest.status, 403)
 })
+
+test('same-origin email POSTs survive an upstream Host rewrite', async () => {
+  const env = { RENT: {} } as any
+  const proxiedRequest = await worker.fetch(new Request('https://internal-worker.example/admin/email-templates', {
+    method: 'POST',
+    headers: { Host: 'upstream.internal', Origin: 'https://rent.example', 'Sec-Fetch-Site': 'same-origin' },
+  }), env)
+
+  assert.notEqual(proxiedRequest.status, 403)
+})
