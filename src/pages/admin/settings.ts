@@ -18,7 +18,7 @@ export function renderAdminSettings(user: any) {
     <div class="panel">
       <div class="section-title"><h2>系统设置</h2><span class="section-note">配置邮件、公司资料、租赁规则、支付方式和推荐分成。</span></div>
 
-      <form id="systemSettingsForm" class="asset-editor">
+      <form id="systemSettingsForm" class="asset-editor" novalidate>
         <section class="form-section">
           <div class="form-section-title"><span class="mono">SMTP</span><div><h3>邮件 SMTP 配置</h3><p>用于邮箱验证、收据、合同、退款和其他通知。密码加密保存，留空表示保留原密码。<a href="/admin/email-templates">完整邮件变量索引</a>。</p></div></div>
           <div class="grid grid-2">
@@ -61,7 +61,7 @@ export function renderAdminSettings(user: any) {
 
         <section class="form-section">
           <div class="form-section-title"><span class="mono">RATE</span><div><h3>价格策略配置</h3><p>用于计算租金与押金的策略文本。</p></div></div>
-          <div class="form-group"><textarea id="priceStrategy" name="priceStrategy" rows="5" class="form-control">${settings.priceStrategy}</textarea></div>
+          <div class="form-group price-strategy-editor"><div class="price-strategy-editor__label-row"><label class="form-label" for="priceStrategy">策略内容</label><span class="price-strategy-editor__meta">管理员内部规则</span></div><textarea id="priceStrategy" name="priceStrategy" rows="3" class="form-control" aria-describedby="priceStrategyHint">${settings.priceStrategy}</textarea><small id="priceStrategyHint" class="form-text">可按行记录租金、押金等计算规则，保存后用于报价说明和后台计算依据。</small></div>
         </section>
 
         <section class="form-section">
@@ -280,6 +280,7 @@ export function renderAdminSettings(user: any) {
         // 发送到后端API保存
         fetch('/admin/settings/save', {
           method: 'POST',
+          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newSettings)
         })

@@ -5387,6 +5387,41 @@ tr:hover td {
   font-size: .78rem;
 }
 
+.price-strategy-editor {
+  width: min(100%, 1100px);
+  margin-bottom: 0;
+}
+
+.price-strategy-editor__label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 7px;
+}
+
+.price-strategy-editor__label-row .form-label {
+  margin-bottom: 0;
+}
+
+.price-strategy-editor__meta {
+  color: var(--text-tertiary);
+  font: 600 .68rem var(--font-mono);
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+
+.price-strategy-editor .form-control {
+  min-height: 96px;
+  margin-bottom: 8px;
+  line-height: 1.65;
+}
+
+.price-strategy-editor .form-text {
+  display: block;
+  margin: 0;
+}
+
 .form-subheading {
   margin: 22px 0 10px;
   padding-top: 16px;

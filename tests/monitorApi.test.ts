@@ -102,6 +102,16 @@ test('same-host POSTs use the client-facing Host header behind a proxy', async (
   assert.notEqual(proxiedRequest.status, 403)
 })
 
+test('same-origin session form posts support a null Origin header', async () => {
+  const env = { RENT: {} } as any
+  const request = await worker.fetch(new Request('https://rent.example/admin/email-templates/return_reminder', {
+    method: 'POST',
+    headers: { Cookie: 'session=test-session', Origin: 'null', 'Sec-Fetch-Site': 'same-origin' },
+  }), env)
+
+  assert.notEqual(request.status, 403)
+})
+
 test('same-origin email POSTs survive an upstream Host rewrite', async () => {
   const env = { RENT: {} } as any
   const proxiedRequest = await worker.fetch(new Request('https://internal-worker.example/admin/email-templates', {

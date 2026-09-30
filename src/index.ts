@@ -712,7 +712,7 @@ app.use('*', async (c, next) => {
     const sameOriginAjax = c.req.header('X-Requested-With') === 'XMLHttpRequest' && /^application\/json(?:;|$)/i.test(c.req.header('Content-Type') || '')
     const hasSessionCookie = /(?:^|;\s*)session=[^;]+/.test(c.req.header('cookie') || '')
     let originValid = true
-    if (origin) {
+    if (origin && origin !== 'null') {
       // TLS and host rewriting may terminate at a proxy before the request
       // reaches the Worker. Prefer the client-facing Host header, with the
       // request URL as a fallback, so same-origin browser form posts are not
@@ -726,6 +726,11 @@ app.use('*', async (c, next) => {
         // In that case Sec-Fetch-Site is the client-facing origin signal.
         originValid = originHost === publicHost || fetchSite === 'same-origin'
       } catch { originValid = false }
+    } else if (origin === 'null' && hasSessionCookie && fetchSite === 'same-origin') {
+      // Some privacy configurations submit a same-origin top-level form with
+      // Origin: null. Fetch Metadata is browser-controlled; require both its
+      // same-origin signal and an existing session before accepting it.
+      originValid = true
     } else if (hasSessionCookie && fetchSite !== 'same-origin') {
       // A browser session without an Origin header is not verifiably same
       // origin. Reject it rather than accepting a forged cross-site form.

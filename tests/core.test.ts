@@ -651,6 +651,8 @@ test('rich text editor pages emit valid browser JavaScript', async () => {
   const user = { id: 'admin', name: 'Admin', email: 'admin@example.com', role: 'ADMIN' }
   const settingsHtml = renderAdminSettings(user)
   assertInlineScriptsParse(settingsHtml)
+  assert.match(settingsHtml, /<form id="systemSettingsForm" class="asset-editor" novalidate>/)
+  assert.match(settingsHtml, /fetch\('\/admin\/settings\/save',[\s\S]*credentials: 'same-origin'/)
   assert.doesNotMatch(settingsHtml, /Zoom2u API|Stripe API 配置|Cloudinary 图片上传|Turnstile 人机验证|Resend 邮件 API/)
   const apiSettingsHtml = renderAdminApiSettings(user)
   assertInlineScriptsParse(apiSettingsHtml)
