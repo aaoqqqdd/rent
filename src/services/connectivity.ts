@@ -75,7 +75,7 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
       detail = 'Access Token 有效，门店接口可访问'
     } else if (definition.id === 'email') {
       const { provider, apiKey } = await resolveEmailCredentials(c)
-      if (!apiKey) { status = 'unconfigured'; detail = '尚未配置邮件服务商密钥（后台「通知渠道」或 RESEND_API_KEY）' }
+      if (!apiKey) { status = 'unconfigured'; detail = '尚未配置邮件服务商密钥（后台「通知渠道」或对应环境变量）' }
       else if (provider === 'brevo') {
         const response = await timedFetch('https://api.brevo.com/v3/account', { headers: { 'api-key': apiKey, Accept: 'application/json' } })
         if (!response.ok) throw new Error(`Brevo 返回 HTTP ${response.status}`)

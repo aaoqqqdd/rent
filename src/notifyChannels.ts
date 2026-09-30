@@ -84,6 +84,8 @@ export async function getNotifyChannelsSummary(c: Context) {
     safeDecrypt(c, stored.webhookUrl),
   ])
   const envResend = String((c.env as any).RESEND_API_KEY || '').trim()
+  const envBrevo = String((c.env as any).BREVO_API_KEY || '').trim()
+  const envMailerSend = String((c.env as any).MAILERSEND_API_KEY || '').trim()
   const activeProvider = stored.emailProvider || 'resend'
   return {
     emailProvider: activeProvider,
@@ -94,14 +96,16 @@ export async function getNotifyChannelsSummary(c: Context) {
       usingEnvFallback: !resendApiKey && Boolean(envResend),
     },
     brevo: {
-      from: stored.brevoFrom || '',
+      from: stored.brevoFrom || String((c.env as any).BREVO_FROM || '').trim() || String((c.env as any).EMAIL_FROM || '').trim(),
       apiKeyMasked: mask(brevoApiKey),
-      configured: Boolean(brevoApiKey),
+      configured: Boolean(brevoApiKey || envBrevo),
+      usingEnvFallback: !brevoApiKey && Boolean(envBrevo),
     },
     mailersend: {
-      from: stored.mailersendFrom || '',
+      from: stored.mailersendFrom || String((c.env as any).MAILERSEND_FROM || '').trim() || String((c.env as any).EMAIL_FROM || '').trim(),
       apiKeyMasked: mask(mailersendApiKey),
-      configured: Boolean(mailersendApiKey),
+      configured: Boolean(mailersendApiKey || envMailerSend),
+      usingEnvFallback: !mailersendApiKey && Boolean(envMailerSend),
     },
     webhook: {
       enabled: Boolean(stored.webhookEnabled),
@@ -174,8 +178,8 @@ export async function saveNotifyChannels(c: Context, input: Record<string, any>)
 }
 
 // 邮件凭据：后台已配置的服务商优先（未显式选择时按 resend → brevo → mailersend
-// 顺序取第一个已配置的），resend 再回落到 env（RESEND_API_KEY / EMAIL_FROM），
-// 发件人最后回落到公司邮箱。任何一步失败都不抛错，只当作未配置处理。
+// 顺序取第一个已配置的），再回落到对应的环境变量；发件人最后回落到
+// EMAIL_FROM 或公司邮箱。任何一步失败都不抛错，只当作未配置处理。
 export async function resolveEmailCredentials(c: Context): Promise<{ provider: EmailProvider; apiKey: string; from: string }> {
   let stored: StoredChannelConfig = {}
   try { stored = await readStored(c) } catch { /* fall through to env */ }
@@ -188,26 +192,26 @@ export async function resolveEmailCredentials(c: Context): Promise<{ provider: E
   for (const provider of candidates) {
     if (provider === 'resend') {
       const apiKey = await safeDecrypt(c, stored.resendApiKey)
-      if (apiKey) return { provider, apiKey, from: await resolveFrom(c, stored.resendFrom) }
+      const envApiKey = String((c.env as any).RESEND_API_KEY || '').trim()
+      if (apiKey || envApiKey) return { provider, apiKey: apiKey || envApiKey, from: await resolveFrom(c, stored.resendFrom, 'EMAIL_FROM') }
     } else if (provider === 'brevo') {
       const apiKey = await safeDecrypt(c, stored.brevoApiKey)
-      if (apiKey) return { provider, apiKey, from: await resolveFrom(c, stored.brevoFrom) }
+      const envApiKey = String((c.env as any).BREVO_API_KEY || '').trim()
+      if (apiKey || envApiKey) return { provider, apiKey: apiKey || envApiKey, from: await resolveFrom(c, stored.brevoFrom, 'BREVO_FROM') }
     } else if (provider === 'mailersend') {
       const apiKey = await safeDecrypt(c, stored.mailersendApiKey)
-      if (apiKey) return { provider, apiKey, from: await resolveFrom(c, stored.mailersendFrom) }
+      const envApiKey = String((c.env as any).MAILERSEND_API_KEY || '').trim()
+      if (apiKey || envApiKey) return { provider, apiKey: apiKey || envApiKey, from: await resolveFrom(c, stored.mailersendFrom, 'MAILERSEND_FROM') }
     }
   }
 
-  // 未保存任何后台凭据：回落到 env（仅 Resend 支持这种部署方式）。
-  if (selectedProvider) return { provider: selectedProvider, apiKey: '', from: await resolveFrom(c, '') }
-  const envApiKey = String((c.env as any).RESEND_API_KEY || '').trim()
-  if (envApiKey) return { provider: 'resend', apiKey: envApiKey, from: await resolveFrom(c, String((c.env as any).EMAIL_FROM || '').trim()) }
-
-  return { provider: stored.emailProvider || 'resend', apiKey: '', from: await resolveFrom(c, '') }
+  return { provider: selectedProvider || 'resend', apiKey: '', from: await resolveFrom(c, '', selectedProvider === 'brevo' ? 'BREVO_FROM' : selectedProvider === 'mailersend' ? 'MAILERSEND_FROM' : 'EMAIL_FROM') }
 }
 
-async function resolveFrom(c: Context, configured: string | undefined): Promise<string> {
+async function resolveFrom(c: Context, configured: string | undefined, envName = 'EMAIL_FROM'): Promise<string> {
   if (configured) return configured
+  const providerFrom = String((c.env as any)[envName] || '').trim()
+  if (providerFrom) return providerFrom
   const envFrom = String((c.env as any).EMAIL_FROM || '').trim()
   if (envFrom) return envFrom
   try { return String(getSystemSettings().companyDetails.email || '').trim() } catch { return '' }
@@ -220,17 +224,17 @@ export interface EmailSendResult { ok: boolean; id: string | null; error: string
 // 统一发信入口：按当前生效的邮件服务商拼装请求并发送，返回值统一归一化为
 // { ok, id, error }，调用方不需要关心具体服务商的响应格式。
 export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): Promise<EmailSendResult> {
-  const { provider, apiKey, from } = await resolveEmailCredentials(c)
-  if (!apiKey || !from) return { ok: false, id: null, error: 'Email transport is not configured' }
-  const recipients = Array.isArray(email.to) ? email.to : [email.to]
-  const html = email.html || renderPlainTextEmailHtml(email.subject, email.text, getSystemSettings().companyDetails.name || 'PC Rental')
-  const attachments = email.attachments?.filter(attachment => attachment.filename && attachment.content).map(attachment => ({
-    filename: attachment.filename,
-    content: attachment.content,
-    contentType: attachment.contentType || 'application/octet-stream',
-  }))
-
   try {
+    const { provider, apiKey, from } = await resolveEmailCredentials(c)
+    if (!apiKey || !from) return { ok: false, id: null, error: 'Email transport is not configured' }
+    const recipients = Array.isArray(email.to) ? email.to : [email.to]
+    const html = email.html || renderPlainTextEmailHtml(email.subject, email.text, getSystemSettings().companyDetails.name || 'PC Rental')
+    const attachments = email.attachments?.filter(attachment => attachment.filename && attachment.content).map(attachment => ({
+      filename: attachment.filename,
+      content: attachment.content,
+      contentType: attachment.contentType || 'application/octet-stream',
+    }))
+
     if (provider === 'brevo') {
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
@@ -238,7 +242,7 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
         body: JSON.stringify({ sender: parseFromAddress(from), to: recipients.map((address) => ({ email: address })), subject: email.subject, textContent: email.text, htmlContent: html, ...(attachments?.length ? { attachment: attachments.map(attachment => ({ name: attachment.filename, content: attachment.content })) } : {}) }),
       })
       const result = await response.json().catch(() => ({})) as any
-      return { ok: response.ok, id: result?.messageId || null, error: response.ok ? null : String(result?.message || response.status) }
+      return { ok: response.ok, id: result?.messageId || null, error: response.ok ? null : formatProviderError(result, response.status) }
     }
     if (provider === 'mailersend') {
       const response = await fetch('https://api.mailersend.com/v1/email', {
@@ -249,7 +253,7 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
       const messageId = response.headers.get('x-message-id')
       const ok = response.status === 202 || response.ok
       let error: string | null = null
-      if (!ok) { const result = await response.json().catch(() => ({})) as any; error = String(result?.message || response.status) }
+      if (!ok) { const result = await response.json().catch(() => ({})) as any; error = formatProviderError(result, response.status) }
       return { ok, id: messageId, error }
     }
     // 默认 Resend
@@ -259,10 +263,17 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
       body: JSON.stringify({ from, to: recipients, subject: email.subject, text: email.text, html, ...(attachments?.length ? { attachments: attachments.map(attachment => ({ filename: attachment.filename, content: attachment.content, content_type: attachment.contentType })) } : {}) }),
     })
     const result = await response.json().catch(() => ({})) as any
-    return { ok: response.ok, id: result?.id || null, error: response.ok ? null : String(result?.message || response.status) }
+    return { ok: response.ok, id: result?.id || null, error: response.ok ? null : formatProviderError(result, response.status) }
   } catch (error: any) {
     return { ok: false, id: null, error: String(error?.message || error).slice(0, 500) }
   }
+}
+
+function formatProviderError(result: any, status: number): string {
+  const details = Array.isArray(result?.errors)
+    ? result.errors.map((item: any) => item?.message || item?.parameter || item).filter(Boolean).join('; ')
+    : ''
+  return String(result?.message || details || result?.code || `HTTP ${status}`).slice(0, 500)
 }
 
 // Brevo / MailerSend 的 sender/from 字段需要 { email, name? } 结构；

@@ -45,6 +45,14 @@ test('selected provider does not fall back to an unrelated Resend environment ke
   assert.deepEqual(result, { provider: 'brevo', apiKey: '', from: 'sender@example.com' })
 })
 
+test('selected Brevo provider can use Brevo environment credentials', async () => {
+  const result = await resolveEmailCredentials(
+    context({ emailProvider: 'brevo' }, { BREVO_API_KEY: 'brevo_environment_key', BREVO_FROM: 'sender@example.com' }),
+  )
+
+  assert.deepEqual(result, { provider: 'brevo', apiKey: 'brevo_environment_key', from: 'sender@example.com' })
+})
+
 test('transactional email uses the request format required by each provider', async () => {
   const cases = [
     {
