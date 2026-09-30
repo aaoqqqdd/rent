@@ -49,3 +49,42 @@ test('due-date notifications are inserted once per order and reminder type', asy
   assert.equal(await createDueDateNotifications(context), 0)
   assert.equal(statements.filter(sql => /INSERT OR IGNORE INTO notifications/i.test(sql)).length, 6)
 })
+
+test('automatic due-date notifications also send email', async () => {
+  const requests: string[] = []
+  const db = {
+    prepare(sql: string) {
+      const state = { args: [] as unknown[] }
+      return {
+        bind(...args: unknown[]) { state.args = args; return this },
+        async run() {
+          return /INSERT OR IGNORE INTO notifications/i.test(sql) ? { meta: { changes: 1 } } : { meta: { changes: 0 } }
+        },
+        async first() {
+          if (/SELECT name, email, role FROM users/i.test(sql)) return { name: '客户', email: 'customer@example.com', role: 'CUSTOMER' }
+          if (/SELECT name, email FROM users/i.test(sql)) return { name: '客户', email: 'customer@example.com' }
+          if (/SELECT subject, body, enabled, theme_color FROM email_templates/i.test(sql)) return { subject: '归还提醒 - {order_number}', body: '<p>请及时归还。</p>', enabled: 1, theme_color: '#f0a35b' }
+          if (/SELECT \* FROM orders/i.test(sql)) return { id: 'order-1', userId: 'customer-1', orderNo: 'ORD-1', status: 'active', deviceId: null, endDate: '2026-09-30' }
+          return null
+        },
+        async all() {
+          if (/o\.endDate/i.test(sql)) return { results: [{ id: 'order-1', userId: 'customer-1', orderNo: 'ORD-1' }] }
+          return { results: [] }
+        },
+      }
+    },
+  }
+  const context = { env: { RENT: db, RESEND_API_KEY: 'resend-key', EMAIL_FROM: 'sender@example.com' }, req: { url: 'https://rent.example.test/cron' } } as any
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = async (_input, init) => {
+      requests.push(String(init?.body || ''))
+      return new Response(JSON.stringify({ id: 'email-id' }), { status: 200 })
+    }
+    await createDueDateNotifications(context)
+    assert.equal(requests.length, 2)
+    assert.match(requests[0], /customer@example\.com/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

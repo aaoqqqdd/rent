@@ -29,9 +29,20 @@ const BUSINESS_NOTIFICATION_TEMPLATE_IDS: Record<string, string> = {
   rental_application_rejected: 'rental_application_rejected',
   order_created: 'order_created',
   rental_payment_pending: 'order_pending_payment',
+  rental_payment_charged: 'payment_completed',
+  payment_approved: 'payment_completed',
+  due_soon_3d: 'return_reminder',
+  due_today: 'return_reminder',
   refund_completed: 'refund_completed',
   deposit_refunded: 'refund_completed',
 }
+const CUSTOMER_AUTOMATIC_EMAIL_TYPES = new Set([
+  'early_return_approved', 'rental_payment_charged', 'rental_payment_pending',
+  'rental_application_approved', 'rental_application_rejected', 'rental_cancelled',
+  'rental_suspended', 'payment_approved', 'payment_rejected', 'order_price_adjustment',
+  'due_soon_3d', 'due_today', 'pickup_reminder', 'refund_completed', 'deposit_refunded',
+  'rental_overdue', 'feedback_reward', 'square_deposit_payment', 'square_residual_order', 'square_residual_topup',
+])
 const TAX_INVOICE_TEMPLATE_ID = 'tax_invoice_issued'
 const TAX_INVOICE_TEMPLATE_NAME = 'Tax invoice issued'
 const TAX_INVOICE_TEMPLATE_SUBJECT = 'Tax invoice for order {order_number}'
@@ -112,7 +123,12 @@ async function sendNotificationEmail(c: Context, notification: { recipientId: st
       c.env.RENT.prepare('SELECT * FROM orders WHERE id = ?').bind(notification.orderId).first(),
       c.env.RENT.prepare('SELECT contractNumber, signToken FROM contracts WHERE orderId = ? ORDER BY createdAt DESC LIMIT 1').bind(notification.orderId).first(),
     ]) as any[]
-    if (!template || template.enabled === 0 || !order) return
+    if (!order) return
+    if (!template) {
+      await sendGenericNotificationEmail(c, notification, recipient, email)
+      return
+    }
+    if (template.enabled === 0) return
 
     const [customer, device, refund] = await Promise.all([
       c.env.RENT.prepare('SELECT name, email FROM users WHERE id = ?').bind(order.userId).first(),
@@ -157,6 +173,12 @@ async function sendNotificationEmail(c: Context, notification: { recipientId: st
     return
   }
 
+  if (CUSTOMER_AUTOMATIC_EMAIL_TYPES.has(notification.type)) {
+    if (String(recipient?.role || '').toUpperCase() !== 'CUSTOMER') return
+    await sendGenericNotificationEmail(c, notification, recipient, email)
+    return
+  }
+
   // 通用邮件只服务于后台人员手动发送的私信；通告和其它业务站内通知不发兜底邮件。
   if (notification.type !== 'manual') return
 
@@ -178,6 +200,15 @@ async function sendNotificationEmail(c: Context, notification: { recipientId: st
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
   const subject = fill(String(template.subject || SITE_NOTIFICATION_TEMPLATE_SUBJECT))
   const html = renderEmailNotificationHtml(subject, fill(String(template.body || SITE_NOTIFICATION_TEMPLATE_BODY)), vars.company_name, template.theme_color || '#f0a35b')
+  await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(notification.message, 2000), html })
+}
+
+async function sendGenericNotificationEmail(c: Context, notification: { recipientId: string; title: string; message: string; orderId?: string }, recipient: any, email: string): Promise<void> {
+  const companyDetails = getSystemSettings().companyDetails || ({} as any)
+  const subject = sanitizePlainText(notification.title, 200)
+  const detailUrl = notification.orderId ? buildNotificationOrderDetailUrl(c.req.url, notification.orderId, recipient?.role) : ''
+  const detailLink = detailUrl ? `<p><a href="${escapeHtml(detailUrl)}">查看订单详情</a></p>` : ''
+  const html = renderEmailNotificationHtml(subject, `<p>${notification.message}</p>${detailLink}`, String(companyDetails.name || ''))
   await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(notification.message, 2000), html })
 }
 
@@ -379,7 +410,7 @@ export async function createNotification(c: Context, notification: { recipientId
   // 补发邮件：尽力而为，绝不影响站内信；重复通知（dedupe 命中）不重复发信。
   const defaultDelivery = getSystemSettings().notificationSettings?.defaultDelivery || 'in_app_email'
   const notifyByEmail = notification.notifyByEmail ?? defaultDelivery === 'in_app_email'
-  if (inserted && notifyByEmail && (notification.type === 'manual' || notification.type === 'pickup_reminder' || Boolean(BUSINESS_NOTIFICATION_TEMPLATE_IDS[notification.type]))) {
+  if (inserted && notifyByEmail && (notification.type === 'manual' || Boolean(BUSINESS_NOTIFICATION_TEMPLATE_IDS[notification.type]) || CUSTOMER_AUTOMATIC_EMAIL_TYPES.has(notification.type))) {
     try { await sendNotificationEmail(c, notification) }
     catch (error: any) { console.error('sendNotificationEmail failed:', error?.message || error) }
   }
@@ -596,12 +627,15 @@ export async function createDueDateNotifications(c: Context): Promise<number> {
         AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.recipient_id = o.userId AND n.order_id = o.id AND n.type = ?)
     `).bind(date, notice.type).all()
     for (const order of (rows.results || []) as any[]) {
-      const id = `nt-${crypto.randomUUID()}`
-      const result = await c.env.RENT.prepare(`
-        INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(id, order.userId, notice.type, notice.title, `${notice.text} 订单：${order.orderNo || order.id}。`, order.id, null, null).run() as any
-      created += Number(result.meta?.changes ?? result.changes ?? 0)
+      const inserted = await createNotification(c, {
+        recipientId: order.userId,
+        type: notice.type,
+        title: notice.title,
+        message: `${notice.text} 订单：${order.orderNo || order.id}。`,
+        orderId: order.id,
+        notifyByEmail: true,
+      })
+      if (inserted) created++
     }
   }
   const melbourneToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
