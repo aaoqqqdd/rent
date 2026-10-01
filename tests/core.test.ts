@@ -32,10 +32,10 @@ import { renderStaffCustomerDetail } from '../src/pages/staff/customerDetail'
 import { renderStaffOrdersOngoing } from '../src/pages/staff/ordersPending'
 import { renderStaffDevices } from '../src/pages/staff/devices'
 import { renderStaffCustomerEdit } from '../src/pages/staff/customerEdit'
-import { allocateProportionalRefund, balanceAfterPriceAdjustment, refundableDepositFee, stripeAuthorizationAmount, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile, stripeDepositSettlementCaptureAmount, summarizeOrderPriceAdjustment, resolveOrderPriceAdjustmentRefundMethod } from '../src/actions/stripePayments'
+import { allocateProportionalRefund, balanceAfterPriceAdjustment, paidRentalPaymentCoversOrder, refundableDepositFee, stripeAuthorizationAmount, stripeCheckoutItems, stripePaymentAmounts, stripeCustomerProfile, stripeDepositSettlementCaptureAmount, summarizeOrderPriceAdjustment, resolveOrderPriceAdjustmentRefundMethod } from '../src/actions/stripePayments'
 import { renderCustomerReferral } from '../src/pages/customer/referral'
 import { getBankRefundPrefill, readContractSignDraft, renderSigningProgress } from '../src/pages/public/contractSign'
-import { paymentResultState } from '../src/pages/public/paymentResult'
+import { paymentResultState, selectPaymentResultPayment } from '../src/pages/public/paymentResult'
 import { renderOrderStatusFeedback } from '../src/pages/admin/orderStatusFeedback'
 import { renderStaffInspection } from '../src/pages/staff/inspection'
 import { renderGuestAccount } from '../src/pages/customer/guestAccount'
@@ -496,6 +496,13 @@ test('Stripe adds 2.5% to rent and service fees while excluding the deposit', ()
   assert.equal(stripeAuthorizationAmount(220, 200), 22050)
 })
 
+test('a paid Stripe payment only suppresses a new authorization when it covers rent and delivery', () => {
+  assert.equal(paidRentalPaymentCoversOrder({ status: 'paid', rental_amount: 320 }, 1320, 1000), true)
+  assert.equal(paidRentalPaymentCoversOrder({ status: 'paid', rental_amount: 300 }, 1320, 1000), false)
+  assert.equal(paidRentalPaymentCoversOrder({ status: 'paid', rental_amount: 320, payment_provider: 'square' }, 1320, 1000), true)
+  assert.equal(paidRentalPaymentCoversOrder({ status: 'pending', rental_amount: 320 }, 1320, 1000), false)
+})
+
 test('rental length selects preauthorization or SetupIntent deposit handling', () => {
   assert.equal(depositPaymentModeForRental(7, true, 'amex'), 'PREAUTH')
   assert.equal(depositPaymentModeForRental(8, true, 'amex'), 'SETUP_INTENT')
@@ -554,6 +561,14 @@ test('payment results distinguish Stripe, bank transfer, and immediate balance p
   assert.equal(paymentResultState({ paymentMethod: 'card', status: 'pending_payment' }, { status: 'pending' }), 'stripe_pending')
   assert.equal(paymentResultState({ paymentMethod: 'bank_transfer', status: 'pending_payment' }, { status: 'pending' }), 'bank_pending')
   assert.equal(paymentResultState({ paymentMethod: 'balance', status: 'paid' }, { status: 'paid' }), 'success')
+})
+
+test('payment result follows the actual latest payment record instead of a stale order method', () => {
+  const payment = selectPaymentResultPayment({ paymentMethod: 'bank_transfer' }, [
+    { payment_method: 'card', payment_provider: 'stripe', status: 'pending' },
+  ])
+  assert.equal(payment?.payment_provider, 'stripe')
+  assert.equal(paymentResultState({ paymentMethod: payment?.payment_method, paymentProvider: payment?.payment_provider }, payment), 'stripe_pending')
 })
 
 test('deposit refunds do not return a processing fee because the fee excludes deposits', () => {

@@ -14,13 +14,21 @@ export function paymentResultState(order: any, payment: any, cancelled = false):
   return order?.paymentMethod === 'bank_transfer' || order?.payment_method === 'bank_transfer' ? 'bank_pending' : 'stripe_pending'
 }
 
+export function selectPaymentResultPayment(order: any, payments: any[]): any | null {
+  const rows = Array.isArray(payments) ? payments : []
+  if (!rows.length) return null
+  const paid = rows.find(payment => String(payment?.status || '').toLowerCase() === 'paid')
+  return paid || rows[0]
+}
+
 export async function renderPaymentResult(c: Context, orderId: string, user: any, cancelled = false) {
   const order = await getOrderById(c, orderId);
   const contract = order ? await getContractByOrderId(c, order.id) : null;
-  const paymentMethod = String(order?.paymentMethod ?? 'card')
-  const provider = String(order?.paymentProvider || (paymentMethod === 'card' ? 'stripe' : 'internal'))
-  const payment = order ? await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, payment_provider, deposit_amount FROM payments WHERE rental_id = ? AND payment_method = ? AND COALESCE(payment_provider, ?) = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod, provider, provider).first() as any : null
-  const status = paymentResultState(order, payment, cancelled)
+  const payments = order ? ((await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, payment_provider, deposit_amount, created_at FROM payments WHERE rental_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all()).results || []) as any[] : []
+  const payment = selectPaymentResultPayment(order, payments)
+  const paymentMethod = String(payment?.payment_method || order?.paymentMethod || 'card')
+  const provider = String(payment?.payment_provider || order?.paymentProvider || (paymentMethod === 'card' ? 'stripe' : 'internal'))
+  const status = paymentResultState({ ...order, paymentMethod, payment_method: paymentMethod, paymentProvider: provider, payment_provider: provider }, payment, cancelled)
   let title = '';
   let message = '';
   let icon = '';

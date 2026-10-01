@@ -403,7 +403,18 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
 
             <div class="form-group" style="margin: 20px 0;"><label class="form-label" for="couponCode">优惠码（选填）</label><input class="form-control" id="couponCode" name="couponCode" maxlength="40" placeholder="输入优惠码后继续付款"><small class="form-text" id="coupon-preview" aria-live="polite"></small></div>
 
-            <div class="payment-options" style="display: ${hasSavedCard ? 'none' : 'flex'}; flex-direction: column; gap: 15px;">
+            ${!hasSavedCard ? `<div id="payment-method-choices" class="payment-method-buttons" style="display:flex; flex-wrap:wrap; gap:12px; margin:20px 0 12px;">
+              ${systemSettings.paymentMethods.stripe ? `<button type="button" class="button button-secondary" data-payment-choice="stripe">信用卡支付（Stripe）</button>` : ''}
+              ${systemSettings.paymentMethods.balancePayment && canUseBalance ? `<button type="button" class="button button-secondary" data-payment-choice="balance">账户余额支付</button>` : ''}
+              ${systemSettings.paymentMethods.bankTransfer ? `<button type="button" class="button button-secondary" data-payment-choice="bank_transfer">银行转账</button>` : ''}
+              ${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<button type="button" class="button button-secondary" data-payment-choice="alipay">支付宝（人民币）</button>` : ''}
+              ${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<button type="button" class="button button-secondary" data-payment-choice="wechat">微信支付（人民币）</button>` : ''}
+            </div>` : ''}
+            <div id="selected-payment-method-panel" class="alert" hidden style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin:20px 0 12px;">
+              <span>当前支付方式：<strong id="selected-payment-method-label">—</strong></span>
+              ${hasSavedCard ? '' : '<button type="button" class="button button-secondary" id="change-payment-method">更换支付方式</button>'}
+            </div>
+            <div class="payment-options" id="payment-method-radios" style="display:none;" aria-hidden="true">
               ${systemSettings.paymentMethods.stripe ? `
               <label class="payment-option">
                 <input type="radio" name="paymentMethod" value="stripe" required />
@@ -426,7 +437,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               ${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<label class="payment-option"><input type="radio" name="paymentMethod" value="wechat" required /><span><strong>微信支付（人民币）</strong><small class="rmb-summary">选择后获取实时汇率</small></span></label>` : ''}
             </div>
             ${systemSettings.paymentMethods.bankTransfer ? `<aside id="bank-transfer-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>银行转账资料</strong><span class="mono">AUD</span></div><dl><div><dt>银行</dt><dd>${escapeAttribute(systemSettings.bankDetails.bankName || '—')}</dd></div><div><dt>账户名</dt><dd>${escapeAttribute(systemSettings.bankDetails.accountName)}</dd></div><div><dt>BSB</dt><dd>${escapeAttribute(systemSettings.bankDetails.bsb)}</dd></div><div><dt>账号</dt><dd>${escapeAttribute(systemSettings.bankDetails.account)}</dd></div><div><dt>租金及服务费</dt><dd data-price="orderTotal">${formatCurrency(stripePrincipal)}</dd></div></dl><div class="grid grid-2"><div class="form-group"><label class="form-label" for="transferReference">银行 Reference</label><input class="form-control bank-proof-input" id="transferReference" name="transferReference" maxlength="100" placeholder="银行交易 Reference"><span class="field-error" data-payment-error="transferReference"></span></div><div class="form-group"><label class="form-label" for="transferProofUrl">付款截图链接</label><input class="form-control bank-proof-input" id="transferProofUrl" name="transferProofUrl" type="url" placeholder="https://.../payment-proof.jpg"><span class="field-error" data-payment-error="transferProofUrl"></span></div></div><div class="form-group"><label class="form-label" for="transferNote">转账备注（选填）</label><textarea class="form-control" id="transferNote" name="transferNote" maxlength="500"></textarea><small class="form-text">这里只提交租金及服务费；押金按单独选择的押金方式处理。请先把截图上传到可公开访问的 HTTPS 图床，再粘贴图片链接。</small></div></aside>` : ''}
-            ${((systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl) || (systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl)) ? `<aside id="rmb-payment-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>人民币付款</strong><span class="mono">CNY</span></div><p id="rmb-payment-summary">选择支付宝或微信后获取实时汇率。</p><div class="grid grid-2">${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<div><strong>支付宝收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.alipayQrUrl)}" alt="支付宝收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<div><strong>微信收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.wechatQrUrl)}" alt="微信收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}</div><div class="grid grid-2"><div class="form-group"><label class="form-label">付款 Reference</label><input class="form-control bank-proof-input" name="transferReference" maxlength="100" placeholder="支付宝/微信交易单号"></div><div class="form-group"><label class="form-label">付款凭证图片链接</label><input class="form-control bank-proof-input" name="transferProofUrl" type="url" placeholder="https://..."></div></div><div class="form-group"><label class="form-label">备注（选填）</label><textarea class="form-control" name="transferNote" maxlength="500"></textarea></div></aside>` : ''}
+            ${((systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl) || (systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl)) ? `<aside id="rmb-payment-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>人民币付款</strong><span class="mono">CNY</span></div><p id="rmb-payment-summary">选择支付宝或微信后获取实时汇率。</p><div class="grid grid-2">${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<div data-rmb-method="alipay"><strong>支付宝收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.alipayQrUrl)}" alt="支付宝收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<div data-rmb-method="wechat"><strong>微信收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.wechatQrUrl)}" alt="微信收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}</div><div class="grid grid-2"><div class="form-group"><label class="form-label">付款 Reference</label><input class="form-control bank-proof-input" name="transferReference" maxlength="100" placeholder="支付宝/微信交易单号"></div><div class="form-group"><label class="form-label">付款凭证图片链接</label><input class="form-control bank-proof-input" name="transferProofUrl" type="url" placeholder="https://..."></div></div><div class="form-group"><label class="form-label">备注（选填）</label><textarea class="form-control" name="transferNote" maxlength="500"></textarea></div></aside>` : ''}
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">${stripeFeePercent}%</span></div>
@@ -465,6 +476,11 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const bankTransferNotice = document.getElementById('bank-transfer-notice');
               const rmbPaymentNotice = document.getElementById('rmb-payment-notice');
               const rmbSummary = document.getElementById('rmb-payment-summary');
+              const paymentChoices = document.getElementById('payment-method-choices');
+              const selectedPaymentPanel = document.getElementById('selected-payment-method-panel');
+              const selectedPaymentLabel = document.getElementById('selected-payment-method-label');
+              const changePaymentButton = document.getElementById('change-payment-method');
+              const paymentMethodLabels = { stripe: '信用卡支付（Stripe）', balance: '账户余额支付', bank_transfer: '银行转账', alipay: '支付宝（人民币）', wechat: '微信支付（人民币）' };
               const couponInput = document.getElementById('couponCode');
               const couponPreview = document.getElementById('coupon-preview');
               const totalPreview = document.getElementById('coupon-total-preview');
@@ -522,15 +538,22 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               couponInput?.addEventListener('input', previewCoupon);
               const bankProofInputs = Array.from(document.querySelectorAll('.bank-proof-input'));
               const bankInputs = fields.querySelectorAll('input');
+              const getPaymentMethod = () => form.querySelector('input[name="paymentMethod"]:checked')?.value || form.querySelector('input[name="paymentMethod"][type="hidden"]')?.value || '';
               const update = () => {
-                const payment = form.querySelector('input[name="paymentMethod"]:checked')?.value;
+                const payment = getPaymentMethod();
                 const refund = form.querySelector('input[name="refundMethod"]:checked')?.value || form.querySelector('input[name="refundMethod"]')?.value;
+                if (paymentChoices) paymentChoices.hidden = Boolean(payment);
+                if (selectedPaymentPanel) selectedPaymentPanel.hidden = !payment;
+                if (selectedPaymentLabel) selectedPaymentLabel.textContent = paymentMethodLabels[payment] || '—';
+                document.querySelectorAll('[data-payment-choice]').forEach(button => button.classList.toggle('button-primary', button.getAttribute('data-payment-choice') === payment));
                 const show = payment === 'bank_transfer' && refund === 'original';
                 fields.style.display = show ? 'block' : 'none';
                 bankInputs.forEach(input => input.required = show);
                 if (stripeFeeNotice) stripeFeeNotice.hidden = payment !== 'stripe';
                 if (bankTransferNotice) bankTransferNotice.hidden = payment !== 'bank_transfer';
                 if (rmbPaymentNotice) rmbPaymentNotice.hidden = !['alipay', 'wechat'].includes(payment);
+                rmbPaymentNotice?.querySelectorAll('[data-rmb-method]').forEach(element => { element.hidden = element.getAttribute('data-rmb-method') !== payment; });
+                [bankTransferNotice, rmbPaymentNotice].forEach(notice => notice?.querySelectorAll('input, textarea').forEach(input => { input.disabled = notice.hidden; }));
                 bankProofInputs.forEach(input => input.required = input.closest('aside')?.id === 'bank-transfer-notice' ? payment === 'bank_transfer' : ['alipay', 'wechat'].includes(payment));
                 if (['alipay', 'wechat'].includes(payment) && rmbSummary) {
                   rmbSummary.textContent = '正在获取实时汇率…';
@@ -547,10 +570,20 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               };
               pickupTimeSlotSelect?.addEventListener('change', recomputeServiceFee);
               returnTimeSlotSelect?.addEventListener('change', recomputeServiceFee);
+              document.querySelectorAll('[data-payment-choice]').forEach(button => button.addEventListener('click', () => {
+                const radio = form.querySelector('input[name="paymentMethod"][value="' + button.getAttribute('data-payment-choice') + '"]');
+                if (!radio || radio.disabled) return;
+                radio.checked = true;
+                update();
+              }));
+              changePaymentButton?.addEventListener('click', () => {
+                form.querySelectorAll('input[name="paymentMethod"]').forEach(input => { if (input.type !== 'hidden') input.checked = false; });
+                update();
+              });
               recomputeServiceFee();
               form.addEventListener('change', update);
               form.addEventListener('submit', event => {
-                const payment = form.querySelector('input[name="paymentMethod"]:checked')?.value;
+                const payment = getPaymentMethod();
                 if (!['bank_transfer', 'alipay', 'wechat'].includes(payment)) return;
                 let valid = true;
                 bankProofInputs.forEach(input => { if (!input.required) return; const error = document.querySelector('[data-payment-error="' + input.id + '"]'); let message = input.value.trim() ? '' : (input.type === 'url' ? '请填写有效的 HTTPS 截图链接。' : '请填写付款 Reference。'); if (!message && input.type === 'url') { try { if (new URL(input.value).protocol !== 'https:') message = '请填写有效的 HTTPS 截图链接。'; } catch { message = '请填写有效的 HTTPS 截图链接。'; } } input.setAttribute('aria-invalid', String(Boolean(message))); if (error) error.textContent = message; if (message) valid = false; });
@@ -657,7 +690,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               const form = document.querySelector('form[action*="step=4"]');
               form.addEventListener('submit', event => {
                 if (resolved || ctx) { event.preventDefault(); return; }
-                const method = form.querySelector('input[name="paymentMethod"]:checked')?.value;
+                const method = form.querySelector('input[name="paymentMethod"]:checked')?.value || form.querySelector('input[name="paymentMethod"][type="hidden"]')?.value;
                 if (method !== 'stripe') return;
                 event.preventDefault();
                 const submitBtn = form.querySelector('button[type="submit"]');

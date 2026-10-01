@@ -147,6 +147,7 @@ import {
   languageScriptVersion,
 } from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
+import { escapeHtml } from './lib/html'
 import { createTallyFeedbackToken } from './lib/tally'
 import { parsePickupQrPayload } from './lib/pickupQr'
 import { pickupTimeSlotEndMinutes } from './domain/pickupTimeSlots'
@@ -3196,10 +3197,11 @@ app.get('/api/payment/status', async (c) => {
   const ownsOrder = order.userId === user.id ||
     (user.accountType === 'guest' && String(user.guestOrderId || '') === orderId)
   if (!ownsOrder) return c.json({ error: 'forbidden' }, 403)
-  const paymentMethod = String(order.paymentMethod ?? 'card')
-  const provider = String(order.paymentProvider || (paymentMethod === 'card' ? 'stripe' : 'internal'))
-  const payment = await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, payment_provider FROM payments WHERE rental_id = ? AND payment_method = ? AND COALESCE(payment_provider, ?) = ? ORDER BY created_at DESC LIMIT 1').bind(order.id, paymentMethod, provider, provider).first() as any
-  const state = pages.paymentResultState(order, payment, false)
+  const payments = ((await c.env.RENT.prepare('SELECT status, amount, processing_fee, payment_method, payment_provider, deposit_amount, created_at FROM payments WHERE rental_id = ? ORDER BY created_at DESC LIMIT 20').bind(order.id).all()).results || []) as any[]
+  const payment = pages.selectPaymentResultPayment(order, payments)
+  const paymentMethod = String(payment?.payment_method || order.paymentMethod || 'card')
+  const provider = String(payment?.payment_provider || order.paymentProvider || (paymentMethod === 'card' ? 'stripe' : 'internal'))
+  const state = pages.paymentResultState({ ...order, paymentMethod, payment_method: paymentMethod, paymentProvider: provider, payment_provider: provider }, payment, false)
   return c.json({ state, orderNo: order.orderNo || null, redirectTarget: `/customer/orders/${order.id}` }, 200, { 'Cache-Control': 'no-store' })
 })
 
@@ -3787,7 +3789,7 @@ app.get('/admin/exceptions', async (c) => {
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
   const [topups, proofs, overdueOrders, offlineDevices, heldDeposits, damageCases, disputes, anomalousOrders, consistencyIssues, failingJobs, referralRewards] = await Promise.all([
     c.env.RENT.prepare("SELECT bt.id, bt.user_id, bt.amount, bt.payment_method, bt.reference, bt.note, u.name AS user_name FROM balance_topups bt LEFT JOIN users u ON u.id = bt.user_id WHERE bt.status = 'submitted' ORDER BY bt.updated_at ASC LIMIT 50").all(),
-    c.env.RENT.prepare("SELECT pp.id, pp.payment_id, p.rental_id, pp.reference_number, pp.uploaded_at, o.orderNo FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN orders o ON o.id = p.rental_id WHERE pp.status = 'submitted' ORDER BY pp.uploaded_at ASC LIMIT 50").all(),
+    c.env.RENT.prepare("SELECT pp.id, pp.payment_id, pp.image_url, p.rental_id, p.payment_method, pp.reference_number, pp.uploaded_at, o.orderNo FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id LEFT JOIN orders o ON o.id = p.rental_id WHERE pp.status = 'submitted' ORDER BY pp.uploaded_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, endDate FROM orders WHERE status IN ('active', 'extended', 'overdue', 'pending_return') AND endDate < ? ORDER BY endDate ASC LIMIT 50").bind(new Date().toISOString().slice(0, 10)).all(),
     c.env.RENT.prepare("SELECT id, name, agent_status, agent_last_seen_at FROM devices WHERE agent_token_hash IS NOT NULL AND (agent_last_seen_at IS NULL OR agent_last_seen_at <= datetime('now', '-5 minutes')) ORDER BY agent_last_seen_at ASC LIMIT 50").all(),
     c.env.RENT.prepare("SELECT id, orderNo, depositAmount FROM orders WHERE deposit_status = 'HELD' AND status IN ('returned', 'completed') ORDER BY updatedAt ASC LIMIT 50").all(),
@@ -3818,7 +3820,7 @@ app.get('/admin/exceptions', async (c) => {
   ]) as any[]
   const sections = [
     ['待审核充值', topups.results, '/admin/exceptions', (item: any) => `<strong>${sanitizePlainText(item.user_name || item.user_id, 100)}</strong> · ${sanitizePlainText(item.payment_method, 30)} · AUD$${Number(item.amount).toFixed(2)}<div class="record-actions"><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/approve" data-site-confirm="确认通过这笔充值并立即入账吗？"><button class="button button-sm button-primary">通过并入账</button></form><form method="post" action="/admin/balance-topups/${encodeURIComponent(item.id)}/reject" data-site-confirm="确认驳回这笔充值吗？"><button class="button button-sm button-danger">驳回</button></form></div>`],
-    ['待审核付款凭证', proofs.results, '/admin/exceptions', (item: any) => `<strong>订单 ${sanitizePlainText(item.orderNo || item.rental_id, 50)}</strong> · ${sanitizePlainText(item.reference_number || '无 Reference', 100)}<div class="record-actions"><form method="post" action="/admin/orders/${encodeURIComponent(item.rental_id)}/transfer-proof/approve" data-site-confirm="确认付款凭证无误并通过吗？"><button class="button button-sm button-primary">审核通过</button></form><form method="post" action="/admin/orders/${encodeURIComponent(item.rental_id)}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" required placeholder="驳回原因"><button class="button button-sm button-danger">驳回</button></form></div>`],
+    ['待审核付款凭证', proofs.results, '/admin/exceptions', (item: any) => { let image = ''; try { image = item.image_url ? validateHostedImageUrls(item.image_url, 1)[0] : '' } catch { } return `<strong>订单 ${sanitizePlainText(item.orderNo || item.rental_id, 50)}</strong> · ${sanitizePlainText(item.payment_method || '转账', 30)} · ${sanitizePlainText(item.reference_number || '无 Reference', 100)}${image ? `<div style="margin-top:10px"><a href="${escapeHtml(image)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(image)}" alt="付款凭证预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;max-width:220px;max-height:140px;object-fit:contain;border-radius:8px;border:1px solid #dbe3ee"></a></div>` : ''}<div class="record-actions"><form method="post" action="/admin/orders/${encodeURIComponent(item.rental_id)}/transfer-proof/approve" data-site-confirm="确认付款凭证无误并通过吗？"><button class="button button-sm button-primary">审核通过</button></form><form method="post" action="/admin/orders/${encodeURIComponent(item.rental_id)}/transfer-proof/reject"><input class="form-control" name="reason" maxlength="300" required placeholder="驳回原因"><button class="button button-sm button-danger">驳回</button></form></div>` }],
     ['逾期或待归还订单', overdueOrders.results, '/admin/orders', (item: any) => `${item.orderNo || item.id} · 应归还 ${item.endDate}`],
     ['离线设备', offlineDevices.results, '/admin/devices', (item: any) => `${item.name} · 设备端离线`],
     ['待结算押金', heldDeposits.results, '/admin/refunds', (item: any) => `${item.orderNo || item.id} · AUD$${Number(item.depositAmount).toFixed(2)}`],

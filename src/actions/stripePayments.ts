@@ -451,15 +451,18 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
   }
 
   // 短期订单只建立一笔完整预授权：授权上限包含租金、押金和租金手续费。
-  const existing = await c.env.RENT.prepare("SELECT id, stripe_payment_intent_id, status FROM payments WHERE rental_id = ? AND payment_method = 'card' AND rental_amount > 0 ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
-  // 已经自动扣款的历史订单不能把原 PaymentIntent 改成预授权，否则会把已结算交易误当成授权上限。
-  const useFullAuthorization = fullAuthorization && existing?.status !== 'paid'
+  const existing = await c.env.RENT.prepare("SELECT id, stripe_payment_intent_id, status, rental_amount FROM payments WHERE rental_id = ? AND payment_method = 'card' AND COALESCE(payment_provider, 'stripe') = 'stripe' AND rental_amount > 0 ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  // 只有已经覆盖当前租金及配送费的 Stripe 付款才不能把原 PaymentIntent 改成预授权；
+  // 不完整或其它支付渠道的历史记录不能让本次收款漏掉租金。
+  const existingPaidCoversRental = paidRentalPaymentCoversOrder(existing, order.totalAmount, depositAmount)
+  const reuseExistingPayment = Boolean(existing && (existing.status !== 'paid' || existingPaidCoversRental))
+  const useFullAuthorization = fullAuthorization && !existingPaidCoversRental
   const authorizationCents = useFullAuthorization
     ? stripeAuthorizationAmount(order.totalAmount, depositAmount, orderServiceFee(order))
     : chargedCents
 
   const intent = await upsertPaymentIntent(c, {
-    existingIntentId: existing?.stripe_payment_intent_id ? String(existing.stripe_payment_intent_id) : '',
+    existingIntentId: reuseExistingPayment && existing?.stripe_payment_intent_id ? String(existing.stripe_payment_intent_id) : '',
     amountCents: authorizationCents,
     receiptEmail: user.email,
     metadata: {
@@ -483,7 +486,7 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
   if (!alreadyPaid && !intent.client_secret) throw new Error('Stripe 未返回有效支付凭据')
   const paymentStatus = alreadyPaid ? 'paid' : 'pending'
 
-  if (existing) {
+  if (reuseExistingPayment) {
     await c.env.RENT.prepare('UPDATE payments SET stripe_payment_intent_id = ?, amount = ?, processing_fee = ?, deposit_amount = ?, rental_amount = ?, status = ?, paid_at = CASE WHEN ? = \'paid\' THEN COALESCE(paid_at, CURRENT_TIMESTAMP) ELSE paid_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
       .bind(intent.id, authorizationCents / 100, feeCents / 100, useFullAuthorization ? depositAmount : 0, order.totalAmount - depositAmount, paymentStatus, paymentStatus, existing.id).run()
   } else {
@@ -579,6 +582,11 @@ export function stripePaymentAmounts(orderTotal: number, depositAmount = 0, serv
 export function stripeAuthorizationAmount(orderTotal: number, depositAmount = 0, serviceFee = 0): number {
   const amounts = stripePaymentAmounts(orderTotal, depositAmount, serviceFee)
   return amounts.chargedCents + Math.max(0, cents(depositAmount))
+}
+
+export function paidRentalPaymentCoversOrder(payment: any, orderTotal: number, depositAmount = 0): boolean {
+  const requiredRentalCents = Math.max(0, cents(orderTotal) - cents(depositAmount))
+  return String(payment?.status || '').toLowerCase() === 'paid' && cents(payment?.rental_amount || 0) >= requiredRentalCents
 }
 
 const TRANSFER_PAYMENT_METHODS = new Set(['bank_transfer', 'alipay', 'wechat'])

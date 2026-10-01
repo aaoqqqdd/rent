@@ -8,7 +8,7 @@ import {
   getContractBySignToken, insertUser, updateOrderInDB, Order, User,
   updateContractStatusInDB, hashPassword, logError, getOrCreateSignSession,
   updateSignSession, deleteSignSession, getUserById, getSystemSettings, getOrderById, getDeviceById,
-  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, uploadCloudinaryImage, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot, getCustomerRiskAssessment
+  getContractVariableData, renderContractVariables, ensureOrderNumber, issueInvoice, findUserBySession, uploadCloudinaryImage, validateHostedImageUrls, isStrongPassword, loadSystemSettingsFromDB, generateTemporaryPassword, generateUniqueUserId, updateUser, buildLayout, canUseAccountBalance, createNotification, enqueueRentalUserCreation, recordBalanceTransaction, generateContractNumber, generateReferenceNumber, lockReferralRelationship, createAuthSession, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot, getCustomerRiskAssessment
 } from '../../site';
 import { nanoid } from 'nanoid';
 import { getAudCnyRate, roundCnyUp } from '../../rmbExchange';
@@ -405,7 +405,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           try {
             transferProofUrl = body.transferProofFile
               ? await uploadCloudinaryImage(body.transferProofFile, await getCloudinaryRuntimeConfig(c), 'rent/payment-proofs', { watermark: true })
-              : (() => { throw new Error('请直接上传付款凭证图片，系统会自动添加上传日期和唯一编号水印') })()
+              : validateHostedImageUrls(body.transferProofUrl, 1)[0]
           } catch (error: any) { throw new Error(error.message || '请上传有效的付款凭证图片') }
         }
 
