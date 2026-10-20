@@ -6,6 +6,7 @@
 export * from './staff/createContract';
 export * from './public/signContract';
 export * from './admin/saveSettings';
+export * from './admin/manualOrders';
 export * from './staff/cancelContract';
 export * from './coupons';
 export * from './squarePayments';

@@ -422,7 +422,7 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
       issueType: 'ACTIVE_ORDER_WITHOUT_HANDOVER',
       entityType: 'ORDER',
       autoSuspend: true,
-      sql: `SELECT o.id FROM orders o WHERE o.status IN ('active', 'extended', 'overdue') AND o.handover_completed_at IS NULL`,
+      sql: `SELECT o.id FROM orders o WHERE o.is_manual = 0 AND o.status IN ('active', 'extended', 'overdue') AND o.handover_completed_at IS NULL`,
     },
     {
       issueType: 'COMPLETED_ORDER_DEPOSIT_HELD',
@@ -432,7 +432,7 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
     {
       issueType: 'DEVICE_RENTED_WITHOUT_ACTIVE_ORDER',
       entityType: 'DEVICE',
-      sql: `SELECT d.id FROM devices d WHERE d.lifecycle_status = 'RENTED' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.deviceId = d.id AND o.status IN ('active', 'paid', 'extended', 'overdue', 'pending_return'))`,
+      sql: `SELECT d.id FROM devices d WHERE d.lifecycle_status = 'RENTED' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.deviceId = d.id AND (o.status IN ('active', 'paid', 'extended', 'overdue', 'pending_return') OR (o.is_manual = 1 AND o.status = 'suspended')))`,
     },
     {
       issueType: 'RETURNED_ORDER_WITHOUT_RETURN_RECORD',
@@ -1466,6 +1466,7 @@ export async function getContractTemplate(c: Context): Promise<ContractTemplate>
 // 为已审核订单准备客户签署用的合同。审批和订单详情页都会调用此函数，
 // 因此必须先查已有合同，避免重复生成签约链接。
 export async function ensureContractForOrder(c: Context, order: Order, createdBy?: string | null): Promise<Contract> {
+  if (order.is_manual === 1) throw new Error('手动订单无需创建合同')
   const existing = await getContractByOrderId(c, order.id)
   if (existing && existing.status !== 'cancelled' && !existing.deleted_at) return existing
 

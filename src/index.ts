@@ -775,6 +775,7 @@ app.use('*', async (c, next) => {
     : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
     : /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path) ? ['inspection-upload', 10, 3600] as const
     : c.req.path === '/admin/settings/upload-image' ? ['admin-settings-image', 10, 3600] as const
+    : c.req.method === 'POST' && (c.req.path === '/admin/orders/new' || /^\/admin\/orders\/[^/]+\/edit$/.test(c.req.path)) ? ['admin-manual-order', 60, 600] as const
     : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
     : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
     : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
@@ -4274,6 +4275,15 @@ app.get('/admin/orders/balance-topups', async (c) => {
   return c.html(await pages.renderAdminBalanceTopups(c, user))
 })
 
+app.get('/admin/orders/new', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderAdminManualOrder(c, user))
+})
+
+app.post('/admin/orders/new', (c) => actions.saveAdminManualOrder(c))
+app.post('/admin/orders/:id/edit', (c) => actions.saveAdminManualOrder(c, c.req.param('id')))
+
 app.get('/admin/orders/:id', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') {
@@ -4288,6 +4298,7 @@ app.post('/admin/orders/:id/changes', async (c) => {
   const order = await getOrderById(c, c.req.param('id')) as any
   const form = await c.req.parseBody()
   const type = String(form.changeType || '')
+  if (order?.is_manual === 1) return c.text('请在手动订单详情页修改，已完成或已取消的订单不可编辑', 409)
   if (!order || order.status === 'cancelled' || (order.status === 'completed' && type !== 'REFUND_METHOD')) return c.text('订单不存在或已结束，不能修改', 409)
   const reason = String(form.reason || '').trim().slice(0, 500)
   if (!reason) return c.text('订单修改必须填写原因', 400)
@@ -4384,6 +4395,7 @@ app.post('/admin/orders/:id/update', async (c) => {
   // 'completed' 必须在这里放行，否则下面第 3996 行「跳过归还验机并强制完成」
   // 的校验逻辑永远走不到——订单详情页的强制完成按钮此前一直被这里挡在 409。
   const editableStatuses = ['suspended', 'active', 'cancelled', 'completed']
+  if (order?.is_manual === 1) return wantsJson ? c.json({ ok: false, error: '请在手动订单详情页修改' }, 409) : c.text('请在手动订单详情页修改', 409)
   const isResume = status === 'active' && order?.status === 'suspended'
   if (!order || !editableStatuses.includes(status) || (status === 'active' && !isResume) || !canTransitionOrder(order.status, status)) return wantsJson ? c.json({ ok: false, error: '不允许的订单状态转换，请刷新页面查看最新状态' }, 409) : c.text('不允许的订单状态转换', 409)
   if ((status === 'suspended' || status === 'cancelled') && !reason) return wantsJson ? c.json({ ok: false, error: '请填写暂停/取消原因' }, 400) : c.text('请填写暂停/取消原因', 400)
@@ -4516,7 +4528,7 @@ app.post('/admin/orders/bulk-update', async (c) => {
   if ((targetStatus === 'suspended' || targetStatus === 'cancelled') && !reason) return c.text('请填写暂停/取消原因', 400)
 
   const selectedOrders = await Promise.all(selectedIds.map(orderId => getOrderById(c, orderId)))
-  const validOrders = selectedOrders.filter((order): order is NonNullable<typeof order> => Boolean(order && canTransitionOrder(order.status, targetStatus)))
+  const validOrders = selectedOrders.filter((order): order is NonNullable<typeof order> => Boolean(order && order.is_manual !== 1 && canTransitionOrder(order.status, targetStatus)))
   if (!validOrders.length) return c.text('所选订单没有可以执行该状态转换的订单', 409)
   if (targetStatus === 'completed') return c.text('完成订单必须逐笔执行归还验机', 409)
   for (const order of validOrders) {

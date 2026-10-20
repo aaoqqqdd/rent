@@ -118,6 +118,7 @@ export interface Device {
 export type DeviceLifecycleStatus = 'RESERVED' | 'READY' | 'RENTED' | 'RETURNED' | 'INSPECTION' | 'MAINTENANCE' | 'DAMAGED' | 'RETIRED'
 
 export interface Order {
+  is_manual?: number
   id: string
   orderNo: string | null
   userId: string

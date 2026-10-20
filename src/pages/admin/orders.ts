@@ -201,6 +201,7 @@ export async function renderAdminOrders(c: Context, user: any) {
           <span class="section-note">查看和管理系统中的所有订单。</span>
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <a href="/admin/orders/new" class="button button-primary">手动添加订单</a>
           <a href="/admin/orders/balance-topups" class="button button-secondary">余额充值订单</a>
           <a href="/admin/orders/export${exportQuery ? `?${exportQuery}` : ''}" class="button button-secondary" download>导出 CSV</a>
         </div>
@@ -338,9 +339,9 @@ export async function renderAdminOrders(c: Context, user: any) {
     return `
                 <tr>
                   <td><input type="checkbox" name="orderIds" value="${order.id}" class="order-checkbox" form="bulk-order-form" /></td>
-                  <td style="font-family: monospace;">${order.orderNo || order.id}</td>
+                  <td style="font-family: monospace;">${order.orderNo || order.id}${order.is_manual === 1 ? '<br><span class="badge badge-info">手动订单 · 无需合同</span>' : ''}</td>
                   <td>
-                    <div><strong>${escapeHtml(order.customer?.name) || '未知用户'}</strong>${order.customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</div>
+                    <div><strong>${escapeHtml(order.customer?.name) || (order.is_manual === 1 ? '未关联客户' : '未知用户')}</strong>${order.customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</div>
                     <small style="color: var(--text-secondary);">${escapeHtml(order.customer?.email)}</small>
                   </td>
                   <td>${escapeHtml(order.device?.name) || '未知设备'}</td>
@@ -350,14 +351,14 @@ export async function renderAdminOrders(c: Context, user: any) {
                   <td>${createdAt ? formatMelbourneDate(createdAt) : '-'}</td>
                   <td>
                     <div style="display: flex; flex-direction: column; gap: 8px; min-width: 160px;">
-                      ${!['completed', 'cancelled'].includes(String(order.status)) ? `<form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; gap: 8px; align-items: center;">
+                      ${order.is_manual !== 1 && !['completed', 'cancelled'].includes(String(order.status)) ? `<form method="POST" action="/admin/orders/${order.id}/update" class="js-order-status-form" style="display: flex; gap: 8px; align-items: center;">
                         <select name="status" class="form-control" style="min-width: 110px; padding: 6px 10px; font-size: 0.85rem;">
                           ${order.status === 'suspended' ? '<option value="active">恢复租赁</option>' : '<option value="suspended">暂停租赁（仅管理员）</option>'}
                           <option value="cancelled">已取消</option>
                         </select>
                         <button type="submit" class="button button-secondary" style="padding: 6px 10px; font-size: 0.8rem;">更新</button>
                       </form>` : ''}
-                      <a class="link-button" href="/admin/orders/${order.id}">查看详情</a>
+                      <a class="link-button" href="/admin/orders/${order.id}">${order.is_manual === 1 && !['completed', 'cancelled'].includes(String(order.status)) ? '查看 / 修改手动订单' : '查看详情'}</a>
                     </div>
                   </td>
                 </tr>

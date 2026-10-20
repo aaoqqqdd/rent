@@ -1549,6 +1549,7 @@ export async function chargeOverdueReturns(c: Context, now = new Date()): Promis
   let overdue = 0
   let charged = 0
   for (const order of candidates) {
+    if (order.is_manual === 1) continue
     const overdueDays = returnOverdueDays(order, now)
     if (overdueDays === null) continue
     overdue++

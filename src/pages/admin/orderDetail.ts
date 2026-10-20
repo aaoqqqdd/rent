@@ -10,6 +10,7 @@ import { renderReconciliationPanel } from '../partials/reconciliationPanel';
 import { normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
 import { getDeliveryBookingsForOrder, safeDeliveryTrackingUrl } from '../../services/deliveryViews'
 import { deliveryStatusInfo } from '../../deliveryStatus'
+import { renderAdminManualOrder } from './manualOrder'
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
@@ -21,6 +22,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   if (!order) {
     return buildLayout('订单详情 - 电脑租赁管理系统', '<div class="panel"><h2>订单未找到</h2><p>您请求的订单不存在。</p></div>', user);
   }
+  if (order.is_manual === 1) return renderAdminManualOrder(c, user, order)
   const deliveryBookings = await getDeliveryBookingsForOrder(c, order.id)
 
   const [customer, device, existingContract, completedRefund, depositRefundSummary, pendingPriceRefundSummary, transferProof, statusHistory, depositSettlement, changeHistory, swapDevices] = await Promise.all([

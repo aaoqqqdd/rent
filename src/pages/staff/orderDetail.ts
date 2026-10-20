@@ -28,7 +28,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   const handoverInspectionFields = renderManualInspectionFields(beforeInspection)
   const risk = !existingContract && order.status === 'approved' && customer?.role === 'CUSTOMER' ? await getCustomerRiskAssessment(c, customer.id) : null
   if (risk?.blocked) return buildLayout('订单风控限制 - 电脑租赁管理系统', `<div class="panel"><h2>订单存在风控限制</h2><p>客户风险分 ${risk.score}/100，员工不能为该客户创建合同。请由管理员完成风控处理后再继续。</p></div>`, user)
-  const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
+  const contract = existingContract || (order.is_manual !== 1 && order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
     c.env.RENT.prepare("SELECT id, payment_method, payment_provider, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),

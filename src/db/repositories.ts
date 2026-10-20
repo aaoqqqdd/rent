@@ -21,6 +21,7 @@ import { generateUserId } from '../lib/userId'
 import { hashPassword, verifyPassword } from '../lib/password'
 import { syncSquareCatalogItem, syncSquareCustomerProfile } from '../square'
 import { canTransitionDeviceLifecycle } from '../domain/deviceLifecycle'
+import type { ManualOrderData } from '../domain/manualOrders'
 
 // ---------------------------------------------------------------------------
 // 私有：设备生命周期映射 + 行归一化
@@ -694,6 +695,21 @@ export async function insertOrder(c: Context, order: Order): Promise<void> {
       (order as any).couponCode || null, Number((order as any).discountAmount || 0), order.createdAt
     )
     .run()
+}
+
+// 手动订单不隐含收款或合同签署；空客户和租期直接存 NULL。
+export async function insertManualOrder(c: Context, id: string, data: ManualOrderData, createdBy: string): Promise<void> {
+  const fields = Object.keys(data) as (keyof ManualOrderData)[]
+  await getDB(c).prepare(`INSERT INTO orders (id, orderNo, is_manual, createdAtBy, order_status, rental_status, ${fields.join(', ')}) VALUES (?, ?, 1, ?, 'ACTIVE', 'ACTIVE', ${fields.map(() => '?').join(', ')})`)
+    .bind(id, generateReferenceNumber('OD'), createdBy, ...fields.map(field => data[field])).run()
+}
+
+export async function updateManualOrder(c: Context, id: string, data: ManualOrderData, previousStatus: string): Promise<boolean> {
+  const fields = Object.keys(data) as (keyof ManualOrderData)[]
+  const state = { active: 'ACTIVE', suspended: 'SUSPENDED', pending_return: 'RETURN_PENDING', completed: 'COMPLETED', cancelled: 'CANCELLED' }[data.status]
+  const result = await getDB(c).prepare(`UPDATE orders SET ${fields.map(field => `${field} = ?`).join(', ')}, order_status = ?, rental_status = ?, return_received_at = CASE WHEN ? = 'completed' THEN COALESCE(return_received_at, CURRENT_TIMESTAMP) ELSE return_received_at END, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND is_manual = 1 AND status = ? AND status NOT IN ('completed', 'cancelled')`)
+    .bind(...fields.map(field => data[field]), state, state, data.status, id, previousStatus).run()
+  return Number(result.meta?.changes || 0) > 0
 }
 
 export async function ensureOrderNumber(c: Context, orderId: string, externalReference = ''): Promise<string> {
