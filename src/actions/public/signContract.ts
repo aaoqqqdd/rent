@@ -136,7 +136,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           throw new Error('请先同意租赁协议。');
         }
 
-        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer, esignSignature } = body;
+        const { firstName, lastName, password, passwordConfirm, phoneCode, phone, createAccount: createAccountInput, referrer } = body;
         const createAccount = !currentUser && Boolean(createAccountInput)
         const selectedAccountMode = createAccount ? 'formal' : 'guest'
         const cleanFirstName = String(firstName || '').trim()
@@ -158,10 +158,6 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         }
         if (cleanFirstName.length > 100 || cleanLastName.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           throw new Error('姓名或电子邮箱格式不正确。')
-        }
-        const signature = String(esignSignature || '').trim()
-        if (!isWebsiteOrderContract && (!signature || signature !== name)) {
-          throw new Error('请输入与姓名一致的签名。')
         }
 
         // 如果选择创建账户，密码是必填的
@@ -308,27 +304,20 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
             phone: phoneToValidate,
             fullPhone,
             referrer: String(referrer || '').trim().toUpperCase().slice(0, 64),
-            ...(signature ? { esignSignature: signature } : {}),
             ...(passwordHash ? { passwordHash } : {}),
             windowsPassword,
           },
         });
-        await logError(c, 'INFO', `User information saved, proceeding to step 3`, undefined, { token, email });
+        await logError(c, 'INFO', `User information saved, proceeding to confirmation`, undefined, { token, email });
 
-        redirectUrl = `/contract/sign?token=${token}&step=${isWebsiteOrderContract ? 3 : 3}`;
+        redirectUrl = `/contract/sign?token=${token}&step=4`;
         break;
 
-      case 3: {
-        if (!signSession.userInfo) throw new Error('请先填写您的个人信息。');
-        const typedSignature = String(body.esignSignature || '').trim();
-        const signature = typedSignature;
-        if (!signature || signature !== String(signSession.userInfo.name || '').trim()) throw new Error('请输入与姓名一致的签名。');
-        await updateSignSession(c, token, { userInfo: { ...signSession.userInfo, esignSignature: signature } });
-        if (!isWebsiteOrderContract) {
-          redirectUrl = `/contract/sign?token=${token}&step=4`;
-          break;
-        }
-      }
+      case 3:
+        // 兼容旧签名步骤链接，统一进入资料确认后的最终步骤。
+        if (!signSession.agreedToTerms || !signSession.userInfo?.name) throw new Error('请先同意租赁协议并填写您的个人信息。');
+        redirectUrl = `/contract/sign?token=${token}&step=4`;
+        break;
 
       case 4:
         // Step 4: 确认取还时间并完成签约；合同签署流程不处理付款。
@@ -338,8 +327,8 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         if (!signingOrder) throw new Error('合同关联的订单不存在。')
         const order = signingOrder
 
-        if (!signSession.userInfo || !signSession.userInfo.esignSignature) {
-          await logError(c, 'WARNING', `User attempted to access step 4 without completing signature`, undefined, { token });
+        if (!signSession.agreedToTerms || !signSession.userInfo?.name) {
+          await logError(c, 'WARNING', `User attempted to access step 4 without accepting terms or completing personal information`, undefined, { token });
           throw new Error('请先填写您的个人信息。');
         }
 
@@ -682,7 +671,7 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
         const browser = /Edg\//.test(esignDevice) ? 'Edge' : /Chrome\//.test(esignDevice) ? 'Chrome' : /Firefox\//.test(esignDevice) ? 'Firefox' : /Safari\//.test(esignDevice) ? 'Safari' : 'Other'
         const os = /Windows/.test(esignDevice) ? 'Windows' : /Mac OS|Macintosh/.test(esignDevice) ? 'macOS' : /Android/.test(esignDevice) ? 'Android' : /iPhone|iPad/.test(esignDevice) ? 'iOS' : /Linux/.test(esignDevice) ? 'Linux' : 'Other'
         const existingData = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
-        const signerName = String(userInfo.esignSignature || userInfo.name || '').trim()
+        const signerName = String(userInfo.name || '').trim()
         const customerInitials = signerName.split(/\s+/).filter(Boolean).map((part: string) => part[0]).join('').toUpperCase().slice(0, 8)
         const signedData = {
           ...existingData,
@@ -692,7 +681,6 @@ export async function handleSignContractStep(c: Context, identifier: string, ste
           guest_password: await encryptSecret(c, guestPassword || existingData.guest_password || ''),
           signer_name: signerName,
           customer_initials: existingData.customer_initials || customerInitials,
-          esign_signature: userInfo.esignSignature,
           esign_browser: browser,
           esign_os: os,
           agreement_version: existingData.agreement_version || '1.0',

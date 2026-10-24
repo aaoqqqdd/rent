@@ -156,3 +156,49 @@ test('invalid dates, maintenance blocks, buffers and undated manual rentals prev
   assert.match(html, /尚未确定归还日期/)
   assert.match((await request(link.path, dates)).headers.get('location')!, /\?error=/)
 })
+
+for (const websiteOrder of [false, true]) {
+  test(`contract flow continues without a signature for ${websiteOrder ? 'website' : 'staff'} orders`, async t => {
+    const { sqlite, request, create, context } = await setup(t)
+    context.env.SETTINGS_ENCRYPTION_KEY = 'contract-flow-test-key'
+    t.mock.method(globalThis, 'fetch', async (input: any) => {
+      assert.equal(String(input), 'https://api.frankfurter.app/latest?from=AUD&to=CNY')
+      return Response.json({ rates: { CNY: 4.7 } })
+    })
+    const link = await create()
+    await request(link.path, dates)
+    const contract = sqlite.prepare('SELECT * FROM contracts LIMIT 1').get() as any
+    if (websiteOrder) sqlite.prepare("UPDATE orders SET status = 'approved' WHERE id = ?").run(contract.orderId)
+    const path = `/contract/sign?token=${contract.signToken}`
+    const beforeConsent = await request(`${path}&step=4`, {})
+    assert.ok(new URL(beforeConsent.headers.get('location')!, 'https://rent.example.test').searchParams.has('error'))
+    const beforeInfo = await request(`${path}&step=2`, { firstName: 'Alice', lastName: 'Chen', email: 'alice@example.test', phoneCode: '+61', phone: '0412345678' })
+    assert.equal(new URL(beforeInfo.headers.get('location')!, 'https://rent.example.test').searchParams.get('error'), '请先同意租赁协议。')
+    await request(`${path}&step=1`, { agreeTerms: 'on' })
+    const infoPage = await (await request(`${path}&step=2`)).text()
+    assert.doesNotMatch(infoPage, /name="esignSignature"|signature-section|signatureCanvas/)
+    for (const script of extractInlineScripts(infoPage)) assert.doesNotThrow(() => new Function(script))
+    const saved = await request(`${path}&step=2`, { firstName: 'Alice', lastName: 'Chen', email: 'alice@example.test', phoneCode: '+61', phone: '0412345678' })
+    assert.equal(saved.headers.get('location'), `${path}&step=4`)
+    const session = JSON.parse(String(sqlite.prepare('SELECT session_data FROM sign_sessions WHERE token = ?').get(contract.signToken)?.session_data))
+    assert.equal(session.userInfo.name, 'Alice Chen')
+    assert.equal(session.userInfo.esignSignature, undefined)
+    for (const step of [3, 4]) {
+      const confirmationPage = await (await request(`${path}&step=${step}`)).text()
+      assert.doesNotMatch(confirmationPage, /name="esignSignature"|signatureCanvas|手写签名/)
+      assert.match(confirmationPage, /name="pickupTimeSlot"/)
+      for (const script of extractInlineScripts(confirmationPage)) assert.doesNotThrow(() => new Function(script))
+    }
+    const legacyStep = await request(`${path}&step=3`, {})
+    assert.equal(legacyStep.headers.get('location'), `${path}&step=4`)
+    const confirmation = await request(`${path}&step=4`, {})
+    assert.equal(new URL(confirmation.headers.get('location')!, 'https://rent.example.test').searchParams.get('error'), '请选择可用的取货和归还时间')
+    sqlite.prepare("UPDATE orders SET deliveryMethod = 'Delivery' WHERE id = ?").run(contract.orderId)
+    const completed = await request(`${path}&step=4`, { pickupTimeSlot: 'delivery_morning', returnTimeSlot: 'delivery_afternoon', paymentMethod: 'bank_transfer', refundMethod: 'original', refundBsb: '123456', refundAccountNumber: '12345678', refundAccountName: 'Alice Chen', transferReference: 'TEST-REF', transferProofUrl: 'https://example.com/proof.png' })
+    assert.equal(completed.status, 200, completed.headers.get('location') || '')
+    const signed = sqlite.prepare('SELECT * FROM contracts WHERE id = ?').get(contract.id) as any
+    assert.equal(signed.status, 'signed')
+    assert.equal(JSON.parse(signed.contract_data).esign_signature, undefined)
+    assert.ok(signed.signed_content)
+  })
+}
