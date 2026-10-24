@@ -88,6 +88,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       email: String(payload.companyDetails?.email ?? getSystemSettings().companyDetails.email).trim(),
       website: String(payload.companyDetails?.website ?? getSystemSettings().companyDetails.website).trim(),
       logo: String(payload.companyDetails?.logo ?? getSystemSettings().companyDetails.logo).trim(),
+      loginImage: String(payload.companyDetails?.loginImage ?? getSystemSettings().companyDetails.loginImage).trim(),
       pickupLocations: Array.isArray(payload.companyDetails?.pickupLocations)
         ? payload.companyDetails.pickupLocations.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 20)
         : getSystemSettings().companyDetails.pickupLocations,

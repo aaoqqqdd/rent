@@ -39,36 +39,99 @@ export function renderAdminDashboard(
     'RESERVED': { text: '已预约', class: 'badge-info' },
   }
 
+  // 控制台信息顺序：摘要（现在怎么样）→ 待办（我该做什么）→ 明细。
+  const attention: Array<{ title: string; meta: string; href: string; tone?: 'alert' | 'warn' }> = []
+  const addAttention = (count: number, title: string, href: string, tone?: 'alert' | 'warn') => {
+    if (!count) return
+    attention.push({ title, meta: `${count} 项`, href, tone })
+  }
+  addAttention(stats.overdueRentals, '逾期未归还', '/admin/orders?status=active', 'alert')
+  addAttention(stats.pendingOrders, '待审核订单', '/admin/order-review', 'warn')
+  addAttention(opsCounts?.pendingDamage || 0, '待验收损坏记录', '/admin/inspections', 'warn')
+  addAttention(stats.pendingDeposits, '待结算押金', '/admin/refunds', 'warn')
+  addAttention(opsCounts?.failedPayments || 0, '近 7 日失败付款', '/admin/orders?status=pending_payment', 'warn')
+  addAttention(opsCounts?.failedCommands || 0, '失败的远程命令', '/admin/exceptions', 'warn')
+  addAttention(stats.maintenanceDevices + stats.damagedDevices, '维修与损坏设备', '/admin/devices', 'warn')
+
+  const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Australia/Melbourne', month: 'long', day: 'numeric', weekday: 'long' })
   const body = `
     <div class="hero">
-      <h2>欢迎回来，${escapeHtml(user.name)}！</h2>
-      <p>这是您的管理员控制中心，管理整个系统的所有数据和设置。</p>
+      <h2>${escapeHtml(user.name)}，这是今天的经营概况</h2>
+      <p>${today} · 取货 ${stats.todayPickups} · 归还 ${stats.todayReturns}${attention.length ? ` · 待处理 ${attention.length} 类` : ''}</p>
     </div>
+    <section class="summary" aria-label="经营摘要">
+      <div class="summary__lead">
+        <span class="summary__eyebrow">已确认收入 / REVENUE</span>
+        <div class="summary__figure">${formatCurrency(stats.totalRevenue)}</div>
+        <p class="summary__note">在途 <strong>${formatCurrency(stats.onTheWayRevenue)}</strong></p>
+      </div>
+      <div class="summary__aside">
+        <a class="summary__cell" href="/admin/orders?status=active">
+          <h3>进行中租赁</h3>
+          <div class="value">${stats.activeRentals}<span class="unit">笔</span></div>
+          <div class="trend">今日到期 ${stats.todayReturns} 笔</div>
+        </a>
+        <a class="summary__cell ${stats.pendingOrders ? 'is-attention' : ''}" href="/admin/order-review">
+          <h3>待处理订单</h3>
+          <div class="value">${stats.pendingOrders}<span class="unit">笔</span></div>
+          <div class="trend">待审核 + 待支付</div>
+        </a>
+        <a class="summary__cell ${stats.utilizationRate >= 70 ? 'is-good' : ''}" href="/admin/devices">
+          <h3>设备利用率</h3>
+          <div class="value">${stats.utilizationRate}<span class="unit">%</span></div>
+          <div class="trend">可租 ${stats.availableDevices}/${stats.totalDevices} · 闲置 ${stats.idleDevices}</div>
+        </a>
+        <a class="summary__cell ${stats.overdueRentals ? 'is-danger' : ''}" href="/admin/orders?status=active">
+          <h3>逾期未还</h3>
+          <div class="value">${stats.overdueRentals}<span class="unit">笔</span></div>
+          <div class="trend">${stats.overdueRentals ? '今日跟进' : '暂无'}</div>
+        </a>
+        <a class="summary__cell" href="/admin/calendar">
+          <h3>待取货</h3>
+          <div class="value">${stats.awaitingPickup}<span class="unit">笔</span></div>
+          <div class="trend">已确认，未开始</div>
+        </a>
+        <a class="summary__cell" href="/admin/users">
+          <h3>客户</h3>
+          <div class="value">${stats.totalUsers}<span class="unit">人</span></div>
+          <div class="trend">有效账户</div>
+        </a>
+      </div>
+    </section>
+    ${attention.length ? `
+    <section class="attention" aria-labelledby="attention-title">
+      <div class="attention__head"><h3 id="attention-title">需要你处理</h3><span>共 ${attention.length} 类</span></div>
+      <ol>${attention.map(item => `<li><a href="${item.href}"><span class="attention__title">${escapeHtml(item.title)}</span><span class="attention__meta ${item.tone === 'alert' ? 'is-alert' : 'is-warn'}">${escapeHtml(item.meta)} ›</span></a></li>`).join('')}</ol>
+    </section>` : `
+    <section class="attention">
+      <div class="attention__head"><h3>需要你处理</h3><span>暂无</span></div>
+    </section>`}
+    <div class="section-title"><h3>今日运营</h3></div>
     <div class="stats-grid">
       <div class="stat-card primary">
         <h3>总收入</h3>
         <div class="value">${formatCurrency(stats.totalRevenue)}</div>
-        <div class="trend">↑ 已支付/租赁中/已完成订单，不含已取消</div>
+        
       </div>
       <div class="stat-card success">
         <h3>活跃租赁</h3>
         <div class="value">${stats.activeRentals} 笔</div>
-        <div class="trend">正在进行中的订单</div>
+        
       </div>
       <div class="stat-card warning">
         <h3>待处理订单</h3>
         <div class="value">${stats.pendingOrders} 笔</div>
-        <div class="trend">需要处理的订单</div>
+        
       </div>
       <div class="stat-card info">
         <h3>可用设备</h3>
         <div class="value">${stats.availableDevices}/${stats.totalDevices}</div>
-        <div class="trend">可租赁的设备数量</div>
+        
       </div>
-      <div class="stat-card" style="margin-top: 0;">
+      <div class="stat-card">
         <h3>注册用户</h3>
         <div class="value">${stats.totalUsers} 人</div>
-        <div class="trend">有效用户数（不含已删除访客账户）</div>
+        
       </div>
     </div>
     <div class="section-title" style="margin-top:24px"><h3>今日运营</h3></div>
@@ -87,10 +150,10 @@ export function renderAdminDashboard(
     <div class="panel">
       <div class="section-title">
         <h3>最新订单</h3>
-        <span class="section-note">最近的5条租赁记录</span>
+        
       </div>
       ${recentOrders.length === 0 ? `
-        <div style="text-align: center; padding: 32px; color: var(--text-secondary);">暂无订单</div>
+        <p class="empty-state">还没有订单。审核网站订单或手动添加。</p>
       ` : `
       <table><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
         ${recentOrders.map((order) => {
@@ -103,10 +166,10 @@ export function renderAdminDashboard(
     <div class="panel">
       <div class="section-title">
         <h3>设备概览</h3>
-        <span class="section-note">最近的5台设备状态</span>
+        
       </div>
       ${recentDevices.length === 0 ? `
-        <div style="text-align: center; padding: 32px; color: var(--text-secondary);">暂无设备</div>
+        <p class="empty-state">还没有设备。先添加入库设备。</p>
       ` : `
       <table><thead><tr><th>设备名称</th><th>型号</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
         ${recentDevices.map((device) => {

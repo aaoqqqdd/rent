@@ -2207,6 +2207,32 @@ const status: Readonly<Record<string, string>> = {}
 
 // @domain admin —— 管理员端页面文案
 const admin: Readonly<Record<string, string>> = {
+  '这是今天的经营概况': 'today\'s operations overview',
+  '已确认收入 / REVENUE': 'Revenue confirmed / REVENUE',
+  '已确认收入 /': 'Revenue confirmed /',
+  '在途': 'In transit',
+  '进行中租赁': 'Active rentals',
+  '设备利用率': 'Device utilisation',
+  '可租': 'Available',
+  '闲置': 'idle',
+  '逾期未还': 'Overdue',
+  '今日跟进': 'Follow up today',
+  '已确认，未开始': 'Confirmed, not started',
+  '有效账户': 'Active accounts',
+  '需要你处理': 'Needs your action',
+  '逾期未归还': 'Overdue returns',
+  '待验收损坏记录': 'Damage records to inspect',
+  '近 7 日失败付款': 'Failed payments (7 days)',
+  '失败的远程命令': 'Failed remote commands',
+  '维修与损坏设备': 'Maintenance and damaged devices',
+  '还没有订单。审核网站订单或手动添加。': 'No orders yet. Review website orders or add one manually.',
+  '还没有设备。先添加入库设备。': 'No devices yet. Add a device to inventory.',
+  '今日没有逾期或待审核事项': 'Nothing overdue or pending review today',
+  '完整后台能力在「更多功能」中按分组进入': 'Full admin tools are grouped under More',
+  '或在左上角菜单打开侧边抽屉': 'or open the drawer from the top-left menu',
+  '· 归还': '· Returns',
+  '单待取': 'pickup pending',
+  '单待验': 'inspection pending',
   '请稍后重试': 'Please try again later',
   '您好 {customer_name}': 'Hello {customer_name}',
   '共': 'Total',
@@ -3394,6 +3420,16 @@ const admin: Readonly<Record<string, string>> = {
 
 // @domain staff —— 员工端页面文案
 const staff: Readonly<Record<string, string>> = {
+  '待处理订单 / TO-DO': 'Orders to process / TO-DO',
+  '待处理订单 /': 'Orders to process /',
+  '可出租': 'Available to rent',
+  '已支付与已完成': 'Paid and completed',
+  '笔待审核': 'pending review',
+  '暂无待处理': 'Nothing to process',
+  '手机端只保留高频租赁动作': 'Mobile keeps only high-frequency rental actions',
+  '直接进入取货或验机': 'Go straight to pickup or inspection',
+  '扫描客户取货二维码': 'Scan the customer pickup QR code',
+  '按预约时间排列': 'Sorted by appointment time',
   '台': 'devices',
   '屏幕': 'Screen',
   '键盘': 'Keyboard',
@@ -3698,6 +3734,14 @@ const staff: Readonly<Record<string, string>> = {
 
 // @domain customer —— 客户 / 访客端页面文案
 const customer: Readonly<Record<string, string>> = {
+  '账户余额 / BALANCE': 'Account balance / BALANCE',
+  '账户余额 /': 'Account balance /',
+  '使用中': 'In use',
+  '需要处理': 'Needs action',
+  '历史订单': 'Past orders',
+  '有待付款订单': 'Order awaiting payment',
+  '余额为负，请充值': 'Negative balance, please top up',
+  '暂无通告': 'No announcements',
   '付款凭证图片': 'Payment proof image',
   '取消订单': 'Cancel order',
   '数字和符号': 'numbers and symbols',
@@ -3912,6 +3956,8 @@ const customer: Readonly<Record<string, string>> = {
 
 // @domain public —— 公开页（首页、登录、注册、合同签署、取消订阅等）
 const publicPages: Readonly<Record<string, string>> = {
+  '设备运营工作台': 'Equipment operations desk',
+  '租赁 · 配送 · 归还 · 结算': 'Rentals · Delivery · Returns · Settlement',
   '请重试': 'Please try again',
   '提交失败': 'Submission failed',
   '支付组件加载失败': 'Failed to load the payment component',

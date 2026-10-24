@@ -914,7 +914,10 @@ app.get('/login', async (c) => {
   }
   const deletedMessage = c.req.query('deletion_requested') === '1' ? '账户删除申请已提交，进入 7 天冷静期；您已退出登录。7 天内重新登录可取消删除。' : undefined
   const message = c.req.query('reset') === '1' ? '密码已重置，请使用新密码登录。' : deletedMessage
-  return c.html(pages.renderLogin(message, shouldShowTestAccounts(c), sanitizeRedirectPath(c.req.query('redirect'), '')))
+  // 登录页左侧配图与公司名来自系统设置（管理员在 /admin/settings 上传）。
+  await loadSystemSettingsFromDB(c)
+  const companyDetails = getSystemSettings().companyDetails
+  return c.html(pages.renderLogin(message, shouldShowTestAccounts(c), sanitizeRedirectPath(c.req.query('redirect'), ''), companyDetails.loginImage || '', companyDetails.name || 'PC Rental'))
 })
 
 app.get('/contact', async (c) => {
@@ -5543,8 +5546,8 @@ app.post('/admin/settings/upload-image', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.json({ success: false, error: '无权限' }, 403)
   const form = await c.req.parseBody()
   const kind = String(form.kind || '')
-  const folder = kind === 'alipay' ? 'rent/rmb-payment-qr/alipay' : kind === 'wechat' ? 'rent/rmb-payment-qr/wechat' : ''
-  if (!folder) return c.json({ success: false, error: '不支持的收款码类型' }, 400)
+  const folder = kind === 'alipay' ? 'rent/rmb-payment-qr/alipay' : kind === 'wechat' ? 'rent/rmb-payment-qr/wechat' : kind === 'login' ? 'rent/brand/login' : ''
+  if (!folder) return c.json({ success: false, error: '不支持的图片类型' }, 400)
   try {
     const url = await uploadCloudinaryImage(form.imageFile, await getCloudinaryRuntimeConfig(c), folder)
     return c.json({ success: true, url })

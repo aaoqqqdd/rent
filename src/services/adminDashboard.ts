@@ -26,6 +26,10 @@ export interface AdminDashboardData {
     reservedDevices: number
     maintenanceDevices: number
     damagedDevices: number
+    idleDevices: number
+    utilizationRate: number
+    onTheWayRevenue: number
+    awaitingPickup: number
   }
   recentOrders: Array<{
     id: string
@@ -87,7 +91,11 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
       (SELECT COUNT(*) FROM orders WHERE deposit_status = 'HELD') AS pendingDeposits,
       (SELECT COUNT(*) FROM devices WHERE lifecycle_status = 'RESERVED') AS reservedDevices,
       (SELECT COUNT(*) FROM devices WHERE lifecycle_status = 'MAINTENANCE') AS maintenanceDevices,
-      (SELECT COUNT(*) FROM devices WHERE lifecycle_status = 'DAMAGED') AS damagedDevices
+      (SELECT COUNT(*) FROM devices WHERE lifecycle_status = 'DAMAGED') AS damagedDevices,
+      (SELECT COUNT(*) FROM devices d WHERE d.status = 'available'
+         AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.deviceId = d.id AND o.status IN ('active', 'paid', 'approved', 'pending_payment', 'pending_pickup'))) AS idleDevices,
+      (SELECT COALESCE(SUM(totalAmount), 0) FROM orders WHERE status IN ('pending_payment', 'approved', 'paid')) AS onTheWayRevenue,
+      (SELECT COUNT(*) FROM orders WHERE status IN ('approved', 'paid') AND date(startDate) >= date('now')) AS awaitingPickup
   `
 
   const recentOrdersQuery = `
@@ -133,6 +141,12 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
       reservedDevices: Number(s.reservedDevices || 0),
       maintenanceDevices: Number(s.maintenanceDevices || 0),
       damagedDevices: Number(s.damagedDevices || 0),
+      idleDevices: Number(s.idleDevices || 0),
+      utilizationRate: Number(s.totalDevices || 0) > 0
+        ? Math.round((1 - Number(s.idleDevices || 0) / Number(s.totalDevices)) * 100)
+        : 0,
+      onTheWayRevenue: Number(s.onTheWayRevenue || 0),
+      awaitingPickup: Number(s.awaitingPickup || 0),
     },
     recentOrders: recentOrders.map((o: RecentOrderRow) => ({
       id: String(o.id),

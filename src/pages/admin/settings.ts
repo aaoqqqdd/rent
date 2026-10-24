@@ -31,6 +31,7 @@ export function renderAdminSettings(user: any) {
             <div><label class="form-label" for="companyEmail">公司邮箱</label><input type="email" id="companyEmail" name="companyEmail" class="form-control" value="${settings.companyDetails.email}"></div>
             <div><label class="form-label" for="companyWebsite">公司网站</label><input type="url" id="companyWebsite" name="companyWebsite" class="form-control" value="${settings.companyDetails.website}" placeholder="https://"></div>
             <div><label class="form-label" for="companyLogo">公司 Logo URL</label><input type="url" id="companyLogo" name="companyLogo" class="form-control" value="${settings.companyDetails.logo}" placeholder="https://"></div>
+            <div class="form-group"><label class="form-label" for="loginImageFile">登录页左侧配图</label><input class="form-control" id="loginImageFile" type="file" accept="image/jpeg,image/png,image/webp"><label class="form-label" for="loginImage">配图 URL（上传后自动回填）</label><input class="form-control" id="loginImage" name="loginImage" type="url" value="${escAttr(settings.companyDetails.loginImage || '')}" placeholder="https://.../login.jpg"><small class="form-text">建议 4:3 或 3:4 竖图；留空则显示公司信息文案。</small></div>
             <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
               <div class="form-group"><label class="form-label" for="deliveryAreas">配送区域</label><textarea id="deliveryAreas" name="deliveryAreas" class="form-control" rows="4" placeholder="每行一个区域">${(settings.companyDetails.deliveryAreas || []).join('\n')}</textarea><small class="form-text">官网会显示这些区域；每行一个 suburb 或区域名称。</small></div>
               <div class="form-group"><label class="form-label" for="deliveryNote">配送说明</label><input id="deliveryNote" name="deliveryNote" class="form-control" value="${settings.companyDetails.deliveryNote || ''}" placeholder="例如：配送范围和运费以审核确认为准"><small class="form-text">官网申请页、租赁指南和设备详情会读取这段说明。</small></div>
@@ -190,6 +191,7 @@ export function renderAdminSettings(user: any) {
           await Promise.all([
             uploadQrImage('alipayQrFile', 'alipay', 'alipayQrUrl'),
             uploadQrImage('wechatQrFile', 'wechat', 'wechatQrUrl'),
+            uploadQrImage('loginImageFile', 'login', 'loginImage'),
           ]);
         } catch (error) {
           const message = '收款码上传失败: ' + (error instanceof Error ? error.message : '请稍后重试');
@@ -258,6 +260,7 @@ export function renderAdminSettings(user: any) {
             email: formData.get('companyEmail'),
             website: formData.get('companyWebsite'),
             logo: formData.get('companyLogo'),
+            loginImage: formData.get('loginImage'),
             pickupLocations: String(formData.get('pickupLocations') || '').split(/\\n+/).map(value => value.trim()).filter(Boolean),
                       deliveryAreas: String(formData.get('deliveryAreas') || '').split(/\\n+/).map(value => value.trim()).filter(Boolean),
                       deliveryNote: String(formData.get('deliveryNote') || '').trim(),

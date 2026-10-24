@@ -83,6 +83,8 @@ export const systemSettings = {
     contact: '',
     website: '',
     logo: '',
+    // 登录页左侧配图（管理员在系统设置上传，存 Cloudinary HTTPS 链接；留空则显示公司信息文案）。
+    loginImage: '',
     pickupLocations: [] as string[],
     deliveryAreas: ['墨尔本 CBD', 'Docklands', 'Southbank', 'South Yarra', 'Carlton', 'East Melbourne'] as string[],
     deliveryNote: '送货上门仅限墨尔本 CBD 及周边地区，运费由客服在审核时确认。',

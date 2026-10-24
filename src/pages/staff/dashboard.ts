@@ -9,37 +9,45 @@ import { escapeHtml } from '../../lib/html';
 export function renderStaffDashboard(user: any, dashboardData: any) {
   const { stats, recentOrders, recentDevices } = dashboardData;
 
+  // 员工工作台：待办优先，其次当日运营读数，最后明细。
+  const pendingApproval = Number(stats.pendingOrders || 0)
   const body = `
     <div class="hero">
-      <h2>欢迎回来，${escapeHtml(user.name)}！</h2>
-      <p>这是您的员工控制中心，管理所有租赁订单和设备状态。</p>
+      <h2>欢迎回来，${escapeHtml(user.name)}</h2>
     </div>
-    <div class="stats-grid">
-      <div class="stat-card primary">
-        <h3>总收入（已支付/租赁中/已完成）</h3>
-        <div class="value">${formatCurrency(stats.totalRevenue || 0)}</div>
-        <div class="trend">↑ 不含已取消、待审核和待支付订单</div>
+    <section class="summary" aria-label="工作摘要">
+      <div class="summary__lead">
+        <span class="summary__eyebrow">待处理订单 / TO-DO</span>
+        <div class="summary__figure">${pendingApproval}<small>笔</small></div>
+        <p class="summary__note">${pendingApproval ? '待审核与待支付' : '暂无待处理'}</p>
       </div>
-      <div class="stat-card success">
-        <h3>活跃租赁</h3>
-        <div class="value">${stats.activeRentals || 0} 笔</div>
-        <div class="trend">正在进行中的订单</div>
+      <div class="summary__aside">
+        <a class="summary__cell" href="/staff/orders">
+          <h3>活跃租赁</h3>
+          <div class="value">${stats.activeRentals || 0}<span class="unit">笔</span></div>
+          <div class="trend">进行中</div>
+        </a>
+        <a class="summary__cell" href="/staff/devices">
+          <h3>可用设备</h3>
+          <div class="value">${stats.availableDevices || 0}<span class="unit">/</span>${stats.totalDevices || 0}</div>
+          <div class="trend">可出租</div>
+        </a>
+        <a class="summary__cell" href="/staff/orders">
+          <h3>总收入</h3>
+          <div class="value">${formatCurrency(stats.totalRevenue || 0)}</div>
+          <div class="trend">已支付与已完成</div>
+        </a>
       </div>
-      <div class="stat-card warning">
-        <h3>进行中的订单</h3>
-        <div class="value">${stats.activeRentals || 0} 笔</div>
-        <div class="trend">查看订单状态和租赁进度</div>
-      </div>
-      <div class="stat-card info">
-        <h3>可用设备</h3>
-        <div class="value">${stats.availableDevices || 0}/${stats.totalDevices || 0}</div>
-        <div class="trend">可租赁的设备数量</div>
-      </div>
-    </div>
+    </section>
+    ${pendingApproval ? `
+    <section class="attention" aria-labelledby="staff-attention-title">
+      <div class="attention__head"><h3 id="staff-attention-title">需要你处理</h3><span>${pendingApproval} 笔待审核</span></div>
+      <ol><li><a href="/staff/orders?status=pending_approval"><span class="attention__title">待审核订单</span><span class="attention__meta is-warn">${pendingApproval} 笔 ›</span></a></li></ol>
+    </section>` : ''}
     <div class="panel">
       <div class="section-title">
         <h3>最新订单</h3>
-        <span class="section-note">最近的5条租赁记录</span>
+        
       </div>
       <table><thead><tr><th>订单号</th><th>客户</th><th>设备</th><th>状态</th><th>操作</th></tr></thead><tbody>
         ${recentOrders.map((order: any) => {
@@ -53,7 +61,7 @@ export function renderStaffDashboard(user: any, dashboardData: any) {
     <div class="panel">
       <div class="section-title">
         <h3>设备概览</h3>
-        <span class="section-note">最近的5台设备状态</span>
+        
       </div>
       <table><thead><tr><th>设备名称</th><th>状态</th><th>当前租用者</th><th>操作</th></tr></thead><tbody>
         ${recentDevices.map((device: any) => {

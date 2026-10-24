@@ -6,15 +6,33 @@
 import { buildLayout } from '../../site';
 import { escapeHtml } from '../../lib/html';
 import { sanitizeRedirectPath } from '../../lib/security';
+import { validateHostedImageUrls } from '../../lib/hostedImages';
 
 const escapeAttribute = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
 
-export function renderLogin(errorMessage?: string, showTestAccounts = false, redirectPath = '') {
+function safeBrandImageUrl(value: unknown): string {
+  try {
+    return validateHostedImageUrls(value, 1)[0] || ''
+  } catch {
+    return ''
+  }
+}
+
+export function renderLogin(errorMessage?: string, showTestAccounts = false, redirectPath = '', brandImage = '', companyName = 'PC Rental') {
   // 唯一跳转白名单实现：拒绝 //evil、/\evil、绝对 URL 与控制字符（见 lib/security.ts）。
   const safeRedirectPath = sanitizeRedirectPath(redirectPath, '')
+  const safeImage = safeBrandImageUrl(brandImage)
   const body = `
     <div class="page-centered">
       <div class="login-container">
+        <div class="login-brand${safeImage ? ' has-image' : ''}">
+          ${safeImage ? `<img src="${escapeAttribute(safeImage)}" alt="" loading="eager" decoding="async" />` : ''}
+          <div class="login-brand__copy">
+            <strong>设备运营工作台</strong>
+            <span>${escapeHtml(companyName || 'PC Rental')} · 墨尔本</span>
+            <span>租赁 · 配送 · 归还 · 结算</span>
+          </div>
+        </div>
         <div class="login-card">
           <div class="login-logo"><span class="logo-mark"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="32" fill="#0A0A0F"/><g transform="translate(10 10)"><path d="M24 10 42 39 33 39 24 25 15 39 6 39Z" fill="#2563EB"/><path d="M5 39 14 39 33 4 24 4Z" fill="#fff"/></g></svg></span>PC Rental</div>
           <p class="login-subtitle">专业设备租赁管理平台</p>

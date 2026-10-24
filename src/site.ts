@@ -1858,7 +1858,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/staff/dashboard', '工作台')}
             ${renderNavLink('/notifications', '通知中心')}
             ${renderNavGroup('租赁管理', [['/staff/orders', '租赁订单'], ['/staff/orders/ongoing', '进行中的租赁']])}
-            ${renderNavGroup('合同管理', [['/staff/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/staff/contracts?status=pending_sign', '待签署合同']])}
+            ${renderNavGroup('合同管理', [['/staff/contracts', '合同列表'], ['/staff/contracts?status=pending_sign', '待签署合同']])}
             ${renderNavGroup('设备运营', [['/staff/devices', '设备管理'], ['/staff/inspections', '验机记录'], ['/staff/rentals/tracking', '租赁追踪']])}
             ${getAccessLevel(currentUser) === 'MANAGER' ? renderNavGroup('人员管理', [['/manager/staff', 'Staff 员工']]) : ''}
           ` : ''}
@@ -1866,8 +1866,8 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavLink('/admin/dashboard', '控制台')}
             ${renderNavLink('/admin/users', '用户管理')}
             ${renderNavGroup('通知中心', [['/admin/notifications', '业务通知'], ['/admin/notifications/settings', '通知设置'], ['/notifications', '发布通知']])}
-            ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/rental-links', '自助租赁链接'], ['/admin/delivery', '配送管理'], ['/admin/orders/balance-topups', '充值订单'], ['/admin/calendar', '租赁日历']])}
-            ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/staff/contracts/new', '新建合同'], ['/admin/templates/contract', '合同模板'], ['/admin/templates', '协议模板']])}
+            ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/delivery', '配送管理'], ['/admin/calendar', '租赁日历']])}
+            ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板'], ['/admin/templates', '协议模板']])}
             ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('营销增长', [['/admin/coupons', '优惠码管理'], ['/admin/marketing-emails', '营销邮件'], ['/admin/marketing-emails/data', '营销数据'], ['/admin/referrals', '推荐奖励管理'], ['/admin/feedback-rewards', '反馈奖励记录'], ['/admin/feedback-gift-cards', '礼品卡库存']])}
