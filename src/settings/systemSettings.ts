@@ -118,6 +118,9 @@ export const systemSettings = {
   rentalRules: {
     unavailableDates: [] as string[],
     unavailableTimeSlots: {} as Record<string, string[]>,
+    serviceFeeRate: 0.1,
+    serviceFeeHours: { morningStart: '07:00', morningEnd: '08:00', eveningStart: '21:00', eveningEnd: '23:00' },
+    businessHours: { start: '09:00', end: '20:00' },
     minimumRentalDays: 1,
     bufferDays: 0,
   },
