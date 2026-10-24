@@ -19,7 +19,7 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>设备详情 - ${device.name}</h2><span class="section-note">查看设备详细信息和自己负责的租赁记录。</span></div>
+      <div class="section-title"><h2>设备详情 - ${device.name}</h2></div>
       <div class="grid grid-2">
         <div>
           <h3>基本信息</h3>
@@ -30,11 +30,11 @@ export async function renderStaffDeviceDetail(c: Context, user: any, deviceId: s
           <p><strong>日租金:</strong> ${formatCurrency(device.pricePerDay ?? device.dailyRate ?? 0)}</p>
           <p><strong>状态:</strong> ${device.status}</p>
         </div>
-        <div><h3>维护权限</h3><p class="section-note">设备身份、配置、价格和状态由管理员维护。</p></div>
+        <div><h3>维护权限</h3><p class="section-note">仅管理员可修改。</p></div>
       </div>
 
       ${user.role === 'ADMIN' ? `<div class="panel" style="margin-top:20px;"><h3>Windows 客户端</h3>
-        <p class="section-note">客户端会优先按序列号自动绑定；没有匹配序列号时使用一次性注册码。注册码有效 15 分钟，使用一次后失效。</p>
+        <p class="section-note">注册码 15 分钟内有效，使用一次后失效。</p>
         ${setupCode ? `<p><strong>本次注册码：</strong><code>${setupCode}</code></p>` : ''}
         <form method="post" action="/staff/devices/${device.id}/agent-setup"><button class="button" type="submit">生成 Windows 客户端注册码</button></form>
       </div>` : ''}

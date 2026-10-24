@@ -14,7 +14,7 @@ export async function renderStaffDeviceEdit(c: Context, user: any, deviceId: str
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>编辑设备 - ${device.name}</h2><span class="section-note">修改设备详细信息。</span></div>
+      <div class="section-title"><h2>编辑设备 - ${device.name}</h2></div>
       ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
       <form method="POST" action="/staff/devices/${device.id}/edit">
         <label class="form-label">设备名称</label>

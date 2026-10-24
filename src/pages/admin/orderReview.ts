@@ -20,7 +20,7 @@ export async function renderAdminOrderReview(c: Context, user: any) {
     ORDER BY datetime(o.createdAt) ASC
   `).all()).results || []) as any[]
 
-  const body = `<div class="page-header"><div><p class="section-code">ORDER REVIEW / WEBSITE</p><h2>网站订单审核</h2><p>数据直接来自 D1 的 orders 表，显示所有状态为“待审核”的订单。通过后进入合同与付款流程，拒绝后订单会取消。</p></div><a class="button button-secondary" href="/admin/orders">全部订单</a></div>
+  const body = `<div class="page-header"><div><p class="section-code">ORDER REVIEW / WEBSITE</p><h2>网站订单审核</h2></div><a class="button button-secondary" href="/admin/orders">全部订单</a></div>
     <div class="stats-grid"><div class="stat-card ${rows.length ? 'warning' : ''}"><h3>待审核订单</h3><div class="value">${rows.length}</div><div class="trend">按提交时间从早到晚排列</div></div></div>
     <section class="panel"><div class="section-title"><h3>审核队列</h3><span class="section-note">请确认租期、设备档期和客户备注后处理；送货订单必须填写配送费</span></div>
       ${rows.length ? `<div class="table-wrapper"><table><thead><tr><th>订单 / 客户</th><th>设备</th><th>租期</th><th>金额</th><th>申请时间</th><th>操作</th></tr></thead><tbody>${rows.map(order => {

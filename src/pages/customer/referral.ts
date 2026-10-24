@@ -58,13 +58,12 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>推荐计划</h2><span class="section-note">邀请好友，获得推荐奖励。</span></div>
+      <div class="section-title"><h2>推荐计划</h2></div>
       ${message ? `<div data-flash-notice class="page-notification page-notification--${type || 'info'}">${message}</div>` : ''}
 
       ${!currentUser.referralCode ? `
         <div style="margin-bottom: 30px; padding: 24px; background: var(--surface-secondary); border-radius: 12px; text-align: center;">
           <h3>加入推荐计划</h3>
-            <p style="color: var(--text-secondary); margin: 16px 0;">加入推荐计划，获取专属推荐码，邀请好友租赁电脑，获得推荐奖励。</p>
           <form method="POST" action="/customer/referral/join" style="display: inline-block;">
             <button type="submit" class="button button-primary">立即加入</button>
           </form>
@@ -77,13 +76,12 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
               <input type="text" class="form-control" value="${currentUser.referralCode}" readonly id="referrerCodeInput" />
               <button class="button button-secondary" onclick="copyReferrerCode()">复制</button>
             </div>
-            <p class="form-text">分享推荐码或推荐链接给朋友。推荐关系会在对方注册时锁定，符合条件的订单完成后发放推荐奖励。</p>
             <label class="form-label" for="referralLinkInput">我的推荐链接</label>
             <div class="input-group"><input type="text" class="form-control" value="${referralLink}" readonly id="referralLinkInput" /><button class="button button-secondary" onclick="copyReferralLink()">复制分享内容</button></div>
             <textarea class="form-control referral-share-text" id="referralShareText" readonly rows="3" aria-label="推荐分享内容">${referralShareText}</textarea>
           </div>
           
-          <form method="POST" action="/customer/referral/leave" data-site-confirm="退出后您的推荐码将失效，且无法再获得新的佣金。请确认是否继续退出。" data-confirm-variant="danger" data-confirm-title="退出推荐计划？" data-confirm-label="退出推荐计划" style="margin-top: 16px;">
+          <form method="POST" action="/customer/referral/leave" data-site-confirm="退出后推荐码将失效，无法再获得佣金。" data-confirm-variant="danger" data-confirm-title="退出推荐计划？" data-confirm-label="退出推荐计划" style="margin-top: 16px;">
             <button type="submit" class="button button-danger">退出推荐计划</button>
           </form>
         </div>
@@ -108,7 +106,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
 
       <div style="margin-top: 30px;" aria-label="佣金提现">
         <h3>奖励提现</h3>
-        <form method="POST" action="/customer/referral/withdraw" id="withdrawForm" data-site-confirm="提交后将按所选方式发起提现；银行转账需要 1-2 个工作日。请确认提现金额与账户信息无误。" data-confirm-variant="danger" data-confirm-title="确认申请提现？" data-confirm-label="申请提现">
+        <form method="POST" action="/customer/referral/withdraw" id="withdrawForm" data-site-confirm="提交后按所选方式提现；银行转账需 1-2 个工作日。" data-confirm-variant="danger" data-confirm-title="确认申请提现？" data-confirm-label="申请提现">
           <div class="form-group">
             <label class="form-label" for="withdrawAmount">提现金额</label>
             <input type="number" id="withdrawAmount" name="amount" class="form-control" min="0.01" max="${commissionBalance}" step="0.01" required />

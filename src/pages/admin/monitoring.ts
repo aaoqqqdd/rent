@@ -45,7 +45,7 @@ export function renderAdminMonitoring(
 
   const jobRows = jobRuns.map(r => `<tr><td>${sanitizePlainText(r.job_name, 60)}</td><td><span class="badge ${r.status === 'SUCCESS' ? 'badge-success' : r.status === 'FAILED' ? 'badge-danger' : 'badge-warning'}">${sanitizePlainText(r.status, 20)}</span></td><td>${sanitizePlainText(r.started_at, 40)}</td><td>${sanitizePlainText(r.completed_at || '-', 40)}</td><td>${sanitizePlainText(r.error_message || r.result_summary || '', 200)}</td></tr>`).join('')
 
-  const body = `<div class="page-header"><div><p class="section-code">OBSERVABILITY / MONITORING</p><h2>系统健康监控</h2><p>近 24 小时失败率与积压量，趋势取近 7 天快照（每 15 分钟一次）。CRITICAL 指标会自动写入异常任务中心。</p></div><span class="badge ${overall === 'OK' ? 'badge-success' : overall === 'WARN' ? 'badge-warning' : 'badge-danger'}">整体：${LEVEL_LABEL[overall]}</span></div>
+  const body = `<div class="page-header"><div><p class="section-code">OBSERVABILITY / MONITORING</p><h2>系统健康监控</h2><p>近 24 小时失败率与积压量，趋势取近 7 天快照。</p></div><span class="badge ${overall === 'OK' ? 'badge-success' : overall === 'WARN' ? 'badge-warning' : 'badge-danger'}">整体：${LEVEL_LABEL[overall]}</span></div>
   <div class="stats-grid">${cards || '<div class="empty-state">暂无指标</div>'}</div>
   <div class="panel">
     <div class="section-title"><h3>最近定时任务</h3><a class="button button-sm button-secondary" href="/admin/exceptions">异常任务中心</a></div>

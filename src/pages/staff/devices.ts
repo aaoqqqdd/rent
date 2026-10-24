@@ -10,7 +10,7 @@ export async function renderStaffDevices(c: Context, user: any) {
   const devices = await getDevices(c)
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>设备目录</h2><span class="section-note">查看设备资料和租赁状态；设备信息由管理员维护。</span></div>
+      <div class="section-title"><h2>设备目录</h2></div>
       <div class="table-wrapper">
         <table class="table">
           <thead>

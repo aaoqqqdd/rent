@@ -37,7 +37,6 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
     <div class="panel">
       <div class="section-title">
         <h2>设备管理</h2>
-        <span class="section-note">管理所有租赁设备信息。</span>
         <div class="record-actions" style="margin-left:auto"><a href="/admin/device-agent-bindings" class="button button-secondary">Windows 客户端管理</a><a href="/admin/devices/new" class="button button-success">添加入库设备</a></div>
       </div>
       ${devices.length === 0 ? `

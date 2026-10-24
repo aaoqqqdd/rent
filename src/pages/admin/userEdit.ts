@@ -20,11 +20,11 @@ export async function renderAdminUserEdit(c: Context, user: any, targetUserId: s
   const escape = (value: unknown) => sanitizePlainText(value, 200).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
   const body = `
-    <div class="entity-header"><div class="identity-strip mono"><span>USER / ${targetUser.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">IDENTITY CONTROL</p><h2>编辑用户</h2><p>${targetUser.name} · 修改资料、权限和账户信息。</p></div><a href="/admin/users/${targetUser.id}" class="button button-secondary">返回用户详情</a></div></div>
+    <div class="entity-header"><div class="identity-strip mono"><span>USER / ${targetUser.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">IDENTITY CONTROL</p><h2>编辑用户</h2><p>${targetUser.name}</p></div><a href="/admin/users/${targetUser.id}" class="button button-secondary">返回用户详情</a></div></div>
     ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
     <div class="panel record-panel single-column">
       <form method="POST" action="/admin/users/${targetUser.id}/edit" class="record-form">
-        <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>基本资料</h3><p>姓名、邮箱和联系电话。</p></div></div><div class="grid grid-2">
+        <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>基本资料</h3></div></div><div class="grid grid-2">
           <div class="form-group">
             <label class="form-label">名 / Given name</label>
             <input class="form-control" name="firstName" value="${personName.firstName}" required autocomplete="given-name" />

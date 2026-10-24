@@ -7,10 +7,10 @@ import { buildLayout } from '../../site'
 
 export function renderAdminDeviceNew(user: any, errorMessage = '', registrationKey = '') {
   const body = `
-    <div class="page-header"><div><p class="section-code">ASSET INTAKE</p><h2>添加入库设备</h2><p>登记资产身份、硬件配置和租赁价格；这些资料将供员工搜索和选择设备。</p></div><a href="/admin/devices" class="button button-secondary">返回设备列表</a></div>
+    <div class="page-header"><div><p class="section-code">ASSET INTAKE</p><h2>添加入库设备</h2></div><a href="/admin/devices" class="button button-secondary">返回设备列表</a></div>
     <div class="panel">
       ${errorMessage ? `<div ${registrationKey ? '' : 'data-flash-notice'} class="page-notification page-notification--${registrationKey ? 'success' : 'error'}">${errorMessage}${registrationKey ? `<p class="mono" style="font-size:1.1rem;user-select:all;word-break:break-all;"><strong>${registrationKey}</strong></p><small>此密钥只显示这一次，请立即复制并交给 Windows 设备代理。</small>` : ''}</div>` : ''}<form method="POST" action="/admin/devices/new" class="asset-editor">
-        <section class="form-section"><div class="form-section-title"><span class="mono">ID</span><div><h3>设备身份</h3><p>名称用于员工端分类，资产编号和序列号用于准确搜索单台设备。</p></div></div>
+        <section class="form-section"><div class="form-section-title"><span class="mono">ID</span><div><h3>设备身份</h3></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label class="form-label" for="name">设备名称</label><input class="form-control" id="name" name="name" required maxlength="120" placeholder="例如 MacBook Pro 14"></div>
             <div class="form-group"><label class="form-label" for="brand">品牌</label><div class="brand-entry"><input class="form-control" id="brand" name="brand" required maxlength="120" placeholder="例如 Apple" autocomplete="off"><span class="brand-logo" id="brandLogo" aria-hidden="true"></span><div class="brand-suggestions" id="brandSuggestions" role="listbox" aria-label="品牌选项"></div></div></div>
@@ -22,7 +22,7 @@ export function renderAdminDeviceNew(user: any, errorMessage = '', registrationK
             <div class="form-group"><label class="form-label" for="status">初始状态</label><select class="form-control" id="status" name="status"><option value="available">可用</option><option value="maintenance">维修中</option><option value="rented">已出租</option><option value="retired">已退役</option></select></div>
           </div>
         </section>
-        <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3><p>配置字段会直接进入员工端设备搜索。</p></div></div>
+        <section class="form-section"><div class="form-section-title"><span class="mono">SPEC</span><div><h3>硬件配置</h3></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label class="form-label" for="cpu">CPU</label><input class="form-control" id="cpu" name="cpu" maxlength="200" placeholder="例如 Apple M3 Pro 12-core"></div>
             <div class="form-group"><label class="form-label" for="ram">内存</label><input class="form-control" id="ram" name="ram" maxlength="200" placeholder="例如 18GB"></div>
@@ -32,7 +32,7 @@ export function renderAdminDeviceNew(user: any, errorMessage = '', registrationK
           </div>
           <div class="form-group"><label class="form-label" for="description">补充描述</label><textarea class="form-control" id="description" name="description" rows="4" maxlength="2000" placeholder="屏幕尺寸、接口、外观或其他需要员工了解的信息"></textarea></div>
         </section>
-        <section class="form-section"><div class="form-section-title"><span class="mono">AUD</span><div><h3>租赁价格</h3><p>价格将在建立合同时用于计算租金和押金；折扣按每台设备单独生效。</p></div></div>
+        <section class="form-section"><div class="form-section-title"><span class="mono">AUD</span><div><h3>租赁价格</h3></div></div>
           <div class="grid grid-2"><div class="form-group"><label class="form-label" for="pricePerDay">日租金（AUD）</label><input class="form-control" type="number" id="pricePerDay" name="pricePerDay" min="0" step="0.01" required></div><div class="form-group"><label class="form-label" for="depositAmount">押金（AUD）</label><input class="form-control" type="number" id="depositAmount" name="depositAmount" min="0" step="0.01" required></div><div class="form-group"><label class="form-label" for="weeklyDiscountPercent">周租折扣（%）</label><input class="form-control" type="number" id="weeklyDiscountPercent" name="weeklyDiscountPercent" min="0" max="100" step="0.01" value="0"><small class="form-text">每满 7 天适用；填写 0 表示不打折。</small></div><div class="form-group"><label class="form-label" for="monthlyDiscountPercent">月租折扣（%）</label><input class="form-control" type="number" id="monthlyDiscountPercent" name="monthlyDiscountPercent" min="0" max="100" step="0.01" value="0"><small class="form-text">每满 30 天适用；月租优先于周租。</small></div></div>
         </section>
         <div class="record-actions"><a href="/admin/devices" class="button button-secondary">取消</a><button type="submit" class="button button-primary">保存并入库</button></div>

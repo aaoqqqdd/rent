@@ -51,7 +51,7 @@ export async function renderStaffCustomers(c: Context, user: any, searchTerm: st
 
   const body = `
     <div class="panel">
-      <div class="section-title"><div><h2>客户管理</h2><span class="section-note">管理所有注册客户。</span></div><a class="button" href="/staff/customers/new">创建客户账户</a></div>
+      <div class="section-title"><div><h2>客户管理</h2></div><a class="button" href="/staff/customers/new">创建客户账户</a></div>
       <div class="search-bar" style="margin-bottom: 20px;">
         <form action="/staff/customers" method="GET" style="display: flex; gap: 10px; flex-wrap: wrap;">
           <input type="search" name="searchTerm" class="form-control" placeholder="搜索客户姓名、邮箱或手机..." value="${esc(searchTerm)}" style="flex-grow: 1;" />

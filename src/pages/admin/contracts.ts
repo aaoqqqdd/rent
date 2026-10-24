@@ -16,12 +16,12 @@ export async function renderAdminContracts(c: Context, user: any) {
 
   const body = `
     <div class="panel">
-      <div class="section-title"><div><a class="breadcrumb-link" href="/admin/contracts">← 返回协议与模板</a><h2>编辑正式合同</h2><span class="section-note">维护签署完成后生成正式合同所使用的正文。</span></div></div>
+      <div class="section-title"><div><a class="breadcrumb-link" href="/admin/contracts">← 返回协议与模板</a><h2>编辑正式合同</h2></div></div>
 
       <div class="admin-contract-sections">
         <div class="section">
           <h4>合同模板正文</h4>
-          <p>变量会在客户完成签署时替换，并冻结为正式合同快照。</p>
+          <p>变量在签署时替换并冻结为快照。</p>
           <form id="contractTemplateForm" class="editor-layout-form" method="post" action="/admin/contracts/template">
             <div class="form-group">
               <div class="grid grid-2"><div><label class="form-label">合同版本</label><input class="form-control" id="contractVersion" value="${contractMetadata.version || '1.0'}" required></div><div><label class="form-label">最后更新日期</label><input class="form-control" id="contractLastUpdatedDate" type="date" value="${contractMetadata.lastUpdatedDate || ''}"></div></div>

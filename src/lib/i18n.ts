@@ -25,11 +25,25 @@ export const I18N_STORAGE_KEY = 'rent-language'
 // 缺省带全部：宁可多几十 KB（gzip 后很小），也不要出现漏翻。
 const ALL_DOMAINS: readonly I18nDomain[] = i18nDomainGroups.map((group) => group.domain)
 
-// 按角色声明页面实际可能出现的字典域。只是「声明」，/i18n.js 仍然注入全量字典：
-// 一是空域瘦身收益（远小于几十 KB）抵不过漏翻风险，二是 SPA 局部导航会在同一份
-// 脚本里切换角色域，动态裁剪反而会造成「同一个 Worker 隔离内互相污染」。
-// 保留这个出口是为了让 <body data-i18n-domains> 有确定值，后续若要按域拆分
-// i18n.js 可以直接复用。
+// 按角色声明页面实际可能出现的字典域。只是「声明」，/i18n.js 仍然注入全量字典。
+//
+// 为什么不做按域注入（2026-10 实测，gzip -9，字典 4179 条 / 运行时骨架约 19 KB）：
+//   全量           260,216 B raw / 92,537 B gzip
+//   admin  9 个域  227,454 B raw / 约 76,077 B gzip  → 仅省 16.5 KB gzip
+//   staff  9 个域  169,915 B raw / 约 55,407 B gzip  → 省 37.1 KB gzip
+//   customer 9 个域 173,302 B raw / 约 56,334 B gzip → 省 36.2 KB gzip
+//   游客   7 个域  160,623 B raw / 约 52,200 B gzip  → 省 40.3 KB gzip
+// 结论：最坏角色（admin）也只省 16.5 KB gzip，代价却是：
+//   1) 首屏请求数 1 → N（每多一个请求就多一次 RTT，慢网下比这点字节更贵）；
+//   2) 版本指纹变化时整批失效，命中率不如「单文件缓存一年（immutable）」；
+//   3) 最致命：局部导航可能在同一文档内跨角色（员工看客户详情、管理员进客户中心），
+//      页面上会出现未注入的域 → 中文残留，而这正是本任务要消灭的问题。
+// 漏翻的代价远高于 16.5 KB，因此保持单文件全量注入。
+//
+// ⚠️ 当前字典实际集中在 common 域（4179 条里 2161 条在 common，其余在
+// admin/staff/customer/public/legal，nav/table/forms/status/errors 目前为空）。
+// 所以 `data-i18n-domains` 只是**声明性元数据，不参与裁剪**：/i18n.js 始终注入
+// 全量字典。看到域声明别以为可以按角色裁剪 —— 现在裁也裁不掉体积。
 export function i18nDomainsForRole(role?: string | null, accountType?: string | null): string {
   const base: I18nDomain[] = ['common', 'nav', 'table', 'forms', 'status', 'legal', 'errors']
   if (role === 'ADMIN') return [...base, 'admin', 'staff', 'public'].join(',')
@@ -40,16 +54,31 @@ export function i18nDomainsForRole(role?: string | null, accountType?: string | 
 
 // 把字典序列化成紧凑的 `key\tvalue\n` 行，相对 JSON 能省掉大量引号 / 转义，
 // 解压后解析也只需一次 split。
+//
+// 输出按「英文值」排序（方案 B）：相邻行的英文前缀高度相似，deflate 的滑动窗口
+// 更容易命中公共子串，实测 gzip 86,130 → 83,597 B（约 -2.9%）。排序是纯输出层的
+// 优化，不影响 i18nMessages（服务端测试用的扁平对象保持原样）。
+//
+// 排序必须稳定且确定：value 相同时回落到 key 比较，key 仍相同则保持原始插入顺序
+// （ES2019+ 的 sort 是稳定排序）。这样同一份字典两次调用输出的字节完全一致，
+// 内容指纹 languageScriptVersion 才不会随机抖动。
 export function serializeDictionary(domains: readonly I18nDomain[] = ALL_DOMAINS): string {
-  const lines: string[] = []
+  const entries: Array<[string, string]> = []
   for (const group of i18nDomainGroups) {
     if (!domains.includes(group.domain)) continue
     for (const [key, value] of Object.entries(group.messages)) {
       if (!key || !value) continue
       // 制表符 / 换行在字典 key、value 里都不合法，用空格兜底避免破坏分隔
-      lines.push(`${key.replace(/[\t\n]/g, ' ')}\t${value.replace(/[\t\n]/g, ' ')}`)
+      entries.push([key.replace(/[\t\n]/g, ' '), value.replace(/[\t\n]/g, ' ')])
     }
   }
+  entries.sort((a, b) => {
+    if (a[1] !== b[1]) return a[1] < b[1] ? -1 : 1
+    if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1
+    return 0
+  })
+  const lines: string[] = new Array(entries.length)
+  for (let i = 0; i < entries.length; i++) lines[i] = `${entries[i][0]}\t${entries[i][1]}`
   return lines.join('\n')
 }
 

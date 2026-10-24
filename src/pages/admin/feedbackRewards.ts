@@ -23,7 +23,7 @@ export function renderAdminFeedbackRewards(user: any, rewards: any[] = []) {
   const pendingCount = rewards.filter((r: any) => r.status === 'PENDING' || r.status === 'PROCESSING').length
   const failedCount = rewards.filter((r: any) => r.status === 'FAILED').length
   const issuedCount = rewards.filter((r: any) => r.status === 'ISSUED').length
-  const body = `<div class="page-header"><div><p class="section-code">TALLY / REWARDS</p><h2>客户反馈奖励记录</h2><p>客户提交 Tally 反馈问卷后系统自动发放的奖励记录；发放失败可在此手动重试。</p></div><a class="button button-secondary" href="/admin/feedback-gift-cards">礼品卡库存</a></div>
+  const body = `<div class="page-header"><div><p class="section-code">TALLY / REWARDS</p><h2>客户反馈奖励记录</h2><p>发放失败可在此手动重试。</p></div><a class="button button-secondary" href="/admin/feedback-gift-cards">礼品卡库存</a></div>
   <div class="stats-grid">
     <div class="stat-card ${failedCount ? 'warning' : ''}"><h3>发放失败</h3><div class="value">${failedCount}</div></div>
     <div class="stat-card ${pendingCount ? 'warning' : ''}"><h3>处理中</h3><div class="value">${pendingCount}</div></div>

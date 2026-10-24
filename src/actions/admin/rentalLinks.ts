@@ -13,7 +13,8 @@ export async function createAdminRentalLink(c: Context) {
   const form = await c.req.parseBody()
   const device = await getDeviceById(c, String(form.deviceId || ''))
   const pickup = sanitizePlainText(form.pickupLocation, 300), returns = sanitizePlainText(form.returnLocation, 300)
-  const lateFee = Number(form.lateFeePerDay || 0)
+  // 逾期费用按天计价，保留两位小数（与金额字段的精度约定一致），避免写入三位小数后在合同里出现分位漂移。
+  const lateFee = Math.round(Number(form.lateFeePerDay || 0) * 100) / 100
   if (!device || ['maintenance', 'retired'].includes(String(device.status)) || !pickup || !returns || !Number.isFinite(lateFee) || lateFee < 0 || lateFee > 99999) return c.redirect('/admin/rental-links?error=' + encodeURIComponent('请选择可出租设备，填写取还地点及有效的逾期费用'), 303)
   const id = `rl-${nanoid(12)}`
   await c.env.RENT.prepare('INSERT INTO rental_links (id, token, title, device_id, pickup_location, return_location, device_condition, device_accessories, late_fee_per_day, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -31,5 +32,6 @@ export async function toggleAdminRentalLink(c: Context) {
   const result = await c.env.RENT.prepare('UPDATE rental_links SET enabled = ? WHERE id = ?').bind(enabled, c.req.param('id')).run()
   if (!result.meta?.changes) return c.notFound()
   await createAuditLog(c, { actor: admin, action: 'RENTAL_LINK_UPDATED', targetType: 'RENTAL_LINK', targetId: String(c.req.param('id')), after: { enabled } })
-  return c.redirect('/admin/rental-links', 303)
+  // 带回可见反馈：以前切换状态后回到列表毫无提示，看不出操作是否生效。
+  return c.redirect(`/admin/rental-links?toggled=${enabled ? 'enabled' : 'disabled'}`, 303)
 }
