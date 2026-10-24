@@ -12,7 +12,7 @@ export type SystemSettingsKey =
   | 'copyrightNotice' | 'cookiePolicy' | 'complaintsPolicy' | 'acceptableUsePolicy' | 'consumerRights'
   | 'userTermsEn' | 'rentalTermsEn' | 'serviceTermsEn' | 'privacyPolicyEn' | 'softwareTermsEn'
   | 'copyrightNoticeEn' | 'cookiePolicyEn' | 'complaintsPolicyEn' | 'acceptableUsePolicyEn' | 'consumerRightsEn'
-  | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings'
+  | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings'
   | 'companyDetails' | 'taxInvoiceTemplate' | 'rentalRules' | 'registrationSettings' | 'notificationSettings' | 'legalMetadata' | 'tallyFormUrl'
   | 'feedbackRewards'
 
@@ -83,8 +83,6 @@ export const systemSettings = {
     contact: '',
     website: '',
     logo: '',
-    // 登录页左侧配图（管理员在系统设置上传，存 Cloudinary HTTPS 链接；留空则显示公司信息文案）。
-    loginImage: '',
     pickupLocations: [] as string[],
     deliveryAreas: ['墨尔本 CBD', 'Docklands', 'Southbank', 'South Yarra', 'Carlton', 'East Melbourne'] as string[],
     deliveryNote: '送货上门仅限墨尔本 CBD 及周边地区，运费由客服在审核时确认。',
@@ -94,7 +92,6 @@ export const systemSettings = {
     abnLabel: 'ABN',
     documentNumberLabel: 'INVOICE NO.',
     issuedLabel: 'Issued',
-    invoiceMessage: 'Thank you for your business.',
     billedToLabel: 'BILLED TO',
     rentalOrderLabel: 'RENTAL ORDER',
     contractLabel: 'Contract',
@@ -106,11 +103,12 @@ export const systemSettings = {
     priceLabel: 'PRICE',
     amountLabel: 'AMOUNT (AUD)',
     subtotalLabel: 'Subtotal',
+    invoiceMessage: 'Thank you for your business.',
     gstLabel: 'GST',
     depositLabel: 'Refundable security deposit',
     processingFeeLabel: 'Payment processing fee',
     discountLabel: 'Discount',
-    totalLabel: 'TOTAL PAID',
+    totalLabel: 'Total Due',
     paymentReferenceLabel: 'Payment reference',
     thankYouText: 'Thank you for choosing our rental service.',
     recordNote: 'This document records the payment received for the rental order.',
@@ -119,12 +117,7 @@ export const systemSettings = {
   },
   rentalRules: {
     unavailableDates: [] as string[],
-    // 已不在全局设置页维护；保留字段仅为旧设备级不可用规则兼容。
     unavailableTimeSlots: {} as Record<string, string[]>,
-    serviceFeeHours: [{ start: '07:00', end: '08:00' }, { start: '21:00', end: '23:00' }],
-    unavailablePickupHours: [] as Array<{ weekday: number; start: string; end: string }>,
-    businessHours: { start: '09:00', end: '20:00' },
-    serviceFeeRate: 0.1,
     minimumRentalDays: 1,
     bufferDays: 0,
   },
@@ -263,6 +256,7 @@ export const systemSettings = {
 <h2>六、如何主张权利</h2><p>请先通过 {company_email} 或 {company_phone} 联系我们，并参阅<a href="/complaints">《投诉与争议解决政策》</a>。您也可以联系所在州或领地的公平交易机构或 ACCC。</p>
 <h2>七、联系我们</h2><p>{company_name}<br>地址：{company_address}<br>电话：{company_phone}<br>邮箱：{company_email}</p>`,
   rentalTerms,
+  priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
   paymentMethods: {
     stripe: true,
     square: false,

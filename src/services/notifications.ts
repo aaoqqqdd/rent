@@ -17,45 +17,19 @@ import { buildReceiptPdf, bytesToBase64, DEFAULT_RECEIPT_PDF_TEMPLATE } from './
 
 const STAFF_ROLES = new Set(['ADMIN', 'MANAGER', 'STAFF'])
 
-// 只有后台人员主动发送的私信使用这条兜底模板。订单、申请与退款等业务事件
-// 必须套用各自的业务模板，不能把业务邮件伪装成普通站内通知邮件。
+// 站内通知不带专属邮件模板的类型统一走这条兜底模板；管理员可以在「通知模板」
+// 页面里改标题/正文/主题色。announcement（通告）和 manual（后台手动发送）两种
+// 类型本来就有各自的「站内/邮件」选择开关，这里不重复发信，避免同一条消息
+// 收到两封邮件。
 const SITE_NOTIFICATION_TEMPLATE_ID = 'site_notification'
 const SITE_NOTIFICATION_TEMPLATE_NAME = '站内通知（自动邮件）'
 const SITE_NOTIFICATION_TEMPLATE_SUBJECT = '{title}'
 const SITE_NOTIFICATION_TEMPLATE_BODY = '<h2>{title}</h2><p>您好 {customer_name}：</p><p>{message}</p>'
-const BUSINESS_NOTIFICATION_TEMPLATE_IDS: Record<string, string> = {
-  rental_application: 'rental_application_submitted',
-  rental_application_approved: 'rental_application_approved',
-  rental_application_rejected: 'rental_application_rejected',
-  order_created: 'order_created',
-  rental_payment_pending: 'order_pending_payment',
-  rental_payment_charged: 'payment_completed',
-  payment_approved: 'payment_completed',
-  due_soon_3d: 'return_reminder',
-  due_today: 'return_reminder',
-  refund_completed: 'refund_completed',
-  deposit_refunded: 'refund_completed',
-}
-const CUSTOMER_AUTOMATIC_EMAIL_TYPES = new Set([
-  'early_return_approved', 'rental_payment_charged', 'rental_payment_pending',
-  'rental_application_approved', 'rental_application_rejected', 'rental_cancelled',
-  'rental_suspended', 'payment_approved', 'payment_rejected', 'order_price_adjustment',
-  'due_soon_3d', 'due_today', 'pickup_reminder', 'refund_completed', 'deposit_refunded',
-  'rental_overdue', 'feedback_reward', 'square_deposit_payment', 'square_residual_order', 'square_residual_topup',
-])
+const SKIP_AUTO_EMAIL_TYPES = new Set(['announcement', 'manual'])
 const TAX_INVOICE_TEMPLATE_ID = 'tax_invoice_issued'
 const TAX_INVOICE_TEMPLATE_NAME = 'Tax invoice issued'
 const TAX_INVOICE_TEMPLATE_SUBJECT = 'Tax invoice for order {order_number}'
 const TAX_INVOICE_TEMPLATE_BODY = '<h2>Tax invoice issued</h2><p>Hello {customer_name},</p><p>Your tax invoice for order <strong>{order_number}</strong> is attached to this email.</p><h3>Invoice details</h3><table style="width:100%; border-collapse:collapse;"><tbody><tr><td style="padding:8px 0; color:#666;">Invoice number</td><td style="padding:8px 0;"><strong>{invoice_number}</strong></td></tr><tr><td style="padding:8px 0; color:#666;">Order number</td><td style="padding:8px 0;">{order_number}</td></tr><tr><td style="padding:8px 0; color:#666;">Amount paid</td><td style="padding:8px 0;"><strong>{total_amount}</strong></td></tr></tbody></table><p>Please keep the attached PDF for your records. If you have any questions, contact <a href="mailto:{company_email}">{company_email}</a>.</p>'
-
-function orderTimeSlot(order: any, key: 'pickup' | 'return'): string {
-  return String(key === 'pickup' ? order?.pickupTimeSlot || order?.pickup_time_slot || '' : order?.returnTimeSlot || order?.return_time_slot || '').trim() || 'N/A'
-}
-
-function orderDeliveryFee(order: any): string {
-  const method = String(order?.deliveryMethod || order?.delivery_method || '').toLowerCase()
-  return method === 'delivery' ? `AUD ${Number(order?.deliveryFee || order?.delivery_fee || 0).toFixed(2)}` : 'N/A'
-}
 
 let siteNotificationTemplateReady: Promise<void> | null = null
 
@@ -86,8 +60,6 @@ async function sendPickupReminderEmail(c: Context, notification: { recipientId: 
     customer_name: normalizeCustomerName(recipient?.name), customer_email: email,
     order_number: String(order.orderNo || order.id), device_name: String(order.device_name || ''),
     pickup_date: String(order.startDate || ''), pickup_location: String(order.pickupLocation || '到店自取'),
-    pickup_time: orderTimeSlot(order, 'pickup'), return_time: orderTimeSlot(order, 'return'),
-    delivery_fee: orderDeliveryFee(order),
     order_detail_url: buildNotificationOrderDetailUrl(c.req.url, order.id, 'CUSTOMER'),
     company_name: String(companyDetails.name || ''), company_email: String(companyDetails.email || ''),
   }
@@ -104,6 +76,7 @@ async function sendPickupReminderEmail(c: Context, notification: { recipientId: 
 // 给一条已创建的站内信补发邮件：找收件人邮箱、找兜底模板、套用变量、发信。
 // 尽力而为——任何一步失败都不影响站内信本身，调用方只需 catch 掉即可。
 async function sendNotificationEmail(c: Context, notification: { recipientId: string; type: string; title: string; message: string; orderId?: string }): Promise<void> {
+  if (SKIP_AUTO_EMAIL_TYPES.has(notification.type)) return
   const { apiKey, from } = await resolveEmailCredentials(c)
   if (!apiKey || !from) return
   const recipient = await c.env.RENT.prepare('SELECT name, email, role FROM users WHERE id = ?').bind(notification.recipientId).first() as any
@@ -114,73 +87,6 @@ async function sendNotificationEmail(c: Context, notification: { recipientId: st
     await sendPickupReminderEmail(c, notification, recipient, email)
     return
   }
-
-  const templateId = BUSINESS_NOTIFICATION_TEMPLATE_IDS[notification.type]
-  if (templateId) {
-    if (!notification.orderId) return
-    const [template, order, contract] = await Promise.all([
-      c.env.RENT.prepare('SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = ?').bind(templateId).first(),
-      c.env.RENT.prepare('SELECT * FROM orders WHERE id = ?').bind(notification.orderId).first(),
-      c.env.RENT.prepare('SELECT contractNumber, signToken FROM contracts WHERE orderId = ? ORDER BY createdAt DESC LIMIT 1').bind(notification.orderId).first(),
-    ]) as any[]
-    if (!order) return
-    if (!template) {
-      await sendGenericNotificationEmail(c, notification, recipient, email)
-      return
-    }
-    if (template.enabled === 0) return
-
-    const [customer, device, refund] = await Promise.all([
-      c.env.RENT.prepare('SELECT name, email FROM users WHERE id = ?').bind(order.userId).first(),
-      order.deviceId ? c.env.RENT.prepare('SELECT name FROM devices WHERE id = ?').bind(order.deviceId).first() : Promise.resolve(null),
-      templateId === 'refund_completed'
-        ? c.env.RENT.prepare("SELECT refund_amount, refunded_processing_fee FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first()
-        : Promise.resolve(null),
-    ]) as any[]
-    const companyDetails = getSystemSettings().companyDetails || ({} as any)
-    const refundAmount = Number(refund?.refund_amount || 0) + Number(refund?.refunded_processing_fee || 0)
-    const signToken = String(contract?.signToken || '')
-    const vars: Record<string, string> = {
-      title: notification.title,
-      message: notification.message,
-      customer_name: normalizeCustomerName(customer?.name),
-      customer_email: String(customer?.email || ''),
-      order_number: String(order.orderNo || order.id),
-      contract_number: String(contract?.contractNumber || ''),
-      device_name: String(device?.name || ''),
-      start_date: String(order.startDate || ''),
-      end_date: String(order.endDate || ''),
-      rental_period: order.rentalPeriod ? `${order.rentalPeriod} 天` : '',
-      total_amount: `AUD ${Number(order.totalAmount || 0).toFixed(2)}`,
-      deposit_amount: `AUD ${Number(order.depositAmount || 0).toFixed(2)}`,
-      refund_amount: `AUD ${refundAmount.toFixed(2)}`,
-      payment_due_date: String(order.paymentDueDate || order.payment_due_date || ''),
-      delivery_method: String(order.deliveryMethod || order.delivery_method || ''),
-      delivery_address: String(order.pickupLocation || order.pickup_location || ''),
-      delivery_fee: orderDeliveryFee(order),
-      pickup_time: orderTimeSlot(order, 'pickup'),
-      return_time: orderTimeSlot(order, 'return'),
-      rental_note: String(order.rentalNote || order.rental_note || ''),
-      order_detail_url: buildNotificationOrderDetailUrl(c.req.url, order.id, recipient?.role),
-      sign_url: signToken ? new URL(`/contract/sign?token=${encodeURIComponent(signToken)}&step=1`, c.req.url).toString() : '',
-      company_name: String(companyDetails.name || ''),
-      company_email: String(companyDetails.email || ''),
-    }
-    const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
-    const subject = fill(String(template.subject || notification.title))
-    const html = renderEmailNotificationHtml(subject, fill(String(template.body || '')), vars.company_name, template.theme_color || '#f0a35b')
-    await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(notification.message, 2000), html })
-    return
-  }
-
-  if (CUSTOMER_AUTOMATIC_EMAIL_TYPES.has(notification.type)) {
-    if (String(recipient?.role || '').toUpperCase() !== 'CUSTOMER') return
-    await sendGenericNotificationEmail(c, notification, recipient, email)
-    return
-  }
-
-  // 通用邮件只服务于后台人员手动发送的私信；通告和其它业务站内通知不发兜底邮件。
-  if (notification.type !== 'manual') return
 
   await ensureSiteNotificationEmailTemplate(c)
   const template = await c.env.RENT.prepare('SELECT subject, body, enabled, theme_color FROM email_templates WHERE id = ?').bind(SITE_NOTIFICATION_TEMPLATE_ID).first() as any
@@ -200,15 +106,6 @@ async function sendNotificationEmail(c: Context, notification: { recipientId: st
   const fill = (value: string) => value.replace(/\{([a-z_]+)\}/g, (_: string, key: string) => vars[key] ?? '')
   const subject = fill(String(template.subject || SITE_NOTIFICATION_TEMPLATE_SUBJECT))
   const html = renderEmailNotificationHtml(subject, fill(String(template.body || SITE_NOTIFICATION_TEMPLATE_BODY)), vars.company_name, template.theme_color || '#f0a35b')
-  await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(notification.message, 2000), html })
-}
-
-async function sendGenericNotificationEmail(c: Context, notification: { recipientId: string; title: string; message: string; orderId?: string }, recipient: any, email: string): Promise<void> {
-  const companyDetails = getSystemSettings().companyDetails || ({} as any)
-  const subject = sanitizePlainText(notification.title, 200)
-  const detailUrl = notification.orderId ? buildNotificationOrderDetailUrl(c.req.url, notification.orderId, recipient?.role) : ''
-  const detailLink = detailUrl ? `<p><a href="${escapeHtml(detailUrl)}">查看订单详情</a></p>` : ''
-  const html = renderEmailNotificationHtml(subject, `<p>${notification.message}</p>${detailLink}`, String(companyDetails.name || ''))
   await sendTransactionalEmail(c, { to: email, subject, text: sanitizePlainText(notification.message, 2000), html })
 }
 
@@ -410,7 +307,7 @@ export async function createNotification(c: Context, notification: { recipientId
   // 补发邮件：尽力而为，绝不影响站内信；重复通知（dedupe 命中）不重复发信。
   const defaultDelivery = getSystemSettings().notificationSettings?.defaultDelivery || 'in_app_email'
   const notifyByEmail = notification.notifyByEmail ?? defaultDelivery === 'in_app_email'
-  if (inserted && notifyByEmail && (notification.type === 'manual' || Boolean(BUSINESS_NOTIFICATION_TEMPLATE_IDS[notification.type]) || CUSTOMER_AUTOMATIC_EMAIL_TYPES.has(notification.type))) {
+  if (inserted && notifyByEmail) {
     try { await sendNotificationEmail(c, notification) }
     catch (error: any) { console.error('sendNotificationEmail failed:', error?.message || error) }
   }
@@ -448,9 +345,6 @@ async function getPaymentEmailContext(c: Context, order: any, contract?: { contr
     start_date: String(order.startDate || ''),
     end_date: String(order.endDate || ''),
     rental_period: order.rentalPeriod ? `${order.rentalPeriod} 天` : '',
-    pickup_time: orderTimeSlot(order, 'pickup'),
-    return_time: orderTimeSlot(order, 'return'),
-    delivery_fee: orderDeliveryFee(order),
     total_amount: `AUD ${Number(order.totalAmount || 0).toFixed(2)}`,
     deposit_amount: `AUD ${Number(order.depositAmount || 0).toFixed(2)}`,
     order_detail_url: buildNotificationOrderDetailUrl(c.req.url, order.id, 'CUSTOMER'),
@@ -474,7 +368,7 @@ async function buildFinancialDocument(c: Context, order: any, contract: { contra
   if (!context) return null
   const invoice = await c.env.RENT.prepare("SELECT * FROM invoices WHERE order_id = ? AND type = 'invoice' ORDER BY issued_at DESC LIMIT 1").bind(order.id).first() as any
   if (!invoice) return null
-  const payment = await c.env.RENT.prepare("SELECT paid_at, payment_method, payment_provider, transaction_id, stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
+  const payment = await c.env.RENT.prepare("SELECT paid_at, payment_method, payment_provider, transaction_id, stripe_payment_intent_id, square_payment_id FROM payments WHERE rental_id = ? AND status = 'paid' ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   const documentNumber = kind === 'payment-receipt'
     ? String(invoice.receipt_number || invoice.invoice_number || order.orderNo || order.id)
     : String(invoice.invoice_number || invoice.receipt_number || order.orderNo || order.id)
@@ -505,7 +399,7 @@ async function buildFinancialDocument(c: Context, order: any, contract: { contra
     issuedAt: String(invoice.issued_at || ''),
     paidAt: String(payment?.paid_at || ''),
     paymentMethod: payment?.payment_provider === 'square' ? 'Gift card' : String(payment?.payment_method || order.paymentMethod || ''),
-    transactionId: String(payment?.transaction_id || payment?.stripe_payment_intent_id || ''),
+    transactionId: String(payment?.transaction_id || payment?.stripe_payment_intent_id || payment?.square_payment_id || ''),
     deviceName: String(context.device?.name || order.deviceName || 'Rental device'),
     startDate: String(order.startDate || ''),
     endDate: String(order.endDate || ''),
@@ -627,15 +521,12 @@ export async function createDueDateNotifications(c: Context): Promise<number> {
         AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.recipient_id = o.userId AND n.order_id = o.id AND n.type = ?)
     `).bind(date, notice.type).all()
     for (const order of (rows.results || []) as any[]) {
-      const inserted = await createNotification(c, {
-        recipientId: order.userId,
-        type: notice.type,
-        title: notice.title,
-        message: `${notice.text} 订单：${order.orderNo || order.id}。`,
-        orderId: order.id,
-        notifyByEmail: true,
-      })
-      if (inserted) created++
+      const id = `nt-${crypto.randomUUID()}`
+      const result = await c.env.RENT.prepare(`
+        INSERT OR IGNORE INTO notifications (id, recipient_id, type, title, message, order_id, sender_id, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(id, order.userId, notice.type, notice.title, `${notice.text} 订单：${order.orderNo || order.id}。`, order.id, null, null).run() as any
+      created += Number(result.meta?.changes ?? result.changes ?? 0)
     }
   }
   const melbourneToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
