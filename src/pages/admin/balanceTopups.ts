@@ -129,7 +129,6 @@ export async function renderAdminBalanceTopups(c: Context, user: any) {
       <div class="section-title">
         <div>
           <h2>余额充值订单</h2>
-          <span class="section-note">查看和管理客户余额充值记录，审核待处理的转账/支付宝/微信充值。</span>
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
           <a href="/admin/orders" class="button button-secondary">返回租赁订单</a>

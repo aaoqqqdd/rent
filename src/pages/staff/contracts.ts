@@ -98,7 +98,7 @@ export async function renderStaffContracts(c: Context, user: any, status?: strin
 
   const body = `
     <div class="panel contract-management-page">
-      <div class="section-title"><div><p class="section-code">CONTRACT WORKSPACE</p><h2>合同管理</h2><span class="section-note">${isAdmin ? '查看全部员工创建的合同、签署状态和合同资料' : '管理自己负责的合同、签署状态和合同资料。'}</span></div><div class="record-actions"><a class="button" href="/staff/contracts/new">新建合同</a><a class="button button-secondary" href="${isAdmin ? '/admin/orders' : '/staff/orders'}">租赁管理</a>${isAdmin ? '<a class="button button-secondary" href="/admin/templates">协议与模板</a><a class="button button-secondary" href="/admin/calendar">租赁日历</a>' : ''}</div></div>
+      <div class="section-title"><div><p class="section-code">CONTRACT WORKSPACE</p><h2>合同管理</h2></div><div class="record-actions"><a class="button" href="/staff/contracts/new">新建合同</a><a class="button button-secondary" href="${isAdmin ? '/admin/orders' : '/staff/orders'}">租赁管理</a>${isAdmin ? '<a class="button button-secondary" href="/admin/templates">协议与模板</a><a class="button button-secondary" href="/admin/calendar">租赁日历</a>' : ''}</div></div>
 
       ${successMessage ? `<div data-flash-notice class="page-notification page-notification--success">${successMessage}</div>` : ''}
       ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}

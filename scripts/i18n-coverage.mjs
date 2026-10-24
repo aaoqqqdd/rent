@@ -113,12 +113,19 @@ export function listSourceFiles() {
 //   - 句子标点（。！？；：，）是边界
 //   - 标签之间的空白缩进不是边界
 const TAG = /<\/?[A-Za-z!][^>]*>/g
-const PUNCT = /[。！？；，、：]/g
+// 只按「句子结束」切分，不再按逗号/顿号切：运行期翻译的单位是 DOM 文本节点，
+// 也就是模板里的静态片段；按逗号切会造出运行期并不存在的片段。
+const PUNCT = /[。！？；]/g
 
 // 内联 <script> 里的可执行 JS 片段不是「文案」，一律丢弃。
 const LOOKS_LIKE_CODE = (piece) =>
   // 以运算符、引号、括号、赋值号开头的片段是代码拼接残留，不是独立文案
   /^['"=?:(){}\[\]+|*&<>\/,;]/.test(piece) ||
+  // SQL 行注释（`-- 说明`）只出现在 SQL 字符串里，不会渲染
+  /^--\s/.test(piece) ||
+  // 模板字符串 / 字符串拼接残留：`${...}`、反引号、引号、赋值号、三元问号、竖线
+  // 都是代码语法，中文文案里不会出现（全角？和引号不在此列）。
+  /\$\{|\$[A-Za-z_]|`|['"=]|\?[^？]|\|/.test(piece) ||
   /=>|\bdocument\.|\bwindow\.|\bgetElementById\b|\bquerySelector(All)?\b|\bfunction\b|\bconst\b|\blet\b|\breturn\b|\bthrow\b|\baddEventListener\b/.test(piece) ||
   // 对象字面量 / 数组 / 三元 / 选项映射表：`: 'xxx'`、`},`、`['a','b']` 之类
   /[:\[\]{}]\s*['"]|['"]\s*,?\s*[\]}]\s*,?$|\?\s*['"]/.test(piece) ||
@@ -150,6 +157,9 @@ export function segmentText(raw) {
     // 句末残留的代码标识（如 `order.endDate}`、`devices.length}`）去掉，
     // 只保留中文部分，避免把 JS 变量名当成文案
     .map((piece) => piece.split(/\s+/).filter((token) => !/^[A-Za-z_$][\w$.,:;?!&|+\-=[\](){}]*$/.test(token) && !/^[a-z]\w*\??\.\w+/.test(token)).join(' ').trim())
+    // 视觉分隔符（`·`、`・`、`|`、`、`）在渲染时与相邻文案处在同一个文本节点里，
+    // 运行期按「中文片段」替换，所以这里剥掉首尾分隔符再比对字典。
+    .map((piece) => piece.replace(/^[\s·・|、]+/, '').replace(/[\s·・|]+$/, ''))
     .filter((piece) => piece && hasChinese(piece) && !LOOKS_LIKE_CODE(piece))
 }
 
@@ -243,7 +253,34 @@ export function scan({ silent = false } = {}) {
     }
   }
 
-  const covered = (phrase) => dictionary.entries.has(phrase)
+  // 与 src/lib/i18n.ts 的运行期算法保持一致：先精确匹配整条文案，否则按「字典里较长的
+  // 键、且两侧不是中文」做片段替换。这样「5 单待取」这类数字+中文的节点会被判为已覆盖，
+  // 而不是要求字典里存在整条「5 单待取」。
+  const fragmentKeys = [...dictionary.entries.keys()].filter((key) => key.length >= 2).sort((a, b) => b.length - a.length)
+  const translateLikeRuntime = (text) => {
+    if (dictionary.entries.has(text)) return dictionary.entries.get(text)
+    if (!/[A-Za-z0-9]/.test(text) && /[\u3400-\u9fff]/.test(text)) {
+      // 纯中文且未收录：运行期原样保留（但片段替换仍可能命中，全部按片段再试一遍）
+    }
+    let out = text
+    for (const key of fragmentKeys) {
+      let offset = 0
+      let position
+      while ((position = out.indexOf(key, offset)) !== -1) {
+        const left = position ? out.charAt(position - 1) : ''
+        const right = out.charAt(position + key.length)
+        const replacement = dictionary.entries.get(key) || ''
+        if (!hasChinese(left) && !hasChinese(right)) {
+          out = out.slice(0, position) + replacement + out.slice(position + key.length)
+          offset = position + replacement.length
+        } else {
+          offset = position + key.length
+        }
+      }
+    }
+    return out
+  }
+  const covered = (phrase) => !hasChinese(translateLikeRuntime(phrase))
   const rows = [...hits.entries()]
     .map(([phrase, meta]) => ({ phrase, count: meta.count, files: [...meta.files], contexts: [...meta.contexts], covered: covered(phrase) }))
     .sort((a, b) => b.count - a.count || b.phrase.length - a.phrase.length)

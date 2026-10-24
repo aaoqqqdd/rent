@@ -4622,28 +4622,46 @@ app.post('/admin/orders/bulk-update', async (c) => {
   const reason = String(form.reason || '').trim().slice(0, 300)
   const selectedIds = Array.isArray(form.orderIds) ? form.orderIds.map(String) : form.orderIds ? [String(form.orderIds)] : []
 
-  if (!['suspended', 'cancelled'].includes(targetStatus) || selectedIds.length === 0) {
-    return c.redirect('/admin/orders')
+  // 界面下拉框（BULK_STATUS_OPTIONS）与服务端接受的状态必须一致。传了不支持的状态
+  // 以前会静默重定向回列表、什么都不发生；现在明确回显错误，让操作者知道没生效。
+  if (!['suspended', 'cancelled'].includes(targetStatus)) {
+    return c.redirect(`/admin/orders?error=${encodeURIComponent('批量更新只支持「已取消」和「已暂停」两种状态')}`)
   }
-  if ((targetStatus === 'suspended' || targetStatus === 'cancelled') && !reason) return c.text('请填写暂停/取消原因', 400)
+  if (selectedIds.length === 0) {
+    return c.redirect(`/admin/orders?error=${encodeURIComponent('请先勾选需要更新的订单')}`)
+  }
+  if (!reason) {
+    return c.redirect(`/admin/orders?error=${encodeURIComponent('请填写取消或暂停原因')}`)
+  }
 
   const selectedOrders = await Promise.all(selectedIds.map(orderId => getOrderById(c, orderId)))
-  const validOrders = selectedOrders.filter((order): order is NonNullable<typeof order> => Boolean(order && order.is_manual !== 1 && canTransitionOrder(order.status, targetStatus)))
-  if (!validOrders.length) return c.text('所选订单没有可以执行该状态转换的订单', 409)
-  if (targetStatus === 'completed') return c.text('完成订单必须逐笔执行归还验机', 409)
+  const foundOrders = selectedOrders.filter((order): order is NonNullable<typeof order> => Boolean(order))
+  // 手动订单有自己的编辑页，不进批量流程；只有它们被选中时要给出可执行的下一步。
+  const manualOnly = foundOrders.length > 0 && foundOrders.every(order => order.is_manual === 1)
+  const validOrders = foundOrders.filter(order => order.is_manual !== 1 && canTransitionOrder(order.status, targetStatus))
+  if (!validOrders.length) {
+    const message = manualOnly ? '手动订单请在订单详情页修改' : '所选订单当前状态都不允许该操作'
+    return c.redirect(`/admin/orders?error=${encodeURIComponent(message)}`)
+  }
+  let processed = 0
   for (const order of validOrders) {
     const automaticCancellationPayment = targetStatus === 'cancelled'
       ? await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND status = 'paid' AND payment_method IN ('balance', 'card') LIMIT 1").bind(order.id).first()
       : null
     if (automaticCancellationPayment) {
       const response = await cancelAndRefund(c, user, order.id, reason)
-      if (response.status >= 400) return c.text(await response.text(), response.status as any)
+      if (response.status >= 400) {
+        // 中途失败时不要把已成功的部分说成全部失败：回报已处理条数并停下。
+        const detail = (await response.text()).slice(0, 200)
+        return c.redirect(`/admin/orders?error=${encodeURIComponent(`已处理 ${processed} 条后停止：${detail}`)}`)
+      }
     } else {
       await updateOrderStatus(c, order.id, targetStatus, { reason, triggeredBy: user.id })
       if (targetStatus === 'cancelled') await releaseDeviceIfUnbooked(c, order.deviceId)
       if (targetStatus === 'suspended') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}暂停，原因：${reason}。`, orderId: order.id })
       if (targetStatus === 'cancelled') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}取消，原因：${reason}。`, orderId: order.id })
     }
+    processed++
   }
 
   const skipped = selectedOrders.length - validOrders.length

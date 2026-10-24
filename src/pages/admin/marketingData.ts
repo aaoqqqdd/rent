@@ -72,7 +72,7 @@ export function renderAdminMarketingData(user: any, data: MarketingAnalyticsData
   const s = data.summary
   const overallRate = deliveryRate(s.sentCount, s.failedCount)
   const stat = (title: string, value: string, note: string, tone = '') => `<div class="stat-card ${tone}"><h3>${title}</h3><div class="value">${value}</div><div class="trend">${note}</div></div>`
-  const body = `<div class="page-header"><div><p class="section-code">MARKETING / ANALYTICS</p><h2>营销数据</h2><p>查看营销受众、退订情况和历史发送表现。已退订客户不会出现在营销邮件发送名单中。</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="button button-secondary" href="/admin/marketing-emails">写营销邮件</a><a class="button button-secondary" href="/admin/email-templates">系统邮件模板</a></div></div>
+  const body = `<div class="page-header"><div><p class="section-code">MARKETING / ANALYTICS</p><h2>营销数据</h2><p>已退订客户不会出现在营销邮件发送名单中。</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="button button-secondary" href="/admin/marketing-emails">写营销邮件</a><a class="button button-secondary" href="/admin/email-templates">系统邮件模板</a></div></div>
   <div class="stats-grid">
     ${stat('客户总数', String(s.totalCustomers), '全部客户账户')}
     ${stat('可发送客户', String(s.sendableCustomers), `活跃且有邮箱 · 已退订 ${s.optedOutCustomers} 人`, 'primary')}

@@ -27,6 +27,15 @@ export const adminOrderStatusMap: Record<string, { text: string; class: string }
   cancelled: { text: '已取消', class: 'badge-danger' }
 };
 
+// 批量更新只开放服务端 /admin/orders/bulk-update 实际接受的两种状态。
+// 两边必须保持一致：以前界面还列了「待支付 / 已支付 / 租赁中」，但服务端只接受
+// suspended/cancelled，选中那些状态会被静默丢弃（无提示地什么都不发生）。
+// 完成订单必须逐笔走归还验机，因此不出现在批量选项里。
+export const BULK_STATUS_OPTIONS: ReadonlyArray<readonly [string, string]> = [
+  ['cancelled', '已取消'],
+  ['suspended', '已暂停'],
+]
+
 const STATUS_ALIASES: Record<string, string> = { pending: 'pending_payment', in_progress: 'active', complete: 'completed', canceled: 'cancelled' }
 
 type AdminOrderFilters = {
@@ -292,22 +301,18 @@ export async function renderAdminOrders(c: Context, user: any) {
           </label>
           <select name="status" id="bulk-status-select" class="form-control" style="min-width: 150px; padding: 8px 12px;">
             <option value="">批量更新状态</option>
-            <option value="pending_payment">待支付</option>
-            <option value="paid">已支付</option>
-            <option value="active">租赁中</option>
-            <option value="cancelled">已取消</option>
+            ${BULK_STATUS_OPTIONS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}
           </select>
-          <input type="text" name="reason" id="bulk-status-reason" class="form-control" maxlength="300" placeholder="取消原因（选择“已取消”后必填，将随通知发送给客户）" style="min-width: 280px; padding: 8px 12px;" hidden />
+          <input type="text" name="reason" id="bulk-status-reason" class="form-control" maxlength="300" placeholder="原因（必填，随通知发送给客户）" style="min-width: 280px; padding: 8px 12px;" hidden />
           <button type="submit" class="button button-primary" style="padding: 8px 16px;">批量更新</button>
         </div>
-        <div style="color: var(--text-secondary); font-size: 0.85rem; margin-top: -8px; margin-bottom: 12px;">已完成状态必须逐笔执行归还验机，批量操作暂不支持。</div>
       </form>
       <script>(function(){
         var select = document.getElementById('bulk-status-select');
         var reason = document.getElementById('bulk-status-reason');
         if (!select || !reason) return;
         function sync() {
-          var needsReason = select.value === 'cancelled';
+          var needsReason = select.value !== '';
           reason.hidden = !needsReason;
           reason.required = needsReason;
         }
@@ -341,7 +346,7 @@ export async function renderAdminOrders(c: Context, user: any) {
     return `
                 <tr>
                   <td><input type="checkbox" name="orderIds" value="${order.id}" class="order-checkbox" form="bulk-order-form" /></td>
-                  <td style="font-family: monospace;">${order.orderNo || order.id}${order.is_manual === 1 ? '<br><span class="badge badge-info">手动订单 · 无需合同</span>' : order.rental_link_id ? '<br><span class="badge badge-info">自助租赁</span>' : ''}</td>
+                  <td style="font-family: monospace;">${order.orderNo || order.id}${order.is_manual === 1 ? '<br><span class="badge badge-info">手动订单</span>' : order.rental_link_id ? '<br><span class="badge badge-info">自助租赁</span>' : ''}</td>
                   <td>
                     <div><strong>${escapeHtml(order.customer?.name) || (order.is_manual === 1 ? '未关联客户' : '未知用户')}</strong>${order.customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</div>
                     <small style="color: var(--text-secondary);">${escapeHtml(order.customer?.email)}</small>

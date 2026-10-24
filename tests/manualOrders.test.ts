@@ -78,7 +78,9 @@ test('admin can create with only a device, edit optional fields, swap equipment 
   assert.equal(row().status, 'active')
   assert.equal(sqlite.prepare("SELECT status FROM devices WHERE id='d-1'").get()?.status, 'rented')
   const html = await (await request(path)).text()
-  assert.match(html, /无需合同/)
+  // 「无需合同」这类解释性文案已按要求从界面删除；页面仍须标明这是手动订单、
+  // 且不出现合同签署入口。真正的业务约束由上面的 contractId === null 保证。
+  assert.match(html, /手动订单/)
   assert.match(html, /保存修改/)
   assert.doesNotMatch(html, /合同签署流程/)
   for (const script of extractInlineScripts(html)) assert.doesNotThrow(() => new Function(script))

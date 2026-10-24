@@ -74,7 +74,9 @@ function statCard(href: string, label: string, value: number, tone: string, unit
 }
 
 function actionTile({ href, label, hint, tone }: QuickAction): string {
-  return `<a class="mq-action${tone ? ` is-${tone}` : ''}" href="${escapeHtml(href)}"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(hint)}</small></a>`
+  // hint 只放真实数字（如「3 单待取」）；没有数字时整行不渲染，不留空白小字。
+  const hintHtml = hint ? `<small>${escapeHtml(hint)}</small>` : ''
+  return `<a class="mq-action${tone ? ` is-${tone}` : ''}" href="${escapeHtml(href)}"><strong>${escapeHtml(label)}</strong>${hintHtml}</a>`
 }
 
 /** 管理员：完整后台能力的「更多」分组（底部 tab 只放 5 个核心动作）。 */
@@ -129,20 +131,20 @@ export async function renderStaffMobileHome(c: Context, user: any) {
         { href: '/staff/mobile/today?stage=pickup', label: '今日取货', hint: `${overview.pickups} 单待取`, tone: 'info' },
         { href: '/staff/mobile/today?stage=return', label: '今日归还', hint: `${overview.returns} 单待验`, tone: 'warning' },
         { href: '/admin/order-review', label: '订单审核', hint: `${overview.pendingReview} 单待审` },
-        { href: '/admin/orders', label: '租赁订单', hint: '全部订单' },
-        { href: '/admin/devices', label: '设备管理', hint: '库存与状态' },
+        { href: '/admin/orders', label: '租赁订单', hint: '' },
+        { href: '/admin/devices', label: '设备管理', hint: '' },
         { href: '/admin/users', label: '用户管理', hint: `${overview.customers} 位客户` },
-        { href: '/admin/finance', label: '财务总览', hint: '收款与退款' },
+        { href: '/admin/finance', label: '财务总览', hint: '' },
       ]
     : [
         { href: '/staff/mobile/scan', label: '扫码作业', hint: '客户取货码', tone: 'primary' },
         { href: '/staff/mobile/today?stage=pickup', label: '今日取货', hint: `${overview.pickups} 单待取`, tone: 'info' },
         { href: '/staff/mobile/today?stage=return', label: '今日归还', hint: `${overview.returns} 单待验`, tone: 'warning' },
         { href: '/staff/customers', label: '我的客户', hint: `${overview.customers} 位` },
-        { href: '/staff/orders', label: '租赁订单', hint: '我的订单' },
-        { href: '/staff/contracts', label: '我的合同', hint: '签约与归档' },
-        { href: '/staff/inspections', label: '验机记录', hint: '归还验机' },
-        { href: '/notifications', label: '通知中心', hint: '系统消息' },
+        { href: '/staff/orders', label: '租赁订单', hint: '' },
+        { href: '/staff/contracts', label: '我的合同', hint: '' },
+        { href: '/staff/inspections', label: '验机记录', hint: '' },
+        { href: '/notifications', label: '通知中心', hint: '' },
       ]
 
   const moreGroups = isAdmin ? adminMoreGroups : staffMoreGroups
@@ -168,7 +170,6 @@ export async function renderStaffMobileHome(c: Context, user: any) {
       <input class="form-control" type="search" name="q" placeholder="扫码或搜索订单号、客户、设备" autocomplete="off" inputmode="search" enterkeyhint="search">
       <button class="button button-primary" type="submit">搜索</button>
     </form>
-    <p class="mobile-task-search__hint">扫码枪或手机键盘输入后回车即可定位订单</p>
 
     <section class="mq-overview" aria-label="今日概览">
       ${statCard('/staff/mobile/today?stage=pickup', '今日取货', overview.pickups, 'is-pickup')}
@@ -181,20 +182,19 @@ export async function renderStaffMobileHome(c: Context, user: any) {
 
     ${attentionHtml}
 
-    <a class="mq-today-cta" href="/staff/mobile/today"><span class="mq-today-cta__icon" aria-hidden="true">☰</span><span><strong>今日任务</strong><small>取货 ${overview.pickups} · 归还 ${overview.returns}，按预约时间排列</small></span><span class="mq-today-cta__arrow" aria-hidden="true">›</span></a>
+    <a class="mq-today-cta" href="/staff/mobile/today"><span class="mq-today-cta__icon" aria-hidden="true">☰</span><span><strong>今日任务</strong><small>取货 ${overview.pickups} · 归还 ${overview.returns}</small></span><span class="mq-today-cta__arrow" aria-hidden="true">›</span></a>
     <a class="mq-scan-cta" href="/staff/mobile/scan"><span class="mq-scan-cta__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"></path><path d="M3 12h18"></path></svg></span><span><strong>扫码作业</strong><small>扫描客户取货二维码，直接进入取货或验机</small></span></a>
 
     <section class="mq-section" aria-labelledby="mq-quick-title">
-      <div class="mq-section__head"><h3 id="mq-quick-title">快捷操作</h3><span>常驻入口</span></div>
+      <div class="mq-section__head"><h3 id="mq-quick-title">快捷操作</h3></div>
       <div class="mq-quick">${quickActions.map(actionTile).join('')}</div>
     </section>
 
     <section class="mq-section" aria-labelledby="mq-more-title">
-      <div class="mq-section__head"><h3 id="mq-more-title">更多功能</h3><span>${isAdmin ? '完整管理后台' : '员工完整功能'}</span></div>
+      <div class="mq-section__head"><h3 id="mq-more-title">更多功能</h3></div>
       <div class="mq-more">${moreHtml}</div>
     </section>
 
-    <p class="mq-footnote">手机端只保留高频租赁动作；完整后台能力在「更多功能」中按分组进入，或在左上角菜单打开侧边抽屉。</p>
   </div>`
   return buildLayout('手机工作台 - 电脑租赁管理系统', body, user, { compactStaffNav: true, currentPath: '/staff/mobile' })
 }

@@ -18,7 +18,7 @@ export function renderAdminAgents(user: any, enabled: boolean, agents: any[] = [
     <td>${esc(a.created_at, 40)}</td>
   </tr>`).join('')
 
-  const body = `<div class="page-header"><div><p class="section-code">GROWTH / AGENT PROGRAM</p><h2>代理计划（预留）</h2><p>长期分销 / 代理关系，区别于一次性推荐奖励。当前为预留能力。</p></div><a class="button button-secondary" href="/admin/referrals">推荐奖励管理</a></div>
+  const body = `<div class="page-header"><div><p class="section-code">GROWTH / AGENT PROGRAM</p><h2>代理计划（预留）</h2></div><a class="button button-secondary" href="/admin/referrals">推荐奖励管理</a></div>
   <div class="page-notification ${enabled ? 'page-notification--info' : 'page-notification--warning'}">
     <strong>${enabled ? '已启用' : '未启用'}</strong> · ${enabled ? '代理归因与佣金结算流程需在后续版本接入下单链路。' : '数据表与佣金计算已预留（agentCommission），但未接入下单 / 结算 / 佣金发放。启用属于独立开发项。'}
   </div>

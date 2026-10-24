@@ -23,7 +23,7 @@ export async function renderStaffContractProgress(c: Context, user: any, contrac
   const customerEmail = customer ? sanitizePlainText(customer.email, 254) : '未知';
 
   const body = `
-    <div class="page-header"><div><p class="section-code">SIGNING STATUS</p><h2>合同签署进度</h2><p>合同 ${contract.contractNumber} 的签署状态与客户交付链接。</p></div><a class="button button-secondary" href="/staff/contracts">返回合同管理</a></div>
+    <div class="page-header"><div><p class="section-code">SIGNING STATUS</p><h2>合同签署进度</h2></div><a class="button button-secondary" href="/staff/contracts">返回合同管理</a></div>
     <div class="panel">
       <div class="section-title"><h2>签署记录</h2><span class="section-note mono">${contract.contractNumber}</span></div>
 

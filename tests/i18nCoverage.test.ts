@@ -39,5 +39,8 @@ test('i18n coverage: 中文残留率 < 2%', () => {
 test('i18n coverage: 扫描覆盖面足够（防止扫描器被改窄后测试假绿）', () => {
   // 页面模板 / site.ts / appClient 都在扫描范围内
   assert.ok(report.files >= 100, `扫描文件数 ${report.files}，疑似扫描范围被缩小`)
-  assert.ok(report.phrases >= 3000, `抽取中文片段 ${report.phrases} 条，疑似提取逻辑被破坏`)
+  // 片段计数下限按「运行期模型」校准：扫描器只按 DOM 文本节点边界（`${}`、HTML 标签）
+  // 切分，不再按中文逗号/顿号切，因此总数会比旧实现少（约 2800 条）。
+  // 下限仍然要卡住「提取逻辑被破坏」这类事故，所以设 2500。
+  assert.ok(report.phrases >= 2500, `抽取中文片段 ${report.phrases} 条，疑似提取逻辑被破坏`)
 })

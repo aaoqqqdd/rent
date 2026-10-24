@@ -29,13 +29,13 @@ export function renderAdminDataRetention(user: any, policies: any[] = [], previe
     </tr>`
   }).join('')
 
-  const body = `<div class="page-header"><div><p class="section-code">COMPLIANCE / DATA RETENTION</p><h2>数据保留策略</h2><p>按数据类别定义保留期与到期动作。合同、财务、审计记录为永久保留；其余类别到期后由清理任务归档 / 删除 / 匿名化。</p></div><a class="button button-secondary" href="/admin/settings">返回系统设置</a></div>
+  const body = `<div class="page-header"><div><p class="section-code">COMPLIANCE / DATA RETENTION</p><h2>数据保留策略</h2><p>合同、财务、审计记录永久保留。</p></div><a class="button button-secondary" href="/admin/settings">返回系统设置</a></div>
   <div class="panel">
     <div class="section-title"><h3>策略清单</h3><span class="section-note">“已过期条数”为只读预览，不会自动清理</span></div>
     <div class="table-wrapper retention-policy-table"><table><thead><tr><th>数据类别</th><th>策略</th><th>保留期</th><th>到期动作</th><th>预览 / 更新</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty-state">尚未初始化策略</td></tr>'}</tbody></table></div>
   </div>
   <div class="panel">
-    <p class="section-note">实际的到期数据清理由后台调度任务执行（见备份恢复 / 异常自动化）；本页仅负责定义策略与预览影响面。删除类动作不适用于合同与财务记录。</p>
+    <p class="section-note">删除类动作不适用于合同与财务记录。</p>
   </div>`
   return buildLayout('数据保留策略 - 电脑租赁管理系统', body, user)
 }

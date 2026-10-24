@@ -42,7 +42,7 @@ function couponComponentOptions(coupon?: any): string {
     <option value="RENTAL_FEE" ${selected.has('RENTAL_FEE') ? 'selected' : ''}>租赁费用</option>
     <option value="DELIVERY_FEE" ${selected.has('DELIVERY_FEE') ? 'selected' : ''}>配送费</option>
     <option value="DEPOSIT_FEE" ${selected.has('DEPOSIT_FEE') ? 'selected' : ''}>押金</option>
-  </select><small class="form-text">可多选；不选择时默认只按租赁费用计算优惠。逾期费和损坏费不参与优惠。</small>`
+  </select><small class="form-text">不选择时只按租赁费用计算；逾期费和损坏费不参与优惠。</small>`
 }
 
 export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[] = []) {
@@ -61,7 +61,7 @@ export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[
       <form method="post" action="/admin/coupons/${encodeURIComponent(c.id)}/delete" style="display:inline" data-site-confirm="删除后该优惠码将立即失效，已领取但未使用的优惠码也无法再使用。" data-confirm-variant="danger" data-confirm-title="删除优惠码？" data-confirm-label="删除优惠码"><button class="button button-sm button-danger" type="submit">删除</button></form>
     </td>
   </tr>`).join('')
-  const body = `<div class="page-header"><div><p class="section-code">FINANCE / PROMOTIONS</p><h2>优惠码管理</h2><p>创建和管理客户付款时可使用的优惠码。</p></div><a class="button button-secondary" href="/admin/finance">返回财务总览</a></div>
+  const body = `<div class="page-header"><div><p class="section-code">FINANCE / PROMOTIONS</p><h2>优惠码管理</h2></div><a class="button button-secondary" href="/admin/finance">返回财务总览</a></div>
   <div class="panel">
     <h3>创建优惠码</h3>
     <form method="post" action="/admin/coupons" class="grid grid-2">
@@ -98,7 +98,7 @@ export function renderAdminCouponEdit(user: any, coupon: any, devices: any[] = [
   const toLocal = (value: string) => value ? String(value).replace(' ', 'T').slice(0, 16) : ''
   const body = `<div class="page-header"><div><p class="section-code">FINANCE / PROMOTIONS</p><h2>编辑优惠码 ${sanitizePlainText(coupon.code, 40)}</h2></div><a class="button button-secondary" href="/admin/coupons">返回优惠码列表</a></div>
   <div class="panel">
-    ${locked ? `<p class="section-note">该优惠码已有 ${coupon.used_count} 次使用记录，代码、折扣类型和折扣值不可再修改，请改为创建新优惠码。</p>` : ''}
+    ${locked ? `<p class="section-note">已使用，代码与折扣不可改；请新建优惠码。</p>` : ''}
     <form method="post" action="/admin/coupons/${encodeURIComponent(coupon.id)}" class="grid grid-2">
       <input class="form-control" value="${sanitizePlainText(coupon.code, 40)}" disabled>
       <select class="form-control" name="status"><option value="ACTIVE" ${coupon.status === 'ACTIVE' ? 'selected' : ''}>启用</option><option value="DRAFT" ${coupon.status === 'DRAFT' ? 'selected' : ''}>草稿（暂不生效）</option><option value="DISABLED" ${coupon.status === 'DISABLED' ? 'selected' : ''}>停用</option></select>

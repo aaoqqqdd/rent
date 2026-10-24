@@ -41,7 +41,7 @@ export function renderAdminConnectivity(user: any) {
   </article>`).join('')
   const inboundRows = INBOUND_ENDPOINTS.map(([path, method, auth, use]) => `<tr><td><code>${sanitizePlainText(path, 120)}</code></td><td>${method}</td><td>${sanitizePlainText(auth, 40)}</td><td>${sanitizePlainText(use, 100)}</td></tr>`).join('')
 
-  const body = `<div class="page-header"><div><p class="section-code">SYSTEM / CONNECTIVITY</p><h2>网站通讯检测</h2><p>主动检查 Worker、第三方 API 与设备客户端通道。检测不会发送邮件、创建付款或执行设备命令；第三方检测会计入对应服务的普通 API 请求量。</p></div><div class="record-actions"><button class="button button-primary" id="check-all" type="button">全部检测</button><a class="button button-secondary" href="/admin/monitoring">历史健康监控</a></div></div>
+  const body = `<div class="page-header"><div><p class="section-code">SYSTEM / CONNECTIVITY</p><h2>网站通讯检测</h2><p>检测不会发送邮件、创建付款或执行设备命令。</p></div><div class="record-actions"><button class="button button-primary" id="check-all" type="button">全部检测</button><a class="button button-secondary" href="/admin/monitoring">历史健康监控</a></div></div>
   <div class="grid grid-2" id="connectivity-grid">${probeCards}</div>
   <div class="panel"><div class="section-title"><div><p class="section-code">INBOUND API INVENTORY</p><h3>站内通讯接口目录</h3></div><span class="section-note">敏感接口仅列出，不执行写入测试</span></div><div class="table-wrapper"><table><thead><tr><th>接口</th><th>方法</th><th>鉴权</th><th>用途</th></tr></thead><tbody>${inboundRows}</tbody></table></div></div>
   <style>.connectivity-card code{display:block;margin:10px 0 14px;word-break:break-all}.connectivity-result{min-height:48px;margin:12px 0;color:var(--text-secondary)}.connectivity-result strong{display:block;color:var(--text-primary)}.connectivity-card.is-running{opacity:.72}</style>

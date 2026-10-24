@@ -95,7 +95,6 @@ export async function renderWithdrawalsPanel(c: Context): Promise<string> {
     <section class="panel" id="withdrawals">
       <div class="section-title">
         <h3>佣金提现审核</h3>
-        <span class="section-note">查看银行转账提现申请并人工处理状态。</span>
       </div>
 
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px;">
@@ -119,7 +118,7 @@ export async function renderWithdrawalsPanel(c: Context): Promise<string> {
 
       <div style="margin-bottom: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-secondary);">
         <strong>说明</strong>
-        <p style="margin: 8px 0 0; color: var(--text-secondary);">银行转账提现需要满足最低 100 澳元；管理员可以根据实际打款情况标记为已完成或未完成，并查看客户的转账信息。</p>
+        <p style="margin: 8px 0 0; color: var(--text-secondary);">最低提现 100 澳元；按实际打款标记完成或未完成。</p>
       </div>
 
       ${withdrawals.length === 0 ? `

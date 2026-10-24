@@ -16,11 +16,11 @@ export function renderAdminSettings(user: any) {
   const escAttr = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>系统设置</h2><span class="section-note">配置邮件、公司资料、租赁规则、支付方式和推荐分成。</span></div>
+      <div class="section-title"><h2>系统设置</h2></div>
 
       <form id="systemSettingsForm" class="asset-editor" novalidate>
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">SMTP</span><div><h3>邮件 SMTP 配置</h3><p>用于邮箱验证、收据、合同、退款和其他通知。密码加密保存，留空表示保留原密码。<a href="/admin/email-templates">完整邮件变量索引</a>。</p></div></div>
+          <div class="form-section-title"><span class="mono">SMTP</span><div><h3>邮件 SMTP 配置</h3><p>密码加密保存，留空保留原密码。<a href="/admin/email-templates">完整邮件变量索引</a>。</p></div></div>
           <div class="grid grid-2">
             <div><label class="form-label" for="companyName">公司名称</label><input id="companyName" name="companyName" class="form-control" value="${settings.companyDetails.name}"></div>
             <div><label class="form-label" for="companyAbn">公司 ABN</label><input id="companyAbn" name="companyAbn" class="form-control" value="${settings.companyDetails.abn}" placeholder="11 位 ABN"></div>
@@ -31,11 +31,11 @@ export function renderAdminSettings(user: any) {
             <div><label class="form-label" for="companyEmail">公司邮箱</label><input type="email" id="companyEmail" name="companyEmail" class="form-control" value="${settings.companyDetails.email}"></div>
             <div><label class="form-label" for="companyWebsite">公司网站</label><input type="url" id="companyWebsite" name="companyWebsite" class="form-control" value="${settings.companyDetails.website}" placeholder="https://"></div>
             <div><label class="form-label" for="companyLogo">公司 Logo URL</label><input type="url" id="companyLogo" name="companyLogo" class="form-control" value="${settings.companyDetails.logo}" placeholder="https://"></div>
-            <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工新建合同时只能从这些地点中选择；管理员仍可临时编辑。</small></div>
-              <div class="form-group"><label class="form-label" for="deliveryAreas">配送区域</label><textarea id="deliveryAreas" name="deliveryAreas" class="form-control" rows="4" placeholder="每行一个区域">${(settings.companyDetails.deliveryAreas || []).join('\n')}</textarea><small class="form-text">官网会显示这些区域；每行一个 suburb 或区域名称。</small></div>
+            <div class="form-group"><label class="form-label" for="pickupLocations">自取/归还地点</label><textarea id="pickupLocations" name="pickupLocations" class="form-control" rows="4" placeholder="每行一个地点">${settings.companyDetails.pickupLocations.join('\n')}</textarea><small class="form-text">员工只能选择这些地点；管理员可临时编辑。</small></div>
+              <div class="form-group"><label class="form-label" for="deliveryAreas">配送区域</label><textarea id="deliveryAreas" name="deliveryAreas" class="form-control" rows="4" placeholder="每行一个区域">${(settings.companyDetails.deliveryAreas || []).join('\n')}</textarea><small class="form-text">每行一个 suburb 或区域名称。</small></div>
               <div class="form-group"><label class="form-label" for="deliveryNote">配送说明</label><input id="deliveryNote" name="deliveryNote" class="form-control" value="${settings.companyDetails.deliveryNote || ''}" placeholder="例如：配送范围和运费以审核确认为准"><small class="form-text">官网申请页、租赁指南和设备详情会读取这段说明。</small></div>
           </div>
-          <div class="form-group pickup-time-settings"><label class="form-label">取还时间规则</label><div class="grid grid-3"><div class="pickup-time-settings__range"><span class="form-text">营业时段（免服务费）</span><div class="time-clock-row"><div><span>开始</span>${timeClock('businessHoursStart', '营业开始时间', pickupHours.businessHours.start)}</div><div><span>结束</span>${timeClock('businessHoursEnd', '营业结束时间', pickupHours.businessHours.end)}</div></div></div><div class="pickup-time-settings__range"><span class="form-text">非营业服务时段（收服务费）</span><div class="pickup-range-list" id="serviceRangeList">${pickupHours.serviceFeeHours.map(range => rangeRow('service', range)).join('')}</div><button class="button button-secondary button-sm pickup-range-add" type="button" data-add-range="service">＋ 添加时段</button></div><div class="pickup-time-settings__range"><span class="form-text">按星期不可取货时段</span><div class="pickup-range-list" id="unavailableRangeList">${pickupHours.unavailablePickupHours.map(range => rangeRow('unavailable', range)).join('')}</div><button class="button button-secondary button-sm pickup-range-add" type="button" data-add-range="unavailable">＋ 添加时段</button></div></div><div class="pickup-time-settings__rate"><label class="form-label" for="serviceFeeRate">非营业服务费比例（%）</label><input id="serviceFeeRate" class="form-control" type="number" min="0" max="100" step="0.01" value="${(Number(settings.rentalRules.serviceFeeRate ?? 0.1) * 100).toFixed(2)}"></div><small class="form-text">客户先选营业或非营业；非营业时间自动收取此比例。不可取货时间按星期隐藏，不会出现在客户可选项中。</small></div>
+          <div class="form-group pickup-time-settings"><label class="form-label">取还时间规则</label><div class="grid grid-3"><div class="pickup-time-settings__range"><span class="form-text">营业时段（免服务费）</span><div class="time-clock-row"><div><span>开始</span>${timeClock('businessHoursStart', '营业开始时间', pickupHours.businessHours.start)}</div><div><span>结束</span>${timeClock('businessHoursEnd', '营业结束时间', pickupHours.businessHours.end)}</div></div></div><div class="pickup-time-settings__range"><span class="form-text">非营业服务时段（收服务费）</span><div class="pickup-range-list" id="serviceRangeList">${pickupHours.serviceFeeHours.map(range => rangeRow('service', range)).join('')}</div><button class="button button-secondary button-sm pickup-range-add" type="button" data-add-range="service">＋ 添加时段</button></div><div class="pickup-time-settings__range"><span class="form-text">按星期不可取货时段</span><div class="pickup-range-list" id="unavailableRangeList">${pickupHours.unavailablePickupHours.map(range => rangeRow('unavailable', range)).join('')}</div><button class="button button-secondary button-sm pickup-range-add" type="button" data-add-range="unavailable">＋ 添加时段</button></div></div><div class="pickup-time-settings__rate"><label class="form-label" for="serviceFeeRate">非营业服务费比例（%）</label><input id="serviceFeeRate" class="form-control" type="number" min="0" max="100" step="0.01" value="${(Number(settings.rentalRules.serviceFeeRate ?? 0.1) * 100).toFixed(2)}"></div><small class="form-text">非营业时段按此比例收费；不可取货时段按星期隐藏。</small></div>
           <div class="grid grid-2"><div><label class="form-label" for="minimumRentalDays">最短租赁天数</label><input id="minimumRentalDays" name="minimumRentalDays" type="number" min="1" step="1" class="form-control" value="${settings.rentalRules.minimumRentalDays}"></div><div><label class="form-label" for="bufferDays">设备周转缓冲天数</label><input id="bufferDays" name="bufferDays" type="number" min="0" step="1" class="form-control" value="${settings.rentalRules.bufferDays}"><small class="form-text">自动扩展订单前后不可预约的缓冲时间。</small></div></div>
         </section>
 
@@ -56,25 +56,25 @@ export function renderAdminSettings(user: any) {
             <div class="form-group"><label class="form-label" for="feedbackCouponMinimumOrderAmount">最低使用金额（AUD）</label><input class="form-control" id="feedbackCouponMinimumOrderAmount" type="number" min="0" max="1000000" step="0.01" value="${feedbackRewards.couponMinimumOrderAmount || 0}"><small class="form-text">填 0 表示不限制最低订单金额。</small></div>
             <div class="form-group"><label class="form-label" for="feedbackCouponExpiresDays">优惠码有效期（天）</label><input class="form-control" id="feedbackCouponExpiresDays" type="number" min="1" max="365" step="1" value="${feedbackRewards.couponExpiresDays}"></div>
           </div>
-          <p class="form-text">礼品卡奖励不会调用 Square 发卡 API；请先在 <a href="/admin/feedback-gift-cards">礼品卡库存</a> 录入外部兑换码，系统按先进先出发放。发放记录（含失败原因和重试）请查看 <a href="/admin/feedback-rewards">反馈奖励记录</a>。</p>
+          <p class="form-text">礼品卡奖励不调用 Square 发卡 API；请先在 <a href="/admin/feedback-gift-cards">礼品卡库存</a> 录入外部兑换码。发放记录请查看 <a href="/admin/feedback-rewards">反馈奖励记录</a>。</p>
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">RATE</span><div><h3>价格策略配置</h3><p>用于计算租金与押金的策略文本。</p></div></div>
-          <div class="form-group price-strategy-editor"><div class="price-strategy-editor__label-row"><label class="form-label" for="priceStrategy">策略内容</label><span class="price-strategy-editor__meta">管理员内部规则</span></div><textarea id="priceStrategy" name="priceStrategy" rows="3" class="form-control" aria-describedby="priceStrategyHint">${settings.priceStrategy}</textarea><small id="priceStrategyHint" class="form-text">可按行记录租金、押金等计算规则，保存后用于报价说明和后台计算依据。</small></div>
+          <div class="form-section-title"><span class="mono">RATE</span><div><h3>价格策略配置</h3></div></div>
+          <div class="form-group price-strategy-editor"><div class="price-strategy-editor__label-row"><label class="form-label" for="priceStrategy">策略内容</label><span class="price-strategy-editor__meta">管理员内部规则</span></div><textarea id="priceStrategy" name="priceStrategy" rows="3" class="form-control" aria-describedby="priceStrategyHint">${settings.priceStrategy}</textarea><small id="priceStrategyHint" class="form-text">按行记录租金、押金等计算规则。</small></div>
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">PAY</span><div><h3>支付方式配置</h3><p>启用或停用面向客户的支付渠道，并设置支付手续费。</p></div></div>
+          <div class="form-section-title"><span class="mono">PAY</span><div><h3>支付方式配置</h3></div></div>
           <div class="form-group">
             <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
             <input class="form-control" id="processingFeeRate" name="processingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.processingFeeRate ?? 0.025) * 100).toFixed(2)}">
-            <small class="form-text">Stripe 手续费按租金及立即支付的时段服务费（不含押金）计算；押金预授权、释放和长期押金扣款不加手续费。</small>
+            <small class="form-text">仅按租金与服务费计算；押金不加手续费。</small>
           </div>
           <div class="form-group">
             <label class="form-label" for="squareProcessingFeeRate">Square 礼品卡手续费比例（%）</label>
             <input class="form-control" id="squareProcessingFeeRate" name="squareProcessingFeeRate" type="number" min="0" max="100" step="0.01" value="${(Number(settings.paymentMethods.squareProcessingFeeRate ?? 0.022) * 100).toFixed(2)}">
-            <small class="form-text">Square 礼品卡手续费按租金及服务费（不含押金）计算；审核通过后实际提交 Square 时按此比例收取。</small>
+            <small class="form-text">仅按租金与服务费计算；押金不加手续费。</small>
           </div>
           <div class="checkbox-group"><input type="checkbox" id="enableStripe" name="enableStripe" ${settings.paymentMethods.stripe ? 'checked' : ''}><label for="enableStripe">启用 Stripe 信用卡支付</label></div>
           <div class="checkbox-group"><input type="checkbox" id="enableSquare" name="enableSquare" ${settings.paymentMethods.square ? 'checked' : ''}><label for="enableSquare">启用 Square 礼品卡支付</label></div>
@@ -85,7 +85,7 @@ export function renderAdminSettings(user: any) {
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">BANK</span><div><h3>银行转账账户信息</h3><p>客户选择银行转账时会看到这些账户信息，供其转账使用。</p></div></div>
+          <div class="form-section-title"><span class="mono">BANK</span><div><h3>银行转账账户信息</h3></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label for="bankName" class="form-label">银行名称</label><input type="text" id="bankName" name="bankName" class="form-control" value="${settings.bankDetails.bankName}" placeholder="例如: Commonwealth Bank"></div>
             <div class="form-group"><label for="bankAccountName" class="form-label">账户名称</label><input type="text" id="bankAccountName" name="bankAccountName" class="form-control" value="${settings.bankDetails.accountName}" placeholder="请输入账户名称"></div>
@@ -95,7 +95,7 @@ export function renderAdminSettings(user: any) {
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">RMB</span><div><h3>人民币收款码</h3><p>可直接选择图片上传到 Cloudinary；也可以继续填写公开 HTTPS 图片地址。客户付款后提交 Reference 和付款截图，管理员审核后订单才会变为已付款。</p></div></div>
+          <div class="form-section-title"><span class="mono">RMB</span><div><h3>人民币收款码</h3><p>客户提交 Reference 和付款截图，管理员审核后订单变为已付款。</p></div></div>
           <div class="grid grid-2">
             <div class="form-group"><label class="form-label" for="alipayQrFile">支付宝收款码图片</label><input class="form-control" id="alipayQrFile" type="file" accept="image/jpeg,image/png,image/webp"><label class="form-label" for="alipayQrUrl">支付宝收款码 URL（自动回填）</label><input class="form-control" id="alipayQrUrl" name="alipayQrUrl" type="url" value="${escAttr(settings.rmbPayment.alipayQrUrl)}" placeholder="https://.../alipay-qr.png"><small class="form-text">支持 JPG、PNG、WebP，单张不超过 5MB。</small></div>
             <div class="form-group"><label class="form-label" for="wechatQrFile">微信收款码图片</label><input class="form-control" id="wechatQrFile" type="file" accept="image/jpeg,image/png,image/webp"><label class="form-label" for="wechatQrUrl">微信收款码 URL（自动回填）</label><input class="form-control" id="wechatQrUrl" name="wechatQrUrl" type="url" value="${escAttr(settings.rmbPayment.wechatQrUrl)}" placeholder="https://.../wechat-qr.png"><small class="form-text">支持 JPG、PNG、WebP，单张不超过 5MB。</small></div>

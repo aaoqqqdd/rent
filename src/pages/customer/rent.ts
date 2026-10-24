@@ -49,7 +49,7 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>租赁设备: ${device.name}</h2><span class="section-note">填写租赁信息并确认订单。</span></div>
+      <div class="section-title"><h2>租赁设备: ${device.name}</h2></div>
       ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
       <form method="POST" action="/customer/rent/${device.id}">
         <div class="form-group">
@@ -85,7 +85,7 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
         </div></div>
         <div class="form-group"><label class="form-label" for="deliveryMethod">设备交付方式</label><select id="deliveryMethod" name="deliveryMethod" class="form-control"><option value="Pickup"${prefilledDelivery === 'Pickup' ? ' selected' : ''}>到店自取</option><option value="Delivery"${prefilledDelivery === 'Delivery' ? ' selected' : ''}>送货上门（运费由管理员/员工确认）</option></select></div>
         <div class="grid grid-2" id="pickupTimeGroup"><div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select id="pickupTimeSlot" name="pickupTimeSlot" class="form-control">${pickupSlots.map(([value, label]) => `<option value="${value}"${value === (prefilledPickup || 'morning') ? ' selected' : ''}>${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select id="returnTimeSlot" name="returnTimeSlot" class="form-control">${pickupSlots.map(([value, label]) => `<option value="${value}"${value === (prefilledReturn || 'morning') ? ' selected' : ''}>${label}</option>`).join('')}</select></div></div>
-        <div class="form-group" id="deliveryAddressGroup" hidden><label class="form-label" for="deliveryAddress">送货地址</label><textarea id="deliveryAddress" name="deliveryAddress" class="form-control" rows="3" placeholder="请填写完整的街道、Suburb、州和邮编">${prefilledAddress}</textarea><small class="form-text">提交后由绑定员工或管理员确认配送范围和运费，暂不在此页面收取。</small></div>
+        <div class="form-group" id="deliveryAddressGroup" hidden><label class="form-label" for="deliveryAddress">送货地址</label><textarea id="deliveryAddress" name="deliveryAddress" class="form-control" rows="3" placeholder="请填写完整的街道、Suburb、州和邮编">${prefilledAddress}</textarea><small class="form-text">运费由工作人员确认后另行通知。</small></div>
         <div class="form-group"><label class="form-label" for="rentalNote">申请备注（选填）</label><textarea id="rentalNote" name="rentalNote" class="form-control" rows="2" maxlength="500" placeholder="例如配送时间、设备使用要求等">${prefilledNote}</textarea></div>
         <div class="form-group"><label class="form-label" for="couponCode">优惠码（选填）</label><input id="couponCode" name="couponCode" class="form-control" maxlength="40" placeholder="输入优惠码" value="${prefilledCoupon}"><small class="form-text" id="couponQuotePreview" aria-live="polite"></small></div>
         <div class="alert" id="rentalRuleMessage">最短租赁时间：${rentalRules.minimumRentalDays} 天。不可用日期：${rentalRules.unavailableDates.length ? rentalRules.unavailableDates.join('、') : '无'}。</div>

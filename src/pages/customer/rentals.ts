@@ -14,7 +14,6 @@ export async function renderCustomerRentals(c: Context, user: any) {
     <div class="panel">
       <div class="section-title">
         <h2>我的租赁</h2>
-        <span class="section-note">查看您的当前和历史租赁记录。</span>
       </div>
 
       <h3>当前租赁中</h3>
