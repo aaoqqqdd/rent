@@ -3,18 +3,22 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getAccessLevel, getAccountTypeDisplay, splitPersonName, formatMelbourneDate, getCustomerRiskAssessment } from '../../site';
+import { buildLayout, getAccessLevel, getAccountTypeDisplay, splitPersonName, formatMelbourneDate, getCustomerRiskLevels } from '../../site';
 import { renderPasswordSetupNotice } from '../partials/passwordSetupNotice';
+import { queryAdminUsers } from '../../services/paginatedLists';
+import { renderPager } from '../../lib/pagination';
 
+// 用户列表：SQL 分页（默认每页 50）+ 批量风险分级。
+// 旧实现在这里对每个客户单独跑一次风险评估（6 条 SQL/人），用户一多就是上千条
+// D1 查询；现在整个页面固定 3 条聚合查询（用户页 / 关联人 / 风险分级）。
 export async function renderAdminUsers(user: any, c: any) {
-  const { getUsersAsync } = await import('../../site')
-  const allUsers = await getUsersAsync(c);
-  const usersById = new Map(allUsers.map(account => [account.id, account]))
-  const customerRisks = new Map<string, any>(await Promise.all(
-    allUsers
-      .filter(account => account.role === 'CUSTOMER')
-      .map(async account => [account.id, await getCustomerRiskAssessment(c, account.id)] as [string, any]),
-  ))
+  const { rows: allUsers, meta, usersById, searchTerm } = await queryAdminUsers(c, {
+    page: c.req.query('page'),
+    searchTerm: c.req.query('searchTerm') || '',
+  });
+  const customerRisks = allUsers.some(account => account.role === 'CUSTOMER')
+    ? await getCustomerRiskLevels(c, allUsers.filter(account => account.role === 'CUSTOMER').map(account => account.id))
+    : new Map<string, any>()
 
   const roleMap: Record<string, { text: string; class: string }> = {
     'ADMIN': { text: '管理员', class: 'badge-danger' },
@@ -43,9 +47,19 @@ export async function renderAdminUsers(user: any, c: any) {
       ${allUsers.length === 0 ? `
         <div class="empty-state">
           <span class="empty-state-code mono">USER / 000</span>
-          <h3>暂无用户</h3><p>创建首个用户后，身份资料会显示在这里。</p><a href="/admin/users/new" class="button">添加新用户</a>
+          <h3>${meta.total > 0 ? '这一页没有用户' : searchTerm ? '没有匹配的用户' : '暂无用户'}</h3>
+          <p>${meta.total > 0 ? `当前列表共 ${meta.total} 位用户，请返回第一页查看。` : searchTerm ? '请调整搜索关键词后重试。' : '创建首个用户后，身份资料会显示在这里。'}</p>
+          ${meta.total > 0 ? '<a href="/admin/users" class="button">回到第一页</a>' : ''}
+          <a href="/admin/users/new" class="button">添加新用户</a>
         </div>
       ` : `
+      <div class="search-bar" style="margin-bottom: 20px;">
+        <form action="/admin/users" method="GET" style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <input type="search" name="searchTerm" class="form-control" placeholder="搜索姓名或邮箱..." value="${searchTerm.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}" style="flex-grow: 1;" />
+          <button type="submit" class="button button-primary">搜索</button>
+          ${searchTerm ? '<a class="button button-secondary" href="/admin/users">清除搜索</a>' : ''}
+        </form>
+      </div>
       <div class="table-wrapper"><table>
         <thead>
           <tr>

@@ -7,6 +7,7 @@ import { Context } from 'hono'
 import { stripeRequest } from './stripe'
 import rawLayoutTemplate from './layout.html'
 import { styleSheetHref, appScriptHref, languageScriptHref } from './lib/assetVersion'
+import { languageBootScript, i18nDomainsForRole } from './lib/i18n'
 import { nanoid } from 'nanoid'
 
 // 给 styles.css / app.js 链接注入内容指纹版本号，配合 ?v=<hash> 的一年期 immutable 缓存。
@@ -37,6 +38,7 @@ import { generateUserId, generateReferralCode } from './lib/userId'
 import { validateHostedImageUrls } from './lib/hostedImages'
 import { uploadCloudinaryImage, uploadCloudinaryImages } from './lib/cloudinary'
 import { safeJsonParse } from './lib/json'
+import { injectTableDataLabels } from './lib/tableLabels'
 import { dispatchChannelAlert } from './notifyChannels'
 
 export {
@@ -209,7 +211,7 @@ import {
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
 } from './services/referral'
-import { getCustomerRiskAssessment, getReferralRiskAssessment } from './services/risk'
+import { getCustomerRiskAssessment, getCustomerRiskLevels, getReferralRiskAssessment } from './services/risk'
 import {
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
 } from './services/rentalProvisioning'
@@ -227,7 +229,7 @@ export {
   notifyOverdueBankTransferRefunds,
   ensureReferralProgram, lockReferralRelationship, syncReferralOrderState,
   revokeReferralRewardForOrder, releaseQualifiedReferralRewards, releaseReferralRewardNow,
-  getCustomerRiskAssessment, getReferralRiskAssessment,
+  getCustomerRiskAssessment, getCustomerRiskLevels, getReferralRiskAssessment,
   recordExternalRentalFlow, enqueueRentalUserCreation, enqueueRentalUserDeletion,
   issueInvoice, issueCreditNote,
   planWithdrawalConsumption, createWithdrawalRequest,
@@ -246,7 +248,9 @@ export {
 }
 
 function renderLayoutTemplate(values: Record<string, string>): string {
-  return layoutTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, key: string) =>
+  // 占位符名允许数字（如 I18N_BOOT 的邻居 I18N_DOMAINS 之外还有 H1 之类的未来扩展）；
+  // 只写 [A-Z_] 会把 {{I18N2}} 一类占位符漏替换，直接出现在线上 HTML 里。
+  return layoutTemplate.replace(/\{\{([A-Z][A-Z0-9_]*)\}\}/g, (placeholder, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? values[key] : placeholder
   )
 }
@@ -1660,8 +1664,10 @@ export async function loadDatabaseData(c: Context): Promise<void> {
 }
 
 
-export function buildLayout(title: string, body: string, currentUser?: User | null, options: { compactStaffNav?: boolean } = {}): string {
+export function buildLayout(title: string, body: string, currentUser?: User | null, options: { compactStaffNav?: boolean; currentPath?: string } = {}): string {
   const normalizedTitle = title.includes('电脑租赁管理系统') ? title : `${title} - 电脑租赁管理系统`
+  // 当前路径：用于手机端底部 tab 的 aria-current 高亮（服务端渲染，无需等脚本）。
+  const currentPath = (options.currentPath || '').replace(/\/$/, '') || ''
   const isAuthPage = title.includes('登录') || title.includes('注册') || title.includes('找回密码')
   const topNav =
     currentUser || isAuthPage
@@ -1769,12 +1775,25 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
   const chevronSvg = '<span class="nav-group-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>'
   const renderNavGroup = (label: string, links: Array<[string, string]>) => `<details class="sidebar-nav-group"><summary>${label}${chevronSvg}</summary>${links.map(([href, text]) => renderNavLink(href, text)).join('')}</details>`
 
-  const mobileLinks = currentUser?.role === 'ADMIN' || currentUser?.role === 'STAFF'
-    ? [['/staff/mobile', '今日订单', '◉'], ['/staff/mobile?stage=pickup', '取货', '◷'], ['/staff/mobile?stage=return', '归还', '↺'], ['/staff/mobile/scan', '扫码', '▦'], ['/staff/inspections', '验机', '◈']]
+  // 手机端底部 tab：只放最高频的核心动作（完整能力在「更多」抽屉与手机工作台里）。
+  // 第三个元素是该 tab 视为「当前页」的路径前缀，用于输出 aria-current 与 active 高亮。
+  const mobileLinks: Array<[string, string, string, string[]]> = currentUser?.role === 'ADMIN' || currentUser?.role === 'STAFF'
+    ? [
+        ['/staff/mobile', '今日订单', '◉', ['/staff/mobile', '/staff/mobile/today']],
+        ['/staff/mobile?stage=pickup', '取货', '◷', []],
+        ['/staff/mobile?stage=return', '归还', '↺', []],
+        ['/staff/mobile/scan', '扫码', '▦', ['/staff/mobile/scan']],
+        ['/staff/inspections', '验机', '◈', ['/staff/inspections']],
+      ]
       : currentUser?.accountType === 'guest'
-        ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
-        : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/devices', '可租设备', 'laptop'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
-  const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span class="nav-icon">${navIconSvg(navIcons[href] || icon)}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span class="nav-icon">${navIconSvg('↗')}</span><small>登录</small></a><a href="/register"><span class="nav-icon">${navIconSvg('+')}</span><small>注册</small></a>`
+        ? [['/customer/guest', '合同中心', '▤', ['/customer/guest']], ['/customer/guest/upgrade', '升级账户', '✦', ['/customer/guest/upgrade']]]
+        : [['/customer/dashboard', '首页', '◉', ['/customer/dashboard']], ['/notifications', '通知', 'N', ['/notifications']], ['/customer/devices', '可租设备', 'laptop', ['/customer/devices']], ['/customer/rentals', '租赁', '▤', ['/customer/rentals']], ['/customer/orders', '订单', '▦', ['/customer/orders']], ['/customer/balance', '钱包', '$', ['/customer/balance']], ['/customer/profile', '我的', '◎', ['/customer/profile']]]
+  const mobileNav = currentUser
+    ? mobileLinks.map(([href, text, icon, activePaths]) => {
+        const isCurrent = activePaths.some(path => currentPath === path || currentPath.startsWith(`${path}/`))
+        return `<a href="${href}"${isCurrent ? ' class="active" aria-current="page"' : ''}><span class="nav-icon">${navIconSvg(navIcons[href] || icon)}</span><small>${text}</small></a>`
+      }).join('')
+    : `<a href="/login"><span class="nav-icon">${navIconSvg('↗')}</span><small>登录</small></a><a href="/register"><span class="nav-icon">${navIconSvg('+')}</span><small>注册</small></a>`
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
   const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${getAvatarInitials(currentUser.name)}</span>` : ''
 
@@ -1897,7 +1916,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     : ''
   const footerHtml = `<footer class="legal-footer"><span class="legal-footer__copyright">© ${new Date().getFullYear()} ${footerCompany}</span><nav aria-label="网站法律信息">${footerNav}${footerMore}</nav></footer>`
 
-  return renderLayoutTemplate({
+  const layoutHtml = renderLayoutTemplate({
     TITLE: normalizedTitle,
     BODY_CLASS: isAuthPage ? 'auth-page' : currentUser ? 'app-page' : 'public-page',
     TOP_NAV: topNav,
@@ -1910,8 +1929,13 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     SEARCH: searchPanel,
     SIDEBAR: sidebar + mobileOperationsSidebar,
     CONTENT: body,
-    FOOTER: footerHtml
+    FOOTER: footerHtml,
+    // 首屏语言脚本（极小内联，见 lib/i18n）：在 <head> 同步执行写入
+    // <html data-language>，避免英文偏好用户先看到中文再切换的闪烁。
+    I18N_BOOT: languageBootScript,
+    I18N_DOMAINS: i18nDomainsForRole(currentUser?.role, (currentUser as any)?.accountType)
   })
+  return injectTableDataLabels(layoutHtml) // 移动端表格卡片补齐字段名（见 lib/tableLabels）
 }
 
 // ==================== 签约会话持久化管理 ====================

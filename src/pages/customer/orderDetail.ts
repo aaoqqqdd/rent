@@ -12,6 +12,7 @@ import { getOrderPriceAdjustmentSummary } from '../../actions/stripePayments';
 import { getDeliveryBookingsForOrder, safeDeliveryTrackingUrl, type DeliveryBookingView } from '../../services/deliveryViews';
 import { decryptSecret } from '../../lib/secretBox';
 import { pickupTimeSlots } from '../../domain/pickupTimeSlots';
+import { renderOrderStatusBadge } from '../partials/orderStatusBadge';
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   stripe: '信用卡（Stripe）', card: '信用卡（Stripe）', square: '礼品卡', bank_transfer: '银行转账', alipay: '支付宝', wechat: '微信',
@@ -73,7 +74,6 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const refundLabel = preauthSettled ? '预授权已结算，剩余押金已释放' : refundStatus?.status === 'pending' ? '退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? '部分退款' : '已退款') : ''
   const windowsData = typeof contract?.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })() : (contract?.contract_data || {})
   const windowsPassword = await decryptSecret(c, windowsData.windows_password)
-  const rentalStatusLabels: Record<string, string> = { pending: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', paid: '租赁已确认，等待开始', approved: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
   const deliveryBlock = deliveryBookings.length ? `<section class="panel" style="margin-top:20px"><h3>配送状态</h3><p class="form-text">配送状态由 Zoom2u 实时更新。</p>${deliveryBookings.map((booking: any) => { const trackingUrl = safeDeliveryTrackingUrl(booking.trackingUrl); return `<div class="delivery-status-row"><div><strong>${booking.direction === 'return' ? '回收' : '派送'}：${esc(booking.statusLabel)}</strong><p class="form-text">${esc(booking.statusDescription)}</p>${booking.providerReference ? `<small class="form-text">配送编号：${esc(booking.providerReference)}</small>` : ''}${booking.locked ? '<small class="delivery-lock-note">该状态下不能更新或取消配送订单。</small>' : ''}</div>${trackingUrl ? `<a class="button button-secondary" href="${esc(trackingUrl)}" target="_blank" rel="noopener noreferrer">查看追踪链接</a>` : ''}</div>` }).join('')}</section>` : ''
   const renderAdjustmentTransferCard = (method: 'bank_transfer' | 'alipay' | 'wechat') => {
     const label = method === 'bank_transfer' ? '银行转账' : method === 'alipay' ? '支付宝' : '微信'
@@ -104,12 +104,12 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   const body = `
     <div class="panel order-detail-shell customer-order-detail">
       <script>(function(){window.addEventListener('square-payment-updated',function(event){var detail=event.detail||{};if(Number(detail.squarePaidAmountCents||0)>0&&Number(detail.remainingAmountCents||0)>=0){window.setTimeout(function(){window.location.reload()},250)}})})();</script>
-      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '订单详情'}</h2><span class="section-note">${order.orderNo ? '查看订单状态、设备信息、租金明细及合同。' : '订单编号将在付款确认后生成。'}</span></div>
+      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '订单详情'}</h2><span class="section-note">${order.orderNo ? '查看订单状态、设备信息、租金明细及合同。' : '订单编号将在付款确认后生成。'}</span><a class="button button-secondary" href="/customer/orders">返回我的订单</a></div>
       ${alertMessage}
       <div class="order-detail-grid">
         <div class="order-info-card">
           <h3>订单信息</h3>
-          <p><strong>订单状态:</strong> ${esc(rentalStatusLabels[String(order.status)] || String(order.status))}</p>
+          <p><strong>订单状态:</strong> ${renderOrderStatusBadge(order.status)}</p>
           <p><strong>下单时间:</strong> ${order.orderDate}</p>
           <p><strong>租期:</strong> ${order.startDate} ${order.startPeriod === 'PM' ? '下午' : '上午'} 至 ${order.endDate} ${order.endPeriod === 'PM' ? '下午' : '上午'}（${order.rentalPeriod || 0} 天）</p>
           <p><strong>领取/归还地点:</strong> ${order.pickupLocation || '待确认'} / ${order.returnLocation || '待确认'}</p>

@@ -5,11 +5,13 @@
 
 import { buildLayout } from '../../site';
 import { escapeHtml } from '../../lib/html';
+import { sanitizeRedirectPath } from '../../lib/security';
 
 const escapeAttribute = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character))
 
 export function renderLogin(errorMessage?: string, showTestAccounts = false, redirectPath = '') {
-  const safeRedirectPath = /^\/(?![\\/])/.test(redirectPath) ? redirectPath : ''
+  // 唯一跳转白名单实现：拒绝 //evil、/\evil、绝对 URL 与控制字符（见 lib/security.ts）。
+  const safeRedirectPath = sanitizeRedirectPath(redirectPath, '')
   const body = `
     <div class="page-centered">
       <div class="login-container">

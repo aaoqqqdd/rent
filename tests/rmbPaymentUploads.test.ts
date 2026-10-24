@@ -92,7 +92,9 @@ test('RMB migration preserves existing records, indexes and payment safeguards',
   const sqlite = new DatabaseSync(':memory:')
   try {
     const files = readdirSync(new URL('../migrations/', import.meta.url)).filter(name => name.endsWith('.sql')).sort()
-    for (const name of files.filter(name => name !== '0161_allow_rmb_order_payments.sql')) sqlite.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'))
+    // 本测试验证的是「单独重放 0161 不丢数据与既有索引」，因此只回放 0161 之前的迁移。
+    // 0162 及之后的迁移晚于 0161，它们新建的索引在「只重放 0161」的模拟里本来就不存在。
+    for (const name of files.filter(name => name < '0161_allow_rmb_order_payments.sql')) sqlite.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'))
     sqlite.exec(`
       INSERT INTO users (id, name, email, role) VALUES ('customer', '客户', 'migration@example.test', 'CUSTOMER');
       INSERT INTO devices (id, name, model, serialNumber, pricePerDay, depositAmount, status) VALUES ('device', '电脑', 'test', 'RMB-SN', 20, 200, 'available');

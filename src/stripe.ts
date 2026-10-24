@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import type { Context } from 'hono'
+import { constantTimeEqual as constantTimeEqualShared } from './lib/security'
 
 type StripeStoredConfig = {
   publishableKey: string
@@ -134,12 +135,9 @@ export async function stripeRequest(c: Context, path: string, params?: URLSearch
   return result
 }
 
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false
-  let mismatch = 0
-  for (let index = 0; index < a.length; index++) mismatch |= a.charCodeAt(index) ^ b.charCodeAt(index)
-  return mismatch === 0
-}
+// 统一的常数时间比较实现（见 lib/security.ts）：不再提前按长度返回，
+// 避免通过响应时间差异推断签名长度 / 前缀。
+const constantTimeEqual = (a: string, b: string): boolean => constantTimeEqualShared(a, b)
 
 export async function verifyStripeWebhook(c: Context, body: string, signatureHeader: string | undefined): Promise<any> {
   if (!signatureHeader) {

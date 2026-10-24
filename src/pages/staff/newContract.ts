@@ -6,11 +6,23 @@
 import { buildLayout, getDevices, getSystemSettings, loadSystemSettingsFromDB, sanitizePlainText } from '../../site'
 import type { Context } from 'hono'
 
-export async function renderNewContractPage(c: Context, user: any) {
+export type NewContractPrefill = Record<string, string>
+
+export async function renderNewContractPage(c: Context, user: any, prefill: NewContractPrefill = {}) {
   await loadSystemSettingsFromDB(c)
   const pickupLocations = getSystemSettings().companyDetails.pickupLocations
   const rentalRules = getSystemSettings().rentalRules
   const escape = (value: unknown) => sanitizePlainText(value, 300).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // 提交失败回填：保留用户已选的设备、日期、时段、交付与费用，避免整页重填。
+  const pre = (key: string) => String(prefill[key] ?? '')
+  const preDate = (key: string) => /^\d{4}-\d{2}-\d{2}$/.test(pre(key)) ? pre(key) : ''
+  const preDevice = pre('deviceId')
+  const preStartPeriod = pre('startPeriod') === 'PM' ? 'PM' : 'AM'
+  const preEndPeriod = pre('endPeriod') === 'PM' ? 'PM' : 'AM'
+  const preDelivery = pre('deliveryMethod') === 'Delivery' ? 'Delivery' : 'Pickup'
+  const preReturnMethod = pre('returnMethod') === 'CourierPickup' ? 'CourierPickup' : 'StoreReturn'
+  const preExpiry = ['1', '3', '7', '15', '30'].includes(pre('expiryDuration')) ? pre('expiryDuration') : '7'
+  const sel = (condition: boolean) => condition ? ' selected' : ''
   const locationOptions = pickupLocations.map(location => `<option value="${escape(location)}">${escape(location)}</option>`).join('')
   const allDevices = await getDevices(c);
   const devices = allDevices.filter(device => !['maintenance', 'retired'].includes(String(device.status || '').toLowerCase()))
@@ -89,7 +101,7 @@ export async function renderNewContractPage(c: Context, user: any) {
           <label for="device-select" class="form-label" style="margin-top: 14px;">设备下拉选择</label>
           <select id="device-select" name="deviceId" class="form-control" required>
             <option value="">请选择设备</option>
-            ${devices.map(device => `<option value="${device.id}">${device.name} (${device.model}) - ${device.serialNumber}${device.status === 'rented' ? ' · 有租赁档期' : ''}</option>`).join('')}
+            ${devices.map(device => `<option value="${escape(device.id)}"${device.id === preDevice ? ' selected' : ''}>${escape(device.name)} (${escape(device.model)}) - ${escape(device.serialNumber)}${device.status === 'rented' ? ' · 有租赁档期' : ''}</option>`).join('')}
           </select>
         </section>
         <section class="booking-picker" aria-labelledby="booking-picker-title"><div class="booking-picker__header"><div><p class="section-code">DEVICE AVAILABILITY</p><h3 id="booking-picker-title">设备租赁日历</h3><p>请手动选择设备，再在日历中选择开始日期和归还日期；红色日期已有租赁。</p></div><span id="booking-status" class="badge badge-neutral">请先选择设备</span></div><div class="booking-month-nav" aria-label="切换租赁日历月份"><button class="button button-sm button-secondary" id="booking-prev" type="button" aria-label="上个月">←</button><strong id="booking-month-label"></strong><button class="button button-sm button-secondary" id="booking-today" type="button">本月</button><button class="button button-sm button-secondary" id="booking-next" type="button" aria-label="下个月">→</button></div><div class="booking-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div><div id="booking-calendar" class="booking-calendar"></div><div id="booking-conflict" class="field-error" role="alert"></div></section>
@@ -97,55 +109,55 @@ export async function renderNewContractPage(c: Context, user: any) {
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="start-date" class="form-label">租赁开始日期</label>
-            <input type="date" id="start-date" name="startDate" class="form-control" required min="${today}">
+            <input type="date" id="start-date" name="startDate" class="form-control" required min="${today}" value="${preDate('startDate')}">
           </div>
           <div class="form-group">
             <label for="end-date" class="form-label">租赁结束日期</label>
-            <input type="date" id="end-date" name="endDate" class="form-control" required min="${today}">
+            <input type="date" id="end-date" name="endDate" class="form-control" required min="${today}" value="${preDate('endDate')}">
           </div>
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
-          <div class="form-group"><label for="start-period" class="form-label">取货时段</label><select id="start-period" name="startPeriod" class="form-control"><option value="AM">00:00–12:59</option><option value="PM">13:00–23:59</option></select></div>
-          <div class="form-group"><label for="end-period" class="form-label">归还时段</label><select id="end-period" name="endPeriod" class="form-control"><option value="AM">00:00–12:59</option><option value="PM">13:00–23:59</option></select></div>
+          <div class="form-group"><label for="start-period" class="form-label">取货时段</label><select id="start-period" name="startPeriod" class="form-control"><option value="AM"${sel(preStartPeriod === 'AM')}>00:00–12:59</option><option value="PM"${sel(preStartPeriod === 'PM')}>13:00–23:59</option></select></div>
+          <div class="form-group"><label for="end-period" class="form-label">归还时段</label><select id="end-period" name="endPeriod" class="form-control"><option value="AM"${sel(preEndPeriod === 'AM')}>00:00–12:59</option><option value="PM"${sel(preEndPeriod === 'PM')}>13:00–23:59</option></select></div>
         </div>
         <div class="grid grid-2" style="margin-top: 16px;">
           <div class="form-group">
             <label for="device-condition" class="form-label">出租前验机</label>
-            <textarea id="device-condition" name="deviceCondition" class="form-control" required placeholder="选择设备后自动填写最近一次 EXE 系统状态，也可以人工补充外观检查"></textarea>
+            <textarea id="device-condition" name="deviceCondition" class="form-control" required placeholder="选择设备后自动填写最近一次 EXE 系统状态，也可以人工补充外观检查">${escape(pre('deviceCondition'))}</textarea>
             <small id="device-condition-source" class="form-text">选择设备后将读取 EXE 最近一次上报状态。</small>
           </div>
           <div class="form-group">
             <label for="device-accessories" class="form-label">配件列表</label>
-            <textarea id="device-accessories" name="deviceAccessories" class="form-control" placeholder="例如：充电器、鼠标、电脑包"></textarea>
+            <textarea id="device-accessories" name="deviceAccessories" class="form-control" placeholder="例如：充电器、鼠标、电脑包">${escape(pre('deviceAccessories'))}</textarea>
           </div>
           <div class="form-group">
             <label for="late-fee" class="form-label">每日逾期费用（AUD）</label>
-            <input type="number" id="late-fee" name="lateFeePerDay" class="form-control" min="0" step="0.01" value="0" required>
+            <input type="number" id="late-fee" name="lateFeePerDay" class="form-control" min="0" step="0.01" value="${escape(pre('lateFeePerDay') || '0')}" required>
           </div>
           <div class="form-group">
             <label for="repair-cost" class="form-label">损坏维修金额（AUD，后续可留空）</label>
-            <input type="number" id="repair-cost" name="repairCost" class="form-control" min="0" step="0.01">
+            <input type="number" id="repair-cost" name="repairCost" class="form-control" min="0" step="0.01" value="${escape(pre('repairCost'))}">
           </div>
-          <div class="form-group"><label for="delivery-method" class="form-label">交付方式</label><select id="delivery-method" name="deliveryMethod" class="form-control"><option value="Pickup">客户自取</option><option value="Delivery">送货上门</option></select></div>
+          <div class="form-group"><label for="delivery-method" class="form-label">交付方式</label><select id="delivery-method" name="deliveryMethod" class="form-control"><option value="Pickup"${sel(preDelivery === 'Pickup')}>客户自取</option><option value="Delivery"${sel(preDelivery === 'Delivery')}>送货上门</option></select></div>
           <div class="form-group" id="pickup-location-group"><label for="pickup-location" class="form-label">自取地点</label>${user.role === 'ADMIN' ? `<input id="pickup-location" name="pickupLocation" class="form-control" list="pickup-location-options" required placeholder="选择或手动填写地点"><datalist id="pickup-location-options">${pickupLocations.map(location => `<option value="${escape(location)}">`).join('')}</datalist><small class="form-text">管理员可选择已配置地点，也可以手动编辑临时地点。</small>` : `<select id="pickup-location" name="pickupLocation" class="form-control" required><option value="">请选择自取地点</option>${locationOptions}</select>`}${user.role !== 'ADMIN' && !pickupLocations.length ? '<small class="form-text text-danger">管理员尚未配置自取地点，请先联系管理员。</small>' : ''}</div>
-          <div class="form-group" id="return-method-group" hidden><label for="return-method" class="form-label">归还方式</label><select id="return-method" name="returnMethod" class="form-control"><option value="CourierPickup">上门提取（使用送货地址）</option><option value="StoreReturn">归还到店</option></select><small class="form-text">自取订单只能归还到店；送货订单可以安排上门提取。</small></div>
+          <div class="form-group" id="return-method-group" hidden><label for="return-method" class="form-label">归还方式</label><select id="return-method" name="returnMethod" class="form-control"><option value="CourierPickup"${sel(preReturnMethod === 'CourierPickup')}>上门提取（使用送货地址）</option><option value="StoreReturn"${sel(preReturnMethod === 'StoreReturn')}>归还到店</option></select><small class="form-text">自取订单只能归还到店；送货订单可以安排上门提取。</small></div>
           <div class="form-group" id="return-location-group"><label for="return-location" class="form-label">归还店铺</label>${user.role === 'ADMIN' ? '<input id="return-location" name="returnLocation" class="form-control" required placeholder="填写归还店铺地点">' : `<select id="return-location" name="returnLocation" class="form-control" required><option value="">请选择归还店铺</option>${locationOptions}</select>`}</div>
-          <div class="form-group delivery-only" hidden><label for="delivery-fee" class="form-label">配送费（AUD）</label><input type="number" id="delivery-fee" name="deliveryFee" class="form-control" min="0" step="0.01" required placeholder="请输入配送费"><small class="form-text">选择送货上门时必须填写。</small></div>
+          <div class="form-group delivery-only" hidden><label for="delivery-fee" class="form-label">配送费（AUD）</label><input type="number" id="delivery-fee" name="deliveryFee" class="form-control" min="0" step="0.01" required placeholder="请输入配送费" value="${escape(pre('deliveryFee'))}"><small class="form-text">选择送货上门时必须填写。</small></div>
         </div>
         <section id="delivery-address-section" class="form-section delivery-address" hidden>
           <div class="form-section-title"><span class="mono">AU</span><div><h3>送货地址</h3><p>输入至少 3 个字符选择地址，街道、城区、州和邮编会自动填写。</p></div></div>
           <div class="form-group address-autocomplete address-autocomplete--admin"><div class="address-autocomplete__heading"><div><label class="form-label" for="delivery-address-search">搜索澳洲地址</label><p class="address-autocomplete__hint">管理员和员工均可使用地址联想；选择结果后请核对门牌号和邮编。</p></div><span class="address-autocomplete__badge">SMART LOOKUP</span></div><div class="address-search-control"><input id="delivery-address-search" class="form-control" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="address-suggestions" aria-expanded="false" placeholder="例如 123 Collins Street, Melbourne"><span class="address-search-indicator" aria-hidden="true">AU</span><div id="address-suggestions" class="address-suggestions" role="listbox" hidden></div></div><div id="address-search-status" class="address-search-status" aria-live="polite">可直接手工填写下方地址。</div></div>
           <input type="hidden" id="delivery-place-id" name="deliveryPlaceId"><input type="hidden" id="delivery-address" name="deliveryAddress">
-          <div class="grid grid-2"><div class="form-group"><label class="form-label" for="delivery-street">街道地址</label><input id="delivery-street" name="deliveryStreet" class="form-control" autocomplete="address-line1"></div><div class="form-group"><label class="form-label" for="delivery-suburb">Suburb</label><input id="delivery-suburb" name="deliverySuburb" class="form-control" autocomplete="address-level2"></div><div class="form-group"><label class="form-label" for="delivery-state">州</label><select id="delivery-state" name="deliveryState" class="form-control"><option value="">请选择</option>${['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].map(state => `<option value="${state}">${state}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="delivery-postcode">邮编</label><input id="delivery-postcode" name="deliveryPostcode" class="form-control" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="postal-code"></div></div>
+          <div class="grid grid-2"><div class="form-group"><label class="form-label" for="delivery-street">街道地址</label><input id="delivery-street" name="deliveryStreet" class="form-control" autocomplete="address-line1" value="${escape(pre('deliveryStreet'))}"></div><div class="form-group"><label class="form-label" for="delivery-suburb">Suburb</label><input id="delivery-suburb" name="deliverySuburb" class="form-control" autocomplete="address-level2" value="${escape(pre('deliverySuburb'))}"></div><div class="form-group"><label class="form-label" for="delivery-state">州</label><select id="delivery-state" name="deliveryState" class="form-control"><option value="">请选择</option>${['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].map(state => `<option value="${state}"${state === pre('deliveryState') ? ' selected' : ''}>${state}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="delivery-postcode">邮编</label><input id="delivery-postcode" name="deliveryPostcode" class="form-control" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="postal-code" value="${escape(pre('deliveryPostcode'))}"></div></div>
         </section>
         <div class="form-group" style="margin-top: 16px;">
           <label for="expiry-duration" class="form-label">合同签署过期时间（过期后无法签署或查看）</label>
           <select id="expiry-duration" name="expiryDuration" class="select-control">
-            <option value="1">1 天</option>
-            <option value="3">3 天</option>
-            <option value="7" selected>7 天 (默认)</option>
-            <option value="15">15 天</option>
-            <option value="30">30 天</option>
+            <option value="1"${sel(preExpiry === '1')}>1 天</option>
+            <option value="3"${sel(preExpiry === '3')}>3 天</option>
+            <option value="7"${sel(preExpiry === '7')}>7 天 (默认)</option>
+            <option value="15"${sel(preExpiry === '15')}>15 天</option>
+            <option value="30"${sel(preExpiry === '30')}>30 天</option>
           </select>
         </div>
         <input type="hidden" id="valid-from" name="validFrom">

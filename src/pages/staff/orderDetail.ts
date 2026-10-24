@@ -9,6 +9,7 @@ import { renderReconciliationPanel } from '../partials/reconciliationPanel'
 import type { Context } from 'hono'
 import { getDeliveryBookingsForOrder, safeDeliveryTrackingUrl } from '../../services/deliveryViews'
 import { deliveryStatusInfo } from '../../deliveryStatus'
+import { renderOrderStatusBadge } from '../partials/orderStatusBadge'
 
 const esc = (value: unknown) => String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
@@ -36,16 +37,25 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   ])
   const contractExpired = contract ? isContractExpired(contract) : false
   const alertMessage = message ? `<div data-flash-notice class="page-notification page-notification--${type}">${message}</div>` : ''
-  const statusLabels: Record<string, string> = { pending: '待处理', pending_approval: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', approved: '已审核，等待签署/付款', paid: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
+  // 从订单列表带过来的 back 参数（searchTerm/page…）白名单回填，用于「返回列表」。
+  const rawBack = String(c.req?.query?.('back') || '')
+  const backParams = new URLSearchParams(rawBack)
+  const safeBack = new URLSearchParams()
+  if (backParams.get('searchTerm')) safeBack.set('searchTerm', String(backParams.get('searchTerm')).slice(0, 120))
+  for (const key of ['page', 'perPage']) { const value = backParams.get(key); if (value && /^\d{1,6}$/.test(value)) safeBack.set(key, value) }
+  // 纵深防御：safeBack 只由 URLSearchParams 序列化（全 ASCII、特殊字符已百分号编码），
+  // 再断言一次不含 scheme/双斜杠/控制字符，确保拼进 href 后仍是本站 query，不会变成开放重定向。
+  const backQueryText = safeBack.toString()
+  const backSuffix = backQueryText && !/^(?:[a-z][a-z0-9+.-]*:|\/\/)|[\u0000-\u001f\u007f]/i.test(backQueryText) ? `?${backQueryText}` : ''
 
   const body = `
     <div class="panel order-detail-shell staff-order-detail">
-      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '订单详情'}</h2><span class="section-note">${order.orderNo ? '查看订单、设备、合同签署及支付信息。订单状态由管理员管理。' : '订单编号将在付款确认后生成。'}</span></div>
+      <div class="section-title"><h2>${order.orderNo ? `订单详情 #${order.orderNo}` : '订单详情'}</h2><span class="section-note">${order.orderNo ? '查看订单、设备、合同签署及支付信息。订单状态由管理员管理。' : '订单编号将在付款确认后生成。'}</span><a class="button button-secondary" href="/staff/orders${backSuffix}">返回订单列表</a></div>
       ${alertMessage}
       <div class="order-detail-grid">
         <div class="order-info-card">
           <h3>订单信息</h3>
-          <p><strong>订单状态:</strong> ${statusLabels[String(order.status)] || '待处理'}</p>
+          <p><strong>订单状态:</strong> ${renderOrderStatusBadge(order.status)}</p>
           <p><strong>下单时间:</strong> ${order.orderDate}</p>
           <p><strong>租期:</strong> ${order.startDate} 至 ${order.endDate}</p>
           <p><strong>总金额:</strong> ${formatCurrency(order.totalAmount)}</p>

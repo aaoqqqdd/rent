@@ -63,6 +63,73 @@ export async function getCustomerRiskAssessment(c: Context, customerId: string):
   return calculateCustomerRiskAssessment(facts)
 }
 
+/**
+ * 批量客户风险分级（列表页用）。
+ *
+ * 逐个调用 getCustomerRiskAssessment 是 6 条 SQL × 客户数（/admin/users 一页 50 行
+ * 就是 300 条 D1 查询），这里改成 5 条聚合 SQL：orders / payments / payment_refunds /
+ * damage_cases / risk_flags 各扫一次，按 customer_id 归并后在内存里套同一套评分规则
+ * （calculateCustomerRiskAssessment），分数与逐条计算完全一致。
+ */
+export async function getCustomerRiskLevels(c: Context, customerIds: string[]): Promise<Map<string, CustomerRiskAssessment>> {
+  const ids = Array.from(new Set(customerIds.filter(Boolean)))
+  const result = new Map<string, CustomerRiskAssessment>()
+  if (!ids.length) return result
+  const placeholders = ids.map(() => '?').join(', ')
+
+  const [accounts, orderStats, paymentStats, refundStats, damageStats, flags] = await Promise.all([
+    c.env.RENT.prepare(`SELECT id, balance, identity_status FROM users WHERE role = 'CUSTOMER' AND id IN (${placeholders})`).bind(...ids).all() as Promise<any>,
+    c.env.RENT.prepare(`SELECT userId AS customer_id,
+      SUM(CASE WHEN status = 'overdue' OR handover_overdue = 1 THEN 1 ELSE 0 END) AS overdue_orders,
+      SUM(CASE WHEN status IN ('overdue', 'suspended') THEN 1 ELSE 0 END) AS not_returned_orders,
+      SUM(CASE WHEN deposit_deduction_amount > 0 THEN 1 ELSE 0 END) AS deposit_deduction_orders
+      FROM orders WHERE userId IN (${placeholders}) GROUP BY userId`).bind(...ids).all() as Promise<any>,
+    c.env.RENT.prepare(`SELECT customer_id,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_payments,
+      SUM(CASE WHEN status IN ('paid', 'refunded') THEN COALESCE(amount, 0) ELSE 0 END) AS paid_amount
+      FROM payments WHERE customer_id IN (${placeholders}) GROUP BY customer_id`).bind(...ids).all() as Promise<any>,
+    c.env.RENT.prepare(`SELECT o.userId AS customer_id, COALESCE(SUM(r.refund_amount), 0) AS refunded_amount
+      FROM payment_refunds r JOIN orders o ON o.id = r.order_id
+      WHERE r.status = 'succeeded' AND o.userId IN (${placeholders}) GROUP BY o.userId`).bind(...ids).all() as Promise<any>,
+    c.env.RENT.prepare(`SELECT o.userId AS customer_id, COUNT(*) AS customer_damage_cases
+      FROM damage_cases dc JOIN orders o ON o.id = dc.order_id
+      WHERE dc.liability_status = 'CUSTOMER' AND o.userId IN (${placeholders}) GROUP BY o.userId`).bind(...ids).all() as Promise<any>,
+    c.env.RENT.prepare(`SELECT customer_id, flag_type, severity, status, expires_at
+      FROM risk_flags WHERE status = 'ACTIVE' AND customer_id IN (${placeholders}) ORDER BY created_at DESC`).bind(...ids).all() as Promise<any>,
+  ])
+
+  const accountById = new Map<string, any>((accounts.results || []).map((row: any) => [String(row.id), row]))
+  const orderById = new Map<string, any>((orderStats.results || []).map((row: any) => [String(row.customer_id), row]))
+  const paymentById = new Map<string, any>((paymentStats.results || []).map((row: any) => [String(row.customer_id), row]))
+  const refundById = new Map<string, any>((refundStats.results || []).map((row: any) => [String(row.customer_id), row]))
+  const damageById = new Map<string, any>((damageStats.results || []).map((row: any) => [String(row.customer_id), row]))
+  const flagsById = new Map<string, RiskFlagLike[]>()
+  for (const flag of (flags.results || []) as any[]) {
+    const key = String(flag.customer_id)
+    flagsById.set(key, [...(flagsById.get(key) || []), flag as RiskFlagLike])
+  }
+
+  for (const id of ids) {
+    const account = accountById.get(id)
+    const order = orderById.get(id) || {}
+    const payment = paymentById.get(id) || {}
+    const facts: CustomerRiskFacts = {
+      balance: Number(account?.balance || 0),
+      identityStatus: account?.identity_status,
+      failedPaymentCount: Number(payment.failed_payments || 0),
+      overdueOrderCount: Number(order.overdue_orders || 0),
+      notReturnedOrderCount: Number(order.not_returned_orders || 0),
+      customerDamageCaseCount: Number(damageById.get(id)?.customer_damage_cases || 0),
+      depositDeductionOrderCount: Number(order.deposit_deduction_orders || 0),
+      paidAmount: Number(payment.paid_amount || 0),
+      refundedAmount: Number(refundById.get(id)?.refunded_amount || 0),
+      activeFlags: flagsById.get(id) || [],
+    }
+    result.set(id, account ? calculateCustomerRiskAssessment(facts) : { score: 100, level: 'CRITICAL', blocked: true, reasons: ['客户资料不存在'], blockingFlag: null })
+  }
+  return result
+}
+
 function daysSince(value: unknown): number {
   const timestamp = new Date(String(value || '')).getTime()
   if (!Number.isFinite(timestamp)) return 0

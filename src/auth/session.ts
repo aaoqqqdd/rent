@@ -9,7 +9,7 @@
 
 import type { Context } from 'hono'
 import { getDB } from '../db/client'
-import { parseCookie } from '../lib/cookie'
+import { readAuthTokenFromCookie } from '../lib/security'
 import { normalizeUserRow } from '../db/repositories'
 import type { User } from '../db/types'
 
@@ -57,8 +57,8 @@ export async function findUserBySession(c: Context, cookieHeader: string | null)
 
 async function resolveUserBySession(c: Context, cookieHeader: string | null): Promise<User | null> {
   const db = getDB(c)
-  const cookies = parseCookie(cookieHeader)
-  const token = cookies.session || ''
+  // 同时接受 __Host-session（HTTPS 新 Cookie）与 session（旧 Cookie / 本地 http）。
+  const token = readAuthTokenFromCookie(cookieHeader)
   if (!token) return null
 
   if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) return null
@@ -104,7 +104,7 @@ export async function revokeAllSessions(c: Context, userId: string): Promise<voi
 }
 
 export async function deleteAuthSession(c: Context, cookieHeader: string | null): Promise<void> {
-  const token = parseCookie(cookieHeader).session || ''
+  const token = readAuthTokenFromCookie(cookieHeader)
   if (/^[A-Za-z0-9_-]{32,}$/.test(token)) await c.env.RENT.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(await sha256Hex(token)).run()
 }
 

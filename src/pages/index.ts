@@ -14,6 +14,7 @@ export * from './public/paymentResult';
 export * from './public/unsubscribe';
 export * from './public/tallyForm';
 export * from './invoice';
+export * from './partials/orderStatusBadge';
 
 export * from './customer/dashboard';
 export * from './customer/orders';
@@ -30,6 +31,7 @@ export * from './customer/guestAccount';
 
 export * from './staff/dashboard';
 export * from './staff/mobileOperations';
+export * from './staff/mobileHome';
 export * from './staff/mobileScan';
 export * from './staff/orders';
 export * from './staff/orderDetail';

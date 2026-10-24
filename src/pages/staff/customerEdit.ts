@@ -12,9 +12,19 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
     return buildLayout('编辑客户 - 电脑租赁管理系统', '<div class="panel"><h2>客户未找到</h2><p>您请求的客户不存在。</p></div>', user)
   }
   const personName = splitPersonName(customer.name)
+  // 把列表带过来的 back 参数（searchTerm/page）继续透传给详情页，返回时不丢筛选。
+  const rawBack = String(c.req?.query?.('back') || '')
+  const backParams = new URLSearchParams(rawBack)
+  const safeBack = new URLSearchParams()
+  if (backParams.get('searchTerm')) safeBack.set('searchTerm', String(backParams.get('searchTerm')).slice(0, 120))
+  for (const key of ['page', 'perPage']) { const value = backParams.get(key); if (value && /^\d{1,6}$/.test(value)) safeBack.set(key, value) }
+  // 纵深防御：safeBack 只由 URLSearchParams 序列化（全 ASCII、特殊字符已百分号编码），
+  // 再断言一次不含 scheme/双斜杠/控制字符，确保拼进 href 后仍是本站 query，不会变成开放重定向。
+  const backQueryText = safeBack.toString()
+  const backSuffix = backQueryText && !/^(?:[a-z][a-z0-9+.-]*:|\/\/)|[\u0000-\u001f\u007f]/i.test(backQueryText) ? `?${backQueryText}` : ''
 
   const body = `
-    <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>编辑客户</h2><p>${customer.name} · 修改联系方式和退款账户。</p></div><a href="/staff/customers/${customer.id}" class="button button-secondary">返回客户详情</a></div></div>
+    <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>编辑客户</h2><p>${customer.name} · 修改联系方式和退款账户。</p></div><a href="/staff/customers/${customer.id}${backSuffix}" class="button button-secondary">返回客户详情</a></div></div>
     ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
     <div class="panel record-panel single-column">
       <form method="POST" action="/staff/customers/${customer.id}/edit" class="record-form">
@@ -49,7 +59,7 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
             <input class="form-control" name="account" value="${customer.account ?? ''}" />
           </div>
           ${user.role === 'ADMIN' ? `<div><label class="form-label">余额</label><input class="form-control" type="number" step="0.01" name="balance" value="${customer.balance}" /></div>` : ''}
-        </div></section><div class="record-actions"><a class="button button-secondary" href="/staff/customers/${customer.id}">取消</a><button class="button button-primary" type="submit">保存修改</button></div>
+        </div></section><div class="record-actions"><a class="button button-secondary" href="/staff/customers/${customer.id}${backSuffix}">取消</a><button class="button button-primary" type="submit">保存修改</button></div>
       </form>
     </div>
   `

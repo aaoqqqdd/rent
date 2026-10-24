@@ -11,26 +11,26 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
 
   if (!contractId) {
     await logError(c, 'WARNING', 'Attempted to cancel contract without ID');
-    return c.redirect('/staff/contracts?error=Contract ID is missing');
+    return c.redirect(`/staff/contracts?error=${encodeURIComponent('缺少合同编号，无法作废')}`);
   }
 
   try {
     const user = await findUserBySession(c, c.req.header('cookie') ?? null);
     if (!user) {
       await logError(c, 'WARNING', `Unauthorized attempt to cancel contract. Contract ID: ${contractId}`);
-      return c.redirect('/login?error=Please log in first');
+      return c.redirect(`/login?error=${encodeURIComponent('请先登录')}`);
     }
 
     const contract = await getContractById(c, contractId);
 
     if (!contract) {
       await logError(c, 'WARNING', `Contract not found for ID: ${contractId}`);
-      return c.redirect(`/staff/contracts?error=Contract not found`);
+      return c.redirect(`/staff/contracts?error=${encodeURIComponent('合同不存在或已被删除')}`);
     }
 
     if (contract.status !== 'pending_sign') {
       await logError(c, 'WARNING', `Attempted to cancel a contract not in 'pending_sign' status. Contract ID: ${contractId}, Current Status: ${contract.status}`);
-      return c.redirect(`/staff/contracts?error=Only pending contracts can be cancelled`);
+      return c.redirect(`/staff/contracts?error=${encodeURIComponent('只有等待签署的合同可以作废')}`);
     }
 
     const isAdmin = user.role === 'ADMIN';
@@ -38,7 +38,7 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
 
     if (!isAdmin && !isCreator) {
       await logError(c, 'WARNING', `Permission denied: User ${user.id} attempted to cancel contract ${contractId} created by ${contract.created_by}`);
-      return c.redirect(`/staff/contracts?error=You don't have permission to cancel this contract`);
+      return c.redirect(`/staff/contracts?error=${encodeURIComponent('您没有权限作废该合同')}`);
     }
 
     await updateContractStatus(c, contractId, 'cancelled');
@@ -53,9 +53,9 @@ export async function handleCancelContractAction(c: Context): Promise<Response> 
     }
 
     await logError(c, 'INFO', `Contract cancelled successfully. Contract ID: ${contractId}, Cancelled by: ${user.id}`);
-    return c.redirect('/staff/contracts?success=Contract cancelled successfully');
+    return c.redirect(`/staff/contracts?success=${encodeURIComponent('合同已作废')}`);
   } catch (error) {
     await logError(c, 'ERROR', `Failed to cancel contract. Contract ID: ${contractId}`, error as Error);
-    return c.redirect(`/staff/contracts?error=Failed to cancel contract`);
+    return c.redirect(`/staff/contracts?error=${encodeURIComponent('作废合同失败，请稍后重试')}`);
   }
 }

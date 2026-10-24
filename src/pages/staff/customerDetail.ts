@@ -7,6 +7,7 @@ import { buildLayout, getUserById, getOrdersForUser, getDevicesByIds, formatCurr
 import { Context } from 'hono';
 import { escapeHtml } from '../../lib/html';
 import { renderPasswordSetupNotice } from '../partials/passwordSetupNotice';
+import { renderOrderStatusBadge } from '../partials/orderStatusBadge';
 
 export async function renderStaffCustomerDetail(c: Context, user: any, customerId: string) {
   const customer = await getUserById(c, customerId)
@@ -19,6 +20,16 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
   const devices = await getDevicesByIds(c, deviceIds)
   const deviceMap = new Map(devices.map((device) => [device.id, device]))
   const personName = splitPersonName(customer.name)
+  // 从列表带过来的 back 参数（searchTerm/page…）原样带回，保证返回时筛选条件不丢。
+  const rawBack = String(c.req?.query?.('back') || '')
+  const backParams = new URLSearchParams(rawBack)
+  const safeBack = new URLSearchParams()
+  if (backParams.get('searchTerm')) safeBack.set('searchTerm', String(backParams.get('searchTerm')).slice(0, 120))
+  for (const key of ['page', 'perPage']) { const value = backParams.get(key); if (value && /^\d{1,6}$/.test(value)) safeBack.set(key, value) }
+  // 纵深防御：safeBack 只由 URLSearchParams 序列化（全 ASCII、特殊字符已百分号编码），
+  // 再断言一次不含 scheme/双斜杠/控制字符，确保拼进 href 后仍是本站 query，不会变成开放重定向。
+  const backQueryText = safeBack.toString()
+  const backSuffix = backQueryText && !/^(?:[a-z][a-z0-9+.-]*:|\/\/)|[\u0000-\u001f\u007f]/i.test(backQueryText) ? `?${backQueryText}` : ''
 
   const accountNotice = customer.accountType === 'guest' ? `<div class="page-notification page-notification--info"><strong>访客/临时账户</strong> · 仅限订单 ${customer.guestOrderId || '-'} · 计划删除日期 ${customer.guestExpiresAt || '租期结束'}</div>` : customer.accountType === 'deleted_guest' ? '<div class="page-notification page-notification--error"><strong>已删除访客账户</strong> · 登录权限和个人联系方式已清除。</div>' : ''
   const activeRiskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, reason FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY CASE severity WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END, created_at DESC").bind(customer.id).all()).results as any[]
@@ -27,7 +38,7 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
     ${renderPasswordSetupNotice(c.req.query('passwordSetup'))}
     ${accountNotice}
     ${riskNotice}
-    <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>ACTIVE RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>${escapeHtml(customer.name)}</h2><p>${escapeHtml(customer.email)}</p></div><div class="entity-heading-actions"><a class="button button-secondary" href="/staff/customers">返回客户列表</a><a class="button" href="/staff/customers/${customer.id}/edit">编辑客户</a></div></div></div>
+    <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>ACTIVE RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>${escapeHtml(customer.name)}</h2><p>${escapeHtml(customer.email)}</p></div><div class="entity-heading-actions"><a class="button button-secondary" href="/staff/customers${backSuffix}">返回客户列表</a><a class="button" href="/staff/customers/${customer.id}/edit${backSuffix}">编辑客户</a></div></div></div>
     <div class="panel record-panel single-column"><div class="record-grid">
         <section class="record-section"><p class="section-code">PROFILE</p><h3>基本信息</h3><dl class="data-list"><div><dt>客户 ID</dt><dd class="mono">${customer.id}</dd></div><div><dt>名 / Given name</dt><dd>${escapeHtml(personName.firstName) || '未填写'}</dd></div><div><dt>姓 / Family name</dt><dd>${escapeHtml(personName.lastName) || '未填写'}</dd></div><div><dt>邮箱</dt><dd>${escapeHtml(customer.email)}</dd></div><div><dt>手机</dt><dd>${escapeHtml(customer.phone) || '未填写'}</dd></div><div><dt>注册日期</dt><dd>${escapeHtml(customer.registrationDate || customer.createdAt || '-')}</dd></div></dl></section>
         <section class="record-section"><p class="section-code">ACCOUNT</p><h3>账户信息</h3><dl class="data-list"><div><dt>余额</dt><dd class="mono">${formatCurrency(customer.balance)}</dd></div><div><dt>BSB</dt><dd class="mono">${escapeHtml(customer.bsb) || '未填写'}</dd></div><div><dt>银行账号</dt><dd class="mono">${escapeHtml(customer.accountNumber || customer.account) || '未填写'}</dd></div></dl>
@@ -39,7 +50,7 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
           <table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
             ${orders.map((order) => {
     const device = deviceMap.get(order.deviceId)
-    return `<tr><td>${escapeHtml(order.orderNo)}</td><td>${escapeHtml(device?.name) || 'N/A'}</td><td>${escapeHtml(order.startDate)} ~ ${escapeHtml(order.endDate)}</td><td>${formatCurrency(order.totalAmount)}</td><td>${escapeHtml(order.status)}</td><td><a class="link-button" href="${staffOrderPath(order)}">查看订单</a></td></tr>`
+    return `<tr><td>${escapeHtml(order.orderNo)}</td><td>${escapeHtml(device?.name) || 'N/A'}</td><td>${escapeHtml(order.startDate)} ~ ${escapeHtml(order.endDate)}</td><td>${formatCurrency(order.totalAmount)}</td><td>${renderOrderStatusBadge(order.status)}</td><td><a class="link-button" href="${staffOrderPath(order)}">查看订单</a></td></tr>`
   }).join('')}
           </tbody></table>
         </div>

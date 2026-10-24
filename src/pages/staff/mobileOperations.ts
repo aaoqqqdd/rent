@@ -98,13 +98,15 @@ export async function renderStaffMobileOperations(c: Context, user: any) {
   }).join('')
 
   const pageTitle = stage === 'pickup' ? '今日取货' : stage === 'return' ? '今日归还' : '今日租赁任务'
-  const clearHref = stage ? `/staff/mobile?stage=${stage}` : '/staff/mobile'
+  const clearHref = stage ? `/staff/mobile/today?stage=${stage}` : '/staff/mobile/today'
   const body = `<div class="mobile-operations-page">
+    <nav class="mobile-page-crumbs" aria-label="面包屑"><a href="/staff/mobile">工作台</a><span aria-hidden="true">/</span><span>今日任务</span></nav>
     <div class="page-header"><div><p class="section-code">TODAY / RENTAL OPS</p><h2>${pageTitle}</h2><p>${today} · 按预约时间从早到晚排列</p></div><a class="button button-secondary" href="/staff/orders">全部订单</a></div>
-    <form class="mobile-task-search" method="get" action="/staff/mobile"><input class="form-control" type="search" name="q" value="${escapeHtml(search)}" placeholder="扫码或搜索订单号、客户、设备" autocomplete="off" inputmode="search" enterkeyhint="search" ${search ? '' : 'autofocus'}>${stage ? `<input type="hidden" name="stage" value="${stage}">` : ''}<button class="button button-primary" type="submit">搜索</button>${search ? `<a class="button button-secondary" href="${clearHref}">清除</a>` : ''}</form>
+    <form class="mobile-task-search" method="get" action="/staff/mobile/today"><input class="form-control" type="search" name="q" value="${escapeHtml(search)}" placeholder="扫码或搜索订单号、客户、设备" autocomplete="off" inputmode="search" enterkeyhint="search" ${search ? '' : 'autofocus'}>${stage ? `<input type="hidden" name="stage" value="${stage}">` : ''}<button class="button button-primary" type="submit">搜索</button>${search ? `<a class="button button-secondary" href="${clearHref}">清除</a>` : ''}</form>
     <p class="mobile-task-search__hint">扫码枪或手机键盘输入后回车即可定位订单</p>
     <div class="mobile-task-summary"><span>今日任务 <strong>${tasks.length}</strong></span><span class="is-pickup">取货 <strong>${pickupCount}</strong></span><span class="is-return">归还 <strong>${returnCount}</strong></span></div>
+    <div class="mobile-filter-chips" role="tablist" aria-label="任务筛选">${[['', '全部'], ['pickup', '取货'], ['return', '归还']].map(([value, label]) => `<a class="mobile-chip${stage === value ? ' is-active' : ''}" role="tab" aria-selected="${stage === value ? 'true' : 'false'}" href="${value ? `/staff/mobile/today?stage=${value}` : '/staff/mobile/today'}">${label}<b>${value === 'pickup' ? pickupCount : value === 'return' ? returnCount : tasks.length}</b></a>`).join('')}</div>
     <section class="mobile-task-list">${taskRows || `<div class="empty-state"><h3>${search ? '没有匹配的今日任务' : '今天没有待处理任务'}</h3><p>${search ? '请更换订单号、客户或设备关键词。' : '取货和归还任务会按预约日期自动显示在这里。'}</p></div>`}</section>
   </div>`
-  return buildLayout('今日租赁任务 - 电脑租赁管理系统', body, user, { compactStaffNav: true })
+  return buildLayout('今日租赁任务 - 电脑租赁管理系统', body, user, { compactStaffNav: true, currentPath: '/staff/mobile/today' })
 }

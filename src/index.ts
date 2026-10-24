@@ -142,6 +142,7 @@ import { handleDeliveryStatusEmail } from './services/deliveryNotifications'
 import { buildTaxInvoiceDocument, sendTaxInvoiceEmail } from './services/notifications'
 import {
   styleSheetText as siteStyles,
+  styleSheetByteLength,
   styleSheetVersion,
   appScriptText,
   appScriptVersion,
@@ -149,6 +150,15 @@ import {
   languageScriptVersion,
 } from './lib/assetVersion'
 import { getTableColumns as getCachedTableColumns } from './db/client'
+import {
+  buildContentSecurityPolicy,
+  checkFormFieldLimits,
+  maxRequestBodyBytes,
+  resolveContentLength,
+  sanitizeRedirectPath,
+  serializeAuthCookie,
+  serializeAuthCookieClear,
+} from './lib/security'
 import { escapeHtml } from './lib/html'
 import { createTallyFeedbackToken } from './lib/tally'
 import { parsePickupQrPayload } from './lib/pickupQr'
@@ -267,9 +277,13 @@ async function resolveImageUrls(fileValue: unknown, legacyUrl: unknown, c: any, 
 }
 
 async function parseFormBodyForRequest(c: any): Promise<Record<string, any>> {
-  return String(c.req.header('content-type') || '').toLowerCase().includes('multipart/form-data')
+  const form = String(c.req.header('content-type') || '').toLowerCase().includes('multipart/form-data')
     ? await c.req.parseBody()
     : parseFormBody(await c.req.text())
+  // 字段长度 / 数量上限：超长文本一律拒绝（由调用方回 413），而不是悄悄截断后写库。
+  const limits = checkFormFieldLimits(form as Record<string, unknown>)
+  if (!limits.ok) throw new Error(`FORM_LIMIT:${limits.reason}`)
+  return form as Record<string, any>
 }
 
 async function addWatermarkedContractDamagePhotos(c: any, form: Record<string, any>, submittedData: Record<string, string>): Promise<void> {
@@ -280,6 +294,16 @@ async function addWatermarkedContractDamagePhotos(c: any, form: Record<string, a
   const uploaded = await uploadCloudinaryImages(form.damagePhotoFiles, await getCloudinaryRuntimeConfig(c), 'rent/damage-photos', 5, { watermark: true })
   submittedData.damage_photos = [existing, ...uploaded].filter(Boolean).join('\n')
 }
+
+// 安全响应头中间件必须注册在**所有路由之前**：Hono 按注册顺序匹配，静态资源
+// （/styles.css、/app.js、/i18n.js、/favicon.*）的路由定义在文件靠前的位置，
+// 如果 header 中间件注册在它们之后，这些响应根本不经过任何 app.use —— 既没有
+// CSP/nosniff，404 / 500 / 413 也会一样丢头。这里放在静态资源路由之前。
+// 静态资源短路（不查会话）仍然保留在下面鉴权中间件里，因此不会给 CSS 增加 D1 查询。
+app.use('*', async (c, next) => {
+  applySecurityHeaders(c)
+  await next()
+})
 
 app.get('/styles.css', (c) => {
   c.header('Content-Type', 'text/css; charset=utf-8')
@@ -292,6 +316,9 @@ app.get('/styles.css', (c) => {
   c.header('ETag', `"${styleSheetVersion}"`)
   c.header('X-Content-Type-Options', 'nosniff')
   if (c.req.header('If-None-Match') === `"${styleSheetVersion}"`) return c.body(null, 304)
+  // siteStyles 已在模块加载时压缩过一次（src/lib/assetVersion.ts），这里复用同一个
+  // 字符串；Content-Length 用预先算好的字节数，避免每次请求重新统计。
+  c.header('Content-Length', String(styleSheetByteLength))
   return c.body(siteStyles)
 })
 
@@ -647,6 +674,31 @@ function errorDetails(error: unknown) {
   }
 }
 
+// 只影响会话 Cookie 的 Secure 属性与 HSTS，与旧实现同一判据（请求 URL 协议），
+// 不引入 x-forwarded-proto 之类可被伪造的推断，避免改变现有登录行为。
+function isSecureRequest(c: any): boolean {
+  return new URL(c.req.url).protocol === 'https:'
+}
+
+// 表名 / 列名这类不能绑定参数、只能拼进 SQL 的标识符，先过这道白名单再拼接。
+// 所有此类拼接点（DDL 列名、时间戳列名、保留策略预览的 FROM/日期列）都必须经过它。
+const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
+function sqlIdentifier(value: unknown): string {
+  const name = String(value ?? '')
+  if (!SQL_IDENTIFIER.test(name)) throw new Error('Invalid SQL identifier')
+  return name
+}
+
+// 这些路径的响应包体可能包含认证态数据（会话、合同、订单、重置链接），
+// 一律禁止浏览器与中间缓存留存。
+const NO_STORE_EXACT_PATHS = new Set(['/login', '/forgot-password', '/reset-password', '/verify-email', '/verify-email/pending', '/contract/sign', '/sso/consume', '/api/search', '/api/payment/status', '/api/monitor'])
+const NO_STORE_PATH_PREFIXES = ['/admin/', '/staff/', '/customer/', '/rent/', '/notifications', '/contract/', '/orders/']
+
+function isNoStorePath(pathname: string): boolean {
+  if (NO_STORE_EXACT_PATHS.has(pathname)) return true
+  return NO_STORE_PATH_PREFIXES.some((prefix) => pathname === prefix.replace(/\/$/, '') || pathname.startsWith(prefix))
+}
+
 function applySecurityHeaders(c: any): void {
   c.header('X-Content-Type-Options', 'nosniff')
   c.header('X-Frame-Options', 'DENY')
@@ -656,12 +708,11 @@ function applySecurityHeaders(c: any): void {
   c.header('Cross-Origin-Resource-Policy', 'same-origin')
   c.header('X-Permitted-Cross-Domain-Policies', 'none')
   if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-  // Do not allow browsers or intermediary caches to retain authenticated
-  // pages, reset links, or contract signing pages containing credentials.
-  if (c.get('user') || c.req.path.startsWith('/admin/') || c.req.path.startsWith('/staff/') || c.req.path.startsWith('/customer/') || c.req.path.startsWith('/rent/') || ['/login', '/forgot-password', '/reset-password', '/verify-email', '/contract/sign', '/sso/consume'].includes(c.req.path)) {
-    c.header('Cache-Control', 'private, no-store')
-  }
-  c.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com https://tally.so https://web.squarecdn.com https://sandbox.web.squarecdn.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com https://tally.so https://connect.squareup.com https://connect.squareupsandbox.com; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com https://tally.so; frame-ancestors 'none'; form-action 'self' https://app.squareup.com")
+  if (c.get('user') || isNoStorePath(c.req.path)) c.header('Cache-Control', 'private, no-store')
+  // CSP 指令集中在 src/lib/security.ts（有单测断言不含 unsafe-eval、object-src/base-uri/
+  // frame-ancestors 保持最严）。script-src 仍保留 'unsafe-inline'：页面里还有大量内联
+  // <script>，全面改 nonce 属于跨模块改造，作为遗留项记录在交付说明里。
+  c.header('Content-Security-Policy', buildContentSecurityPolicy())
 }
 
 app.use('*', async (c, next) => {
@@ -711,17 +762,15 @@ app.use('*', async (c, next) => {
 })
 
 app.use('*', async (c, next) => {
-  applySecurityHeaders(c)
-  const contentLength = Number(c.req.header('Content-Length') || 0)
-  const uploadPath = c.req.method === 'POST' && (
-    c.req.path === '/contract/sign' ||
-    c.req.path === '/customer/balance/top-up/transfer' ||
-    c.req.path === '/admin/settings/upload-image' ||
-    /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ||
-    /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path)
-  )
-  const maxBody = ['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) ? 512 * 1024 : uploadPath ? 6 * 1024 * 1024 : 128 * 1024
-  if (contentLength > maxBody) return c.text('Request body too large', 413)
+  const maxBody = maxRequestBodyBytes(c.req.path, c.req.method)
+  // 旧实现用 Number(header || 0)：缺失或非数字的 Content-Length 会退化成 0，
+  // 等于完全绕过请求体上限。这里改为：有声明长度就比声明值；没有就实测缓冲后的体积。
+  const declaredLength = resolveContentLength(c.req.header('Content-Length'))
+  if (declaredLength !== null && declaredLength > maxBody) return c.text('Request body too large', 413)
+  if (declaredLength === null && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    const raw = await c.req.arrayBuffer()
+    if (raw.byteLength > maxBody) return c.text('Request body too large', 413)
+  }
   const publicWebOrigin = String((c.env as any).PUBLIC_WEB_ORIGIN || '').replace(/\/$/, '')
   const isPublicOrderLookup = c.req.path === '/public/order-lookup'
   if (c.req.method === 'POST' && !['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path) && !isPublicOrderLookup) {
@@ -784,16 +833,34 @@ app.use('*', async (c, next) => {
     : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
     : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
     : c.req.path.startsWith('/api/address/') ? ['address-search', 120, 60] as const
-    : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const : null
+    : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const
+    // 以下是安全加固补齐的高风险写 / 查询接口（会话握手、改密、付款初始化、上传、导出）。
+    // 追加在链尾，不改变上面既有规则的匹配优先级。
+    : c.req.path === '/sso/consume' ? ['sso-consume', 30, 600] as const
+    : c.req.path === '/logout' && c.req.method === 'POST' ? ['logout', 60, 600] as const
+    : c.req.path === '/customer/profile/password' || c.req.path === '/profile/password' ? ['password-change', 10, 900] as const
+    : c.req.path === '/customer/profile/delete-account' ? ['account-deletion', 5, 3600] as const
+    : c.req.method === 'POST' && c.req.path === '/customer/profile' ? ['profile-update', 30, 600] as const
+    : c.req.method === 'POST' && /^\/customer\/balance\/top-up(?:\/transfer)?$/.test(c.req.path) ? ['balance-topup', 10, 600] as const
+    : /^\/customer\/orders\/[^/]+\/square\/(?:config|payment)$/.test(c.req.path) ? ['square-payment', 10, 600] as const
+    : c.req.method === 'POST' && /^\/customer\/orders\/[^/]+\/(?:receipt|invoice\/send)/.test(c.req.path) ? ['receipt-send', 10, 3600] as const
+    : c.req.method === 'POST' && c.req.path.startsWith('/admin/contracts/template') ? ['contract-template-write', 30, 600] as const
+    : c.req.method === 'POST' && c.req.path.startsWith('/admin/settings') ? ['admin-settings-write', 60, 600] as const
+    : c.req.path === '/admin/orders/export' ? ['orders-export', 10, 3600] as const
+    : c.req.path === '/api/search' ? ['global-search', 120, 60] as const
+    : c.req.path === '/api/contract-sign/coupon-preview' ? ['coupon-preview', 30, 60] as const
+    : c.req.path === '/api/payment/status' ? ['payment-status-poll', 300, 60] as const
+    : c.req.method === 'POST' && c.req.path.startsWith('/api/device-agent/') && c.req.path !== '/api/device-agent/register' ? ['device-agent-api', 240, 60] as const
+    : null
   const agentRegistrationRule = c.req.path === '/api/device-agent/register' && c.req.method === 'POST'
     ? ['device-agent-register', 10, 900] as const
     : null
-  const activeRateRule = rateRule || agentRegistrationRule
+  // 支付 Webhook 一律不参与限流：Stripe / Square 会按自己的退避策略重放同一条事件，
+  // 一旦被 429 就变成「已收款未入账」。它们的保护手段是签名校验 + 事件幂等。
+  const isWebhook = ['/webhooks/stripe', '/webhooks/square', '/webhooks/tally'].includes(c.req.path)
+  const activeRateRule = isWebhook ? null : (rateRule || agentRegistrationRule)
   if (activeRateRule && !await enforceRateLimit(c, activeRateRule[0], ip, activeRateRule[1], activeRateRule[2])) return c.text('请求过于频繁，请稍后再试', 429)
   await next()
-  // Re-apply after the handler so route-specific responses cannot accidentally
-  // omit the baseline headers; the pre-handler application also covers errors.
-  applySecurityHeaders(c)
 });
 
 app.use('*', async (c, next) => {
@@ -847,7 +914,7 @@ app.get('/login', async (c) => {
   }
   const deletedMessage = c.req.query('deletion_requested') === '1' ? '账户删除申请已提交，进入 7 天冷静期；您已退出登录。7 天内重新登录可取消删除。' : undefined
   const message = c.req.query('reset') === '1' ? '密码已重置，请使用新密码登录。' : deletedMessage
-  return c.html(pages.renderLogin(message, shouldShowTestAccounts(c), c.req.query('redirect') || ''))
+  return c.html(pages.renderLogin(message, shouldShowTestAccounts(c), sanitizeRedirectPath(c.req.query('redirect'), '')))
 })
 
 app.get('/contact', async (c) => {
@@ -876,7 +943,7 @@ app.post('/login', async (c) => {
   const account = form.account?.trim()
   const password = form.password?.trim()
   const requestedRedirect = String(form.redirect || '')
-  const redirectPath = /^\/(?![\\/])/.test(requestedRedirect) ? requestedRedirect : ''
+  const redirectPath = sanitizeRedirectPath(requestedRedirect, '')
   if (!account || !password) {
     return c.html(pages.renderLogin('请输入账号和密码', shouldShowTestAccounts(c), redirectPath))
   }
@@ -914,9 +981,7 @@ app.post('/login', async (c) => {
     : isMobileDeviceRequest(c) ? '/staff/mobile' : user.role === 'STAFF' ? '/staff/dashboard' : '/admin/dashboard'
   const response = c.redirect(redirectPath || defaultRedirect)
   const session = await createAuthSession(c, user.id, form.remember === 'on')
-  let cookieOptions = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`;
-  if (new URL(c.req.url).protocol === 'https:') cookieOptions += '; Secure'
-  response.headers.set('Set-Cookie', cookieOptions)
+  response.headers.set('Set-Cookie', serializeAuthCookie(session.token, { maxAge: session.maxAge, secure: isSecureRequest(c) }))
   return response
 })
 
@@ -954,9 +1019,7 @@ app.get('/sso/consume', async (c) => {
   if (!activeUser?.id) return c.redirect('/login')
   const session = await createAuthSession(c, String(activeUser.id))
   const response = c.redirect('/')
-  let ssoCookie = `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}`
-  if (new URL(c.req.url).protocol === 'https:') ssoCookie += '; Secure'
-  response.headers.set('Set-Cookie', ssoCookie)
+  response.headers.set('Set-Cookie', serializeAuthCookie(session.token, { maxAge: session.maxAge, secure: isSecureRequest(c) }))
   return response
 })
 
@@ -1141,7 +1204,7 @@ app.post('/register', async (c) => {
     ['refund_policy_accepted_at', 'TEXT'],
     ['refund_policy_accepted_ip', 'TEXT'],
   ] as const) {
-    try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} ${definition}`).run() } catch (_) { }
+    try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${sqlIdentifier(column)} ${definition}`).run() } catch (_) { }
   }
   const acceptedAt = new Date().toISOString()
   const acceptedIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0].trim() || null
@@ -1158,7 +1221,7 @@ app.post('/register', async (c) => {
     : '/customer/dashboard')
   if (!getSystemSettings().registrationSettings?.requireEmailVerification) {
     const session = await createAuthSession(c, newUserId)
-    response.headers.set('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
+    response.headers.set('Set-Cookie', serializeAuthCookie(session.token, { maxAge: session.maxAge, secure: isSecureRequest(c) }))
   }
 
   return response
@@ -1239,7 +1302,8 @@ app.post('/reset-password', async (c) => {
 const logout = async (c: any) => {
   await deleteAuthSession(c, c.req.header('cookie') ?? null)
   const response = c.redirect('/')
-  response.headers.set('Set-Cookie', 'session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT')
+  // 登出要把 Cookie 彻底过期（属性必须与签发时一致，否则部分浏览器会保留旧值）。
+  for (const cookie of serializeAuthCookieClear(isSecureRequest(c))) response.headers.append('Set-Cookie', cookie)
   return response
 }
 app.post('/logout', logout)
@@ -1712,7 +1776,9 @@ app.get('/admin/announcements', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
   const order = c.req.query('order') === 'asc' ? 'asc' : 'desc'
-  const result = await c.env.RENT.prepare(`SELECT MIN(id) AS id, title, message, created_at, MAX(expires_at) AS expires_at, COUNT(*) AS recipient_count FROM notifications WHERE sender_id = ? AND type = 'announcement' GROUP BY title, message, created_at ORDER BY created_at ${order === 'asc' ? 'ASC' : 'DESC'}`).bind(user.id).all() as any
+  // ORDER BY 方向不能参数化：先映射成枚举常量（只有 ASC / DESC 两个合法值）再拼接。
+  const orderDirection = order === 'asc' ? 'ASC' : 'DESC'
+  const result = await c.env.RENT.prepare(`SELECT MIN(id) AS id, title, message, created_at, MAX(expires_at) AS expires_at, COUNT(*) AS recipient_count FROM notifications WHERE sender_id = ? AND type = 'announcement' GROUP BY title, message, created_at ORDER BY created_at ${orderDirection}`).bind(user.id).all() as any
   const rows = (result.results || []) as any[]
   const total = rows.length
   const pageSize = 10
@@ -2375,6 +2441,8 @@ app.post('/customer/rent/:id', async (c) => {
   const deliveryAddress = String(form.deliveryAddress || '').trim().slice(0, 1000)
   const rentalNote = String(form.rentalNote || '').trim().slice(0, 500)
   const couponCode = String(form.couponCode || '').trim().toUpperCase().slice(0, 40)
+  // 校验失败重新渲染时回填用户已填内容（不包含敏感字段）。
+  const rentPrefill = { startDate, endDate, startPeriod: String(form.startPeriod || ''), endPeriod: String(form.endPeriod || ''), deliveryMethod, pickupTimeSlot, returnTimeSlot, deliveryAddress, rentalNote, couponCode }
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
   const startPeriod = deliveryMethod === 'Pickup' ? pickupTimeSlotPeriod(pickupTimeSlot) : form.startPeriod === 'PM' ? 'PM' : 'AM'
@@ -2421,7 +2489,7 @@ app.post('/customer/rent/:id', async (c) => {
     ))
   }
   if (!device || device.status !== 'available' || !startDate || !endDate || (deliveryMethod === 'Delivery' && !deliveryAddress) || !Number.isFinite(start.getTime()) || start > end || halfDays <= 0 || Math.ceil(halfDays / 2) < rentalRules.minimumRentalDays || blockedDate || invalidPeriod || selectedTimeUnavailable || periodConflict) {
-    return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期'))
+    return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, '请选择可用设备和正确的租赁日期', rentPrefill))
   }
   const rentAmount = calculateRentalFee(device, Math.ceil(halfDays / 2))
   const serviceFee = deliveryMethod === 'Pickup'
@@ -2436,7 +2504,7 @@ app.post('/customer/rent/:id', async (c) => {
       eligibleCoupon = await findEligibleCoupon(c, couponCode, device, couponFeeParts)
       await checkCustomerCouponEligibility(c, eligibleCoupon, user.id)
     } catch (error: any) {
-      return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, error?.message || '优惠码无效'), 400)
+      return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, error?.message || '优惠码无效', rentPrefill), 400)
     }
     discountAmount = calculateCouponDiscount(eligibleCoupon, couponFeeParts)
     appliedCouponCode = String(eligibleCoupon.code).toUpperCase()
@@ -2456,13 +2524,13 @@ app.post('/customer/rent/:id', async (c) => {
       await reserveCouponForOrder(c, { coupon: eligibleCoupon, customerId: user.id, orderId, discountAmount })
     } catch (error: any) {
       await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(orderId).run()
-      return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, error?.message || '优惠码申请失败，请重新提交订单'), 409)
+      return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, error?.message || '优惠码申请失败，请重新提交订单', rentPrefill), 409)
     }
   }
   const customer = await getUserById(c, user.id)
   const recipients = customer?.staffId ? [customer.staffId] : (await getUsers(c)).filter((account: any) => account.role === 'ADMIN' && account.status !== 'inactive').map((account: any) => account.id)
   await Promise.all(recipients.map((recipientId: string) => createNotification(c, { recipientId, type: 'rental_application', title: deliveryMethod === 'Delivery' ? '新租赁申请及配送确认' : '新租赁申请待审核', message: `${customer?.name || '客户'} 申请租赁 ${device.name}（${startDate} 至 ${endDate}）${deliveryMethod === 'Delivery' ? `，需要配送至：${deliveryAddress}，运费请确认` : '，客户选择到店自取'}。${rentalNote ? `备注：${rentalNote}` : ''}`, orderId: orderId })))
-  return c.redirect(`/customer/orders/${orderId}`)
+  return c.redirect(`/customer/orders/${orderId}?success=${encodeURIComponent(deliveryMethod === 'Delivery' ? '租赁申请已提交。工作人员确认配送范围和运费后，订单将进入待付款状态。' : '租赁申请已提交。工作人员审核通过后，订单将进入待付款状态。')}`)
 })
 
 app.get('/staff/dashboard', async (c) => {
@@ -2479,6 +2547,13 @@ app.get('/staff/dashboard', async (c) => {
 })
 
 app.get('/staff/mobile', async (c) => {
+  const user = c.get('user')
+  if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
+  return c.html(await pages.renderStaffMobileHome(c, user))
+})
+
+// 今日任务列表（原 /staff/mobile 的内容）：工作台首屏的「今日任务」入口指向这里。
+app.get('/staff/mobile/today', async (c) => {
   const user = c.get('user')
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.redirect('/login')
   return c.html(await pages.renderStaffMobileOperations(c, user))
@@ -3014,7 +3089,13 @@ app.get('/staff/contracts/new', async (c) => {
   if (!user || (user.role !== 'STAFF' && user.role !== 'ADMIN')) {
     return c.redirect('/login')
   }
-  return c.html(await pages.renderNewContractPage(c, user))
+  // 合同创建失败后回跳时会带 ?error= 与已填字段，按白名单回填到表单。
+  const contractPrefill: Record<string, string> = {}
+  for (const key of ['deviceId', 'startDate', 'endDate', 'startPeriod', 'endPeriod', 'deliveryMethod', 'returnMethod', 'pickupLocation', 'returnLocation', 'deviceCondition', 'deviceAccessories', 'lateFeePerDay', 'repairCost', 'deliveryFee', 'deliveryStreet', 'deliverySuburb', 'deliveryState', 'deliveryPostcode', 'expiryDuration']) {
+    const value = c.req.query(key)
+    if (value) contractPrefill[key] = String(value)
+  }
+  return c.html(await pages.renderNewContractPage(c, user, contractPrefill))
 })
 
 app.get('/staff/inspections', async (c) => {
@@ -3091,7 +3172,11 @@ app.post('/staff/contracts/:id/data', async (c) => {
   const contract = await getContractById(c, c.req.param('id'))
   if (!contract || (user.role !== 'ADMIN' && (contract.createdBy || contract.created_by) !== user.id)) return c.html(renderForbidden(), 403)
   if (isContractExpired(contract) || ['completed', 'cancelled'].includes(contract.status)) return c.html(renderForbidden(), 403)
-  const form = await parseFormBodyForRequest(c)
+  let form: Record<string, any>
+  try { form = await parseFormBodyForRequest(c) } catch (error: any) {
+    if (String(error?.message || '').startsWith('FORM_LIMIT:')) return c.text('表单内容过长或字段过多', 413)
+    throw error
+  }
   const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
   const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
   // 已签署字段直接忽略，不报错；签署记录始终保持原值。
@@ -3586,14 +3671,14 @@ app.post('/customer/profile/delete-account', async (c) => {
   const form = await c.req.parseBody()
   if (form.confirmDelete !== 'on') return c.html(await pages.renderCustomerProfile(c, user, '请先确认永久删除账户及余额清零事项。', 'error'), 400)
   for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
-    try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) { }
+    try { await c.env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${sqlIdentifier(column)} TEXT`).run() } catch (_) { }
   }
   const requestedAt = new Date()
   const scheduledAt = new Date(requestedAt.getTime() + 7 * 24 * 60 * 60 * 1000)
   await c.env.RENT.prepare("UPDATE users SET deletion_requested_at = ?, deletion_scheduled_at = ? WHERE id = ? AND role = 'CUSTOMER' AND status = 'active'").bind(requestedAt.toISOString(), scheduledAt.toISOString(), user.id).run()
   await deleteAuthSession(c, c.req.header('cookie') ?? null)
   const response = c.redirect('/login?deletion_requested=1')
-  response.headers.set('Set-Cookie', 'session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT')
+  for (const cookie of serializeAuthCookieClear(isSecureRequest(c))) response.headers.append('Set-Cookie', cookie)
   return response
 })
 
@@ -3714,7 +3799,7 @@ app.post('/customer/security', async (c) => {
   await revokeAllSessions(c, user.id)
   const session = await createAuthSession(c, user.id)
   const response = c.html(await pages.renderCustomerSecurity(c, user, '密码已更新，其他设备已退出登录', 'success'))
-  response.headers.set('Set-Cookie', `session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAge}${new URL(c.req.url).protocol === 'https:' ? '; Secure' : ''}`)
+  response.headers.set('Set-Cookie', serializeAuthCookie(session.token, { maxAge: session.maxAge, secure: isSecureRequest(c) }))
   return response
 })
 
@@ -4258,7 +4343,11 @@ app.post('/admin/contracts/:id/data', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const contract = await getContractById(c, c.req.param('id'))
   if (!contract) return c.notFound()
-  const form = await parseFormBodyForRequest(c)
+  let form: Record<string, any>
+  try { form = await parseFormBodyForRequest(c) } catch (error: any) {
+    if (String(error?.message || '').startsWith('FORM_LIMIT:')) return c.text('表单内容过长或字段过多', 413)
+    throw error
+  }
   const allowed = new Set(CONTRACT_OPERATIONAL_FIELDS.map(([name]) => name))
   const existing = typeof contract.contract_data === 'string' ? JSON.parse(contract.contract_data || '{}') : (contract.contract_data || {})
   // 已签署字段直接忽略，不报错；签署记录始终保持原值。
@@ -4822,26 +4911,29 @@ app.get('/admin/reports', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const windowDays = [7, 30, 90, 365].includes(Number(c.req.query('days'))) ? Number(c.req.query('days')) : 30
-  const since = `datetime('now', '-${windowDays} days')`
+  // 窗口天数虽然只能来自上面的枚举，仍然走绑定参数而不是把值拼进 SQL：
+  // 所有以 since 为界的时间列都绑定同一个 `-N days` 偏移量。
+  const since = "datetime('now', ?)"
+  const sinceOffset = `-${windowDays} days`
   const [rentalRevenue, refundTotal, deposits, outstanding, overdue, fleet, rentedDays, damage, maintenance, coupon, referral, methods] = await Promise.all([
-    c.env.RENT.prepare(`SELECT COALESCE(SUM(COALESCE(rental_amount, amount)), 0) AS v FROM payments WHERE status = 'paid' AND paid_at >= ${since}`).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(COALESCE(rental_amount, amount)), 0) AS v FROM payments WHERE status = 'paid' AND paid_at >= ${since}`).bind(sinceOffset).first<{ v: number }>(),
     c.env.RENT.prepare(`SELECT COALESCE(SUM(CASE WHEN r.type = 'cancellation' THEN MAX(0, MIN(r.refund_amount, COALESCE(p.rental_amount, 0))) ELSE MAX(0, r.refund_amount) END), 0) AS v
       FROM payment_refunds r LEFT JOIN payments p ON p.id = r.payment_id
-      WHERE r.status = 'succeeded' AND r.type <> 'deposit' AND r.created_at >= ${since}`).first<{ v: number }>(),
+      WHERE r.status = 'succeeded' AND r.type <> 'deposit' AND r.created_at >= ${since}`).bind(sinceOffset).first<{ v: number }>(),
     c.env.RENT.prepare(`SELECT
         COALESCE(SUM(CASE WHEN deposit_status IN ('HELD','PAID','PARTIALLY_DEDUCTED','REFUND_PENDING') THEN deposit_held_amount ELSE 0 END), 0) AS held,
         COALESCE(SUM(CASE WHEN deposit_status IN ('REFUNDED','PARTIALLY_REFUNDED') AND deposit_refund_at >= ${since} THEN deposit_refund_amount ELSE 0 END), 0) AS refunded,
         COALESCE(SUM(CASE WHEN deposit_status = 'FORFEITED' AND deposit_refund_at >= ${since} THEN deposit_deduction_amount ELSE 0 END), 0) AS forfeited
-      FROM orders`).first<{ held: number; refunded: number; forfeited: number }>(),
+      FROM orders`).bind(sinceOffset, sinceOffset).first<{ held: number; refunded: number; forfeited: number }>(),
     c.env.RENT.prepare("SELECT COALESCE(SUM(totalAmount), 0) AS v FROM orders WHERE status = 'pending_payment'").first<{ v: number }>(),
     c.env.RENT.prepare("SELECT COUNT(*) AS v FROM orders WHERE rental_status = 'OVERDUE' OR (status IN ('active','extended') AND endDate < date('now'))").first<{ v: number }>(),
     c.env.RENT.prepare("SELECT COUNT(*) AS v FROM devices WHERE COALESCE(lifecycle_status, status, '') NOT IN ('RETIRED','retired')").first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT COALESCE(SUM(rentalPeriod), 0) AS v FROM orders WHERE status IN ('active','extended','completed','overdue','returned','pending_return','paid','pending_pickup') AND createdAt >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT COALESCE(SUM(COALESCE(final_cost_cents, estimated_cost_cents)), 0) AS v FROM damage_cases WHERE created_at >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT COALESCE(SUM(cost), 0) AS v FROM maintenance_records WHERE COALESCE(completed_at, started_at) >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT COALESCE(SUM(discount_amount), 0) AS v FROM coupon_redemptions WHERE status = 'REDEEMED' AND COALESCE(redeemed_at, created_at) >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT COALESCE(SUM(reward_amount), 0) AS v FROM referral_rewards WHERE status IN ('APPROVED','AVAILABLE') AND created_at >= ${since}`).first<{ v: number }>(),
-    c.env.RENT.prepare(`SELECT CASE WHEN payment_method = 'card' AND payment_provider = 'square' THEN 'square' ELSE payment_method END AS method, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS count FROM payments WHERE status = 'paid' AND paid_at >= ${since} GROUP BY CASE WHEN payment_method = 'card' AND payment_provider = 'square' THEN 'square' ELSE payment_method END`).all(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(rentalPeriod), 0) AS v FROM orders WHERE status IN ('active','extended','completed','overdue','returned','pending_return','paid','pending_pickup') AND createdAt >= ${since}`).bind(sinceOffset).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(COALESCE(final_cost_cents, estimated_cost_cents)), 0) AS v FROM damage_cases WHERE created_at >= ${since}`).bind(sinceOffset).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(cost), 0) AS v FROM maintenance_records WHERE COALESCE(completed_at, started_at) >= ${since}`).bind(sinceOffset).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(discount_amount), 0) AS v FROM coupon_redemptions WHERE status = 'REDEEMED' AND COALESCE(redeemed_at, created_at) >= ${since}`).bind(sinceOffset).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT COALESCE(SUM(reward_amount), 0) AS v FROM referral_rewards WHERE status IN ('APPROVED','AVAILABLE') AND created_at >= ${since}`).bind(sinceOffset).first<{ v: number }>(),
+    c.env.RENT.prepare(`SELECT CASE WHEN payment_method = 'card' AND payment_provider = 'square' THEN 'square' ELSE payment_method END AS method, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS count FROM payments WHERE status = 'paid' AND paid_at >= ${since} GROUP BY CASE WHEN payment_method = 'card' AND payment_provider = 'square' THEN 'square' ELSE payment_method END`).bind(sinceOffset).all(),
   ])
   return c.html(pages.renderAdminOperationsReport(user, {
     windowDays,
@@ -4879,6 +4971,9 @@ app.get('/admin/data-retention', async (c) => {
   for (const p of policies) {
     const src = RETENTION_PREVIEW_SOURCES[p.category]
     if (!src) continue
+    // 表名 / 列名无法参数化，只能白名单：映射本身是常量，这里再断言一次标识符形状，
+    // 即使以后映射改成来自数据库也不会变成拼接注入点。
+    if (!SQL_IDENTIFIER.test(src.table) || !SQL_IDENTIFIER.test(src.dateCol)) continue
     try {
       const row = await c.env.RENT.prepare(`SELECT COUNT(*) AS v FROM ${src.table} WHERE ${src.dateCol} <= datetime('now', ?)`).bind(`-${Math.max(0, Number(p.retention_days) || 0)} days`).first<{ v: number }>()
       preview[p.category] = Number(row?.v || 0)
@@ -6174,7 +6269,8 @@ async function advanceDeviceCommand(c: any, targetState: 'ACKNOWLEDGED' | 'RUNNI
     return c.json({ ok: true, duplicate: true })
   }
   if (!canTransitionDeviceCommand(from, targetState)) return c.json({ ok: false, error: `Command is not ${targetState === 'ACKNOWLEDGED' ? 'awaiting acknowledgement' : 'runnable'}` }, 409)
-  await c.env.RENT.prepare(`UPDATE device_commands SET status = ?, ${timestampColumn} = COALESCE(${timestampColumn}, CURRENT_TIMESTAMP) WHERE id = ? AND device_id = ? AND status = ?`).bind(targetState, id, device.id, from).run()
+  const timestamp = sqlIdentifier(timestampColumn)
+  await c.env.RENT.prepare(`UPDATE device_commands SET status = ?, ${timestamp} = COALESCE(${timestamp}, CURRENT_TIMESTAMP) WHERE id = ? AND device_id = ? AND status = ?`).bind(targetState, id, device.id, from).run()
   return c.json({ ok: true })
 }
 
@@ -6321,7 +6417,7 @@ export default {
 
         await runScheduledJob(c, 'purge_scheduled_account_deletions', async () => {
           for (const column of ['deletion_requested_at', 'deletion_scheduled_at']) {
-            try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${column} TEXT`).run() } catch (_) { }
+            try { await env.RENT.prepare(`ALTER TABLE users ADD COLUMN ${sqlIdentifier(column)} TEXT`).run() } catch (_) { }
           }
           // Legacy databases differ in which of these columns they carry (snake_case
           // vs camelCase, and some never had a bank `account` column at all — the app
@@ -6355,8 +6451,8 @@ export default {
             updated_at: 'CURRENT_TIMESTAMP',
           }
           const setClause = Object.entries(scrubExpr)
-            .filter(([col]) => userColumns.has(col))
-            .map(([col, expr]) => `${col} = ${expr}`)
+            .filter(([col]) => userColumns.has(col) && SQL_IDENTIFIER.test(col))
+            .map(([col, expr]) => `${sqlIdentifier(col)} = ${expr}`)
             .join(', ')
           const deletedAccountResult = await env.RENT.prepare(`UPDATE users SET ${setClause} WHERE role = 'CUSTOMER' AND status = 'active' AND deletion_scheduled_at IS NOT NULL AND deletion_scheduled_at <= CURRENT_TIMESTAMP`).run()
           return Number(deletedAccountResult.meta?.changes || 0)

@@ -980,7 +980,27 @@ test('staff ongoing orders are read-only and limited to assigned customers', asy
     users: [{ id: 'own-customer', name: 'Own', staff_id: 'staff-1' }, { id: 'other-customer', name: 'Other', staff_id: 'staff-2' }],
     devices: [{ id: 'd1', name: 'Laptop' }],
   }
-  const db = { prepare(sql: string) { const table = /FROM\s+(orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''; return { bind() { return this }, async all() { return { results: rows[table] || [] } } } } }
+  // 归属过滤已经下推成 SQL（`... AND u.staff_id = ?`），这个假 D1 按语句里的
+  // 绑定参数模拟该过滤，保证测试断言的仍是「员工只看自己客户」。
+  const db = {
+    prepare(sql: string) {
+      const table = /FROM\s+(orders|users|devices)/i.exec(sql)?.[1].toLowerCase() || ''
+      let params: any[] = []
+      return {
+        bind(...values: any[]) { params = values; return this },
+        async all() {
+          let results = rows[table] || []
+          if (sql.includes('o.status IN') || /FROM\s+orders/i.test(sql)) {
+            const statuses = params.filter(value => typeof value === 'string' && !String(value).startsWith('staff-'))
+            const staffId = params.find(value => typeof value === 'string' && String(value).startsWith('staff-'))
+            const byCustomer = new Map(rows.users.map(account => [account.id, account]))
+            results = results.filter(order => (!statuses.length || statuses.includes(order.status)) && (!staffId || (byCustomer as Map<string, any>).get(order.userId)?.staff_id === staffId))
+          }
+          return { results }
+        },
+      }
+    },
+  }
   const html = await renderStaffOrdersOngoing({ env: { RENT: db } } as any, { id: 'staff-1', name: 'Staff', email: 'staff@example.com', role: 'STAFF' })
   assert.match(html, /OWN-1/)
   assert.doesNotMatch(html, /OTHER-1|REVIEW-1/)

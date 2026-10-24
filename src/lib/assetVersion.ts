@@ -10,8 +10,16 @@
 import siteStyles from '../styles.css'
 import clientScript from '../appClient.js.txt'
 import { languageScript } from './i18n'
+import { minifyCss } from './cssMin'
 
-export const styleSheetText: string = siteStyles
+// 源文件（排版过的样式表），保留给需要检查原文的测试/工具使用。
+export const styleSheetSource: string = siteStyles
+// /styles.css 实际返回的内容：模块加载时压缩一次，整个 isolate 复用同一个字符串。
+// 传输量因此从 ~195KB 降到 ~162KB（见 tests/perfCssMin.test.ts 的体积断言）。
+export const styleSheetText: string = minifyCss(siteStyles)
+// 压缩后样式的 UTF-8 字节数：/styles.css 直接把它写进 Content-Length，
+// 不必每次请求重新编码统计。
+export const styleSheetByteLength: number = new TextEncoder().encode(styleSheetText).length
 export const appScriptText: string = clientScript
 export const languageScriptText: string = languageScript
 
@@ -25,7 +33,10 @@ function fnv1a(input: string): string {
   return (hash >>> 0).toString(36)
 }
 
-export const styleSheetVersion: string = fnv1a(siteStyles)
+// 指纹必须基于「真正返回给浏览器的字节」，否则改压缩规则而源码不变时 URL 不变，
+// 一年期 immutable 缓存会把旧内容一直留在浏览器里。
+// 加 'css1:' 前缀用于区分「压缩前历史指纹」，升级时强制换一次 URL。
+export const styleSheetVersion: string = fnv1a(`css1:${styleSheetText}`)
 export const styleSheetHref: string = `/styles.css?v=${styleSheetVersion}`
 
 export const appScriptVersion: string = fnv1a(clientScript)

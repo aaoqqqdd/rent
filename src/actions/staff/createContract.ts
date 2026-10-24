@@ -12,6 +12,13 @@ import { depositPaymentModeForRental } from '../../domain/paymentPlan';
 
 export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>, options: { errorPath?: string; rentalLinkId?: string; directSigning?: boolean } = {}): Promise<Response> {
   const errorPath = options.errorPath || '/staff/contracts/new'
+  // 提交失败回到表单时回填已填内容（白名单字段，避免把任意键塞进 URL）。
+  const PREFILL_KEYS = ['deviceId', 'startDate', 'endDate', 'startPeriod', 'endPeriod', 'deliveryMethod', 'returnMethod', 'pickupLocation', 'returnLocation', 'deviceCondition', 'deviceAccessories', 'lateFeePerDay', 'repairCost', 'deliveryFee', 'deliveryStreet', 'deliverySuburb', 'deliveryState', 'deliveryPostcode', 'expiryDuration']
+  const failRedirect = (message: string) => {
+    const query = new URLSearchParams({ error: message })
+    for (const key of PREFILL_KEYS) { const value = String(body[key] ?? '').trim(); if (value) query.set(key, value.slice(0, 500)) }
+    return c.redirect(`${errorPath}?${query.toString()}`)
+  }
   const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, returnLocation } = body;
   const startPeriod = body.startPeriod === 'PM' ? 'PM' : 'AM'
   const endPeriod = body.endPeriod === 'PM' ? 'PM' : 'AM'
@@ -25,55 +32,55 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   let pickupLocationValue = String(body.pickupLocation || '').trim()
   let deliveryAddressData: Record<string, string> = {}
   if (deliveryMethod === 'Pickup') {
-    if (!pickupLocationValue) return c.redirect(`${errorPath}?error=${encodeURIComponent('请选择自取地点')}`)
-    if (user.role !== 'ADMIN' && !allowedLocations.includes(pickupLocationValue)) return c.redirect(`${errorPath}?error=${encodeURIComponent('员工只能选择管理员配置的自取地点')}`)
+    if (!pickupLocationValue) return failRedirect('请选择自取地点')
+    if (user.role !== 'ADMIN' && !allowedLocations.includes(pickupLocationValue)) return failRedirect('员工只能选择管理员配置的自取地点')
   } else {
     const street = String(body.deliveryStreet || '').trim()
     const suburb = String(body.deliverySuburb || '').trim()
     const state = String(body.deliveryState || '').trim().toUpperCase()
     const postcode = String(body.deliveryPostcode || '').trim()
-    if (!street || !suburb || !['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].includes(state) || !/^\d{4}$/.test(postcode)) return c.redirect(`${errorPath}?error=${encodeURIComponent('请填写完整有效的澳洲送货地址')}`)
+    if (!street || !suburb || !['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].includes(state) || !/^\d{4}$/.test(postcode)) return failRedirect('请填写完整有效的澳洲送货地址')
     pickupLocationValue = `${street}, ${suburb} ${state} ${postcode}, Australia`
     deliveryAddressData = { delivery_address: pickupLocationValue, delivery_street: street, delivery_suburb: suburb, delivery_state: state, delivery_postcode: postcode, delivery_place_id: String(body.deliveryPlaceId || '').trim().slice(0, 300) }
   }
   if (returnMethod === 'CourierPickup') {
     returnLocationValue = pickupLocationValue
   } else if (!returnLocationValue || (user.role !== 'ADMIN' && !allowedLocations.includes(returnLocationValue))) {
-    return c.redirect(`${errorPath}?error=${encodeURIComponent('请选择管理员配置的归还店铺')}`)
+    return failRedirect('请选择管理员配置的归还店铺')
   }
 
   if (!deviceId || !startDate || !endDate) {
-    return c.redirect(`${errorPath}?error=${encodeURIComponent('设备、开始日期和结束日期均为必填项')}`);
+    return failRedirect('设备、开始日期和结束日期均为必填项');
   }
   const lateFeePerDay = Number(body.lateFeePerDay)
   const repairCost = body.repairCost === '' ? null : Number(body.repairCost)
   if (!deviceCondition?.trim() || !Number.isFinite(lateFeePerDay) || lateFeePerDay < 0 || (deliveryMethod === 'Delivery' && !deliveryFeeText) || !Number.isFinite(deliveryFee) || deliveryFee < 0 || (repairCost !== null && (!Number.isFinite(repairCost) || repairCost < 0))) {
-    return c.redirect(`${errorPath}?error=${encodeURIComponent('请填写设备状况、取还地点及有效的非负费用')}`);
+    return failRedirect('请填写设备状况、取还地点及有效的非负费用');
   }
 
   const device = await getDeviceById(c, deviceId);
 
   const normalizedStatus = String(device?.status || '').toLowerCase();
-  if (!device || ['maintenance', 'retired'].includes(normalizedStatus)) return c.redirect(`${errorPath}?error=${encodeURIComponent('维修或退役设备不能新建合同')}`)
+  if (!device || ['maintenance', 'retired'].includes(normalizedStatus)) return failRedirect('维修或退役设备不能新建合同')
   const rentalRules = await getDeviceRentalRules(c, deviceId)
   const start = new Date(startDate);
   const end = new Date(endDate);
   const todayValue = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   if (startDate < todayValue || endDate < todayValue) {
-    return c.redirect(`${errorPath}?error=${encodeURIComponent('开始日期和结束日期必须是今天或之后的日期')}`);
+    return failRedirect('开始日期和结束日期必须是今天或之后的日期');
   }
   if (start > end) {
-    return c.redirect(`${errorPath}?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
+    return failRedirect('租赁结束日期必须晚于开始日期');
   }
   const melbourneNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Australia/Melbourne' }))
   const melbourneMinutes = melbourneNow.getHours() * 60 + melbourneNow.getMinutes()
   const periodPassed = (date: string, period: string) => date === todayValue && melbourneMinutes >= (period === 'AM' ? 12 * 60 : 23 * 60)
   const halfDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
-  if (halfDays <= 0) return c.redirect(`${errorPath}?error=${encodeURIComponent('归还时段必须晚于取货时段')}`)
+  if (halfDays <= 0) return failRedirect('归还时段必须晚于取货时段')
   const rentalPeriod = Math.ceil(halfDays / 2);
-  if (rentalPeriod < rentalRules.minimumRentalDays) return c.redirect(`${errorPath}?error=${encodeURIComponent(`最短租赁时间为 ${rentalRules.minimumRentalDays} 天`)}`)
+  if (rentalPeriod < rentalRules.minimumRentalDays) return failRedirect(`最短租赁时间为 ${rentalRules.minimumRentalDays} 天`)
   const unavailable = new Set(rentalRules.unavailableDates)
-  for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) if (unavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`${errorPath}?error=${encodeURIComponent('该设备包含管理员设置的不可用日期')}`)
+  for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) if (unavailable.has(day.toISOString().slice(0, 10))) return failRedirect('该设备包含管理员设置的不可用日期')
   const periodSlots = (period: string) => period === 'AM' ? ['morning_service', 'morning'] : ['afternoon', 'evening_service']
   const periodBlocked = (date: string, period: string) => periodSlots(period).every(slot => (rentalRules.unavailableTimeSlots?.[date] || []).includes(slot))
   for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) {
@@ -82,14 +89,14 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
       const index = Math.round(Date.parse(`${date}T00:00:00Z`) / 86400000) * 2 + (period === 'PM' ? 1 : 0)
       const requestStart = Math.round(Date.parse(`${startDate}T00:00:00Z`) / 86400000) * 2 + (startPeriod === 'PM' ? 1 : 0)
       const requestEnd = Math.round(Date.parse(`${endDate}T00:00:00Z`) / 86400000) * 2 + (endPeriod === 'PM' ? 1 : 0)
-      if (requestStart <= index && index < requestEnd && (periodBlocked(date, period) || periodPassed(date, period))) return c.redirect(`${errorPath}?error=${encodeURIComponent('所选上午/下午时段已过或不可用')}`)
+      if (requestStart <= index && index < requestEnd && (periodBlocked(date, period) || periodPassed(date, period))) return failRedirect('所选上午/下午时段已过或不可用')
     }
   }
-  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays, startPeriod, endPeriod)) return c.redirect(`${errorPath}?error=${encodeURIComponent('该设备在所选日期或缓冲时间内已有订单')}`)
+  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays, startPeriod, endPeriod)) return failRedirect('该设备在所选日期或缓冲时间内已有订单')
   const sameDayBookings = ((await c.env.RENT.prepare(`SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled') AND (startDate = ? OR endDate = ? OR startDate = ? OR endDate = ?)`)
     .bind(deviceId, startDate, startDate, endDate, endDate).all()).results || []) as any[]
-  if (sameDayBookings.some(item => (item.startDate === startDate && item.startPeriod === startPeriod) || (item.endDate === startDate && item.endPeriod === startPeriod))) return c.redirect(`${errorPath}?error=${encodeURIComponent('该设备的取货时段已被出租')}`)
-  if (sameDayBookings.some(item => (item.startDate === endDate && item.startPeriod === endPeriod) || (item.endDate === endDate && item.endPeriod === endPeriod))) return c.redirect(`${errorPath}?error=${encodeURIComponent('该设备的归还时段已被出租')}`)
+  if (sameDayBookings.some(item => (item.startDate === startDate && item.startPeriod === startPeriod) || (item.endDate === startDate && item.endPeriod === startPeriod))) return failRedirect('该设备的取货时段已被出租')
+  if (sameDayBookings.some(item => (item.startDate === endDate && item.startPeriod === endPeriod) || (item.endDate === endDate && item.endPeriod === endPeriod))) return failRedirect('该设备的归还时段已被出租')
 
   const dailyRate = device.pricePerDay;
   const depositAmount = device.depositAmount;
@@ -108,7 +115,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     try {
       coupon = await findEligibleCoupon(c, couponCode, device, couponFeeParts)
     } catch (error: any) {
-      return c.redirect(`${errorPath}?error=${encodeURIComponent(error?.message || '优惠码无效')}`)
+      return failRedirect(error?.message || '优惠码无效')
     }
     discountAmount = calculateCouponDiscount(coupon, couponFeeParts)
     appliedCouponCode = String(coupon.code).toUpperCase()
@@ -203,7 +210,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     source: 'contract_creation',
   })
   try { await insertOrder(c, newOrder) } catch (error) {
-    if (options.rentalLinkId && /RENTAL_LINK_/.test(String(error))) return c.redirect(`${errorPath}?error=${encodeURIComponent('所选租期已被预订，或租赁链接已停用，请重新选择。')}`, 303)
+    if (options.rentalLinkId && /RENTAL_LINK_/.test(String(error))) return failRedirect('所选租期已被预订，或租赁链接已停用，请重新选择。')
     throw error
   }
   await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ? WHERE id = ?')

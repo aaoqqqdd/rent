@@ -40,3 +40,5 @@ lerna-debug.log*
 
 # claude code local tooling / worktrees
 .claude/
+# local verification artifacts (screenshots, temp reports)
+tmp/

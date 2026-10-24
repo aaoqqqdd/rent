@@ -7,7 +7,20 @@ import { buildLayout, getDeviceById, formatCurrency, getDeviceRentalRules } from
 import { pickupTimeSlots, serviceFeeRate } from '../../domain/pickupTimeSlots';
 import type { Context } from 'hono';
 
-export async function renderCustomerRent(c: Context, deviceId: string, user: any, errorMessage?: string) {
+export interface RentFormPrefill {
+  startDate?: string
+  endDate?: string
+  startPeriod?: string
+  endPeriod?: string
+  deliveryMethod?: string
+  pickupTimeSlot?: string
+  returnTimeSlot?: string
+  deliveryAddress?: string
+  rentalNote?: string
+  couponCode?: string
+}
+
+export async function renderCustomerRent(c: Context, deviceId: string, user: any, errorMessage?: string, prefill: RentFormPrefill = {}) {
   const device = await getDeviceById(c, deviceId);
 
   if (!device) {
@@ -20,6 +33,19 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
   // Do not use toISOString() here: UTC can already be tomorrow while the
   // customer is still on the previous local calendar date.
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+
+  // 校验失败重新渲染时保留用户已填内容，避免整页重填。
+  const attr = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] || ch))
+  const prefilledStart = attr(prefill.startDate)
+  const prefilledEnd = attr(prefill.endDate)
+  const prefilledStartPeriod = prefill.startPeriod === 'PM' ? 'PM' : 'AM'
+  const prefilledEndPeriod = prefill.endPeriod === 'PM' ? 'PM' : 'AM'
+  const prefilledDelivery = prefill.deliveryMethod === 'Delivery' ? 'Delivery' : 'Pickup'
+  const prefilledPickup = String(prefill.pickupTimeSlot ?? '')
+  const prefilledReturn = String(prefill.returnTimeSlot ?? '')
+  const prefilledAddress = attr(prefill.deliveryAddress)
+  const prefilledNote = String(prefill.rentalNote ?? '')
+  const prefilledCoupon = attr(prefill.couponCode)
 
   const body = `
     <div class="panel">
@@ -45,23 +71,23 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
 
         <div class="grid grid-2"><div class="form-group">
           <label class="form-label" for="startDate">开始日期</label>
-          <input type="date" id="startDate" name="startDate" class="form-control" min="${today}" required />
+          <input type="date" id="startDate" name="startDate" class="form-control" min="${today}" value="${prefilledStart}" required />
         </div><div class="form-group">
           <label class="form-label" for="startPeriod">开始时段</label>
-          <select id="startPeriod" name="startPeriod" class="form-control"><option value="AM">上午</option><option value="PM">下午</option></select>
+          <select id="startPeriod" name="startPeriod" class="form-control"><option value="AM"${prefilledStartPeriod === 'AM' ? ' selected' : ''}>上午</option><option value="PM"${prefilledStartPeriod === 'PM' ? ' selected' : ''}>下午</option></select>
         </div></div>
         <div class="grid grid-2"><div class="form-group">
           <label class="form-label" for="endDate">结束日期</label>
-          <input type="date" id="endDate" name="endDate" class="form-control" min="${today}" required />
+          <input type="date" id="endDate" name="endDate" class="form-control" min="${today}" value="${prefilledEnd}" required />
         </div><div class="form-group">
           <label class="form-label" for="endPeriod">结束时段</label>
-          <select id="endPeriod" name="endPeriod" class="form-control"><option value="AM">上午</option><option value="PM">下午</option></select>
+          <select id="endPeriod" name="endPeriod" class="form-control"><option value="AM"${prefilledEndPeriod === 'AM' ? ' selected' : ''}>上午</option><option value="PM"${prefilledEndPeriod === 'PM' ? ' selected' : ''}>下午</option></select>
         </div></div>
-        <div class="form-group"><label class="form-label" for="deliveryMethod">设备交付方式</label><select id="deliveryMethod" name="deliveryMethod" class="form-control"><option value="Pickup">到店自取</option><option value="Delivery">送货上门（运费由管理员/员工确认）</option></select></div>
-        <div class="grid grid-2" id="pickupTimeGroup"><div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select id="pickupTimeSlot" name="pickupTimeSlot" class="form-control">${pickupSlots.map(([value, label]) => `<option value="${value}"${value === 'morning' ? ' selected' : ''}>${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select id="returnTimeSlot" name="returnTimeSlot" class="form-control">${pickupSlots.map(([value, label]) => `<option value="${value}"${value === 'morning' ? ' selected' : ''}>${label}</option>`).join('')}</select></div></div>
-        <div class="form-group" id="deliveryAddressGroup" hidden><label class="form-label" for="deliveryAddress">送货地址</label><textarea id="deliveryAddress" name="deliveryAddress" class="form-control" rows="3" placeholder="请填写完整的街道、Suburb、州和邮编"></textarea><small class="form-text">提交后由绑定员工或管理员确认配送范围和运费，暂不在此页面收取。</small></div>
-        <div class="form-group"><label class="form-label" for="rentalNote">申请备注（选填）</label><textarea id="rentalNote" name="rentalNote" class="form-control" rows="2" maxlength="500" placeholder="例如配送时间、设备使用要求等"></textarea></div>
-        <div class="form-group"><label class="form-label" for="couponCode">优惠码（选填）</label><input id="couponCode" name="couponCode" class="form-control" maxlength="40" placeholder="输入优惠码"><small class="form-text" id="couponQuotePreview" aria-live="polite"></small></div>
+        <div class="form-group"><label class="form-label" for="deliveryMethod">设备交付方式</label><select id="deliveryMethod" name="deliveryMethod" class="form-control"><option value="Pickup"${prefilledDelivery === 'Pickup' ? ' selected' : ''}>到店自取</option><option value="Delivery"${prefilledDelivery === 'Delivery' ? ' selected' : ''}>送货上门（运费由管理员/员工确认）</option></select></div>
+        <div class="grid grid-2" id="pickupTimeGroup"><div class="form-group"><label class="form-label" for="pickupTimeSlot">取货时间</label><select id="pickupTimeSlot" name="pickupTimeSlot" class="form-control">${pickupSlots.map(([value, label]) => `<option value="${value}"${value === (prefilledPickup || 'morning') ? ' selected' : ''}>${label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label" for="returnTimeSlot">归还时间</label><select id="returnTimeSlot" name="returnTimeSlot" class="form-control">${pickupSlots.map(([value, label]) => `<option value="${value}"${value === (prefilledReturn || 'morning') ? ' selected' : ''}>${label}</option>`).join('')}</select></div></div>
+        <div class="form-group" id="deliveryAddressGroup" hidden><label class="form-label" for="deliveryAddress">送货地址</label><textarea id="deliveryAddress" name="deliveryAddress" class="form-control" rows="3" placeholder="请填写完整的街道、Suburb、州和邮编">${prefilledAddress}</textarea><small class="form-text">提交后由绑定员工或管理员确认配送范围和运费，暂不在此页面收取。</small></div>
+        <div class="form-group"><label class="form-label" for="rentalNote">申请备注（选填）</label><textarea id="rentalNote" name="rentalNote" class="form-control" rows="2" maxlength="500" placeholder="例如配送时间、设备使用要求等">${prefilledNote}</textarea></div>
+        <div class="form-group"><label class="form-label" for="couponCode">优惠码（选填）</label><input id="couponCode" name="couponCode" class="form-control" maxlength="40" placeholder="输入优惠码" value="${prefilledCoupon}"><small class="form-text" id="couponQuotePreview" aria-live="polite"></small></div>
         <div class="alert" id="rentalRuleMessage">最短租赁时间：${rentalRules.minimumRentalDays} 天。不可用日期：${rentalRules.unavailableDates.length ? rentalRules.unavailableDates.join('、') : '无'}。</div>
         <div class="card" id="quotePreview"><strong>租赁报价</strong><p>请选择租期后查看租金、押金和配送费用。</p></div>
 

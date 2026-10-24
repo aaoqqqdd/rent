@@ -5,6 +5,7 @@
 
 import { buildLayout, formatCurrency, getOrdersWithDetailsForUser } from '../../site';
 import { deliveryStatusInfo } from '../../deliveryStatus';
+import { renderOrderStatusBadge } from '../partials/orderStatusBadge';
 import { Context } from 'hono';
 
 function escape(value: unknown): string {
@@ -23,11 +24,11 @@ function deliveryCell(order: any): string {
 }
 
 function renderRows(orders: any[], actionLabel: string): string {
-  return orders.map((order: any) => `<tr><td>${escape(order.orderNo || '付款后生成')}</td><td>${escape(order.deviceName ?? '')}</td><td>${escape(order.startDate)} ~ ${escape(order.endDate)}</td><td>${formatCurrency(order.totalAmount)}</td><td>${escape(order.status)}</td><td>${deliveryCell(order)}</td><td><a class="link-button" href="/customer/orders/${encodeURIComponent(order.id)}">${actionLabel}</a></td></tr>`).join('')
+  return orders.map((order: any) => `<tr><td>${escape(order.orderNo || '付款后生成')}</td><td>${escape(order.deviceName ?? '')}</td><td>${escape(order.startDate)} ~ ${escape(order.endDate)}</td><td>${formatCurrency(order.totalAmount)}</td><td>${renderOrderStatusBadge(order.status)}</td><td>${deliveryCell(order)}</td><td><a class="link-button" href="/customer/orders/${encodeURIComponent(order.id)}">${actionLabel}</a></td></tr>`).join('')
 }
 
-function renderTable(orders: any[], empty: string, actionLabel: string): string {
-  return orders.length > 0 ? `<div class="table-wrapper"><table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>订单状态</th><th>配送状态</th><th>操作</th></tr></thead><tbody>${renderRows(orders, actionLabel)}</tbody></table></div>` : `<p>${empty}</p>`
+function renderTable(orders: any[], empty: string, actionLabel: string, emptyLinks = ''): string {
+  return orders.length > 0 ? `<div class="table-wrapper"><table class="table"><thead><tr><th>订单号</th><th>设备</th><th>租期</th><th>金额</th><th>订单状态</th><th>配送状态</th><th>操作</th></tr></thead><tbody>${renderRows(orders, actionLabel)}</tbody></table></div>` : `<div class="empty-state"><p>${empty}</p>${emptyLinks}</div>`
 }
 
 export async function renderCustomerOrders(c: Context, user: any) {
@@ -40,8 +41,8 @@ export async function renderCustomerOrders(c: Context, user: any) {
   const body = `
     <div class="panel">
       <div class="section-title"><h2>我的订单</h2><span class="section-note">查看您的所有租赁订单及最新配送状态。</span></div>
-      <h3>待付款订单</h3>${renderTable(pendingOrders, '您目前没有待付款订单。', '去支付')}
-      <h3 style="margin-top: 40px;">当前租赁中</h3>${renderTable(activeOrders, '您目前没有正在租赁的设备。', '查看')}
+      <h3>待付款订单</h3>${renderTable(pendingOrders, '您目前没有待付款订单。', '去支付', '<a class="button button-primary" href="/customer/devices">去挑选设备</a>')}
+      <h3 style="margin-top: 40px;">当前租赁中</h3>${renderTable(activeOrders, '您目前没有正在租赁的设备。', '查看', '<a class="button button-primary" href="/customer/devices">浏览可租设备</a>')}
       <h3 style="margin-top: 40px;">已完成订单</h3>${renderTable(completedOrders, '您目前没有已完成的订单。', '查看')}
       <h3 style="margin-top: 40px;">已取消订单</h3>${renderTable(cancelledOrders, '您目前没有已取消的订单。', '查看')}
     </div>
