@@ -192,7 +192,8 @@ export function renderAdminSettings(user: any) {
             uploadQrImage('wechatQrFile', 'wechat', 'wechatQrUrl'),
           ]);
         } catch (error) {
-          alert('收款码上传失败: ' + (error instanceof Error ? error.message : '请稍后重试'));
+          const message = '收款码上传失败: ' + (error instanceof Error ? error.message : '请稍后重试');
+          if (window.siteToast) window.siteToast(message, 'error'); else alert(message);
           return;
         }
 
@@ -297,17 +298,19 @@ export function renderAdminSettings(user: any) {
         })
         .then(data => {
           if (data.success) {
-            alert('系统设置已保存成功！');
+            if (window.siteToast) window.siteToast('系统设置已保存成功！', 'success'); else alert('系统设置已保存成功！');
             // Reload from D1 so the form always displays the persisted values,
             // rather than the browser's pre-submit values.
-            window.location.reload();
+            setTimeout(() => window.location.reload(), 800);
           } else {
-            alert('保存失败: ' + data.error);
+            const message = '保存失败: ' + data.error;
+            if (window.siteToast) window.siteToast(message, 'error'); else alert(message);
           }
         })
         .catch(error => {
           console.error('Error saving settings:', error);
-          alert('保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。'));
+          const message = '保存失败: ' + (error instanceof Error ? error.message : '请查看控制台获取详情。');
+          if (window.siteToast) window.siteToast(message, 'error'); else alert(message);
         });
         });
       })();

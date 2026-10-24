@@ -136,8 +136,8 @@ export async function renderAdminBalanceTopups(c: Context, user: any) {
         </div>
       </div>
 
-      ${successMessage ? `<div class="page-notification page-notification--success">${successMessage}</div>` : ''}
-      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+      ${successMessage ? `<div data-flash-notice class="page-notification page-notification--success">${successMessage}</div>` : ''}
+      ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
 
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 20px 0;">
         <div class="panel" style="padding: 18px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe;">
@@ -243,11 +243,11 @@ export async function renderAdminBalanceTopups(c: Context, user: any) {
               <td>
                 ${topup.status === 'submitted' ? `
                 <div style="display: flex; flex-direction: column; gap: 8px; min-width: 140px;">
-                  <form method="post" action="/admin/balance-topups/${encodeURIComponent(topup.id)}/approve" data-site-confirm="确认通过这笔充值并立即入账吗？">
+                  <form method="post" action="/admin/balance-topups/${encodeURIComponent(topup.id)}/approve" data-site-confirm="通过后这笔充值会立即记入客户余额。请先核对付款 Reference 与到账金额。" data-confirm-variant="danger" data-confirm-title="确认充值入账？" data-confirm-label="通过并入账">
                     <input type="hidden" name="redirect" value="${redirectTarget}" />
                     <button type="submit" class="button button-sm button-primary" style="width: 100%;">通过并入账</button>
                   </form>
-                  <form method="post" action="/admin/balance-topups/${encodeURIComponent(topup.id)}/reject" data-site-confirm="确认驳回这笔充值吗？">
+                  <form method="post" action="/admin/balance-topups/${encodeURIComponent(topup.id)}/reject" data-site-confirm="确认驳回这笔充值吗？驳回后客户需要重新提交付款凭证。" data-confirm-variant="danger" data-confirm-title="驳回充值？" data-confirm-label="驳回充值">
                     <input type="hidden" name="redirect" value="${redirectTarget}" />
                     <button type="submit" class="button button-sm button-danger" style="width: 100%;">驳回</button>
                   </form>

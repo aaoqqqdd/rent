@@ -239,7 +239,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
           }, 2000);
         }, function(err) {
           console.error('无法复制链接: ', err);
-          alert('复制失败，请手动复制链接');
+          if (window.siteToast) window.siteToast('复制失败，请手动复制链接', 'error'); else alert('复制失败，请手动复制链接');
         });
       });
     </script>`;

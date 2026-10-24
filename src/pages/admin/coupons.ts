@@ -58,7 +58,7 @@ export function renderAdminCoupons(user: any, coupons: any[] = [], devices: any[
     <td>
       <a class="button button-sm button-secondary" href="/admin/coupons/${encodeURIComponent(c.id)}/edit">编辑</a>
       <form method="post" action="/admin/coupons/${encodeURIComponent(c.id)}/toggle" style="display:inline"><button class="button button-sm button-secondary" type="submit">${c.active ? '停用' : '启用'}</button></form>
-      <form method="post" action="/admin/coupons/${encodeURIComponent(c.id)}/delete" style="display:inline" data-site-confirm="确认删除该优惠码吗？"><button class="button button-sm button-danger" type="submit">删除</button></form>
+      <form method="post" action="/admin/coupons/${encodeURIComponent(c.id)}/delete" style="display:inline" data-site-confirm="删除后该优惠码将立即失效，已领取但未使用的优惠码也无法再使用。" data-confirm-variant="danger" data-confirm-title="删除优惠码？" data-confirm-label="删除优惠码"><button class="button button-sm button-danger" type="submit">删除</button></form>
     </td>
   </tr>`).join('')
   const body = `<div class="page-header"><div><p class="section-code">FINANCE / PROMOTIONS</p><h2>优惠码管理</h2><p>创建和管理客户付款时可使用的优惠码。</p></div><a class="button button-secondary" href="/admin/finance">返回财务总览</a></div>

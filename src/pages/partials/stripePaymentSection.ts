@@ -26,11 +26,12 @@ export function stripePaymentHelperScript(): string {
     if (!node) throw new Error('缺少 Payment Element 容器');
     if (!window.Stripe) throw new Error('Stripe.js 未能加载');
     if (!opts || !opts.clientSecret || !opts.publishableKey) throw new Error('缺少支付凭据');
-    var stripe = window.Stripe(opts.publishableKey);
-    var elements = stripe.elements({ clientSecret: opts.clientSecret, appearance: APPEARANCE });
-    var paymentElement = elements.create('payment', { layout: 'tabs' });
-    paymentElement.mount(node);
+    var stripe = opts.deferred ? opts.deferred.stripe : window.Stripe(opts.publishableKey);
+    var elements = opts.deferred ? opts.deferred.elements : stripe.elements({ clientSecret: opts.clientSecret, appearance: APPEARANCE });
+    var paymentElement = opts.deferred ? opts.deferred.paymentElement : elements.create('payment', { layout: 'tabs' });
+    if (opts.deferred) paymentElement.unmount();
     var ready = new Promise(function(resolve){ paymentElement.on('ready', resolve); });
+    paymentElement.mount(node);
     return {
       ready: ready,
       elements: elements,
@@ -38,6 +39,7 @@ export function stripePaymentHelperScript(): string {
         var absoluteReturnUrl = opts.returnUrl ? new URL(opts.returnUrl, window.location.href).href : '';
         return stripe.confirmPayment({
           elements: elements,
+          ...(opts.deferred ? { clientSecret: opts.clientSecret } : {}),
           confirmParams: absoluteReturnUrl ? { return_url: absoluteReturnUrl } : {},
           redirect: 'if_required'
         }).then(function(res){
@@ -54,17 +56,19 @@ export function stripePaymentHelperScript(): string {
     if (!node) throw new Error('缺少 Setup Element 容器');
     if (!window.Stripe) throw new Error('Stripe.js 未能加载');
     if (!opts || !opts.clientSecret || !opts.publishableKey) throw new Error('缺少卡片验证凭据');
-    var stripe = window.Stripe(opts.publishableKey);
-    var elements = stripe.elements({ clientSecret: opts.clientSecret, appearance: APPEARANCE });
-    var paymentElement = elements.create('payment', { layout: 'tabs' });
-    paymentElement.mount(node);
+    var stripe = opts.deferred ? opts.deferred.stripe : window.Stripe(opts.publishableKey);
+    var elements = opts.deferred ? opts.deferred.elements : stripe.elements({ clientSecret: opts.clientSecret, appearance: APPEARANCE });
+    var paymentElement = opts.deferred ? opts.deferred.paymentElement : elements.create('payment', { layout: 'tabs' });
+    if (opts.deferred) paymentElement.unmount();
     var ready = new Promise(function(resolve){ paymentElement.on('ready', resolve); });
+    paymentElement.mount(node);
     return {
       ready: ready,
       confirm: function(){
         var absoluteReturnUrl = opts.returnUrl ? new URL(opts.returnUrl, window.location.href).href : '';
         return stripe.confirmSetup({
           elements: elements,
+          ...(opts.deferred ? { clientSecret: opts.clientSecret } : {}),
           confirmParams: absoluteReturnUrl ? { return_url: absoluteReturnUrl } : {},
           redirect: 'if_required'
         }).then(function(res){

@@ -2534,147 +2534,161 @@ button:disabled {
   accent-color: var(--primary);
 }
 
-.alert {
-  padding: 12px 16px;
-  border-radius: var(--radius);
-  margin-bottom: 16px;
-  border: 1px solid;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  font-size: 0.85rem;
-  line-height: 1.5;
-}
-
-.alert-success {
-  background: var(--success-light);
-  border-color: #86efac;
-  color: #065f46;
-}
-
-.alert-warning {
-  background: var(--warning-light);
-  border-color: #fcd34d;
-  color: #92400e;
-}
-
-.alert-danger {
-  background: var(--danger-light);
-  border-color: #fca5a5;
-  color: #991b1b;
-}
-
-.alert-info {
-  background: var(--info-light);
-  border-color: #7dd3fc;
-  color: #0c4a6e;
-}
-
+/* 消息按影响程度分层：正文提示、操作浮层，以及不可忽略的高危面板。 */
+.alert,
 .page-notification {
-  position: sticky;
-  top: 60px;
-  z-index: 105;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  --notice-ink: #1d4ed8;
+  --notice-bg: #eff6ff;
+  --notice-border: #bfdbfe;
+  --notice-icon: url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><circle cx=%2212%22 cy=%2212%22 r=%229%22/><path d=%22M12 11v6M12 7h.01%22/></svg>');
+  position: relative;
+  top: auto;
+  display: block;
   width: 100%;
-  padding: 14px 18px;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
-  margin-bottom: 18px;
-  font-size: 0.95rem;
-  line-height: 1.5;
+  box-sizing: border-box;
+  margin: 0 0 16px;
+  padding: 13px 16px 13px 44px;
+  border: 1px solid var(--notice-border);
+  border-radius: 8px;
+  color: var(--notice-ink);
+  background: var(--notice-bg);
+  box-shadow: none;
+  font-size: .875rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
 }
 
-/* 风险分是当前客户的持续状态，固定在导航下方，避免滚动风险记录时丢失上下文。 */
-.risk-score-notice {
-  position: fixed;
-  top: 68px;
-  left: clamp(12px, 3vw, 48px);
-  right: clamp(12px, 3vw, 48px);
-  width: auto;
-  margin: 0;
+.alert::before,
+.page-notification::before {
+  content: '';
+  position: absolute;
+  top: 15px;
+  left: 16px;
   display: grid;
-  grid-template-columns: minmax(220px, .9fr) minmax(220px, 1fr) minmax(280px, 1.4fr);
-  gap: 12px 28px;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: currentColor;
+  mask: var(--notice-icon) center / contain no-repeat;
 }
 
-.risk-score-notice>* {
-  margin: 0;
+.alert-success,
+.page-notification--success {
+  --notice-ink: #166534;
+  --notice-bg: #f0fdf4;
+  --notice-border: #bbf7d0;
+  --notice-icon: url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><circle cx=%2212%22 cy=%2212%22 r=%229%22/><path d=%22m8 12 3 3 5-6%22/></svg>');
+}
+
+.alert-warning,
+.page-notification--warning {
+  --notice-ink: #92400e;
+  --notice-bg: #fffbeb;
+  --notice-border: #fde68a;
+  --notice-icon: url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><circle cx=%2212%22 cy=%2212%22 r=%229%22/><path d=%22M12 7v6M12 17h.01%22/></svg>');
+}
+
+.alert-danger,
+.alert-error,
+.page-notification--error {
+  --notice-ink: #991b1b;
+  --notice-bg: #fef2f2;
+  --notice-border: #fecaca;
+  --notice-icon: url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><circle cx=%2212%22 cy=%2212%22 r=%229%22/><path d=%22M12 7v6M12 17h.01%22/></svg>');
+}
+
+.alert p,
+.page-notification p {
+  margin: 6px 0 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.alert p:first-child,
+.page-notification p:first-child {
+  margin-top: 0;
+}
+
+.alert a,
+.page-notification a {
+  text-underline-offset: 3px;
+}
+
+.notice-dismissible {
+  padding-right: 48px;
+}
+
+.notice-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  font: 400 22px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.notice-close:hover {
+  background: rgb(0 0 0 / .06);
+}
+
+.notice-close:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+/* 风险拦截占据正文中的醒目区域，保留原因和处理入口，不覆盖导航或表格。 */
+.page-notification[data-notice-priority="critical"] {
+  padding: 24px 24px 24px 76px;
+  margin-bottom: 24px;
+  border: 1px solid #fca5a5;
+  border-left: 4px solid #b91c1c;
+  background: #fff1f2;
+  color: #881337;
+  font-size: .9375rem;
+}
+
+.page-notification[data-notice-priority="critical"]::before {
+  top: 24px;
+  left: 22px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: #b91c1c url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22white%22 stroke-width=%222%22 stroke-linecap=%22round%22><path d=%22M12 5v9M12 19h.01%22/></svg>') center / 24px no-repeat;
+  mask: none;
+}
+
+.page-notification[data-notice-priority="critical"]>strong {
+  display: block;
+  font-size: 1.125rem;
+  line-height: 1.4;
 }
 
 .risk-score-notice>small {
-  text-align: right;
+  display: block;
+  margin-top: 8px;
 }
 
-body:has(.risk-score-notice) .content {
-  padding-top: 150px;
-}
-
-@media (max-width: 760px) {
-  .risk-score-notice {
-    top: 62px;
-    left: 12px;
-    right: 12px;
-    display: flex;
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
+@media (max-width: 640px) {
+  .page-notification[data-notice-priority="critical"] {
+    padding: 20px 16px 20px 60px;
   }
 
-  .risk-score-notice>small {
-    text-align: left;
+  .page-notification[data-notice-priority="critical"]::before {
+    top: 20px;
+    left: 16px;
+    width: 28px;
+    height: 28px;
   }
-
-  body:has(.risk-score-notice) .content {
-    padding-top: 190px;
-  }
-}
-
-.page-notification--success {
-  background: #ecfdf5;
-  border-color: #a7f3d0;
-  color: #065f46;
-}
-
-.page-notification--error {
-  background: #fee2e2;
-  border-color: #fecaca;
-  color: #991b1b;
-}
-
-.page-notification--info {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  color: #1d4ed8;
-}
-
-.login-card .page-notification {
-  position: static;
-  width: auto;
-  margin: 16px 0;
-  padding: 12px 14px;
-  box-shadow: none;
-  font-size: .92rem;
-}
-
-.motion-status-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.35em;
-  height: 1.35em;
-  margin-right: 8px;
-  border-radius: 50%;
-  font-weight: 800;
-  line-height: 1;
-  vertical-align: -0.15em;
-}
-
-.motion-status-icon svg {
-  width: .9em;
-  height: .9em;
 }
 
 .page-transition-curtain {
@@ -3174,18 +3188,6 @@ body:not(.has-navigated) .content>.page-header {
 .device-catalog-card:hover,
 .payment-option:hover {
   will-change: transform;
-}
-
-.page-notification--success .motion-status-icon,
-.alert-success .motion-status-icon {
-  color: var(--success);
-  background: var(--success-light);
-}
-
-.page-notification--error .motion-status-icon,
-.alert-error .motion-status-icon {
-  color: var(--danger);
-  background: var(--danger-light, #fee2e2);
 }
 
 .card {
@@ -4357,43 +4359,83 @@ button.button {
   transform: translateY(0);
 }
 
-.button-secondary {
+/* button.button 的基础色带 !important，变体必须同样提高优先级，否则 <button> 会全部显示成主色蓝。 */
+.button-secondary,
+button.button-secondary {
   color: var(--text);
   background: var(--surface-strong) !important;
   border-color: #aeb8c1;
   box-shadow: none !important;
 }
 
-.button-secondary:hover {
+.button-secondary:hover,
+button.button-secondary:hover {
   color: var(--primary-dark);
-  background: var(--primary-light);
+  background: var(--primary-light) !important;
   border-color: #8ba9fb;
 }
 
-.button-success {
+.button-success,
+button.button-success {
   background: var(--success) !important;
   border-color: var(--success);
 }
 
-.button-warning {
+.button-success:hover,
+button.button-success:hover {
+  background: #065f46 !important;
+  border-color: #065f46;
+}
+
+.button-warning,
+button.button-warning {
   background: var(--warning) !important;
   border-color: var(--warning);
 }
 
-.button-danger {
+.button-warning:hover,
+button.button-warning:hover {
+  background: #92400e !important;
+  border-color: #92400e;
+}
+
+.button-danger,
+button.button-danger {
   background: var(--danger) !important;
   border-color: var(--danger);
 }
 
-.button-info {
+.button-danger:hover,
+button.button-danger:hover {
+  background: #991b1b !important;
+  border-color: #991b1b;
+}
+
+.button-info,
+button.button-info {
   background: var(--info) !important;
   border-color: var(--info);
 }
 
-.button-sm {
+.button-info:hover,
+button.button-info:hover {
+  background: #075985 !important;
+  border-color: #075985;
+}
+
+.button-sm,
+button.button-sm {
   min-height: 32px;
   padding: 5px 11px;
   font-size: 0.78rem;
+}
+
+.button:disabled,
+button.button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  box-shadow: none !important;
+  transform: none !important;
 }
 
 .link-button {
@@ -4577,27 +4619,6 @@ textarea:focus {
 input[type='checkbox'],
 input[type='radio'] {
   accent-color: var(--primary);
-}
-
-.alert {
-  border-width: 1px 1px 1px 4px;
-  border-radius: 3px;
-}
-
-.alert-success {
-  border-color: var(--success);
-}
-
-.alert-warning {
-  border-color: var(--warning);
-}
-
-.alert-danger {
-  border-color: var(--danger);
-}
-
-.alert-info {
-  border-color: var(--info);
 }
 
 .table-wrapper {
@@ -5772,22 +5793,39 @@ tr:hover td {
   background: var(--text-tertiary);
 }
 
-.action-toast {
+.notification-toast-layer {
   position: fixed;
-  z-index: 100;
-  right: 22px;
-  bottom: 22px;
-  max-width: min(360px, calc(100vw - 44px));
-  padding: 12px 16px;
-  color: #fff;
-  background: var(--graphite);
-  border-left: 4px solid var(--success);
-  box-shadow: var(--shadow-lg);
-  font-weight: 600;
+  z-index: 1190;
+  top: 76px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(400px, calc(100vw - 48px));
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+  pointer-events: none;
 }
 
-.action-toast[data-state="error"] {
-  border-left-color: var(--danger);
+.notification-toast-layer>* {
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.site-toast {
+  margin: 0;
+  background: var(--surface);
+  box-shadow: 0 4px 20px rgb(15 23 42 / .1);
+  animation: feedback-dialog-in 180ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@media (max-width: 640px) {
+  .notification-toast-layer {
+    top: 68px;
+    right: 12px;
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 160px);
+  }
 }
 
 .feedback-dialog {
@@ -5954,27 +5992,40 @@ tr:hover td {
   margin-top: 12px;
 }
 
+.notification-toast.notification-toast--stacked {
+  position: relative;
+  inset: auto;
+  width: 100%;
+}
+
 .site-confirm-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1210;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background: rgba(15, 23, 42, .58);
-  backdrop-filter: blur(6px);
-  animation: feedback-dialog-in 180ms cubic-bezier(.22, 1, .36, 1) both;
-}
-
-.site-confirm-card {
-  width: min(440px, 100%);
-  padding: 30px;
+  margin: auto;
+  padding: 0;
+  width: min(480px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
   color: var(--text-primary);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  text-align: center;
+  border-radius: 12px;
+  box-shadow: 0 24px 80px rgb(15 23 42 / .25);
+}
+
+.site-confirm-overlay[open] {
+  animation: feedback-dialog-in 180ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.site-confirm-overlay::backdrop {
+  background: rgb(15 23 42 / .58);
+  backdrop-filter: blur(4px);
+}
+
+.site-confirm-card {
+  padding: 28px;
+  text-align: left;
 }
 
 .site-confirm-card__mark {
@@ -5982,34 +6033,110 @@ tr:hover td {
   place-items: center;
   width: 44px;
   height: 44px;
-  margin: 0 auto 14px;
-  color: #fff;
-  background: var(--primary);
-  border-radius: 50%;
-  font: 700 1.4rem var(--font-mono);
+  margin: 0 0 18px;
+  color: var(--primary);
+  background: var(--primary-light);
+  border-radius: 10px;
+  font: 700 1.5rem system-ui, sans-serif;
+}
+
+.site-confirm-card__eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: .75rem;
+  font-weight: 600;
 }
 
 .site-confirm-card h2 {
-  margin: 0 0 10px;
-  font-size: 1.2rem;
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  line-height: 1.4;
 }
 
 .site-confirm-card p {
   margin: 0 0 24px;
   color: var(--text-secondary);
+  font-size: .9rem;
+  line-height: 1.8;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.site-confirm-overlay--danger {
+  width: min(540px, calc(100vw - 32px));
+  border-top: 4px solid var(--danger);
+}
+
+.site-confirm-overlay--danger .site-confirm-card__mark {
+  color: var(--danger);
+  background: #fef2f2;
+}
+
+.site-confirm-overlay--danger .site-confirm-card__eyebrow {
+  color: var(--danger);
+}
+
+.site-confirm-verification {
+  margin: 0 0 24px;
+}
+
+.site-confirm-verification label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: .875rem;
+}
+
+.site-confirm-verification .form-control {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.site-confirm-verification textarea.form-control {
+  min-height: 96px;
+  resize: vertical;
 }
 
 .site-confirm-actions {
   display: flex;
-  justify-content: center;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.site-confirm-actions .button {
+  min-height: 44px;
+}
+
+.danger-zone {
+  padding: 24px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fffafa;
+}
+
+.danger-zone h3 {
+  color: #991b1b;
+}
+
+@media (max-width: 640px) {
+  .site-confirm-card {
+    padding: 24px 20px;
+  }
+
+  .site-confirm-actions .button {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
 
   .announcement-overlay,
-  .notification-toast {
+  .site-confirm-overlay[open],
+  .notification-toast,
+  .site-toast {
     animation: none;
   }
 }

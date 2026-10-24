@@ -13,7 +13,7 @@ export function renderAdminDeviceControl(user: any, device: any, commands: any[]
   const isOnline = String(device.agent_status || device.agentStatus || '').toLowerCase() === 'online'
   const stateBadge = (status: string) => `badge ${['SUCCESS', 'SUCCEEDED', 'COMPLETED'].includes(status) ? 'badge-success' : ['FAILED', 'EXPIRED', 'CANCELLED'].includes(status) ? 'badge-danger' : 'badge-warning'}`
   const timeline = (command: any) => [['已发送', command.sent_at], ['已确认', command.acknowledged_at], ['执行中', command.started_at], ['已结束', command.completed_at]].filter(([, at]) => at).map(([label, at]) => `${label} ${esc(formatMelbourneDateTime(at))}`).join(' → ') || '排队中'
-  const rows = commands.length ? commands.map(command => `<tr><td class="mono">${esc(formatMelbourneDateTime(command.created_at))}</td><td>${labels[command.command_type] || esc(command.command_type)}</td><td><span class="${stateBadge(String(command.status))}">${esc(command.status)}</span><div class="form-text mono">${timeline(command)}</div></td><td>${esc(command.result_message || command.error_message || '等待客户端执行')}${command.status === 'QUEUED' ? `<form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/commands/${encodeURIComponent(command.id)}/cancel" style="margin-top:6px" onsubmit="return confirm('取消这条尚未被设备领取的命令？')"><button class="button button-secondary" type="submit">取消命令</button></form>` : ''}</td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无远程命令记录</td></tr>'
+  const rows = commands.length ? commands.map(command => `<tr><td class="mono">${esc(formatMelbourneDateTime(command.created_at))}</td><td>${labels[command.command_type] || esc(command.command_type)}</td><td><span class="${stateBadge(String(command.status))}">${esc(command.status)}</span><div class="form-text mono">${timeline(command)}</div></td><td>${esc(command.result_message || command.error_message || '等待客户端执行')}${command.status === 'QUEUED' ? `<form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/commands/${encodeURIComponent(command.id)}/cancel" style="margin-top:6px" data-site-confirm="取消后设备将不会执行这条远程命令。" data-confirm-title="取消远程命令？" data-confirm-label="取消命令"><button class="button button-secondary" type="submit">取消命令</button></form>` : ''}</td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">暂无远程命令记录</td></tr>'
   const action = (type: string, text: string, className = 'button-secondary') => `<button class="button ${className}" name="commandType" value="${type}" type="submit" ${isOnline ? '' : 'disabled title="设备不在线，无法执行远程操作"'}>${text}</button>`
   const onlineNote = isOnline ? '设备在线，命令会由 Windows 客户端在下一次轮询时领取。' : '设备当前不在线，远程操作已禁用；设备上线后即可操作。'
 
@@ -57,14 +57,14 @@ export function renderAdminDeviceControl(user: any, device: any, commands: any[]
         </form>
       </details>
       ${isOpen ? `<div class="record-actions" style="margin-top:10px">
-        <form method="post" action="/admin/maintenance/${encodeURIComponent(record.id)}/advance" onsubmit="return confirm('推进到下一阶段？')"><button class="button button-primary" type="submit">${record.status === 'CLIENT_CHECK' ? `完成维护（需 10/10 通过，当前 ${passedCount}）` : '推进到下一阶段'}</button></form>
+        <form method="post" action="/admin/maintenance/${encodeURIComponent(record.id)}/advance" data-site-confirm="推进后维护记录将进入下一阶段，且无法回退。" data-confirm-title="推进维护阶段？" data-confirm-label="推进阶段"><button class="button button-primary" type="submit">${record.status === 'CLIENT_CHECK' ? `完成维护（需 10/10 通过，当前 ${passedCount}）` : '推进到下一阶段'}</button></form>
       </div>
       ${['DATA_CLEAN', 'SYSTEM_RESET', 'CLIENT_CHECK'].includes(record.status) ? `<h5 style="margin:12px 0 6px">归还前十项验证</h5>${renderChecks(record)}` : ''}` : ''}
     </div>`
   }).join('') || '<p class="form-text">暂无维护记录。</p>'
 
   const body = `<div class="page-header"><div><p class="section-code">REMOTE CONTROL</p><h2>${esc(device.name)}</h2><p>${esc(device.model)} · ${esc(device.serialNumber || device.serial_number || '无序列号')} · 生命周期 <span class="badge badge-info">${esc(device.lifecycle_status || device.lifecycleStatus || 'READY')}</span></p></div><div class="record-actions"><a class="button button-secondary" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑设备</a><a class="button button-secondary" href="/admin/device-agent-bindings">绑定设备</a></div></div>` +
-    (successMessage ? `<div class="alert alert-success" style="margin-bottom:16px">${esc(successMessage)}</div>` : '') +
+    (successMessage ? `<div data-flash-notice class="alert alert-success" style="margin-bottom:16px">${esc(successMessage)}</div>` : '') +
     `<div class="panel"><h3>远程操作</h3><p class="form-text">${onlineNote}</p><form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/commands"><div class="record-actions">${action('SYNC', '立即同步')}${action('REFRESH_DEVICE_INFO', '刷新设备信息')}${action('CHECK_UPDATE', '检查客户端更新')}${action('PAUSE_RENTAL', '暂停设备', 'button-warning')}${action('RESUME_RENTAL', '恢复设备', 'button-success')}</div><div class="grid grid-2" style="margin-top:14px"><input class="form-control" name="title" maxlength="120" placeholder="通知标题" ${isOnline ? '' : 'disabled'}><input class="form-control" name="message" maxlength="500" placeholder="通知内容" ${isOnline ? '' : 'disabled'}></div>${action('SHOW_MESSAGE', '发送设备通知')}</form></div>` +
     `<div class="panel"><div class="section-title"><h3>维护生命周期</h3><span class="section-note">RETURNED → INSPECTION → MAINTENANCE → READY；损坏可退役</span></div>` +
     `<form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/maintenance" class="grid grid-2" style="gap:10px;margin-bottom:16px">
@@ -73,7 +73,7 @@ export function renderAdminDeviceControl(user: any, device: any, commands: any[]
         <label class="form-group" style="grid-column:1/-1"><span class="form-label">维护说明</span><input class="form-control" name="description" maxlength="1000" required placeholder="例如：客户归还后检出键盘进液，需更换键盘"></label>
         <div style="grid-column:1/-1"><button class="button button-primary" type="submit">新建维护记录</button></div>
       </form>` +
-    `<form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/retire" onsubmit="return confirm('确认退役该设备？退役后不可再出租。')" style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+    `<form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/retire" data-site-confirm="设备退役后将无法再出租。请核对设备、进行中的订单与退役原因。" data-confirm-variant="danger" data-confirm-title="退役设备？" data-confirm-label="退役设备" style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:end">
         <label class="form-group" style="flex:1"><span class="form-label">退役原因</span><input class="form-control" name="reason" maxlength="500" required placeholder="例如：主板损坏，维修成本超过残值"></label>
         <label class="form-check"><input type="checkbox" name="force" value="1"> 强制退役</label>
         <button class="button button-danger" type="submit">退役设备</button>

@@ -6,6 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { isRiskFlagCurrentlyActive, findBlockingRiskFlag } from '../src/site'
+import { renderAdminRiskFlags } from '../src/pages/admin/riskFlags'
 
 test('isRiskFlagCurrentlyActive only depends on status, never expires on its own', () => {
   assert.equal(isRiskFlagCurrentlyActive({ status: 'ACTIVE' }), true)
@@ -36,4 +37,20 @@ test('findBlockingRiskFlag returns the first blocking flag when several are pres
   const soft = { flag_type: 'MANUAL_REVIEW', severity: 'LOW', status: 'ACTIVE' }
   const hard = { flag_type: 'FRAUD_SUSPECTED', severity: 'LOW', status: 'ACTIVE' }
   assert.equal(findBlockingRiskFlag([soft, hard]), hard)
+})
+
+
+test('blocking risk assessment has a persistent critical panel with a next step', () => {
+  const html = renderAdminRiskFlags({ id: 'admin', role: 'ADMIN' }, { id: 'customer', name: '客户' }, [], [], { score: 60, level: 'HIGH', blocked: true, reasons: ['付款失败'] })
+  assert.match(html, /data-notice-priority="critical" role="alert"/)
+  assert.match(html, /高风险：已拦截新增租赁/)
+  assert.match(html, /请核实下方风险原因/)
+  assert.match(html, /付款失败/)
+  assert.doesNotMatch(html, /data-flash-notice/)
+})
+
+test('nonblocking medium risk uses a warning without critical treatment', () => {
+  const html = renderAdminRiskFlags({ id: 'admin', role: 'ADMIN' }, { id: 'customer', name: '客户' }, [], [], { score: 30, level: 'MEDIUM', blocked: false, reasons: [] })
+  assert.match(html, /risk-score-notice page-notification--warning/)
+  assert.doesNotMatch(html, /data-notice-priority="critical"/)
 })

@@ -16,8 +16,8 @@ export async function renderAdminRentalLinks(c: Context, user: any) {
   const locations = getSystemSettings().companyDetails.pickupLocations
   const input = (name: string, label: string, extra = '') => `<div class="form-group"><label class="form-label" for="link-${name}">${label}</label><input class="form-control" id="link-${name}" name="${name}" ${extra}></div>`
   const body = `<div class="page-header"><div><h2>自助租赁链接</h2><p>为单台设备创建固定链接。不同客户打开同一链接，选择各自的租期、签约并付款。</p></div><a class="button button-secondary" href="/admin/orders">查看租赁订单</a></div>
-    ${c.req.query('error') ? `<div class="page-notification page-notification--error" role="alert">${esc(c.req.query('error'))}</div>` : ''}
-    ${c.req.query('created') ? '<div class="page-notification page-notification--success">固定链接已创建，可在下方复制并分享给多个客户。</div>' : ''}
+    ${c.req.query('error') ? `<div data-flash-notice class="page-notification page-notification--error" role="alert">${esc(c.req.query('error'))}</div>` : ''}
+    ${c.req.query('created') ? '<div data-flash-notice class="page-notification page-notification--success">固定链接已创建，可在下方复制并分享给多个客户。</div>' : ''}
     <section class="panel"><h3>创建固定链接</h3><form method="POST" action="/admin/rental-links"><div class="grid grid-2">
       <div class="form-group"><label class="form-label" for="link-deviceId">指定设备</label><select class="form-control" id="link-deviceId" name="deviceId" required><option value="">请选择一台设备</option>${devices.filter(device => !['maintenance', 'retired'].includes(String(device.status))).map(device => `<option value="${esc(device.id)}">${esc(device.name)} · ${esc(device.serialNumber)}</option>`).join('')}</select></div>
       ${input('title', '链接名称（选填）', 'maxlength="120" placeholder="默认使用设备名称"')}

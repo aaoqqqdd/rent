@@ -4,6 +4,82 @@
  * 抽成带内容指纹的外部文件后可长期缓存、只解析一次。SPA 局部导航只替换 .content，
  * 不受影响。以 defer 加载，执行时 DOM 已就绪；不启用 strict 模式以保持与原内联脚本一致。 */
 (function () {
+  // 成功反馈轻量展示；错误和业务警告保留在原处，直到用户处理或关闭。
+  function getNoticeLayer() {
+    var layer = document.getElementById('site-notice-layer');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.id = 'site-notice-layer';
+      layer.className = 'notification-toast-layer';
+      layer.setAttribute('aria-label', '操作反馈与新通知');
+      document.body.appendChild(layer);
+    }
+    return layer;
+  }
+  function addNoticeClose(notice) {
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'notice-close';
+    close.setAttribute('aria-label', '关闭提示');
+    close.textContent = '×';
+    close.addEventListener('click', function () { notice.dismissNotice ? notice.dismissNotice() : notice.remove(); });
+    notice.classList.add('notice-dismissible');
+    notice.appendChild(close);
+  }
+  window.siteToast = function (message, type) {
+    var notice = document.createElement('div');
+    var failed = type === 'error';
+    notice.className = 'alert alert-' + (failed ? 'error' : 'success') + ' site-toast';
+    notice.setAttribute('role', failed ? 'alert' : 'status');
+    notice.setAttribute('aria-atomic', 'true');
+    notice.textContent = String(message || '');
+    notice.dataset.toastType = failed ? 'error' : 'success';
+    var timer;
+    notice.dismissNotice = function () { window.clearTimeout(timer); notice.remove(); };
+    var pause = function () { window.clearTimeout(timer); };
+    var resume = function () {
+      pause();
+      if (!failed && !notice.matches(':hover, :focus-within')) timer = window.setTimeout(notice.dismissNotice, 10000);
+    };
+    addNoticeClose(notice);
+    notice.addEventListener('mouseenter', pause);
+    notice.addEventListener('mouseleave', resume);
+    notice.addEventListener('focusin', pause);
+    notice.addEventListener('focusout', resume);
+    var layer = getNoticeLayer();
+    var previous = Array.from(layer.querySelectorAll('.site-toast')).filter(function (item) { return item.dataset.toastType === 'success'; });
+    if (!failed && previous.length >= 3) previous[0].dismissNotice();
+    layer.appendChild(notice);
+    resume();
+    return notice;
+  };
+  function prepareFlashNotices(isReload) {
+    var notices = document.querySelectorAll('[data-flash-notice]');
+    if (!notices.length) return;
+    var url = new URL(window.location.href);
+    ['success', 'error', 'created', 'reset', 'deletion_requested', 'passwordSetup'].forEach(function (key) {
+      url.searchParams.delete(key);
+    });
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, '', url.href);
+    notices.forEach(function (notice) {
+      if (notice.dataset.flashReady === 'true') return;
+      notice.dataset.flashReady = 'true';
+      // 高危提示由页面明确标记，不能被当作短暂操作反馈隐藏。
+      if (notice.dataset.noticePriority === 'critical') return;
+      var success = notice.matches('.page-notification--success, .alert-success') || notice.querySelector('.alert-success');
+      if (success && !notice.querySelector('a, button, input, form')) {
+        if (!isReload) window.siteToast(notice.textContent, 'success');
+        notice.remove();
+        return;
+      }
+      notice.setAttribute('role', notice.matches('.page-notification--error, .alert-error, .alert-danger') ? 'alert' : 'status');
+      notice.setAttribute('aria-atomic', 'true');
+      addNoticeClose(notice);
+    });
+  }
+  var navigation = window.performance && window.performance.getEntriesByType('navigation')[0];
+  prepareFlashNotices(navigation && navigation.type === 'reload');
+
   function prepareImageUploadForms() {
     document.querySelectorAll('form').forEach(function (form) {
       var proofInput = form.querySelector('input[name="imageUrl"]');
@@ -67,12 +143,15 @@
         button.addEventListener('mousedown', function (event) {
           event.preventDefault();
           root.focus();
-          let value = item[2] || null;
+          // 链接地址用站内弹窗输入；其它格式命令仍是同步执行。
           if (item[1] === 'createLink') {
-            value = window.prompt('请输入链接地址（https://）');
-            if (!value) return;
+            window.sitePrompt('请输入链接地址（https://）', function (value) {
+              root.focus();
+              document.execCommand('createLink', false, value);
+            }, { title: '插入链接', label: '链接地址', placeholder: 'https://', confirmLabel: '插入链接', multiline: false, required: true, maxLength: 2000 });
+            return;
           }
-          document.execCommand(item[1], false, value);
+          document.execCommand(item[1], false, item[2] || null);
         });
         toolbar.appendChild(button);
       });
@@ -104,24 +183,157 @@
       return String(html || '').replace(/<[^>]+>/g, '').trim();
     };
 
-    window.siteConfirm = function (message, onConfirm) {
-      const overlay = document.createElement('div');
-      overlay.className = 'site-confirm-overlay';
-      overlay.innerHTML = '<div class="site-confirm-card" role="dialog" aria-modal="true" aria-labelledby="site-confirm-title"><span class="site-confirm-card__mark">?</span><h2 id="site-confirm-title">请确认操作</h2><p></p><div class="site-confirm-actions"><button type="button" class="button button-secondary" data-confirm-cancel>取消</button><button type="button" class="button button-primary" data-confirm-ok>确认</button></div></div>';
-      overlay.querySelector('p').textContent = message || '确定继续吗？';
-      const close = function () { overlay.remove(); };
-      overlay.querySelector('[data-confirm-cancel]').addEventListener('click', close);
-      overlay.querySelector('[data-confirm-ok]').addEventListener('click', function () { close(); onConfirm(); });
-      document.body.appendChild(overlay);
+    // 确认弹窗与原因填写弹窗共用的外壳：原生 <dialog> 自带焦圈、Esc 关闭和 backdrop。
+    function openSiteModal(options) {
+      // 同一时间只允许一个确认弹窗，避免连续点击叠出多层对话框。
+      if (document.querySelector('[data-site-confirm-dialog]')) return null;
+      options = options || {};
+      const danger = options.danger === true;
+      const previousFocus = document.activeElement;
+      const dialog = document.createElement('dialog');
+      dialog.className = 'site-confirm-overlay' + (danger ? ' site-confirm-overlay--danger' : '');
+      dialog.setAttribute('data-site-confirm-dialog', '');
+      dialog.setAttribute('aria-labelledby', 'site-confirm-title');
+      dialog.setAttribute('aria-describedby', 'site-confirm-description');
+      if (danger) dialog.setAttribute('role', 'alertdialog');
+      dialog.innerHTML = '<div class="site-confirm-card"><span class="site-confirm-card__mark" aria-hidden="true"></span><span class="site-confirm-card__eyebrow"></span><h2 id="site-confirm-title"></h2><p id="site-confirm-description"></p><div class="site-confirm-verification" hidden><label for="site-confirm-input"></label><input id="site-confirm-input" class="form-control" type="text" autocomplete="off" spellcheck="false"><textarea id="site-confirm-textarea" class="form-control" rows="3" hidden></textarea></div><div class="site-confirm-actions"><button type="button" class="button button-secondary" data-confirm-cancel>取消</button><button type="button" class="button" data-confirm-ok></button></div></div>';
+      dialog.querySelector('.site-confirm-card__mark').textContent = options.mark || (danger ? '!' : '?');
+      dialog.querySelector('.site-confirm-card__eyebrow').textContent = options.eyebrow || (danger ? '高风险操作' : '操作确认');
+      dialog.querySelector('h2').textContent = options.title || '请确认操作';
+      dialog.querySelector('p').textContent = options.message || '确定继续吗？';
+      const cancel = dialog.querySelector('[data-confirm-cancel]');
+      const confirm = dialog.querySelector('[data-confirm-ok]');
+      confirm.classList.add(danger ? 'button-danger' : 'button-primary');
+      confirm.textContent = options.confirmLabel || (danger ? '确认执行' : '确认');
+      let closed = false;
+      const close = function () {
+        if (closed) return;
+        closed = true;
+        dialog.close();
+        dialog.remove();
+        if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+      };
+      cancel.addEventListener('click', close);
+      dialog.addEventListener('cancel', function (event) { event.preventDefault(); close(); });
+      dialog.addEventListener('click', function (event) { if (event.target === dialog) close(); });
+      dialog.addEventListener('close', close);
+      document.body.appendChild(dialog);
+      dialog.showModal();
+      return { dialog: dialog, cancel: cancel, confirm: confirm, close: close, verification: dialog.querySelector('.site-confirm-verification') };
+    }
+
+    window.siteConfirm = function (message, onConfirm, options) {
+      options = options || {};
+      const modal = openSiteModal({
+        message: message,
+        title: options.title,
+        confirmLabel: options.confirmLabel,
+        danger: options.danger === true,
+      });
+      if (!modal) return;
+      const input = modal.dialog.querySelector('#site-confirm-input');
+      if (options.requireText) {
+        modal.verification.hidden = false;
+        modal.dialog.querySelector('label').textContent = '请输入“' + options.requireText + '”以确认';
+        modal.confirm.disabled = true;
+        input.addEventListener('input', function () { modal.confirm.disabled = input.value !== options.requireText; });
+      }
+      modal.confirm.addEventListener('click', function () {
+        if (options.requireText && input.value !== options.requireText) return;
+        modal.close();
+        onConfirm();
+      });
+      if (options.requireText) input.focus();
+      else modal.cancel.focus();
     };
 
+    // 原因/备注类输入统一走站内弹窗，返回 Promise 式的回调结果，避免 window.prompt。
+    window.sitePrompt = function (message, onSubmit, options) {
+      options = options || {};
+      const multiline = options.multiline !== false;
+      const modal = openSiteModal({
+        message: message,
+        title: options.title || '请填写内容',
+        confirmLabel: options.confirmLabel || '确认提交',
+        danger: options.danger === true,
+        eyebrow: options.danger === true ? '高风险操作' : '需要填写',
+      });
+      if (!modal) return;
+      modal.verification.hidden = false;
+      const label = modal.dialog.querySelector('label');
+      label.textContent = options.label || '说明';
+      const input = modal.dialog.querySelector(multiline ? '#site-confirm-textarea' : '#site-confirm-input');
+      const unusedInput = modal.dialog.querySelector(multiline ? '#site-confirm-input' : '#site-confirm-textarea');
+      label.setAttribute('for', input.id);
+      unusedInput.remove();
+      input.hidden = false;
+      input.value = String(options.value || '');
+      input.maxLength = Math.max(1, Number(options.maxLength) || 300);
+      input.placeholder = options.placeholder || '';
+      const required = options.required !== false;
+      const sync = function () { modal.confirm.disabled = required && !input.value.trim(); };
+      input.addEventListener('input', sync);
+      sync();
+      modal.confirm.addEventListener('click', function () {
+        const value = input.value.trim();
+        if (required && !value) return;
+        modal.close();
+        onSubmit(value);
+      });
+      input.focus();
+    };
+
+    // 授权只对确认后同步触发的这一次提交生效；取消、校验失败或重试都会重新确认。
+    const confirmedForms = new WeakSet();
+    function replayAuthorizedSubmit(form, submitter) {
+      if (!form.isConnected) return;
+      confirmedForms.add(form);
+      try { form.requestSubmit(submitter && submitter.form === form ? submitter : undefined); }
+      finally { confirmedForms.delete(form); }
+    }
     document.addEventListener('submit', function (event) {
       const form = event.target;
-      if (!(form instanceof HTMLFormElement) || !form.dataset.siteConfirm) return;
+      if (!(form instanceof HTMLFormElement) || confirmedForms.has(form)) return;
+      const submitter = event.submitter;
+      // 需要填写原因的高危操作：先弹出输入框，确认后把值写入隐藏字段再提交。
+      if (form.dataset.sitePrompt) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.sitePrompt(form.dataset.sitePrompt, function (value) {
+          const fieldName = form.dataset.promptName || 'reason';
+          let field = form.querySelector('input[type="hidden"][name="' + fieldName + '"]') || form.querySelector('input[type="hidden"][data-site-prompt-value]');
+          if (!field) {
+            field = document.createElement('input');
+            field.type = 'hidden';
+            field.setAttribute('data-site-prompt-value', '');
+            form.appendChild(field);
+          }
+          field.name = fieldName;
+          field.value = value;
+          replayAuthorizedSubmit(form, submitter);
+        }, {
+          danger: form.dataset.promptVariant === 'danger',
+          title: form.dataset.promptTitle,
+          label: form.dataset.promptLabel,
+          placeholder: form.dataset.promptPlaceholder,
+          confirmLabel: form.dataset.promptConfirmLabel,
+          multiline: form.dataset.promptMultiline !== 'false',
+          required: form.dataset.promptRequired !== 'false',
+          maxLength: form.dataset.promptMaxlength,
+        });
+        return;
+      }
+      if (!form.dataset.siteConfirm) return;
       event.preventDefault();
-      const message = form.dataset.siteConfirm;
-      delete form.dataset.siteConfirm;
-      window.siteConfirm(message, function () { form.requestSubmit(); });
+      event.stopImmediatePropagation();
+      window.siteConfirm(form.dataset.siteConfirm, function () {
+        replayAuthorizedSubmit(form, submitter);
+      }, {
+        danger: form.dataset.confirmVariant === 'danger',
+        title: form.dataset.confirmTitle,
+        confirmLabel: form.dataset.confirmLabel,
+        requireText: form.dataset.confirmText,
+      });
     }, true);
 
     // 表单提交时的加载指示；页面入场动画见 styles.css 的 site-enter。
@@ -186,7 +398,7 @@
       const showNotification = function (notification, unreadCount) {
         const isAnnouncement = notification.type === 'announcement';
         const overlay = document.createElement('div');
-        overlay.className = isAnnouncement ? 'announcement-overlay' : 'notification-toast';
+        overlay.className = isAnnouncement ? 'announcement-overlay' : 'notification-toast notification-toast--stacked';
         overlay.innerHTML = isAnnouncement
           ? '<div class="announcement-card" role="dialog" aria-modal="true" aria-labelledby="announcement-title"><span class="announcement-card__label">网站通告</span><h2 id="announcement-title"></h2><p></p><button class="button button-primary" type="button">以后不再展示此通告</button></div>'
           : '<article class="notification-toast__card" role="status"><div class="notification-toast__header"><span class="notification-toast__mark">N</span><strong></strong><button type="button" aria-label="关闭通知">×</button></div><p></p><a class="button button-sm button-secondary" href="/notifications">查看通知</a></article>';
@@ -194,7 +406,7 @@
         overlay.querySelector('p').innerHTML = isAnnouncement ? (notification.message_html || '') : ('你收到了 ' + unreadCount + ' 条新消息');
         const dismiss = function () { fetch('/notifications/' + encodeURIComponent(notification.id) + '/dismiss', { method: 'POST' }).finally(function () { overlay.remove(); }); };
         overlay.querySelector('.announcement-card button, .notification-toast__header button').addEventListener('click', dismiss);
-        document.body.appendChild(overlay);
+        (isAnnouncement ? document.body : getNoticeLayer()).appendChild(overlay);
       };
       const pollNotifications = function () {
         fetch('/notifications/unread', { headers: { Accept: 'application/json' }, credentials: 'same-origin' }).then(function (response) { return response.ok ? response.json() : null; }).then(function (payload) {
@@ -548,6 +760,7 @@
           // 轻量淡出/淡入过渡由 CSS 处理（body.is-navigating .content），不隐藏到 0，避免长表格页面白闪。
           const swap = function () {
             document.body.classList.add('has-navigated');
+            document.querySelectorAll('.site-toast').forEach(function (notice) { notice.dismissNotice(); });
             content.replaceChildren(...Array.from(nextContent.childNodes));
             pageTitle = parsed.title;
             document.title = pageTitle;
@@ -566,6 +779,7 @@
           swap();
           document.body.classList.remove('is-navigating');
           if (addHistory) window.history.pushState({}, '', url.href);
+          prepareFlashNotices(false);
         } catch (error) {
           // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。
           document.body.classList.remove('is-navigating');
@@ -658,24 +872,7 @@
   });
 })();
 
-  // 站点动画以 CSS 为主（styles.css 的 site-enter 入场、hover/焦点过渡、加载帘幕）。
-  // 这里只做纯 CSS 无法表达的轻量增强：成功/错误提示的状态图标、筛选标签的滑动指示条。
-  window.runSiteAnimations = function () {
-    var content = document.querySelector('.content');
-    if (!content) return;
-    var notices = content.querySelectorAll('.page-notification--success, .alert-success, .page-notification--error, .alert-error');
-    notices.forEach(function (notice) {
-      if (notice.querySelector('.motion-status-icon')) return;
-      var icon = document.createElement('span');
-      icon.className = 'motion-status-icon';
-      var isSuccess = notice.classList.contains('page-notification--success') || notice.classList.contains('alert-success');
-      icon.innerHTML = isSuccess
-        ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>'
-        : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-      icon.setAttribute('aria-hidden', 'true');
-      notice.prepend(icon);
-    });
-  };
+  // 筛选标签的滑动指示条。提示图标由 CSS 绘制，避免破坏正文布局。
   window.runFilterTabMotion = function () {
     document.querySelectorAll('.filter-tabs').forEach(function (group) {
       var active = group.querySelector('.button-primary');
@@ -694,6 +891,5 @@
       }
     });
   };
-  window.addEventListener('load', window.runSiteAnimations);
   window.addEventListener('load', window.runFilterTabMotion);
 })();

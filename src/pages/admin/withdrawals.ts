@@ -77,11 +77,11 @@ export async function renderWithdrawalsPanel(c: Context): Promise<string> {
         <td>${processedAt}</td>
         <td>
           ${withdrawal.status === 'pending' || withdrawal.status === 'approved' ? `
-            <form method="POST" action="/admin/withdrawals/${withdrawal.id}/status" style="display:inline-block; margin-right:8px;">
+            <form method="POST" action="/admin/withdrawals/${withdrawal.id}/status" style="display:inline-block; margin-right:8px;" data-site-confirm="请先确认已向该用户完成银行转账。标记完成后，提现记录将结算。" data-confirm-variant="danger" data-confirm-title="确认提现已转账？" data-confirm-label="标记已完成">
               <input type="hidden" name="status" value="completed" />
               <button type="submit" class="button button-sm button-primary">标记已完成</button>
             </form>
-            <form method="POST" action="/admin/withdrawals/${withdrawal.id}/status" style="display:inline-block;">
+            <form method="POST" action="/admin/withdrawals/${withdrawal.id}/status" style="display:inline-block;" data-site-confirm="标记未完成后，本次提现申请将被驳回，金额仍保留在用户佣金余额中。" data-confirm-variant="danger" data-confirm-title="驳回提现申请？" data-confirm-label="标记未完成">
               <input type="hidden" name="status" value="rejected" />
               <button type="submit" class="button button-sm button-danger">标记未完成</button>
             </form>

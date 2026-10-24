@@ -18,26 +18,11 @@ export function renderOrderStatusFeedback(): string {
         const showError = (message) => {
           errorText.textContent = message || '暂时无法更新订单状态，请稍后重试。';
           if (typeof dialog.showModal === 'function') dialog.showModal();
+          else if (window.siteToast) window.siteToast(errorText.textContent, 'error');
           else window.alert(errorText.textContent);
         };
         document.querySelectorAll('.js-order-status-form').forEach((form) => {
-          form.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            if (form.dataset.forceConfirm === 'true') {
-              delete form.dataset.forceConfirm;
-              window.siteConfirm('确定要跳过归还验机并强制将此订单标记为已完成吗？此操作会释放设备，且不能撤销。', () => form.requestSubmit());
-              return;
-            }
-            const statusField = form.querySelector('[name="status"]');
-            if (statusField && ['suspended', 'cancelled'].includes(statusField.value) && !form.querySelector('[name="reason"]')) {
-              const reason = window.prompt('请填写暂停/取消原因（将随通知发送给客户）：');
-              if (!reason || !reason.trim()) return;
-              const hidden = document.createElement('input');
-              hidden.type = 'hidden';
-              hidden.name = 'reason';
-              hidden.value = reason.trim().slice(0, 300);
-              form.appendChild(hidden);
-            }
+          const submitForm = async () => {
             const button = form.querySelector('button[type="submit"]');
             button.disabled = true;
             button.setAttribute('aria-busy', 'true');
@@ -55,6 +40,36 @@ export function renderOrderStatusFeedback(): string {
               button.disabled = false;
               button.removeAttribute('aria-busy');
             }
+          };
+          form.addEventListener('submit', (event) => {
+            event.preventDefault();
+            if (form.dataset.forceConfirm === 'true') {
+              window.siteConfirm('将跳过归还验机并强制将此订单标记为已完成。此操作会释放设备，且不能撤销。请先核实设备和订单状态。', () => {
+                form.dataset.forceConfirm = 'false';
+                try { form.requestSubmit(); } finally { form.dataset.forceConfirm = 'true'; }
+              }, { danger: true, title: '强制完成订单？', confirmLabel: '强制完成订单', requireText: '完成订单' });
+              return;
+            }
+            const statusField = form.querySelector('[name="status"]');
+            if (statusField && ['suspended', 'cancelled'].includes(statusField.value) && !form.querySelector('[name="reason"]')) {
+              window.sitePrompt('请填写暂停/取消原因，原因会随站内通知和邮件发送给客户。', (reason) => {
+                const hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = 'reason';
+                hidden.value = reason.slice(0, 300);
+                form.appendChild(hidden);
+                submitForm();
+              }, {
+                danger: statusField.value === 'cancelled',
+                title: statusField.value === 'cancelled' ? '取消订单？' : '暂停租赁？',
+                label: statusField.value === 'cancelled' ? '取消原因（必填）' : '暂停原因（必填）',
+                placeholder: '例如：客户申请 / 设备无货 / 订单信息有误',
+                confirmLabel: statusField.value === 'cancelled' ? '确认取消订单' : '确认暂停',
+                maxLength: 300,
+              });
+              return;
+            }
+            submitForm();
           });
         });
       })();

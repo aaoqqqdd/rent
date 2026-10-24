@@ -7,7 +7,7 @@ import type { Context } from 'hono'
 import { buildLayout, sanitizePlainText } from '../../site'
 
 export function renderStaffMobileScan(c: Context, user: any, error = '') {
-  const safeError = error ? `<div class="page-notification page-notification--error">${sanitizePlainText(error, 300)}</div>` : ''
+  const safeError = error ? `<div data-flash-notice class="page-notification page-notification--error">${sanitizePlainText(error, 300)}</div>` : ''
   const cameraButtonLabel = error ? '继续扫码' : '打开相机'
   const body = `<div class="mobile-scan-page">
     <div class="page-header"><div><p class="section-code">CAMERA / QR WORKFLOW</p><h2>扫码作业</h2><p>用手机后置相机扫描客户邮件中的取货二维码。</p></div><a class="button button-secondary" href="/staff/mobile">今日任务</a></div>

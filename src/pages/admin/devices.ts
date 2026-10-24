@@ -89,7 +89,7 @@ export function renderAdminDevices(user: any, devices: any[] = []) {
                 <td>
                   <a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑</a>
                   <a class="link-button" data-full-navigation="true" href="/admin/devices/${encodeURIComponent(device.id)}/control">远程控制</a>
-                  <form method="post" action="/admin/devices/${device.id}/delete" style="display:inline" onsubmit="return confirm('确定要删除此设备吗？此操作不可恢复。')"><button class="link-button-danger" type="submit">删除</button></form>
+                  <form method="post" action="/admin/devices/${device.id}/delete" style="display:inline" data-site-confirm="将删除此设备。此操作不可恢复，请确认已核对设备与历史记录。" data-confirm-variant="danger" data-confirm-title="删除设备？" data-confirm-label="删除设备" data-confirm-text="删除设备"><button class="link-button-danger" type="submit">删除</button></form>
                 </td>
               </tr>
             `;

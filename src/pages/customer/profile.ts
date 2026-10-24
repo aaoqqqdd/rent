@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, getUserById } from '../../site';
+import { buildLayout, getUserById, formatCurrency } from '../../site';
 import { Context } from 'hono';
 
 export async function renderCustomerProfile(c: Context, user: any, message?: string, type: 'success' | 'error' = 'error') {
@@ -45,7 +45,7 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
     `<option value="${country.code}" ${country.code === selectedCountryCode ? 'selected' : ''}>${country.name} (${country.code})</option>`
   ).join('');
 
-  const alertMessage = message ? `<div class="page-notification page-notification--${type}">${esc(message)}</div>` : ''
+  const alertMessage = message ? `<div data-flash-notice class="page-notification page-notification--${type}">${esc(message)}</div>` : ''
   const body = `
     <div class="panel">
       <div class="section-title"><h2>个人信息管理</h2><span class="section-note">编辑您的基本资料和支付账户信息。</span></div>
@@ -97,11 +97,11 @@ export async function renderCustomerProfile(c: Context, user: any, message?: str
       ? `<p class="form-text">您当前已取消订阅营销邮件，不会收到促销和活动邮件。</p><form method="POST" action="/customer/profile/marketing-subscription"><input type="hidden" name="action" value="subscribe"><button class="button button-primary" type="submit">重新订阅营销邮件</button></form>`
       : `<p class="form-text">您当前已订阅营销邮件。订单、合同和付款等重要账户邮件不受此设置影响。</p>`}
       </section>
-      <section class="danger-zone" style="margin-top:32px; padding-top:24px; border-top:1px solid var(--border);">
+      <section class="danger-zone" style="margin-top:32px;">
         <h3>删除账户</h3>
         ${deletionScheduledAt
       ? `<p class="form-text">账户已进入冷静期，将于 <strong>${String(deletionScheduledAt).replace('T', ' ').slice(0, 19)}</strong> 后删除。7 天内重新登录即可取消。</p>`
-      : `<p class="form-text">申请后进入 7 天冷静期。冷静期结束后账户才会永久删除，余额和佣金余额会清零且不退还；合同、订单和支付记录仅保留为“删除账户”。</p><form method="POST" action="/customer/profile/delete-account" onsubmit="if (!this.confirmDelete.checked) { alert('请先勾选确认项'); return false; } return confirm('最终确认：账户将进入7天冷静期，期间重新登录可取消删除。确定继续吗？')"><label class="form-check" style="display:flex;gap:8px;align-items:flex-start;margin:16px 0"><input type="checkbox" name="confirmDelete" required><span>我已了解账户进入冷静期，余额及佣金余额不会退还，合同和订单只保留匿名记录。</span></label><button class="button button-danger" type="submit">申请删除账户</button></form>`}
+      : `<p class="form-text">申请后进入 7 天冷静期。冷静期结束后账户才会永久删除，余额和佣金余额会清零且不退还；合同、订单和支付记录仅保留为“删除账户”。</p><form method="POST" action="/customer/profile/delete-account" data-site-confirm="账户：${esc(userToUse.email)}&#10;申请后将立即退出登录，并进入 7 天冷静期；期间重新登录可取消删除。&#10;冷静期结束后账户将永久删除，账户余额 ${esc(formatCurrency(Number(userToUse.balance) || 0))} 与佣金余额 ${esc(formatCurrency(Number(userToUse.commissionBalance ?? userToUse.commission_balance) || 0))} 会清零且不退还，合同、订单和支付记录将匿名保留。" data-confirm-variant="danger" data-confirm-title="申请删除账户？" data-confirm-label="申请删除账户" data-confirm-text="删除账户"><label class="form-check" style="display:flex;gap:8px;align-items:flex-start;margin:16px 0"><input type="checkbox" name="confirmDelete" required><span>我已了解账户进入冷静期，余额及佣金余额不会退还，合同和订单只保留匿名记录。</span></label><button class="button button-danger" type="submit">申请删除账户</button></form>`}
       </section>
     </div>
     <script>

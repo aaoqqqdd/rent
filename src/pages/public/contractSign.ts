@@ -5,10 +5,11 @@
 
 import { buildLayout, getContractBySignToken, getOrderById, getDeviceById, getUserById, getOrCreateSignSession, formatCurrency, getSystemSettings, loadSystemSettingsFromDB, renderContractVariables, getContractVariableData, findUserBySession, sanitizePlainText, sanitizeRichHtml, splitPersonName, canUseAccountBalance, getCustomerSigningUser, getDeviceRentalRules, getContractCustomerSnapshot } from '../../site';
 import { createOrderPaymentIntent, getStripeProcessingFeeRate } from '../../actions/stripePayments';
-import { depositPaymentModeForOrder } from '../../domain/paymentPlan';
+import { depositPaymentModeForOrder, depositPaymentModeForRental } from '../../domain/paymentPlan';
 import { Context } from 'hono';
 import { stripeJsTag, stripePaymentHelperScript } from '../partials/stripePaymentSection';
 import { decryptSecret } from '../../lib/secretBox';
+import { getStripePublishableKey } from '../../stripe';
 import { legacyPickupSlot, pickupTimeOptions } from '../../domain/pickupTimeSlots';
 
 function isTimeSlotPassed(date: string, slot: string): boolean {
@@ -225,7 +226,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
         <div class="panel">
           ${progressBar}
           <h2>阅读并同意租赁协议</h2>
-          ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+          ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
           
           <p class="section-note">本步骤用于阅读并同意租赁协议。正式合同将在完成资料及取还时间确认后生成。</p>
           <div class="contract-content signing-agreement" id="signing-agreement-scroll" tabindex="0" aria-label="租赁协议正文">
@@ -252,7 +253,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           ${progressBar}
           <h2>${title}</h2>
           
-          ${errorMessage ? `<div class="page-notification page-notification--error"><strong>无法保存资料</strong><p>${errorMessage}</p>${!currentUser && errorMessage.includes('已注册') ? `<a class="button button-secondary" href="/login?redirect=${encodeURIComponent(`/contract/sign?token=${token}&step=2`)}">登录后继续</a>` : ''}</div>` : ''}
+          ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error"><strong>无法保存资料</strong><p>${errorMessage}</p>${!currentUser && errorMessage.includes('已注册') ? `<a class="button button-secondary" href="/login?redirect=${encodeURIComponent(`/contract/sign?token=${token}&step=2`)}">登录后继续</a>` : ''}</div>` : ''}
 
           <form method="POST" action="/contract/sign?token=${token}&step=2" id="sign-form" class="signing-form" novalidate>
             ${currentUser ? `
@@ -320,7 +321,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
           <div class="panel">
             ${progressBar}
             <h2>${title}</h2>
-            ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+            ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
             <p class="section-note">合同签署不需要在线付款。请确认取货和归还时间，提交后合同立即完成签署。</p>
             <form method="POST" enctype="multipart/form-data" action="/contract/sign?${tokenOrNumber === contract.contractNumber ? `number=${tokenOrNumber}` : `token=${tokenOrNumber}`}&step=4">
               <input type="hidden" name="noPayment" value="1">
@@ -333,9 +334,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
         `
         break
       }
+      const stripePublishableKey = systemSettings.paymentMethods.stripe ? await getStripePublishableKey(c).catch(() => '') : '';
       const stripeFeeRate = getStripeProcessingFeeRate();
       const stripeFeePercent = (stripeFeeRate * 100).toFixed(2).replace(/\.00$/, '');
-      const depositPaymentMode = depositPaymentModeForOrder(order);
+      const depositPaymentMode = hasSavedCard ? depositPaymentModeForOrder(order) : depositPaymentModeForRental(Number(order.rentalPeriod || 0));
       const orderDepositAmount = Math.max(0, Number(order.depositAmount || 0));
       const orderServiceFee = Math.max(0, Number((order as any).serviceFee || (order as any).service_fee || 0));
       const stripeImmediatelyPaidAmount = Math.max(0, Number(order.totalAmount) - orderDepositAmount);
@@ -377,7 +379,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
         <div class="panel">
           ${progressBar}
           <h2>${title}</h2>
-          ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+          ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
           
           <div class="alert" id="coupon-total-preview">
             <strong>租金及服务费: ${formatCurrency(stripePrincipal)}</strong>${depositPaymentMode === 'PREAUTH' ? `（押金 ${formatCurrency(orderDepositAmount)} 仅预授权，不立即扣款）` : depositPaymentMode === 'SETUP_INTENT' ? `（押金 ${formatCurrency(orderDepositAmount)} 使用 SetupIntent 保存卡片，不预扣）` : `（含押金 ${formatCurrency(orderDepositAmount)}）`}
@@ -418,6 +420,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
             ${((systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl) || (systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl)) ? `<aside id="rmb-payment-notice" class="bank-transfer-notice" hidden><div class="payment-fee-notice__header"><strong>人民币付款</strong><span class="mono">CNY</span></div><p id="rmb-payment-summary">选择支付宝或微信后获取实时汇率。</p><div class="grid grid-2">${systemSettings.paymentMethods.alipay && systemSettings.rmbPayment.alipayQrUrl ? `<div data-rmb-method="alipay"><strong>支付宝收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.alipayQrUrl)}" alt="支付宝收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}${systemSettings.paymentMethods.wechat && systemSettings.rmbPayment.wechatQrUrl ? `<div data-rmb-method="wechat"><strong>微信收款码</strong><img src="${escapeAttribute(systemSettings.rmbPayment.wechatQrUrl)}" alt="微信收款码" loading="lazy" style="max-width:220px;display:block;margin-top:8px"></div>` : ''}</div><div class="grid grid-2"><div class="form-group"><label class="form-label" for="rmbTransferReference">付款 Reference</label><input class="form-control bank-proof-input" id="rmbTransferReference" name="transferReference" maxlength="100" placeholder="支付宝/微信交易单号"></div><div class="form-group"><label class="form-label" for="rmbTransferProofFile">付款凭证图片</label><input class="form-control bank-proof-input" id="rmbTransferProofFile" name="transferProofFile" type="file" accept="image/jpeg,image/png,image/webp"><span class="field-error" data-payment-error="rmbTransferProofFile"></span></div></div><div class="form-group"><label class="form-label">备注（选填）</label><textarea class="form-control" name="transferNote" maxlength="500"></textarea></div></aside>` : ''}
             ${systemSettings.paymentMethods.stripe ? `
             <aside id="stripe-fee-notice" class="payment-fee-notice" hidden aria-live="polite">
+              <div id="sign-stripe-preview" style="margin:14px 0;min-height:44px"></div>
+              <p id="sign-stripe-preview-error" role="alert" style="color:#b42318" hidden></p>
               <div class="payment-fee-notice__header"><strong>信用卡支付手续费</strong><span class="mono">${stripeFeePercent}%</span></div>
               <p>${depositPaymentMode === 'PREAUTH' ? '信用卡只创建一笔预授权；手续费按租金及服务费计算，不按押金计算。归还时按退款方式捕获：退余额捕获全部授权，原路退回只捕获实际应收金额。' : '选择 Stripe 信用卡支付时，租金及已确定的时段服务费会立即扣款；手续费按这两项计算，不按押金计算。'}</p>
               ${depositPaymentMode === 'PREAUTH' ? `<dl><div class="payment-fee-notice__total"><dt>信用卡预授权总额</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div></dl>` : `<dl><div><dt>租金及服务费</dt><dd data-price="stripePrincipal">${formatCurrency(stripePrincipal)}</dd></div><div><dt>${depositPaymentMode === 'SETUP_INTENT' ? '押金（SetupIntent，不预扣）' : '押金'}</dt><dd>${formatCurrency(orderDepositAmount)}</dd></div><div><dt>Stripe 支付手续费</dt><dd data-price="stripeFee">${formatCurrency(stripeFee)}</dd></div><div class="payment-fee-notice__total"><dt>信用卡最终扣款</dt><dd data-price="stripeTotal">${formatCurrency(stripeTotal)}</dd></div></dl>`}
@@ -519,6 +523,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 fields.style.display = show ? 'block' : 'none';
                 bankInputs.forEach(input => input.required = show);
                 if (stripeFeeNotice) stripeFeeNotice.hidden = payment !== 'stripe';
+                form.dispatchEvent(new Event('payment-preview-updated'));
                 if (bankTransferNotice) bankTransferNotice.hidden = payment !== 'bank_transfer';
                 if (rmbPaymentNotice) rmbPaymentNotice.hidden = !['alipay', 'wechat'].includes(payment);
                 rmbPaymentNotice?.querySelectorAll('[data-rmb-method]').forEach(element => { element.hidden = element.getAttribute('data-rmb-method') !== payment; });
@@ -551,6 +556,8 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               update();
             })();
           </script>
+          ${stripeJsTag()}
+          ${stripePaymentHelperScript()}
           <script>
             (() => {
               const ORDER_ID = ${JSON.stringify(String(order.id))};
@@ -647,14 +654,52 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               }
 
               const form = document.querySelector('form[action*="step=4"]');
-              form.addEventListener('submit', event => {
-                if (resolved || ctx) { event.preventDefault(); return; }
+              const previewNode = document.getElementById('sign-stripe-preview');
+              const previewError = document.getElementById('sign-stripe-preview-error');
+              const previewMode = ${JSON.stringify(depositPaymentMode === 'SETUP_INTENT' ? 'setup' : 'payment')};
+              const publishableKey = ${JSON.stringify(stripePublishableKey)};
+              let deferredStripe = null, submitting = false;
+              const showPreviewError = message => { if (previewError) { previewError.textContent = message || ''; previewError.hidden = !message; } };
+              const updateStripePreview = () => {
+                const method = form.querySelector('input[name="paymentMethod"]:checked')?.value || form.querySelector('input[name="paymentMethod"][type="hidden"]')?.value;
+                if (method !== 'stripe' || !previewNode || ${hasSavedCard ? 'true' : 'false'}) return;
+                try {
+                  if (!publishableKey || !window.Stripe) throw new Error('支付组件暂时无法加载，请稍后重试或选择其他支付方式。');
+                  const amount = Math.round(Number(form.querySelector('[data-price="stripeTotal"]')?.textContent.replace(/[^0-9.]/g, '') || ${stripeTotal}) * 100);
+                  if (deferredStripe) {
+                    if (previewMode === 'payment' && amount !== deferredStripe.amount) { deferredStripe.elements.update({ amount }); deferredStripe.amount = amount; }
+                    return;
+                  }
+                  const stripe = window.Stripe(publishableKey);
+                  const elements = stripe.elements({ mode: previewMode, currency: 'aud', ...(previewMode === 'payment' ? { amount, ${depositPaymentMode === 'PREAUTH' ? "captureMethod: 'manual', setupFutureUsage: 'off_session'," : ''} } : { setupFutureUsage: 'off_session' }), appearance: { theme: 'stripe' } });
+                  const paymentElement = elements.create('payment', { layout: 'tabs' });
+                  const ready = new Promise(resolve => paymentElement.on('ready', resolve));
+                  paymentElement.on('loaderror', event => showPreviewError(event.error?.message || '支付组件加载失败，请刷新重试。'));
+                  paymentElement.mount(previewNode);
+                  deferredStripe = { stripe, elements, paymentElement, ready, amount };
+                  showPreviewError('');
+                } catch (error) { showPreviewError(error.message || '支付组件加载失败，请刷新重试。'); }
+              };
+              form.addEventListener('payment-preview-updated', updateStripePreview);
+              updateStripePreview();
+              form.addEventListener('submit', async event => {
+                if (event.defaultPrevented) return;
+                if (resolved || ctx || submitting) { event.preventDefault(); return; }
                 const method = form.querySelector('input[name="paymentMethod"]:checked')?.value || form.querySelector('input[name="paymentMethod"][type="hidden"]')?.value;
                 if (method !== 'stripe') return;
                 event.preventDefault();
+                submitting = true;
                 const submitBtn = form.querySelector('button[type="submit"]');
                 if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '处理中…'; }
-                const restoreBtn = () => { if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '确认并完成签约'; } };
+                const restoreBtn = () => { submitting = false; if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '确认并完成签约'; } };
+                try {
+                  updateStripePreview();
+                  if (!${hasSavedCard ? 'true' : 'false'} && !deferredStripe) throw new Error(previewError?.textContent || '支付组件尚未加载，请重试。');
+                  if (deferredStripe) {
+                    const result = await deferredStripe.elements.submit();
+                    if (result.error) throw new Error(result.error.message || '请检查银行卡信息。');
+                  }
+                } catch (error) { showPreviewError(error.message); restoreBtn(); return; }
                 const fd = new FormData(form);
                 fd.set('asyncStripe', '1');
                 fetch(form.action, { method: 'POST', body: fd, headers: { Accept: 'application/json' }, credentials: 'same-origin' })
@@ -672,7 +717,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                     else if (d.stripe && d.stripe.clientSecret) { showStripeForm(d.stripe); }
                     else { showWaiting(false); }
                   })
-                  .catch(() => { restoreBtn(); });
+                  .catch(() => { showPreviewError('提交失败，请检查网络后重试。'); restoreBtn(); });
               });
 
               function submitAfterSetup(setupIntentId) {
@@ -685,6 +730,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                   .then(({ ok, d }) => {
                     if (!ok || !d || !d.ok) throw new Error((d && d.error) || '卡片验证成功，但租金支付初始化失败。');
                     ctx = { guest: d.guest || null, redirectTarget: d.redirectTarget || RESULT_URL };
+                    deferredStripe = null;
                     if (d.stripe && d.stripe.clientSecret) showStripeForm(d.stripe); else showWaiting(false);
                   });
               }
@@ -708,10 +754,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 var handle;
                 try {
                   handle = window.__mountStripeSetup(panel.querySelector('#sign-stripe-element'), {
-                    clientSecret: stripe.clientSecret, publishableKey: stripe.publishableKey, returnUrl: window.location.href
+                    clientSecret: stripe.clientSecret, publishableKey: stripe.publishableKey, returnUrl: window.location.href, deferred: deferredStripe
                   });
                 } catch (e) { showErr((e && e.message) || '卡片验证组件加载失败，请刷新重试。'); return; }
-                handle.ready.then(function () { payBtn.disabled = false; });
+                handle.ready.then(function () { payBtn.disabled = false; if (deferredStripe) payBtn.click(); });
                 payBtn.addEventListener('click', function () {
                   showErr(''); payBtn.disabled = true; payBtn.textContent = '处理中…';
                   handle.confirm().then(function (out) {
@@ -746,10 +792,10 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
                 var handle;
                 try {
                   handle = window.__mountStripePayment(panel.querySelector('#sign-stripe-element'), {
-                    clientSecret: stripe.clientSecret, publishableKey: stripe.publishableKey, returnUrl: RESULT_URL
+                    clientSecret: stripe.clientSecret, publishableKey: stripe.publishableKey, returnUrl: RESULT_URL, deferred: deferredStripe
                   });
                 } catch (e) { showErr((e && e.message) || '支付组件加载失败，请刷新重试。'); return; }
-                handle.ready.then(function () { payBtn.disabled = false; });
+                handle.ready.then(function () { payBtn.disabled = false; if (deferredStripe) payBtn.click(); });
                 startPoll();
                 payBtn.addEventListener('click', function () {
                   showErr(''); payBtn.disabled = true; payBtn.textContent = '处理中…';
@@ -761,8 +807,6 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
               }
             })();
           </script>
-          ${stripeJsTag()}
-          ${stripePaymentHelperScript()}
         </div>
       `;
       break;

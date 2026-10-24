@@ -18,10 +18,10 @@ export function renderAdminReferrals(user: any, rewards: any[] = [], settlementD
     <td>${reward.qualified_at ? formatMelbourneDate(reward.qualified_at) : '-'}</td>
     <td>${sanitizePlainText(reward.reason || '-', 200)}</td>
     <td>${reward.status === 'PENDING' || reward.status === 'PENDING_REVIEW' ? `
-      <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/release" style="display:inline"><button class="button button-sm button-primary" type="submit">${reward.status === 'PENDING_REVIEW' ? '审核并发放' : '立即发放'}</button></form>
-      <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/revoke" style="display:inline"><input class="form-control" name="reason" maxlength="300" required placeholder="撤销原因" style="width:140px;display:inline-block"><button class="button button-sm button-danger" type="submit">撤销</button></form>
+      <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/release" style="display:inline" data-site-confirm="发放后奖励金额会立即进入推荐人账户余额。" data-confirm-variant="danger" data-confirm-title="发放推荐奖励？" data-confirm-label="确认发放"><button class="button button-sm button-primary" type="submit">${reward.status === 'PENDING_REVIEW' ? '审核并发放' : '立即发放'}</button></form>
+      <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/revoke" style="display:inline" data-site-confirm="撤销后该笔推荐奖励将不再发放，并写入审计记录。" data-confirm-variant="danger" data-confirm-title="撤销推荐奖励？" data-confirm-label="撤销奖励"><input class="form-control" name="reason" maxlength="300" required placeholder="撤销原因" style="width:140px;display:inline-block"><button class="button button-sm button-danger" type="submit">撤销</button></form>
     ` : reward.status === 'AVAILABLE' ? `
-      <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/revoke" style="display:inline"><input class="form-control" name="reason" maxlength="300" required placeholder="撤销原因" style="width:140px;display:inline-block"><button class="button button-sm button-danger" type="submit">撤销</button></form>
+      <form method="post" action="/admin/referrals/${encodeURIComponent(reward.id)}/revoke" style="display:inline" data-site-confirm="撤销后该笔已发放奖励将被收回，并写入审计记录。" data-confirm-variant="danger" data-confirm-title="撤销已发放奖励？" data-confirm-label="撤销奖励"><input class="form-control" name="reason" maxlength="300" required placeholder="撤销原因" style="width:140px;display:inline-block"><button class="button button-sm button-danger" type="submit">撤销</button></form>
     ` : '-'}</td>
   </tr>`).join('')
   const pendingCount = rewards.filter((r: any) => r.status === 'PENDING').length

@@ -18,7 +18,7 @@ export function renderAdminDataRetention(user: any, policies: any[] = [], previe
     return `<tr>
       <td><strong>${esc(p.label, 80)}</strong><small>${esc(p.category, 60)}</small></td>
       <td class="retention-policy-copy">
-        <form id="${formId}" method="post" action="/admin/data-retention/${encodeURIComponent(p.category)}">
+        <form id="${formId}" method="post" action="/admin/data-retention/${encodeURIComponent(p.category)}" data-site-confirm="保存后将按新的保留期与到期动作处理数据；删除或匿名化不可恢复。" data-confirm-variant="danger" data-confirm-title="保存数据保留策略？" data-confirm-label="保存策略">
           <label>依据<input class="form-control" name="basis" maxlength="200" value="${esc(p.basis, 200)}" required></label>
           <label>备注<input class="form-control" name="notes" maxlength="300" value="${esc(p.notes || '', 300)}"></label>
         </form>

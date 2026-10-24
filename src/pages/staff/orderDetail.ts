@@ -35,7 +35,7 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ])
   const contractExpired = contract ? isContractExpired(contract) : false
-  const alertMessage = message ? `<div class="page-notification page-notification--${type}">${message}</div>` : ''
+  const alertMessage = message ? `<div data-flash-notice class="page-notification page-notification--${type}">${message}</div>` : ''
   const statusLabels: Record<string, string> = { pending: '待处理', pending_approval: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', approved: '已审核，等待签署/付款', paid: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
 
   const body = `
@@ -57,13 +57,13 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         <div class="order-info-card order-actions-card">
           <h3>操作</h3>
           ${['STAFF', 'ADMIN'].includes(user.role) && order.status === 'pending_approval' ? `
-            <form method="POST" action="/staff/orders/${order.id}/approve" class="order-approval-form" style="margin-bottom: 10px;">
+            <form method="POST" action="/staff/orders/${order.id}/approve" class="order-approval-form" style="margin-bottom: 10px;" data-site-confirm="批准后订单将进入待付款/待取货流程，并通知客户。" data-confirm-title="批准订单？" data-confirm-label="批准订单">
               <label class="form-label" for="order-delivery-method">交付方式</label>
               <select id="order-delivery-method" name="deliveryMethod" class="form-control"><option value="Pickup" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? '' : 'selected'}>客户自取</option><option value="Delivery" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? 'selected' : ''}>送货上门</option></select>
               <div id="order-delivery-fee-field" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? '' : 'hidden'}><label class="form-label" for="order-delivery-fee">配送费（AUD）</label><input id="order-delivery-fee" name="deliveryFee" class="form-control" type="number" min="0" step="0.01" value="${Number(order.deliveryFee || 0).toFixed(2)}" ${String(order.deliveryMethod || 'Pickup') === 'Delivery' ? 'required' : 'disabled'} placeholder="请输入配送费"></div>
               <button class="button button-primary" type="submit">批准订单</button>
             </form>
-            <form method="POST" action="/staff/orders/${order.id}/reject">
+            <form method="POST" action="/staff/orders/${order.id}/reject" data-site-confirm="拒绝后订单将被取消，客户会收到通知。请确认已与客户沟通。" data-confirm-variant="danger" data-confirm-title="拒绝订单？" data-confirm-label="拒绝订单">
               <button class="button button-danger" type="submit">拒绝订单</button>
             </form>
           ` : ''}
@@ -72,13 +72,13 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
           ` : ''}
           ${(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && contract?.status === 'signed')) ? `<button class="button button-primary" type="button" id="open-handover-dialog">记录交付并开始租赁</button>` : ''}
           ${order.status === 'active' && order.early_return_requested_at ? `<div class="alert">客户已申请提前归还，等待审批。<form method="post" action="/staff/orders/${order.id}/early-return/approve" style="display:inline;margin-left:12px" data-site-confirm="确认批准客户提前归还吗？"><button class="button button-sm button-warning" type="submit">批准提前归还</button></form></div>` : ''}
-          ${['active', 'extended', 'overdue'].includes(String(order.status)) ? `<form method="POST" action="/staff/orders/${order.id}/suspend" data-site-confirm="确认暂停这笔租赁吗？"><label class="form-label" for="suspend-reason">暂停原因（必填，将随通知发送给客户）</label><input class="form-control" id="suspend-reason" name="reason" maxlength="300" required placeholder="例如：设备无货 / 客户申请"><button class="button button-warning" type="submit" style="margin-top:8px">暂停租赁</button><small class="form-text">仅绑定该客户的员工或管理员可以操作。</small></form>` : ''}
+          ${['active', 'extended', 'overdue'].includes(String(order.status)) ? `<form method="POST" action="/staff/orders/${order.id}/suspend" data-site-confirm="暂停后客户将无法继续使用设备，原因会随通知发送给客户。" data-confirm-title="暂停租赁？" data-confirm-label="暂停租赁"><label class="form-label" for="suspend-reason">暂停原因（必填，将随通知发送给客户）</label><input class="form-control" id="suspend-reason" name="reason" maxlength="300" required placeholder="例如：设备无货 / 客户申请"><button class="button button-warning" type="submit" style="margin-top:8px">暂停租赁</button><small class="form-text">仅绑定该客户的员工或管理员可以操作。</small></form>` : ''}
           ${['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(String(order.status)) ? `
             <a class="button button-success" href="/staff/orders/${order.id}/inspection" data-full-navigation="true">设备归还 / 归还验机</a>
           ` : ''}
           ${['paid', 'active', 'completed', 'pending_return'].includes(String(order.status)) ? `<a class="button button-secondary" href="/orders/${order.id}/invoice">查看发票 / 收据</a>` : ''}
           ${user.role === 'ADMIN' && (order.status === 'active' || order.status === 'paid') ? `
-            <form method="POST" action="/staff/orders/${order.id}/cancel" data-site-confirm="确认取消这笔订单吗？">
+            <form method="POST" action="/staff/orders/${order.id}/cancel" data-site-confirm="取消后订单将终止，设备会释放并通知客户。已付款订单请确认退款方式。" data-confirm-variant="danger" data-confirm-title="取消订单？" data-confirm-label="取消订单">
               <label class="form-label" for="cancel-reason">取消原因（必填，将随通知发送给客户）</label>
               <input class="form-control" id="cancel-reason" name="reason" maxlength="300" required placeholder="例如：设备无货 / 订单金额错误">
               <button class="button button-danger" type="submit" style="margin-top:8px">取消订单</button>

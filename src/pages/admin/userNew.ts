@@ -11,7 +11,7 @@ export function renderAdminUserNew(user: any, errorMessage?: string) {
       <div class="entity-heading"><div><p class="section-code">IDENTITY CONTROL</p><h2>添加新用户</h2><p>创建登录身份并分配系统权限。</p></div><a href="/admin/users" class="button button-secondary">返回用户列表</a></div>
     </div>
     <div class="panel record-panel">
-      ${errorMessage ? `<div class="page-notification page-notification--error">${escapeHtml(errorMessage)}</div>` : ''}
+      ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${escapeHtml(errorMessage)}</div>` : ''}
       <aside class="role-guide">
         <p class="section-code">ROLE GUIDE</p><h3>角色权限</h3>
         <dl><div><dt>CUSTOMER</dt><dd>租赁设备并管理自己的订单</dd></div><div><dt>STAFF</dt><dd>处理订单、合同和设备</dd></div><div><dt>MANAGER</dt><dd>管理 Staff 员工</dd></div><div><dt>ADMIN</dt><dd>管理所有用户、财务及系统设置</dd></div></dl>

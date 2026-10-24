@@ -59,7 +59,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
   const body = `
     <div class="panel">
       <div class="section-title"><h2>推荐计划</h2><span class="section-note">邀请好友，获得推荐奖励。</span></div>
-      ${message ? `<div class="page-notification page-notification--${type || 'info'}">${message}</div>` : ''}
+      ${message ? `<div data-flash-notice class="page-notification page-notification--${type || 'info'}">${message}</div>` : ''}
 
       ${!currentUser.referralCode ? `
         <div style="margin-bottom: 30px; padding: 24px; background: var(--surface-secondary); border-radius: 12px; text-align: center;">
@@ -83,8 +83,8 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
             <textarea class="form-control referral-share-text" id="referralShareText" readonly rows="3" aria-label="推荐分享内容">${referralShareText}</textarea>
           </div>
           
-          <form method="POST" action="/customer/referral/leave" style="margin-top: 16px;">
-            <button type="submit" class="button button-danger" onclick="return confirm('确定要退出推荐计划吗？退出后您的推荐码将失效，且无法再获得新的佣金。')">退出推荐计划</button>
+          <form method="POST" action="/customer/referral/leave" data-site-confirm="退出后您的推荐码将失效，且无法再获得新的佣金。请确认是否继续退出。" data-confirm-variant="danger" data-confirm-title="退出推荐计划？" data-confirm-label="退出推荐计划" style="margin-top: 16px;">
+            <button type="submit" class="button button-danger">退出推荐计划</button>
           </form>
         </div>
       `}
@@ -108,7 +108,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
 
       <div style="margin-top: 30px;" aria-label="佣金提现">
         <h3>奖励提现</h3>
-        <form method="POST" action="/customer/referral/withdraw" id="withdrawForm">
+        <form method="POST" action="/customer/referral/withdraw" id="withdrawForm" data-site-confirm="提交后将按所选方式发起提现；银行转账需要 1-2 个工作日。请确认提现金额与账户信息无误。" data-confirm-variant="danger" data-confirm-title="确认申请提现？" data-confirm-label="申请提现">
           <div class="form-group">
             <label class="form-label" for="withdrawAmount">提现金额</label>
             <input type="number" id="withdrawAmount" name="amount" class="form-control" min="0.01" max="${commissionBalance}" step="0.01" required />
@@ -244,13 +244,13 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
         const referrerCodeInput = document.getElementById('referrerCodeInput');
         referrerCodeInput.select();
         document.execCommand('copy');
-        alert('推荐码已复制到剪贴板！');
+        if (window.siteToast) window.siteToast('推荐码已复制到剪贴板！', 'success'); else alert('推荐码已复制到剪贴板！');
       }
       function copyReferralLink() {
         const input = document.getElementById('referralShareText');
         input.select();
         document.execCommand('copy');
-        alert('推荐语和完整链接已复制到剪贴板！');
+        if (window.siteToast) window.siteToast('推荐语和完整链接已复制到剪贴板！', 'success'); else alert('推荐语和完整链接已复制到剪贴板！');
       }
     </script>
   `;

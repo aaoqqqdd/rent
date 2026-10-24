@@ -12,7 +12,7 @@ export function renderAdminDeviceAccept(user: any, device: any, checkTypes: stri
   const detailLink = isAdmin ? `<a class="button button-secondary" href="/admin/devices/${encodeURIComponent(device.id)}/control">设备详情 / 远程操作</a>` : ''
 
   const body = `<div class="page-header"><div><p class="section-code">DEVICE ACCEPTANCE</p><h2>验收 · ${esc(device.name)}</h2><p>${esc(device.model)} · ${esc(device.serialNumber || device.serial_number || '无序列号')} · 生命周期 <span class="badge badge-info">${esc(lifecycleStatus)}</span></p></div><div class="record-actions">${detailLink}</div></div>` +
-    (successMessage ? `<div class="panel"><p class="alert alert-success">${esc(successMessage)}</p></div>` : '') +
+    (successMessage ? `<div class="panel" data-flash-notice><p class="alert alert-success">${esc(successMessage)}</p></div>` : '') +
     (blockedReason ? `<div class="panel"><p class="alert alert-warning">${esc(blockedReason)}</p><p class="form-text">${isAdmin ? `请到<a href="/admin/devices/${encodeURIComponent(device.id)}/control">设备详情</a>页处理进行中的维护记录，或等待关联订单结束后再来验收。` : '请联系管理员处理进行中的维护记录，或等待关联订单结束后再来验收。'}</p></div>` : successMessage ? '' : `
     <div class="panel">
       <div class="section-title"><h3>归还前十项验证</h3><span class="section-note">状况良好可一次性提交；十项全部通过后设备立即变为可用</span></div>

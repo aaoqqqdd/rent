@@ -157,11 +157,12 @@ export async function renderNewContractPage(c: Context, user: any) {
       ${devices.length === 0 ? '<p style="margin-top: 16px; color: var(--text-secondary);">当前没有可出租设备；维修或退役设备不会显示。</p>' : ''}
     </div>
     <script>
-      const urlParams = new URLSearchParams(window.location.search);
-      const error = urlParams.get('error');
-      if (error) {
-        alert(decodeURIComponent(error));
-      }
+      document.addEventListener('DOMContentLoaded', () => {
+        const error = new URLSearchParams(window.location.search).get('error');
+        if (!error) return;
+        const message = decodeURIComponent(error);
+        if (window.siteToast) window.siteToast(message, 'error'); else alert(message);
+      });
 
       const validFromInput = document.getElementById('valid-from');
       const validUntilInput = document.getElementById('valid-until');

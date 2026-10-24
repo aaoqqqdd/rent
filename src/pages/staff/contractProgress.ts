@@ -57,7 +57,6 @@ export async function renderStaffContractProgress(c: Context, user: any, contrac
         ${contract.status === 'signed' ? `<a class="button button-primary" href="/staff/contract/view?orderId=${contract.rentalId}">查看/下载合同</a><button class="button button-secondary" onclick="window.print()">打印签署记录</button>` : '<span class="section-note">正式合同将在客户完成签署后开放下载。</span>'}
       </div>
     </div>
-    <div id="action-toast" class="action-toast" role="status" aria-live="polite" hidden></div>
 
     <script>
       (() => {
@@ -65,15 +64,14 @@ export async function renderStaffContractProgress(c: Context, user: any, contrac
         if (!button) return;
         button.addEventListener('click', async () => {
           const field = document.getElementById('signLink');
-          const toast = document.getElementById('action-toast');
           try {
             const link = field.value;
             if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(link);
             else { field.value = link; field.select(); document.execCommand('copy'); }
             button.textContent = '已复制';
-            toast.textContent = '签署链接已复制'; toast.dataset.state = 'success'; toast.hidden = false;
-            window.setTimeout(() => { button.textContent = '复制链接'; toast.hidden = true; }, 2000);
-          } catch { toast.textContent = '复制失败，请选中输入框手工复制'; toast.dataset.state = 'error'; toast.hidden = false; }
+            window.siteToast('签署链接已复制', 'success');
+            window.setTimeout(() => { button.textContent = '复制链接'; }, 2000);
+          } catch { window.siteToast('复制失败，请选中输入框手工复制', 'error'); }
         });
       })();
     </script>

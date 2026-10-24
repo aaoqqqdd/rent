@@ -35,8 +35,8 @@ export function renderCustomerBalanceTopUp(c: Context, user: any, error = '', pe
   }
   const squareReloadScript = `<script>(function(){window.addEventListener('square-payment-updated',function(event){if(Number((event.detail||{}).squarePaidAmountCents||0)>0)window.setTimeout(function(){window.location.reload()},250)})})();</script>`
   const body = `<div class="entity-header"><div class="identity-strip mono"><span>ACCOUNT / TOP UP</span><span>WALLET FUNDING</span></div><div class="entity-heading"><div><p class="section-code">WALLET</p><h2>余额充值</h2><p>选择充值金额和支付方式，充值到账后可用于租赁订单付款。</p></div><strong class="balance-hero-value">${formatCurrency(user.balance)}</strong></div></div>
-    ${success ? `<div class="page-notification page-notification--success">付款已提交，到账后余额会自动更新，可刷新查看。</div>` : ''}
-    ${error ? `<div class="page-notification page-notification--error">${error}</div>` : ''}
+    ${success ? `<div data-flash-notice class="page-notification page-notification--success">付款已提交，到账后余额会自动更新，可刷新查看。</div>` : ''}
+    ${error ? `<div data-flash-notice class="page-notification page-notification--error">${error}</div>` : ''}
     ${payTopup ? `<div class="panel"><h3>${isSquareTopUp ? '礼品卡充值' : '信用卡充值'}</h3>
       <dl class="data-list" style="margin:8px 0">
         <div><dt>充值金额</dt><dd>${formatCurrency(payTopup.amount)}</dd></div>

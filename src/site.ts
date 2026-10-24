@@ -1681,66 +1681,84 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
 
   const navIcons: Record<string, string> = {
     '/customer/dashboard': '⌂', '/customer/rentals': '▤', '/customer/orders': '▦',
-    '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': '▣', '/customer/balance': '◌', '/customer/guest': '▰', '/customer/guest/upgrade': '↥',
+    '/customer/profile': '◎', '/customer/security': '⚿', '/customer/referral': '✦', '/customer/devices': 'laptop', '/customer/balance': '◌', '/customer/guest': '▰', '/customer/guest/upgrade': '↥',
     '/staff/dashboard': '◍', '/staff/orders': '◓', '/staff/orders/ongoing': '◷', '/staff/customers': '♧', '/staff/contracts': '▱',
-    '/staff/contracts/new': '+', '/staff/contracts?status=pending_sign': '✍', '/staff/inspections': '◈', '/staff/mobile/scan': '▦', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
+    '/staff/contracts/new': 'file-plus', '/staff/contracts?status=pending_sign': '✍', '/staff/inspections': '◈', '/staff/mobile/scan': 'scan', '/staff/rentals/tracking': '⌖', '/staff/devices': '▭', '/manager/staff': '♙',
+    '/staff/mobile': 'today', '/staff/mobile?stage=pickup': 'pickup', '/staff/mobile?stage=return': 'return',
+    '/admin/notifications/settings': 'bell-settings', '/admin/rental-links': 'link', '/admin/delivery': 'truck',
+    '/admin/marketing-emails/data': 'marketing-chart', '/admin/api-settings': 'code',
     '/notifications': 'N', '/admin/notifications': 'inbox', '/admin/dashboard': 'grid', '/admin/users': '♙', '/admin/orders': '▥',
-    '/admin/refunds': '↺', '/admin/contracts': '⌑', '/admin/templates/contract': '▧', '/admin/finance': '$',
-    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/in-app-notification-templates': '▤', '/admin/tax-invoice-template': '▣', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
+    '/admin/refunds': '↺', '/admin/contracts': '▱', '/admin/templates/contract': '▧', '/admin/finance': '$',
+    '/admin/withdrawals': '↗', '/admin/exceptions': 'alert', '/admin/devices': 'laptop', '/admin/device-agent-bindings': '⌁', '/admin/inspections': '◈', '/admin/calendar': '◫', '/admin/coupons': '%', '/admin/templates': '◇', '/admin/email-templates': '✉', '/admin/in-app-notification-templates': 'message-template', '/admin/tax-invoice-template': 'receipt', '/admin/marketing-emails': '⚑', '/admin/settings': '⚙',
     '/admin/devices/reports': 'chart', '/admin/reports': 'trend', '/admin/data-retention': '⧗', '/admin/monitoring': 'activity', '/admin/connectivity': '⌘', '/admin/referrals': 'gift',
-    '/admin/order-review': '⚑', '/admin/orders/balance-topups': '↥', '/admin/feedback-rewards': '✦', '/admin/feedback-gift-cards': 'gift'
+    '/admin/order-review': 'order-review', '/admin/orders/balance-topups': '↥', '/admin/feedback-rewards': 'feedback-reward', '/admin/feedback-gift-cards': 'gift-card'
   }
 
   const navIconSvg = (kind: string) => {
     const paths: Record<string, string> = {
       '◉': '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle>',
-      '▤': '<rect x="5" y="4" width="14" height="16" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path>',
-      '▦': '<rect x="5" y="5" width="14" height="14" rx="2"></rect><path d="M9 5v14M15 5v14M5 9h14M5 15h14"></path>',
+      '▤': '<rect x="5" y="4" width="14" height="17" rx="2"></rect><path d="M9 4V2h6v2M8 9h8M8 13h8M8 17h5"></path>',
+      '▦': '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"></path><path d="M9 7h6M9 11h6M9 15h3"></path>',
       '◎': '<circle cx="12" cy="8" r="3"></circle><path d="M6 20c.7-3.3 2.7-5 6-5s5.3 1.7 6 5"></path>',
       '▣': '<rect x="5" y="5" width="14" height="14" rx="2"></rect><path d="M8 8h8v8H8z"></path>',
-      '⚙': '<circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"></path>',
+      '⚙': '<path d="m10 3-.5 3-2 .9L5 5l-2 3 2.5 2-.2 2L3 14l2 3 3-1 1.5 1.2.5 3h4l.5-3 2-.9L19 18l2-3-2.5-2 .2-2L21 9l-2-3-3 1L14.5 6 14 3h-4Z"></path><circle cx="12" cy="12" r="3"></circle>',
       'N': '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path>',
       '◷': '<circle cx="12" cy="12" r="8"></circle><path d="M12 7v5l3 2"></path>',
       '↺': '<path d="M5 9a8 8 0 1 1 1 8"></path><path d="M5 5v4h4"></path>',
       '↗': '<path d="M7 17 17 7M9 7h8v8"></path>',
       '$': '<path d="M12 3v18M16 7.5c-.8-1-2-1.5-4-1.5-2.4 0-4 1.2-4 3s1.6 3 4 3 4 1.2 4 3-1.6 3-4 3c-2 0-3.2-.5-4-1.5"></path>',
       '⚿': '<rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>',
-      '✦': '<path d="m12 3 1.7 6.3L20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3Z"></path>',
+      '✦': '<circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="5" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"></path>',
       '◈': '<rect x="6" y="4" width="12" height="17" rx="2"></rect><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"></path><path d="m9 13 2 2 4-4"></path>',
       'grid': '<rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect>',
       'alert': '<path d="M12 3 2 20h20L12 3Z"></path><path d="M12 9.5v4.5"></path><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"></circle>',
       'inbox': '<path d="M4 12h4l2 3h4l2-3h4"></path><path d="M5.5 5h13L21 12v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6L5.5 5Z"></path>',
       'chart': '<path d="M4 20V10M10 20V4M16 20v-6"></path><path d="M3 20h18"></path>',
-      'gift': '<rect x="3" y="8" width="18" height="13" rx="1"></rect><path d="M3 8h18M12 8v13"></path><path d="M12 8c-2-3-6-3-6 0M12 8c2-3 6-3 6 0"></path>',
+      'gift': '<rect x="3" y="8" width="18" height="4" rx="1"></rect><path d="M5 12v9h14v-9M12 8v13"></path><path d="M12 8H8a3 3 0 1 1 3-3l1 3Zm0 0h4a3 3 0 1 0-3-3l-1 3Z"></path>',
       'laptop': '<rect x="3" y="4" width="18" height="12" rx="1.5"></rect><path d="M2 20h20"></path>',
       '+': '<path d="M12 5v14M5 12h14"></path>',
-      '♙': '<circle cx="12" cy="8" r="3"></circle><path d="M5 20c.8-3.2 3.1-5 7-5s6.2 1.8 7 5"></path><path d="M8 4h8"></path>',
-      '▥': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M4 10h16M9 10v9M15 10v9"></path>',
+      '♙': '<circle cx="9" cy="8" r="3"></circle><path d="M3 20v-2a6 6 0 0 1 10-4M18 12l4 2v3c0 2-2 4-4 5-2-1-4-3-4-5v-3l4-2Z"></path><path d="m16.5 17 1 1 2-2"></path>',
+      '▥': '<rect x="4" y="5" width="16" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M8 11h8M8 15h8M8 18h4"></path>',
       '⌑': '<path d="m12 3 8 5-8 5-8-5 8-5Z"></path><path d="m6 12 6 4 6-4M6 16l6 4 6-4"></path>',
-      '⌁': '<rect x="5" y="6" width="14" height="12" rx="2"></rect><path d="M8 9h8M8 13h5"></path><circle cx="17" cy="16" r="2"></circle>',
-      '◫': '<rect x="5" y="4" width="14" height="16" rx="2"></rect><path d="M8 8h8M8 12h3M13 12h3M8 16h8"></path>',
-      '%': '<circle cx="8" cy="8" r="2"></circle><circle cx="16" cy="16" r="2"></circle><path d="m17 7-10 10"></path>',
-      '◇': '<path d="m12 3 8 9-8 9-8-9 8-9Z"></path><path d="M9 12h6"></path>',
+      '⌁': '<rect x="3" y="3" width="14" height="11" rx="2"></rect><path d="M10 14v4M6 18h6M15 17l2-2a2.1 2.1 0 0 1 3 3l-2 2a2.1 2.1 0 0 1-3 0M13 19l-2 2a2.1 2.1 0 0 1-3-3l2-2a2.1 2.1 0 0 1 3 0"></path>',
+      '◫': '<rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M7 3v4M17 3v4M3 10h18M7 14h2M13 14h4M7 17h2"></path>',
+      '%': '<path d="M3 8V5h18v4a3 3 0 0 0 0 6v4H3v-4a3 3 0 0 0 0-6V8Z"></path><path d="m15 8-6 8"></path><circle cx="9" cy="8" r="1"></circle><circle cx="15" cy="16" r="1"></circle>',
+      '◇': '<path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5"></path>',
       '✉': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="m5 8 7 5 7-5"></path>'
-      , '◌': '<circle cx="12" cy="12" r="8"></circle><path d="M12 7v5l3 2"></path><path d="M7 5 5 3M17 5l2-2"></path>'
+      , '◌': '<path d="M20 8V6a2 2 0 0 0-2-2H6a3 3 0 0 0 0 6h14v10H6a3 3 0 0 1-3-3V7"></path><path d="M20 12h-5v4h5"></path><circle cx="17" cy="14" r=".5" fill="currentColor" stroke="none"></circle>'
       , '↥': '<path d="M12 19V5"></path><path d="m7 10 5-5 5 5"></path><path d="M5 19h14"></path>'
       , '⌂': '<path d="m4 11 8-7 8 7"></path><path d="M6 10v10h12V10M10 20v-6h4v6"></path>'
-      , '◍': '<circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle><path d="M12 4v5M20 12h-5"></path>'
+      , '◍': '<path d="M4.9 18a9 9 0 1 1 14.2 0H4.9Z"></path><path d="m12 13 4-5M6 12h1M17 12h1M12 5v1"></path><circle cx="12" cy="13" r="1"></circle>'
       , '▰': '<rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="M4 10h16M8 14h3M8 16h6"></path>'
-      , '♧': '<path d="M8 10a3 3 0 1 1 4-3 3 3 0 1 1 4 3 3 3 0 1 1-4 3 3 3 0 1 1-4-3Z"></path><path d="M12 13v7"></path>'
+      , '♧': '<circle cx="9" cy="8" r="3"></circle><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"></path>'
       , '▱': '<path d="M6 4h9l3 3v13H6z"></path><path d="M15 4v4h4M9 12h6M9 16h4"></path>'
       , '⌖': '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle><path d="M12 3v2M12 19v2M3 12h2M19 12h2"></path>'
-      , '▭': '<rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 9h8M8 13h8M8 16h4"></path>'
+      , '▭': '<rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M12 17v4M8 21h8"></path>'
       , '☷': '<path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="8" cy="6" r="1"></circle><circle cx="16" cy="12" r="1"></circle><circle cx="10" cy="18" r="1"></circle>'
-      , '◓': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4v16a8 8 0 0 0 0-16Z"></path>'
+      , '◓': '<rect x="4" y="5" width="16" height="15" rx="2"></rect><path d="M8 3v4M16 3v4M8 11h1M12 11h4M8 16h1M12 16h4"></path>'
       , '◒': '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"></path><path d="M12 4a8 8 0 0 0 0 16Z"></path>'
-      , '⌘': '<path d="M7 5a3 3 0 1 0 0 6h10a3 3 0 1 0 0-6 3 3 0 1 0-5 2 3 3 0 1 0-5-2Z"></path><path d="M7 13a3 3 0 1 0 0 6 3 3 0 1 0 5-2 3 3 0 1 0 5 2 3 3 0 1 0 0-6Z"></path>'
+      , '⌘': '<rect x="9" y="3" width="6" height="5" rx="1"></rect><rect x="3" y="16" width="6" height="5" rx="1"></rect><rect x="15" y="16" width="6" height="5" rx="1"></rect><path d="M12 8v4M6 16v-4h12v4"></path>'
       , '✍': '<path d="M4 20h4L18.5 9.5a2 2 0 0 0-3-3L5 17Z"></path><path d="M13.5 6.5l3 3"></path><path d="M4 20l1-3"></path>'
       , '▧': '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M4 9h16"></path><path d="M10 9v11"></path>'
       , 'trend': '<path d="M4 18l6-6 4 4 6-7"></path><path d="M15 9h5v5"></path><path d="M3 21h18"></path>'
       , '⧗': '<path d="M6 4h12M6 20h12"></path><path d="M7 4c0 4 10 5 10 8s-10 4-10 8"></path><path d="M17 4c0 4-10 5-10 8"></path>'
       , 'activity': '<path d="M3 12h4l3 8 4-16 3 8h4"></path>'
-      , '⚑': '<path d="M6 3v18"></path><path d="M6 4h11l-2.5 4L17 12H6"></path>'
+      , '⚑': '<path d="m3 10 14-6v16L3 14v-4ZM17 9h3v6h-3M5 15l2 6h4l-2-5M3 10v4"></path>'
+      , 'file-plus': '<path d="M14 3H5v18h14V8l-5-5ZM14 3v5h5M8 14h8M12 10v8"></path>'
+      , 'scan': '<path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5M3 12h18M7 7h3v3H7zM14 7h3v3h-3zM7 15h3v3H7zM14 15h3v3h-3z"></path>'
+      , 'receipt': '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"></path><path d="M9 7h6M9 11h6M9 15h2M14 15h1"></path>'
+      , 'message-template': '<path d="M21 14a2 2 0 0 1-2 2H9l-6 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v9Z"></path><path d="M7 7h10M7 11h6"></path>'
+      , 'order-review': '<path d="M10 21H5V3h12v7M8 7h6M8 11h2"></path><circle cx="16" cy="16" r="4"></circle><path d="m19 19 3 3M14.5 16l1 1 2-2"></path>'
+      , 'gift-card': '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M14 10v9M11 15h6M7 14h2"></path><path d="M14 10c-5 0-4-5-1-3l1 3Zm0 0c5 0 4-5 1-3l-1 3Z"></path>'
+      , 'feedback-reward': '<path d="M13 16H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5M7 7h10M7 11h4"></path><circle cx="18" cy="16" r="3"></circle><path d="m16 19-1 3 3-1 3 1-1-3"></path>'
+      , 'bell-settings': '<path d="M12 3a6 6 0 0 0-6 6c0 5-3 5-3 7h9M10 20h3M15 5h6M18 3v4M15 11h6M16 9v4M15 17h6M19 15v4"></path>'
+      , 'link': '<path d="m10 7 3-3a5 5 0 0 1 7 7l-3 3M14 17l-3 3a5 5 0 0 1-7-7l3-3M8 16l8-8"></path>'
+      , 'truck': '<path d="M3 5h11v12H3V5ZM14 9h4l3 4v4h-7M14 13h7"></path><circle cx="7" cy="18" r="2"></circle><circle cx="18" cy="18" r="2"></circle>'
+      , 'marketing-chart': '<path d="M3 3v18h18M7 17v-4M12 17V9M17 17v-6M6 9l5-4 5 2 5-4M17 3h4v4"></path>'
+      , 'code': '<path d="m7 7-5 5 5 5M17 7l5 5-5 5M14 4l-4 16"></path>'
+      , 'today': '<rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M7 3v4M17 3v4M3 10h18"></path><circle cx="12" cy="15.5" r="2.5"></circle>'
+      , 'pickup': '<path d="m3 7 9-4 9 4-9 4-9-4ZM3 7v10l9 4 9-4V7M12 11v10M8 14H2M5 11l3 3-3 3"></path>'
+      , 'return': '<path d="m3 7 9-4 9 4-9 4-9-4ZM3 7v10l9 4 9-4V7M12 11v10M16 14h6M19 11l-3 3 3 3"></path>'
     }
     return `<svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || paths['▣']}</svg>`
   }
@@ -1755,7 +1773,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
     ? [['/staff/mobile', '今日订单', '◉'], ['/staff/mobile?stage=pickup', '取货', '◷'], ['/staff/mobile?stage=return', '归还', '↺'], ['/staff/mobile/scan', '扫码', '▦'], ['/staff/inspections', '验机', '◈']]
       : currentUser?.accountType === 'guest'
         ? [['/customer/guest', '合同中心', '▤'], ['/customer/guest/upgrade', '升级账户', '✦']]
-        : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/devices', '可租设备', '▣'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
+        : [['/customer/dashboard', '首页', '◉'], ['/notifications', '通知', 'N'], ['/customer/devices', '可租设备', 'laptop'], ['/customer/rentals', '租赁', '▤'], ['/customer/orders', '订单', '▦'], ['/customer/balance', '钱包', '$'], ['/customer/profile', '我的', '◎']]
   const mobileNav = currentUser ? mobileLinks.map(([href, text, icon]) => `<a href="${href}"><span class="nav-icon">${navIconSvg(navIcons[href] || icon)}</span><small>${text}</small></a>`).join('') : `<a href="/login"><span class="nav-icon">${navIconSvg('↗')}</span><small>登录</small></a><a href="/register"><span class="nav-icon">${navIconSvg('+')}</span><small>注册</small></a>`
   const mobileLabel = currentUser?.role === 'ADMIN' ? '管理端' : currentUser?.role === 'STAFF' ? '员工端' : currentUser?.accountType === 'guest' ? '访客合同' : '客户端'
   const mobileUserBlock = currentUser ? `<span class="mobile-user-avatar">${getAvatarInitials(currentUser.name)}</span>` : ''

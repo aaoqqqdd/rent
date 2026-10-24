@@ -21,7 +21,7 @@ export async function renderAdminManualOrder(c: Context, user: any, order: Order
   const deviceRows = devices.results as any[], customerRows = customers.results as any[]
   const paymentLabels: Record<string, string> = { card: '信用卡', bank_transfer: '银行转账', balance: '账户余额' }
   const body = `<div class="page-header"><div><h2>${order ? `手动订单 ${esc(order.orderNo || order.id)}` : '手动添加订单'}</h2><p>无需签合同，仅设备必填。创建后默认租赁中，完成前可修改。</p></div><a class="button button-secondary" href="/admin/orders">返回订单列表</a></div>
-    ${error ? `<div class="page-notification page-notification--error" role="alert">${esc(error)}</div>` : ''}
+    ${error ? `<div data-flash-notice class="page-notification page-notification--error" role="alert">${esc(error)}</div>` : ''}
     ${order ? `<div class="panel"><span class="badge badge-info">手动订单 · 无需合同</span> <strong>${esc(manualOrderStatuses[order.status] || order.status)}</strong><p>租金 ${formatCurrency(Number(order.totalAmount) - Number(order.depositAmount))} · 押金 ${formatCurrency(order.depositAmount)}</p></div>` : ''}
     <div class="panel">${!editable ? '<p class="alert">订单已结束，不能再修改。</p>' : ''}<form method="POST" action="${order ? `/admin/orders/${encodeURIComponent(order.id)}/edit` : '/admin/orders/new'}">
       <fieldset ${editable ? '' : 'disabled'} style="border:0;padding:0;margin:0"><div class="grid grid-2">

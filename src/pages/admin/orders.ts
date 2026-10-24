@@ -209,8 +209,8 @@ export async function renderAdminOrders(c: Context, user: any) {
         </div>
       </div>
 
-      ${successMessage ? `<div class="page-notification page-notification--success">${successMessage}</div>` : ''}
-      ${errorMessage ? `<div class="page-notification page-notification--error">${errorMessage}</div>` : ''}
+      ${successMessage ? `<div data-flash-notice class="page-notification page-notification--success">${successMessage}</div>` : ''}
+      ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
 
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 20px 0;">
         <div class="panel" style="padding: 18px; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe;">
@@ -284,7 +284,7 @@ export async function renderAdminOrders(c: Context, user: any) {
         ${userIdFilter ? ' · 当前查看用户关联订单' : ''}
         ${totalOrderCount > ORDER_LIST_PAGE_SIZE ? ` · 仅显示最近 ${ORDER_LIST_PAGE_SIZE} 条，请使用筛选条件缩小范围查看其余订单` : ''}
       </div>
-      <form id="bulk-order-form" method="POST" action="/admin/orders/bulk-update">
+      <form id="bulk-order-form" method="POST" action="/admin/orders/bulk-update" data-site-confirm="确认批量更新所选订单的状态？状态变更会通知客户，取消类操作不可恢复。" data-confirm-title="批量更新订单状态？" data-confirm-label="确认更新">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
           <label style="display: inline-flex; align-items: center; gap: 8px; margin: 0;">
             <input type="checkbox" id="select-all-orders" />
