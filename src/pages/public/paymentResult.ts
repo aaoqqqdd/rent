@@ -44,7 +44,7 @@ export async function renderPaymentResult(c: Context, orderId: string, user: any
     message = paymentMethod === 'balance'
       ? `已从您的账户余额即时扣除 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>，订单已完成付款，网站发票与收据已生成。`
       : preauthorized
-        ? `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已预授权 <strong>${formatCurrency(payment?.amount ?? 0)}</strong>。归还设备后，系统将捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。`
+        ? `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已预授权 <strong>${formatCurrency(payment?.amount ?? 0)}</strong>。归还结算时，退回账户余额会捕获全部预授权并将可退押金入账余额；原路退回只捕获租金、手续费及实际扣款，释放剩余押金。`
         : `您的订单 <strong>#${order?.orderNo ?? '正在生成'}</strong> 已成功支付 <strong>${formatCurrency(payment?.amount ?? order?.totalAmount ?? 0)}</strong>${Number(payment?.processing_fee || 0) ? `，其中租金及服务费支付手续费为 ${formatCurrency(payment.processing_fee)}（不计入押金）` : ''}。网站发票与收据已生成。`;
     icon = `
       <div class="icon-wrapper success">

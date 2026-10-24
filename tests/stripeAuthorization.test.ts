@@ -1,0 +1,240 @@
+/* Copyright (c) 2026 jiongjiong123441. All rights reserved.
+ * Licensed under PolyForm Noncommercial 1.0.0.
+ * Noncommercial use, modification, and distribution are permitted.
+ * Keep this notice and the LICENSE file with all copies and modified versions. */
+
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
+import { readFileSync, readdirSync } from 'node:fs'
+import { URL } from 'node:url'
+import { createHmac } from 'node:crypto'
+import { Hono } from 'hono'
+import { createOrderPaymentIntent, handleStripeWebhook, refundDeposit } from '../src/actions/stripePayments'
+import { saveStripeConfig } from '../src/stripe'
+import { reconcileOrderPayments } from '../src/site'
+import { renderAdminOrderDetail } from '../src/pages/admin/orderDetail'
+import { renderCustomerOrderDetail } from '../src/pages/customer/orderDetail'
+import { extractInlineScripts } from './helpers'
+
+async function setup(t: any, options: { rental?: number; status?: string; mode?: string } = {}) {
+  const sqlite = new DatabaseSync(':memory:')
+  t.after(() => sqlite.close())
+  for (const name of readdirSync(new URL('../migrations/', import.meta.url)).filter(n => n.endsWith('.sql')).sort()) sqlite.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'))
+  sqlite.exec("UPDATE systemSettings SET value = '{\"stripe\":true,\"processingFeeRate\":0.025}' WHERE key = 'paymentMethods'")
+  sqlite.exec("INSERT INTO users (id, name, email, role, balance) VALUES ('customer', '客户', 'customer@example.test', 'CUSTOMER', 12), ('admin', '管理员', 'admin@example.test', 'ADMIN', 0); INSERT INTO devices (id, name, model, pricePerDay, depositAmount, serialNumber, status) VALUES ('device', '电脑', 'Test', 20, 200, 'SN1', 'rented');")
+  const rental = options.rental ?? 100
+  sqlite.prepare("INSERT INTO orders (id, userId, deviceId, startDate, endDate, rentalPeriod, totalAmount, depositAmount, status, paymentMethod, deposit_method, deposit_payment_mode, deposit_status, stripe_deposit_payment_intent_id, refundMethod) VALUES ('order', 'customer', 'device', '2026-10-24', '2026-10-29', 5, ?, 200, ?, 'card', 'card_hold', ?, 'HELD', 'pi_auth', 'balance')").run(rental + 200, options.status || 'completed', options.mode || 'PREAUTH')
+  sqlite.prepare("INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, rental_amount, deposit_amount, processing_fee, status, stripe_payment_intent_id) VALUES ('payment', 'order', 'customer', 'card', ?, ?, 200, ?, 'pending', 'pi_auth')").run(rental + 200 + rental * 0.025, rental, rental * 0.025)
+  const db = {
+    prepare(sql: string) {
+      let values: any[] = []
+      const query = {
+        bind(...input: any[]) { values = input; return query },
+        async first() { return sqlite.prepare(sql).get(...values) || null },
+        async all() { return { results: sqlite.prepare(sql).all(...values) } },
+        async run() { const result = sqlite.prepare(sql).run(...values); return { success: true, meta: { changes: Number(result.changes) } } },
+      }
+      return query
+    },
+    async batch(statements: any[]) {
+      sqlite.exec('BEGIN')
+      try { const results = await Promise.all(statements.map(s => s.run())); sqlite.exec('COMMIT'); return results }
+      catch (error) { sqlite.exec('ROLLBACK'); throw error }
+    },
+  }
+  const env = { RENT: db, SETTINGS_ENCRYPTION_KEY: 'test-only-encryption-key' }
+  const context = { env } as any
+  await saveStripeConfig(context, { publishableKey: 'pk_test_example', secretKey: 'sk_test_example', webhookSecret: 'whsec_example' })
+  const calls: Array<{ path: string; params: URLSearchParams; method: string }> = []
+  let intent: any = { id: 'pi_auth', status: 'requires_capture', currency: 'aud', amount: Math.round((rental * 1.025 + 200) * 100), amount_capturable: Math.round((rental * 1.025 + 200) * 100), amount_received: 0, capture_method: 'manual', metadata: { order_id: 'order', customer_id: 'customer', type: 'rental_authorization' }, client_secret: 'pi_auth_secret_test' }
+  const fetchBefore = globalThis.fetch
+  globalThis.fetch = (async (url: any, init: any) => {
+    const path = String(url).replace('https://api.stripe.com/v1/', '')
+    const params = new URLSearchParams(init?.body)
+    calls.push({ path, params, method: init?.method || 'GET' })
+    assert.ok(String(url).startsWith('https://api.stripe.com/'), `Unexpected request: ${url}`)
+    if (path.startsWith('customers?')) return Response.json({ data: [] })
+    if (path.startsWith('customers')) return Response.json({ id: 'cus_test' })
+    if (path === 'payment_intents/pi_auth/capture') intent = { ...intent, status: 'succeeded', amount_received: Number(params.get('amount_to_capture')), amount_capturable: 0 }
+    else if (path === 'payment_intents/pi_auth/cancel') intent = { ...intent, status: 'canceled', amount_capturable: 0 }
+    else assert.ok(path.startsWith('payment_intents'), `Unexpected Stripe request: ${path}`)
+    return Response.json(intent)
+  }) as typeof fetch
+  t.after(() => { globalThis.fetch = fetchBefore })
+  const settle = (form: Record<string, string>) => {
+    const settlementApp = new Hono()
+    settlementApp.post('/', c => refundDeposit(c, { id: 'admin' }, 'order', form))
+    return settlementApp.request('https://example.test/', { method: 'POST' }, env)
+  }
+  return { sqlite, db, context, calls, settle, intent, setIntent: (value: any) => { intent = { ...intent, ...value } } }
+}
+
+for (const deduction of [0, 25, 200]) {
+  test(`authorization settlement captures rent plus ${deduction} deduction and releases the rest`, async t => {
+    const { sqlite, calls, settle, context } = await setup(t)
+    const form = { refundAmount: String(200 - deduction), refundMethod: 'original', ...(deduction ? { deductionCategory: 'DAMAGE', deductionReason: '设备损坏' } : {}) }
+    const response = await settle(form)
+    assert.equal(response.status, 303, await response.text())
+    const capture = calls.find(c => c.path.endsWith('/capture'))!
+    assert.equal(capture.params.get('amount_to_capture'), String(10250 + deduction * 100))
+    assert.equal(capture.params.get('final_capture'), 'true')
+    assert.equal(sqlite.prepare("SELECT balance FROM users WHERE id='customer'").get()?.balance, 12)
+    const order = sqlite.prepare("SELECT * FROM orders WHERE id='order'").get() as any
+    assert.equal(order.deposit_deduction_amount, deduction)
+    assert.equal(order.deposit_held_amount, 0)
+    assert.equal(order.refundMethod, 'original')
+    assert.equal(order.settlement_status, 'SETTLED')
+    assert.equal(order.deposit_status, deduction === 200 ? 'FORFEITED' : deduction ? 'PARTIALLY_DEDUCTED' : 'REFUNDED')
+    assert.equal(sqlite.prepare('SELECT amount FROM payments').get()?.amount, 102.5 + deduction)
+    assert.equal(sqlite.prepare('SELECT refund_amount FROM payment_refunds').get()?.refund_amount, 0)
+    assert.equal(sqlite.prepare('SELECT total_amount FROM invoices').get()?.total_amount, 102.5 + deduction)
+    assert.equal(sqlite.prepare('SELECT total_paid FROM receipts').get()?.total_paid, 102.5 + deduction)
+    assert.equal(sqlite.prepare('SELECT amount FROM transactions').get()?.amount, 102.5 + deduction)
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM error_logs WHERE error_level = 'CRITICAL'").get()?.count, 0)
+    assert.equal((await reconcileOrderPayments(context, 'order')).issues.length, 0)
+    assert.equal((await settle(form)).status, 409)
+    assert.equal(calls.filter(c => c.path.endsWith('/capture')).length, 1)
+    const adminHtml = await renderAdminOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order')
+    const customerHtml = await renderCustomerOrderDetail(context, { id: 'customer', role: 'CUSTOMER' }, 'order')
+    assert.match(adminHtml, /已释放剩余押金/)
+    assert.doesNotMatch(adminHtml, /action="[^"]*deposit-(?:refund|settlements)"/)
+    assert.match(customerHtml, /预授权已结算，剩余押金已释放/)
+    for (const script of extractInlineScripts(adminHtml + customerHtml)) assert.doesNotThrow(() => new Function(script))
+  })
+}
+
+test('legacy deposit-only authorization with no deductions is canceled without a capture', async t => {
+  const { sqlite, calls, settle } = await setup(t, { rental: 0 })
+  const response = await settle({ refundAmount: '200', refundMethod: 'original' })
+  assert.equal(response.status, 303, await response.text())
+  assert.ok(calls.some(c => c.path.endsWith('/cancel')))
+  assert.ok(!calls.some(c => c.path.endsWith('/capture')))
+  assert.equal(sqlite.prepare('SELECT amount FROM payments').get()?.amount, 0)
+})
+
+for (const invalidIntent of [{ status: 'canceled' }, { status: 'succeeded', amount_received: 30250 }, { currency: 'usd' }, { amount_capturable: 100 }]) {
+  test(`invalid authorization cannot be marked settled: ${JSON.stringify(invalidIntent)}`, async t => {
+    const { sqlite, calls, settle, setIntent } = await setup(t)
+    setIntent(invalidIntent)
+    assert.equal((await settle({ refundAmount: '200', refundMethod: 'original' })).status, 409)
+    assert.equal(sqlite.prepare('SELECT deposit_status FROM orders').get()?.deposit_status, 'HELD')
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM payment_refunds').get()?.count, 0)
+    assert.ok(!calls.some(c => c.path.endsWith('/capture')))
+  })
+}
+
+test('retry after Stripe capture succeeds repairs local settlement without capturing again', async t => {
+  const { sqlite, calls, settle, setIntent } = await setup(t)
+  setIntent({ status: 'succeeded', amount_received: 10250, amount_capturable: 0 })
+  assert.equal((await settle({ refundAmount: '200', refundMethod: 'original' })).status, 303)
+  assert.ok(!calls.some(c => c.path.endsWith('/capture')))
+  assert.equal(sqlite.prepare('SELECT status, amount FROM payments').get()?.amount, 102.5)
+})
+
+test('existing uncaptured intent is reused while the authorization webhook is pending', async t => {
+  const { calls, context } = await setup(t, { status: 'pending_payment' })
+  const result = await createOrderPaymentIntent(context, { id: 'customer', role: 'CUSTOMER', email: 'customer@example.test' }, 'order')
+  assert.equal(result.clientSecret, 'pi_auth_secret_test')
+  assert.equal(result.amountCents, 30250)
+  assert.ok(!calls.some(c => c.path === 'payment_intents' && c.method === 'POST'))
+})
+
+test('new combined authorization requests manual card capture and extended validity', async t => {
+  const { sqlite, calls, context, setIntent } = await setup(t, { status: 'pending_payment' })
+  sqlite.exec('DELETE FROM payment_allocations; DELETE FROM payments;')
+  setIntent({ status: 'requires_payment_method' })
+  await createOrderPaymentIntent(context, { id: 'customer', role: 'CUSTOMER', email: 'customer@example.test' }, 'order')
+  const created = calls.find(c => c.path === 'payment_intents' && c.method === 'POST')!
+  assert.equal(created.params.get('amount'), '30250')
+  assert.equal(created.params.get('capture_method'), 'manual')
+  assert.equal(created.params.get('payment_method_types[0]'), 'card')
+  assert.equal(created.params.get('payment_method_options[card][request_extended_authorization]'), 'if_available')
+  assert.equal(created.params.get('metadata[type]'), 'rental_authorization')
+})
+
+test('long rental still charges rent without holding the deposit', async t => {
+  const { sqlite, calls, context, setIntent } = await setup(t, { status: 'pending_payment', mode: 'SETUP_INTENT' })
+  sqlite.exec("DELETE FROM payment_allocations; DELETE FROM payments; UPDATE orders SET rentalPeriod = 30, stripe_payment_method_id = 'pm_saved' WHERE id='order'; UPDATE users SET stripe_customer_id = 'cus_test' WHERE id='customer';")
+  // The existing customer/card relationship avoids creating another customer.
+  const fetchBefore = globalThis.fetch
+  globalThis.fetch = (async (url: any, init: any) => String(url).includes('/payment_methods/') ? Response.json({ id: 'pm_saved', customer: 'cus_test', card: { brand: 'visa' } }) : fetchBefore(url, init)) as typeof fetch
+  setIntent({ status: 'requires_payment_method' })
+  await createOrderPaymentIntent(context, { id: 'customer', role: 'CUSTOMER', email: 'customer@example.test', stripe_customer_id: 'cus_test' }, 'order')
+  const created = calls.find(c => c.path === 'payment_intents' && c.method === 'POST')!
+  assert.equal(created.params.get('amount'), '10250')
+  assert.equal(created.params.get('capture_method'), null)
+  assert.equal(created.params.get('metadata[deposit_amount]'), '0')
+})
+
+for (const invalid of [{ currency: 'usd' }, { status: 'succeeded' }, { amount: 1 }, { metadata: { type: 'rental_authorization', order_id: 'other', customer_id: 'customer' } }, { metadata: { type: 'rental_authorization', order_id: 'order', customer_id: 'other' } }]) {
+  test(`signed authorization webhook rejects mismatched data: ${JSON.stringify(invalid)}`, async t => {
+    const { sqlite, context, intent } = await setup(t, { status: 'pending_payment' })
+    const app = new Hono()
+    app.post('/', c => handleStripeWebhook(c))
+    const body = JSON.stringify({ id: 'evt_authorization', type: 'payment_intent.amount_capturable_updated', data: { object: { ...intent, ...invalid } } })
+    const timestamp = Math.floor(Date.now() / 1000)
+    const signature = createHmac('sha256', 'whsec_example').update(`${timestamp}.${body}`).digest('hex')
+    const response = await app.request('https://example.test/', { method: 'POST', body, headers: { 'stripe-signature': `t=${timestamp},v1=${signature}` } }, context.env)
+    assert.equal(response.status, 400)
+    assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'pending_payment')
+    assert.equal(sqlite.prepare('SELECT status FROM payments').get()?.status, 'pending')
+  })
+}
+
+test('signed authorization webhook confirms the booking without capturing funds', async t => {
+  const { sqlite, context, intent, calls } = await setup(t, { status: 'pending_payment' })
+  const app = new Hono()
+  app.post('/', c => handleStripeWebhook(c))
+  const body = JSON.stringify({ id: 'evt_authorization', type: 'payment_intent.amount_capturable_updated', data: { object: intent } })
+  const timestamp = Math.floor(Date.now() / 1000)
+  const signature = createHmac('sha256', 'whsec_example').update(`${timestamp}.${body}`).digest('hex')
+  const response = await app.request('https://example.test/', { method: 'POST', body, headers: { 'stripe-signature': `t=${timestamp},v1=${signature}` } }, context.env)
+  assert.equal(response.status, 200, await response.text())
+  assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'paid')
+  assert.equal(sqlite.prepare('SELECT status FROM payments').get()?.status, 'pending')
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM invoices').get()?.count, 0)
+  assert.ok(!calls.some(c => c.path.endsWith('/capture')))
+})
+
+for (const deduction of [0, 25, 200]) {
+  test(`refund to balance captures the entire authorization and credits deposit less ${deduction}`, async t => {
+    const { sqlite, calls, settle, context } = await setup(t)
+    const form = { refundAmount: String(200 - deduction), refundMethod: 'balance', ...(deduction ? { deductionCategory: 'DAMAGE', deductionReason: '设备损坏' } : {}) }
+    const beforeHtml = await renderAdminOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order')
+    assert.match(beforeHtml, /name="refundMethod" required/)
+    assert.match(beforeHtml, /value="balance" selected/)
+    const response = await settle(form)
+    assert.equal(response.status, 303, await response.text())
+    assert.equal(calls.find(c => c.path.endsWith('/capture'))?.params.get('amount_to_capture'), '30250')
+    assert.equal(sqlite.prepare("SELECT balance FROM users WHERE id='customer'").get()?.balance, 212 - deduction)
+    assert.equal(sqlite.prepare('SELECT deposit_refund_amount FROM orders').get()?.deposit_refund_amount, 200 - deduction)
+    assert.equal(sqlite.prepare('SELECT refund_amount FROM payment_refunds').get()?.refund_amount, 200 - deduction)
+    assert.equal(sqlite.prepare('SELECT refund_method FROM payment_refunds').get()?.refund_method, 'balance')
+    assert.equal(sqlite.prepare('SELECT amount FROM payments').get()?.amount, 302.5)
+    assert.equal(sqlite.prepare('SELECT total_amount FROM invoices').get()?.total_amount, 302.5)
+    assert.equal(sqlite.prepare('SELECT total_paid FROM receipts').get()?.total_paid, 302.5)
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM payment_allocations WHERE id LIKE 'pa-release-%'").get()?.count, 0)
+    const reconciliation = await reconcileOrderPayments(context, 'order')
+    assert.equal(reconciliation.issues.length, 0)
+    assert.equal(reconciliation.paidTotal - reconciliation.refundedTotal, 102.5 + deduction)
+    assert.equal((await settle(form)).status, 409)
+    assert.equal(sqlite.prepare("SELECT balance FROM users WHERE id='customer'").get()?.balance, 212 - deduction)
+    const adminHtml = await renderAdminOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order')
+    const customerHtml = await renderCustomerOrderDetail(context, { id: 'customer', role: 'CUSTOMER' }, 'order')
+    assert.doesNotMatch(adminHtml, /已释放剩余押金/)
+    assert.doesNotMatch(customerHtml, /预授权已结算，剩余押金已释放/)
+    for (const script of extractInlineScripts(beforeHtml + adminHtml + customerHtml)) assert.doesNotThrow(() => new Function(script))
+  })
+}
+
+test('retry of full capture credits the deposit to balance once', async t => {
+  const { sqlite, calls, settle, setIntent } = await setup(t)
+  setIntent({ status: 'succeeded', amount_received: 30250, amount_capturable: 0 })
+  // Omitting the form method uses the order's saved balance preference.
+  assert.equal((await settle({ refundAmount: '200' })).status, 303)
+  assert.ok(!calls.some(c => c.path.endsWith('/capture')))
+  assert.equal(sqlite.prepare("SELECT balance FROM users WHERE id='customer'").get()?.balance, 212)
+  assert.equal((await settle({ refundAmount: '200' })).status, 409)
+  assert.equal(sqlite.prepare("SELECT balance FROM users WHERE id='customer'").get()?.balance, 212)
+})

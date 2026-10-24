@@ -68,7 +68,9 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   }
   const report = (data: any, keys: string[]) => `<dl class="data-list">${keys.map(key => `<div><dt>${esc(key)}</dt><dd>${esc(data[key])}</dd></div>`).join('')}</dl>`
   const deducted = Number(depositRefund?.deduction_amount || 0) > 0
-  const refundLabel = refundStatus?.status === 'pending' ? '退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? '部分退款' : '已退款') : ''
+  const preauthSettled = depositMode === 'PREAUTH' && order.refundMethod === 'original' && ['REFUNDED', 'PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status || ''))
+  const releasedDeposit = Math.max(0, deposit - Number(order.deposit_deduction_amount || 0))
+  const refundLabel = preauthSettled ? '预授权已结算，剩余押金已释放' : refundStatus?.status === 'pending' ? '退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? '部分退款' : '已退款') : ''
   const windowsData = typeof contract?.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })() : (contract?.contract_data || {})
   const windowsPassword = await decryptSecret(c, windowsData.windows_password)
   const rentalStatusLabels: Record<string, string> = { pending: '待处理', pending_payment: '待处理', awaiting_signature: '待签合同', paid: '租赁已确认，等待开始', approved: '租赁已确认，等待开始', pending_pickup: '待取货', active: '租赁中', extended: '已延期 / 租赁中', overdue: '已逾期', suspended: '已暂停', pending_return: '待归还', returned: '已归还', completed: '已完成', cancelled: '已取消' }
@@ -118,6 +120,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           <p id="square-payment-summary"${squarePaidAmount > 0 ? '' : ' hidden'}><strong>礼品卡已扣:</strong> ${formatCurrency(squarePaidAmount)}${squareRemainingAmount > 0 ? `；Stripe 剩余 ${formatCurrency(squareRemainingAmount)}` : ''}</p>
           ${squarePaymentSelected && squarePaidAmount > 0 ? `<p><strong>礼品卡扣减后待支付:</strong> ${formatCurrency(squareRemainingAmount)}</p>` : ''}
           ${refundLabel ? `<p><strong>退款状态:</strong> ${esc(refundLabel)}</p>` : ''}
+          ${preauthSettled ? `<p><strong>押金实际扣款:</strong> ${formatCurrency(Number(order.deposit_deduction_amount || 0))}；已释放 ${formatCurrency(releasedDeposit)}</p>` : ''}
         </div>
         <div class="order-info-card">
           <h3>设备信息</h3>
@@ -143,7 +146,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
 
       ${(paymentSources.length || refundRows.length) ? `<section class="panel" style="margin-top:20px"><h3>付款与退款明细</h3>
         ${paymentSources.length ? `<h4 style="margin:12px 0 6px">付款 / 预授权</h4><dl class="data-list">${paymentSources.map((p: any) => { const displayAmount = p.payment_provider === 'square' && Number(p.square_paid_amount || 0) > 0 ? p.square_paid_amount : p.amount; return `<div><dt>${esc(p.payment_provider === 'square' ? '礼品卡' : PAYMENT_METHOD_LABELS[String(p.payment_method)] || p.payment_method)}${p.payment_provider === 'square' && Number(p.square_paid_amount || 0) > 0 ? '（已扣）' : p.status === 'pending' ? '（待结算）' : ''}</dt><dd>${formatCurrency(displayAmount)}</dd></div>` }).join('')}</dl>` : ''}
-        ${refundRows.length ? `<h4 style="margin:16px 0 6px">已退款</h4><dl class="data-list">${refundRows.map((r: any) => `<div><dt>${esc(REFUND_TYPE_LABELS[String(r.type)] || r.type)}${r.refund_method ? ` · ${esc(PAYMENT_METHOD_LABELS[String(r.refund_method)] || r.refund_method)}` : ''}<br><span class="form-text">${melbourneTime(r.created_at)}</span></dt><dd>${formatCurrency(r.refund_amount)}</dd></div>`).join('')}</dl>` : ''}
+        ${refundRows.some((r: any) => Number(r.refund_amount) > 0) ? `<h4 style="margin:16px 0 6px">已退款</h4><dl class="data-list">${refundRows.filter((r: any) => Number(r.refund_amount) > 0).map((r: any) => `<div><dt>${esc(REFUND_TYPE_LABELS[String(r.type)] || r.type)}${r.refund_method ? ` · ${esc(PAYMENT_METHOD_LABELS[String(r.refund_method)] || r.refund_method)}` : ''}<br><span class="form-text">${melbourneTime(r.created_at)}</span></dt><dd>${formatCurrency(r.refund_amount)}</dd></div>`).join('')}</dl>` : ''}
         <p class="form-text" style="margin-top:12px">如对付款或退款金额有疑问，请联系您的专属客服。</p>
       </section>` : ''}
 
@@ -167,7 +170,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
         <div class="section-title" style="margin-top: 24px;"><h3>支付信息</h3></div>
         <div class="alert"><div><strong>收款明细</strong>${depositMode === 'PREAUTH' ? `
           <p style="margin:8px 0 0">信用卡一次性预授权 ${formatCurrency(stripeTotal)}（租金及服务费 ${formatCurrency(immediatelyPaidAmount)} ＋ 押金 ${formatCurrency(deposit)} ＋ 手续费 ${formatCurrency(stripeFee)}）。</p>
-          <p style="margin:6px 0 0">归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。</p>
+          <p style="margin:6px 0 0">归还结算时，退回账户余额会捕获全部预授权并将可退押金入账余额；原路退回只捕获租金、手续费及实际扣款，释放剩余押金。</p>
         ` : `
           <p style="margin:8px 0 0">租金 ${formatCurrency(rentalAmount)} ＋ 时段服务费 ${formatCurrency(serviceFee)} ＝ ${formatCurrency(immediatelyPaidAmount)}；${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 不预扣` : `押金 ${formatCurrency(deposit)} 按${securityDepositMethodLabel(depositMethod)}单独处理`}。</p>
           <p style="margin:6px 0 0">Stripe 手续费按租金及服务费计算 ${formatCurrency(stripeFee)}，付款合计 ${formatCurrency(stripeTotal)}。</p>
@@ -198,7 +201,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
           ${systemSettings.paymentMethods.stripe && (!squarePaymentSelected || squarePaidAmount > 0) ? `<div class="payment-card">
             <h4>信用卡支付（Stripe）</h4>
             <p>${squarePaymentSelected ? '礼品卡先扣款，礼品卡实际扣减额会显示在订单金额中；剩余租金及服务费使用 Stripe 支付。' : ''}在本页安全填写卡信息完成支付，卡号由 Stripe 处理，本站不保存卡号、有效期或安全码。</p>
-            ${depositMode === 'PREAUTH' && !(squarePaymentSelected && squarePaidAmount > 0) ? `<dl class="data-list" style="margin:8px 0"><div><dt><strong>信用卡预授权总额</strong></dt><dd><strong>${formatCurrency(stripeDisplayAmount)}</strong></dd></div></dl><p class="form-text">包含租金及服务费、押金和手续费。</p><p class="form-text" style="margin-top:4px">归还时捕获租金及服务费、实际押金扣款（如有）和手续费，未使用的押金额度自动释放。</p>` : `<dl class="data-list" style="margin:8px 0"><div><dt>${squarePaymentSelected && squarePaidAmount > 0 ? '礼品卡扣减后 Stripe 剩余（含礼品卡手续费）' : '租金及服务费'}</dt><dd>${formatCurrency(squarePaymentSelected && squarePaidAmount > 0 ? stripeDisplayAmount : Number(order.totalAmount) - deposit)}</dd></div>${squarePaymentSelected && squarePaidAmount > 0 ? '' : `<div><dt>Stripe 租金及服务费支付手续费（2.5%）</dt><dd>${formatCurrency(stripeFee)}</dd></div>`}<div><dt><strong>${squarePaymentSelected && squarePaidAmount > 0 ? 'Stripe 待支付金额' : '信用卡最终扣款'}</strong></dt><dd><strong>${formatCurrency(stripeDisplayAmount)}</strong></dd></div></dl><p class="form-text">${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 使用 SetupIntent 保存卡片，不预扣，仅在损坏或逾期时按实际费用扣款。` : '押金按订单约定处理。'}</p><p class="form-text" style="margin-top:4px">手续费不计入押金。</p>`}
+            ${depositMode === 'PREAUTH' && !(squarePaymentSelected && squarePaidAmount > 0) ? `<dl class="data-list" style="margin:8px 0"><div><dt><strong>信用卡预授权总额</strong></dt><dd><strong>${formatCurrency(stripeDisplayAmount)}</strong></dd></div></dl><p class="form-text">包含租金及服务费、押金和手续费。</p><p class="form-text" style="margin-top:4px">归还结算时，退回账户余额会捕获全部预授权并将可退押金入账余额；原路退回只捕获租金、手续费及实际扣款，释放剩余押金。</p>` : `<dl class="data-list" style="margin:8px 0"><div><dt>${squarePaymentSelected && squarePaidAmount > 0 ? '礼品卡扣减后 Stripe 剩余（含礼品卡手续费）' : '租金及服务费'}</dt><dd>${formatCurrency(squarePaymentSelected && squarePaidAmount > 0 ? stripeDisplayAmount : Number(order.totalAmount) - deposit)}</dd></div>${squarePaymentSelected && squarePaidAmount > 0 ? '' : `<div><dt>Stripe 租金及服务费支付手续费（2.5%）</dt><dd>${formatCurrency(stripeFee)}</dd></div>`}<div><dt><strong>${squarePaymentSelected && squarePaidAmount > 0 ? 'Stripe 待支付金额' : '信用卡最终扣款'}</strong></dt><dd><strong>${formatCurrency(stripeDisplayAmount)}</strong></dd></div></dl><p class="form-text">${depositMode === 'SETUP_INTENT' ? `押金 ${formatCurrency(deposit)} 使用 SetupIntent 保存卡片，不预扣，仅在损坏或逾期时按实际费用扣款。` : '押金按订单约定处理。'}</p><p class="form-text" style="margin-top:4px">手续费不计入押金。</p>`}
             ${renderStripePaymentBox({ intentUrl: `/customer/orders/${order.id}/stripe/intent`, returnUrl: `/payment/result?orderId=${encodeURIComponent(order.id)}`, buttonLabel: `${depositMode === 'PREAUTH' && !(squarePaymentSelected && squarePaidAmount > 0) ? '预授权' : '支付'} ${formatCurrency(stripeDisplayAmount)}`, domId: 'order-stripe-pay' })}
           </div>` : ''}
         </div>

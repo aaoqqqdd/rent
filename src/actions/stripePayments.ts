@@ -163,13 +163,21 @@ async function upsertPaymentIntent(c: Context, opts: {
       if (opts.paymentMethodId) params.set('payment_method', opts.paymentMethodId)
       if (opts.customerId) params.set('customer', opts.customerId)
       if (opts.setupFutureUsage) params.set('setup_future_usage', opts.setupFutureUsage)
-      if (opts.captureMethod) params.set('capture_method', opts.captureMethod)
+      if (opts.captureMethod) {
+        params.set('capture_method', opts.captureMethod)
+        params.set('payment_method_types[0]', 'card')
+        params.set('automatic_payment_methods[enabled]', 'false')
+        params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
+      }
       if (opts.description) params.set('description', opts.description)
       if (opts.confirmNow) { params.set('confirm', 'true'); params.set('off_session', 'true') }
       Object.entries(opts.metadata).forEach(([key, value]) => params.set(`metadata[${key}]`, value))
       if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
       const updated = await stripeRequest(c, `payment_intents/${opts.existingIntentId}`, params)
       if (updated?.client_secret) return updated
+    } else if (current?.status === 'requires_capture') {
+      if (Number(current.amount) !== opts.amountCents || String(current.currency).toLowerCase() !== 'aud' || current.metadata?.type !== opts.metadata.type) throw new Error('已有信用卡预授权，金额或支付方式变更前请先取消原授权')
+      return current
     } else if (current && current.status === 'succeeded') {
       // 已经付过款：直接返回，调用方据此判断无需再收款。
       return current
@@ -183,7 +191,12 @@ async function upsertPaymentIntent(c: Context, opts: {
   if (opts.paymentMethodId) params.set('payment_method', opts.paymentMethodId)
   if (opts.customerId) params.set('customer', opts.customerId)
   if (opts.setupFutureUsage) params.set('setup_future_usage', opts.setupFutureUsage)
-  if (opts.captureMethod) params.set('capture_method', opts.captureMethod)
+  if (opts.captureMethod) {
+    params.set('capture_method', opts.captureMethod)
+    params.delete('automatic_payment_methods[enabled]')
+    params.set('payment_method_types[0]', 'card')
+    params.set('payment_method_options[card][request_extended_authorization]', 'if_available')
+  }
   if (opts.description) params.set('description', opts.description)
   if (opts.confirmNow) { params.set('confirm', 'true'); params.set('off_session', 'true') }
   if (opts.receiptEmail) params.set('receipt_email', opts.receiptEmail)
@@ -931,7 +944,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
       const expectedAuthorization = order ? stripeAuthorizationAmount(order.totalAmount, orderDeposit(order), orderServiceFee(order)) : 0
       const capturableCents = Number(session?.amount_capturable || 0)
       const paymentMethodId = typeof session?.payment_method === 'string' ? session.payment_method : String(session?.payment_method?.id || '')
-      if (!order || payment.customer_id !== String(order.userId) || payment.rental_id !== order.id || cents(payment.amount) !== expectedAuthorization || capturableCents !== expectedAuthorization) return c.text('Stripe 订单预授权数据不匹配', 400)
+      if (!order || session.status !== 'requires_capture' || session.capture_method !== 'manual' || String(session.currency).toLowerCase() !== 'aud' || String(session.metadata?.order_id || '') !== order.id || String(session.metadata?.customer_id || '') !== String(order.userId) || payment.customer_id !== String(order.userId) || payment.rental_id !== order.id || cents(payment.amount) !== expectedAuthorization || Number(session.amount) !== expectedAuthorization || capturableCents !== expectedAuthorization) return c.text('Stripe 订单预授权数据不匹配', 400)
       statements.push(
         c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'card', stripe_payment_method_id = COALESCE(NULLIF(?, ''), stripe_payment_method_id), stripe_deposit_payment_intent_id = ?, deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'")
           .bind(paymentMethodId, session.id, Number(payment.deposit_amount), order.id),
@@ -1184,7 +1197,7 @@ function cancellationRefundChannel(payment: any): 'balance' | 'stripe' | 'bank_t
   return 'unavailable'
 }
 
-export function stripeDepositSettlementCaptureAmount(payment: any, deductionAmount: number, refundMethod: string): number {
+export function stripeDepositSettlementCaptureAmount(payment: any, deductionAmount: number, refundMethod = 'original'): number {
   if (refundMethod === 'balance') return Math.max(0, Number(payment?.amount || 0))
   const rentalAmount = Math.max(0, Number(payment?.rental_amount || 0))
   const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
@@ -1219,40 +1232,47 @@ async function settlePreauthorizedDeposit(c: Context, admin: any, order: any, fo
   if (deductionAmount < Number((order as any).overdue_deposit_applied || 0)) return c.text('退款金额不能覆盖已计入的逾期归还费用', 409)
   const deduction = validateDepositDeduction(form, depositAmount, deductionAmount)
   if (deduction instanceof Response) return deduction
+  const fullAuthorization = Number(payment.rental_amount || 0) > 0
   const selectedRefundMethod = String(form.refundMethod || order.refundMethod || 'balance')
   if (!['balance', 'original'].includes(selectedRefundMethod)) return c.text('退款方式无效', 400)
-  const fullAuthorization = Number(payment.rental_amount || 0) > 0
-  // 退回余额时先完整捕获预授权，再把押金退款入账；否则未捕获的押金部分会被直接释放。
+  const refundToBalance = selectedRefundMethod === 'balance'
+  // 退余额时完整捕获后将可退押金入账；原路退回时只捕获应收金额，释放未用押金。
   const captureAmount = stripeDepositSettlementCaptureAmount(payment, deductionAmount, selectedRefundMethod)
   if (captureAmount > Number(payment.amount || 0)) return c.text('捕获金额超过信用卡预授权上限', 409)
 
   let intent = await stripeRequest(c, `payment_intents/${authorizationId}`).catch(() => null)
   if (!intent || !['requires_capture', 'succeeded', 'canceled'].includes(String(intent.status))) return c.text('押金预授权状态无效，无法结算', 409)
-  if (captureAmount > 0 && intent.status === 'requires_capture') {
-    intent = await stripeRequest(c, `payment_intents/${authorizationId}/capture`, new URLSearchParams({ amount_to_capture: String(cents(captureAmount)) }), `deposit-capture-${order.id}`)
-    if (intent.status !== 'succeeded') return c.text('押金扣款尚未成功，请稍后重试', 502)
-    await c.env.RENT.prepare("UPDATE payments SET status = 'paid', amount = ?, transaction_id = COALESCE(transaction_id, ?), paid_at = COALESCE(paid_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .bind(captureAmount, authorizationId, payment.id).run()
-  } else if (captureAmount === 0 && intent.status === 'requires_capture') {
-    await stripeRequest(c, `payment_intents/${authorizationId}/cancel`, new URLSearchParams(), `deposit-release-${order.id}`)
+  if (String(intent.currency).toLowerCase() !== 'aud' || String(intent.metadata?.order_id || '') !== order.id) return c.text('信用卡预授权与订单不匹配', 409)
+  if (captureAmount > 0 && intent.status === 'canceled') return c.text('信用卡预授权已取消或过期，尚未收取租金及扣款，请先重新收款', 409)
+  if (intent.status === 'requires_capture') {
+    if (Number(intent.amount_capturable || 0) < cents(captureAmount)) return c.text('信用卡可捕获金额不足，无法结算', 409)
+    if (captureAmount > 0) {
+      intent = await stripeRequest(c, `payment_intents/${authorizationId}/capture`, new URLSearchParams({ amount_to_capture: String(cents(captureAmount)), final_capture: 'true' }), `deposit-capture-${order.id}`)
+    } else {
+      intent = await stripeRequest(c, `payment_intents/${authorizationId}/cancel`, new URLSearchParams(), `deposit-release-${order.id}`)
+    }
   }
+  // 网络或数据库中断后的重试也必须核对实际捕获金额，不能把过期或错误扣款当作结算成功。
+  if (captureAmount > 0 && (intent.status !== 'succeeded' || Number(intent.amount_received) !== cents(captureAmount))) return c.text('信用卡实际扣款与结算金额不一致，请核实后重试', 409)
+  if (captureAmount === 0 && intent.status !== 'canceled') return c.text('信用卡预授权尚未释放，无法结算', 409)
 
   const nextStatus = deductionAmount >= depositAmount ? 'FORFEITED' : deductionAmount > 0 ? 'PARTIALLY_DEDUCTED' : 'REFUNDED'
   const statements: any[] = [
-    c.env.RENT.prepare('UPDATE orders SET refundMethod = ? WHERE id = ?').bind(selectedRefundMethod, order.id),
-    c.env.RENT.prepare("UPDATE orders SET deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_refund_at = CURRENT_TIMESTAMP, settlement_status = ? WHERE id = ?").bind(nextStatus, deductionAmount, selectedRefundMethod === 'balance' ? totalReleased : 0, computeOrderSettlementStatus({ status: order.status, deposit_status: nextStatus }), order.id),
+    c.env.RENT.prepare("UPDATE payments SET status = ?, amount = ?, transaction_id = COALESCE(transaction_id, ?), paid_at = CASE WHEN ? > 0 THEN COALESCE(paid_at, CURRENT_TIMESTAMP) ELSE paid_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(captureAmount > 0 ? 'paid' : 'refunded', captureAmount, authorizationId, captureAmount, payment.id),
+    c.env.RENT.prepare("UPDATE orders SET refundMethod = ?, deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_held_amount = 0, deposit_refund_at = CURRENT_TIMESTAMP, settlement_status = ? WHERE id = ?")
+      .bind(selectedRefundMethod, nextStatus, deductionAmount, refundToBalance ? totalReleased : 0, computeOrderSettlementStatus({ status: order.status, deposit_status: nextStatus }), order.id),
     c.env.RENT.prepare('UPDATE devices SET status = \'available\' WHERE id = ?').bind(order.deviceId),
-  ]
-  if (deductionAmount > 0 || (selectedRefundMethod === 'balance' && refundAmount > 0)) {
-    statements.push(c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, status, processed_by, refund_method)
+    // 原路释放没有实际退款；退余额则记录实际入账的可退押金。
+    c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, status, processed_by, refund_method)
       VALUES (?, ?, ?, ?, 'deposit', ?, ?, 0, ?, ?, ?, 'succeeded', ?, ?)`)
-      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, depositAmount, selectedRefundMethod === 'balance' ? refundAmount : 0, deductionAmount, deductionAmount > 0 ? deduction.category : null, deductionAmount > 0 ? deduction.reason : '押金结算', admin.id, selectedRefundMethod === 'balance' ? 'balance' : 'stripe'))
-  }
-  if (selectedRefundMethod === 'balance' && refundAmount > 0) {
-    statements.push(c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(refundAmount, order.userId))
-  }
+      .bind(`rf-${nanoid(12)}`, generateReferenceNumber('RFD'), order.id, payment.id, depositAmount, refundToBalance ? refundAmount : 0, deductionAmount, deductionAmount > 0 ? deduction.category : null, deductionAmount > 0 ? deduction.reason : refundToBalance ? '押金退款退回账户余额' : '押金预授权全额释放', admin.id, refundToBalance ? 'balance' : 'stripe'),
+  ]
+  // 原授权分配保留为历史事实，追加释放金额，避免将未捕获的押金计为实收。
+  if (!refundToBalance && refundAmount > 0) statements.push(c.env.RENT.prepare("INSERT OR IGNORE INTO payment_allocations (id, payment_id, order_id, allocation_type, amount) VALUES (?, ?, ?, 'DEPOSIT', ?)").bind(`pa-release-${payment.id}`, payment.id, order.id, -refundAmount))
+  if (refundToBalance && refundAmount > 0) statements.push(c.env.RENT.prepare('UPDATE users SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(refundAmount, order.userId))
   await c.env.RENT.batch(statements)
-  if (selectedRefundMethod === 'balance' && refundAmount > 0) await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '押金退款退回账户余额', admin.id)
+  if (refundToBalance && refundAmount > 0) await recordBalanceTransaction(c, order.userId, refundAmount, 'refund_credit', '押金退款退回账户余额', admin.id)
   if (fullAuthorization && intent.status === 'succeeded') await issueInvoiceSafely(c, order.id, 'settlePreauthorizedDeposit')
   return c.redirect(`/admin/orders/${order.id}`, 303)
 }
@@ -1299,7 +1319,10 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (!order) return c.text('订单不存在', 404)
   if (order.status !== 'completed') return c.text('只有已归还并完成的订单才能处理押金', 409)
   const depositMode = depositPaymentModeForOrder(order)
-  if (depositMode === 'PREAUTH') return settlePreauthorizedDeposit(c, admin, order, form)
+  if (depositMode === 'PREAUTH') {
+    if (!['HELD', 'REFUND_PENDING'].includes(String(order.deposit_status || ''))) return c.text('该笔信用卡预授权已结算或未完成授权，不能重复处理', 409)
+    return settlePreauthorizedDeposit(c, admin, order, form)
+  }
   if (depositMode === 'SETUP_INTENT') return settleSetupIntentDeposit(c, admin, order, form)
   const payment = await paidPayment(c, order, 'deposit')
   if (await hasOpenPaymentDispute(c, payment.id)) return c.text('该笔付款存在未解决的拒付争议，暂不能退款', 409)

@@ -4574,7 +4574,9 @@ app.post('/admin/orders/:id/deposit-refund', async (c) => {
   if (!settlement || settlement.status !== 'APPROVED') return c.text('押金结算须先由 Manager 审批通过', 409)
   try {
     const form = await c.req.parseBody()
-    const isSetupIntentDeposit = String((await getOrderById(c, c.req.param('id')) as any)?.deposit_payment_mode || '') === 'SETUP_INTENT'
+    const settlementOrder = await getOrderById(c, c.req.param('id'))
+    const isSetupIntentDeposit = String(settlementOrder?.deposit_payment_mode || '') === 'SETUP_INTENT'
+    if (settlementOrder?.deposit_payment_mode === 'PREAUTH' && String(form.refundMethod || settlementOrder.refundMethod || 'balance') !== String(settlement.refund_method)) return c.text('退款方式必须与已批准的结算单一致', 409)
     const submittedAmount = isSetupIntentDeposit ? Number(form.deductionAmount || 0) : Number(form.refundAmount)
     const approvedAmount = isSetupIntentDeposit ? Number(settlement.deduction_amount || 0) : Number(settlement.refund_amount)
     if (submittedAmount !== approvedAmount || String(form.deductionCategory || '') !== String(settlement.deduction_category || '') || String(form.deductionReason || '').trim() !== String(settlement.deduction_reason || '')) return c.text('执行金额或扣款说明必须与已批准的结算单一致', 409)

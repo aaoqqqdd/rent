@@ -85,13 +85,13 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const defaultPriceRefundMethod = hasStripeRefundSource ? 'original' : isTransferPayment ? 'pending_deposit' : 'balance'
   const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
   const canModifyRefundMethod = String(order.status) === 'completed' && !isSetupIntentDeposit && !completedRefund;
-  const isPreauthDeposit = isCardPayment && String((order as any).deposit_payment_mode || '') === 'PREAUTH'
+  const isPreauthDeposit = String((order as any).deposit_payment_mode || '') === 'PREAUTH'
   const preauthFee = Math.round(Math.max(0, Number(order.totalAmount) - depositAmount) * 0.025 * 100) / 100
   const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, isSetupIntentDeposit ? 'card_hold' : 'bank_transfer')
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
-  const canSettleDeposit = order.status === 'completed' && (isSetupIntentDeposit || remainingRefundTotal > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED')
+  const canSettleDeposit = order.status === 'completed' && (isSetupIntentDeposit || remainingRefundTotal > 0) && !(isPreauthDeposit && ['REFUNDED', 'PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status || ''))) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED')
   const showRefundCard = order.status === 'completed' || (order.status === 'paid' && order.startDate > today && !completedRefund)
 
   const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
@@ -329,14 +329,15 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
           <h4 style="margin: 0 0 16px 0; color: #c2410c;">退款处理</h4>
           <p class="section-note">押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}</p>
           ${hasTransferPriceRefund ? `<div class="alert"><strong>转账类付款待退差价：${formatCurrency(pendingPriceRefund)}</strong><br>该金额将在本次押金退款中一并退还；押金可退 ${formatCurrency(remainingDepositRefund)}，本次最多合计 ${formatCurrency(remainingRefundTotal)}。</div>` : ''}
-          ${completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
+          ${isPreauthDeposit && order.refundMethod === 'original' && ['REFUNDED', 'PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status || '')) ? `<div class="alert">信用卡预授权已结算：押金扣款 ${formatCurrency(Number(order.deposit_deduction_amount || 0))}，已释放剩余押金 ${formatCurrency(Math.max(0, depositAmount - Number(order.deposit_deduction_amount || 0)))}。</div>` : completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${depositSettlement && completedRefund?.status !== 'succeeded' ? `<div class="alert">结算单 ${escapeHtml(depositSettlement.settlement_number)}：${escapeHtml(depositSettlement.status)}${depositSettlement.review_note ? ` · ${escapeHtml(depositSettlement.review_note)}` : ''}</div>` : ''}
           ${canSettleDeposit ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" onsubmit="return confirm('${depositSettlement?.status === 'APPROVED' ? '确认按已批准结算单执行本次押金结算吗？' : '确认提交本次押金结算供 Manager 审批吗？'}');">
             ${isSetupIntentDeposit ? `<input type="hidden" name="refundMethod" value="original"><p class="section-note">长期租赁：押金未预扣。无损坏或逾期时填 0；只有发生实际费用时才从已保存卡片扣款。</p>` : `<label class="form-label" for="refundMethod">退款方式</label>
+            ${isPreauthDeposit ? '<p class="section-note">退回账户余额：捕获全部预授权，可退押金入账余额；原路退回：只捕获租金、手续费及实际扣款，释放剩余押金。</p>' : ''}
             <select class="form-control" id="refundMethod" name="refundMethod" required>
-              <option value="balance" ${order.refundMethod !== 'original' ? 'selected' : ''}>退回账户余额</option>
-              <option value="original" ${order.refundMethod === 'original' && order.paymentMethod !== 'bank_transfer' ? 'selected' : ''}>原路退回</option>
-              <option value="bank_transfer" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? 'selected' : ''}>银行转账</option>
+              <option value="balance" ${(depositSettlement?.refund_method || order.refundMethod) !== 'original' ? 'selected' : ''}>退回账户余额</option>
+              <option value="original" ${(depositSettlement?.refund_method || order.refundMethod) === 'original' && (isPreauthDeposit || order.paymentMethod !== 'bank_transfer') ? 'selected' : ''}>原路退回</option>
+              ${isPreauthDeposit ? '' : `<option value="bank_transfer" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? 'selected' : ''}>银行转账</option>`}
             </select>
             <div id="refundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
             <script>document.getElementById('refundMethod')?.addEventListener('change',e=>{document.getElementById('refundBankFields').hidden=e.target.value!=='bank_transfer'})</script>`}
@@ -346,7 +347,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
               <option value="other">其他退款项目</option>
             </select>
             <input class="form-control" id="customRefundItem" name="customRefundItem" maxlength="100" placeholder="请输入退款项目名称" hidden>
-            ${isSetupIntentDeposit ? `<label class="form-label" for="deductionAmount">本次实际扣款金额（押金额度 ${formatCurrency(depositAmount)}）</label><input class="form-control" id="deductionAmount" name="deductionAmount" type="number" min="0" max="${depositAmount}" step="0.01" value="${Number(depositSettlement?.deduction_amount || 0)}" required>` : `<label class="form-label" for="refundAmount">本次退款合计（押金 + 差价，最多 ${formatCurrency(remainingRefundTotal)}）</label>
+            ${isSetupIntentDeposit ? `<label class="form-label" for="deductionAmount">本次实际扣款金额（押金额度 ${formatCurrency(depositAmount)}）</label><input class="form-control" id="deductionAmount" name="deductionAmount" type="number" min="0" max="${depositAmount}" step="0.01" value="${Number(depositSettlement?.deduction_amount || 0)}" required>` : `<label class="form-label" for="refundAmount">${isPreauthDeposit ? '本次退回或释放押金额度' : '本次退款合计（押金 + 差价）'}（最多 ${formatCurrency(remainingRefundTotal)}）</label>
             <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${remainingRefundTotal}" step="0.01" value="${Math.min(Number(depositSettlement?.refund_amount ?? remainingRefundTotal), remainingRefundTotal)}" required>`}
             <label class="form-label" for="deductionReason">扣款原因（发生损坏或逾期时必填）</label>
             <select class="form-control" id="deductionCategory" name="deductionCategory">

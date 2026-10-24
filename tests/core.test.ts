@@ -579,10 +579,13 @@ test('deposit refunds do not return a processing fee because the fee excludes de
   assert.equal(refundableDepositFee(1000, { payment_method: 'card', processing_fee: 0 }), 0)
 })
 
-test('Stripe deposit refunds to balance capture the full authorization', () => {
+test('Stripe settlement captures rent and actual deductions and releases unused deposit', () => {
   const payment = { amount: 122.5, rental_amount: 100, processing_fee: 2.5 }
+  assert.equal(stripeDepositSettlementCaptureAmount(payment, 0), 102.5)
+  assert.equal(stripeDepositSettlementCaptureAmount(payment, 10), 112.5)
+  assert.equal(stripeDepositSettlementCaptureAmount(payment, 20), 122.5)
   assert.equal(stripeDepositSettlementCaptureAmount(payment, 0, 'balance'), 122.5)
-  assert.equal(stripeDepositSettlementCaptureAmount(payment, 10, 'original'), 112.5)
+  assert.equal(stripeDepositSettlementCaptureAmount(payment, 10, 'balance'), 122.5)
 })
 
 test('mixed-payment refunds are proportional, rounded to cents, and never exceed a source balance', () => {

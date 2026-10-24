@@ -26,6 +26,9 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const gstAmount = getSystemSettings().companyDetails.gstIncluded ? taxableGross / 11 : 0
   const payment = await c.env.RENT.prepare("SELECT processing_fee FROM payments WHERE rental_id = ? AND status = 'paid' AND COALESCE(rental_amount, 0) > 0 ORDER BY paid_at DESC LIMIT 1").bind(order.id).first() as any
   const processingFee = Math.max(0, Number(payment?.processing_fee || 0))
+  const settledAuthorization = order.deposit_payment_mode === 'PREAUTH' && order.refundMethod === 'original' && order.status === 'completed' && ['REFUNDED', 'PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status))
+  const invoiceDeposit = settledAuthorization ? Number(order.deposit_deduction_amount || 0) : Number(order.depositAmount)
+  const invoiceTotal = Number(order.totalAmount) - Number(order.depositAmount) + invoiceDeposit + processingFee
   const invoiceId = `inv-${order.id}`
   const invoiceNumber = /^INV-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.invoice_number || '')) ? String(data.invoice_number) : generateReferenceNumber('INV')
   const receiptNumber = /^RCP-[0-9]{8}-[A-Z0-9]{6}$/.test(String(data.receipt_number || '')) ? String(data.receipt_number) : generateReferenceNumber('RCP')
@@ -34,7 +37,7 @@ export async function issueInvoice(c: Context, orderId: string): Promise<void> {
   const existing = await c.env.RENT.prepare('SELECT id FROM invoices WHERE id = ?').bind(invoiceId).first()
   const isFirstIssuance = !existing
   await c.env.RENT.prepare(`INSERT INTO invoices (id, invoice_number, receipt_number, order_id, type, subtotal, gst_amount, deposit_amount, processing_fee, total_amount, currency, status) VALUES (?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?, 'AUD', 'issued') ON CONFLICT(id) DO UPDATE SET invoice_number = excluded.invoice_number, receipt_number = excluded.receipt_number, subtotal = excluded.subtotal, gst_amount = excluded.gst_amount, deposit_amount = excluded.deposit_amount, processing_fee = excluded.processing_fee, total_amount = excluded.total_amount, status = 'issued'`)
-    .bind(invoiceId, invoiceNumber, receiptNumber, order.id, taxableGross - gstAmount, gstAmount, Number(order.depositAmount), processingFee, Number(order.totalAmount) + processingFee).run()
+    .bind(invoiceId, invoiceNumber, receiptNumber, order.id, taxableGross - gstAmount, gstAmount, invoiceDeposit, processingFee, invoiceTotal).run()
   await ensureReceiptAndTransactions(c, order, invoiceId)
   if (isFirstIssuance) {
     try { await sendPaymentCompletedEmail(c, order, contract) }
@@ -100,7 +103,7 @@ async function ensureReceiptAndTransactions(c: Context, order: any, invoiceId: s
     const transactionId = `txn-${payment.id}`
     await c.env.RENT.prepare(`INSERT OR IGNORE INTO transactions
       (id, transaction_number, order_id, customer_id, invoice_id, transaction_type, payment_method, amount, currency, status, provider, provider_transaction_id, description, completed_at)
-      VALUES (?, ?, ?, ?, ?, 'RENTAL_PAYMENT', ?, ?, ?, 'SUCCESS', ?, ?, ?, '租赁订单付款', CURRENT_TIMESTAMP)`)
+      VALUES (?, ?, ?, ?, ?, 'RENTAL_PAYMENT', ?, ?, ?, 'SUCCESS', ?, ?, '租赁订单付款', CURRENT_TIMESTAMP)`)
       .bind(transactionId, transactionNumber, order.id, order.userId, invoiceId, financePaymentMethod(payment.payment_method), Number(payment.amount || 0), String(payment.currency || 'AUD').toUpperCase(), payment.payment_provider === 'square' ? 'SQUARE' : payment.payment_method === 'card' ? 'STRIPE' : null, payment.payment_provider === 'square' ? payment.square_payment_id || null : payment.stripe_payment_intent_id || null).run()
     await c.env.RENT.prepare('INSERT OR IGNORE INTO receipt_transactions (receipt_id, transaction_id) VALUES (?, ?)').bind(receiptId, transactionId).run()
   }
