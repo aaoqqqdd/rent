@@ -868,7 +868,6 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   const complaintsPolicyEnValue = values.get('complaintsPolicyEn')
   const acceptableUsePolicyEnValue = values.get('acceptableUsePolicyEn')
   const consumerRightsEnValue = values.get('consumerRightsEn')
-  const priceStrategyValue = values.get('priceStrategy')
   const paymentMethodsValue = values.get('paymentMethods')
   const bankDetailsValue = values.get('bankDetails')
   const rmbPaymentValue = values.get('rmbPayment')
@@ -909,7 +908,6 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   if (String(consumerRightsEnValue || '').trim()) systemSettings.consumerRightsEn = sanitizeRichHtml(consumerRightsEnValue)
   const parsedLegalMetadata = safeJsonParse<any>(legalMetadataValue)
   if (parsedLegalMetadata) systemSettings.legalMetadata = { ...systemSettings.legalMetadata, ...parsedLegalMetadata }
-  if (String(priceStrategyValue || '').trim()) systemSettings.priceStrategy = String(priceStrategyValue)
 
   const parsedPaymentMethods = safeJsonParse<typeof systemSettings.paymentMethods>(paymentMethodsValue)
   const parsedBankDetails = safeJsonParse<typeof systemSettings.bankDetails>(bankDetailsValue)
@@ -1046,7 +1044,6 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     ['complaintsPolicyEn', systemSettings.complaintsPolicyEn],
     ['acceptableUsePolicyEn', systemSettings.acceptableUsePolicyEn],
     ['consumerRightsEn', systemSettings.consumerRightsEn],
-    ['priceStrategy', systemSettings.priceStrategy],
     ['paymentMethods', systemSettings.paymentMethods],
     ['bankDetails', systemSettings.bankDetails],
     ['rmbPayment', systemSettings.rmbPayment],
@@ -1064,7 +1061,7 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
   for (const [key, value] of fieldsToWrite) {
     if (key in updates) {
       // Prevent writing empty content for text fields that must have content
-      const textContentFields = new Set(['userTerms', 'rentalTerms', 'serviceTerms', 'privacyPolicy', 'softwareTerms', 'copyrightNotice', 'cookiePolicy', 'complaintsPolicy', 'acceptableUsePolicy', 'consumerRights', 'priceStrategy'])
+      const textContentFields = new Set(['userTerms', 'rentalTerms', 'serviceTerms', 'privacyPolicy', 'softwareTerms', 'copyrightNotice', 'cookiePolicy', 'complaintsPolicy', 'acceptableUsePolicy', 'consumerRights'])
       if (textContentFields.has(key) && typeof value === 'string' && !String(value).trim()) {
         console.warn(`Skipping empty content for field: ${key}`)
         continue
@@ -1812,7 +1809,6 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
         ['/admin/settings#companyName', '公司资料与营业规则', '系统设置', '公司名称 ABN 地址 联系方式 自取地点 配送区域 不可用日期 营业规则'],
         ['/admin/settings#requireEmailVerification', '注册安全与邮箱验证', '系统设置', '注册 安全 邮箱验证 验证码'],
         ['/admin/marketing-emails#feedbackRewards', '反馈奖励与礼品卡', '营销增长', 'Tally 反馈 奖励 余额 优惠码 礼品卡'],
-        ['/admin/settings#priceStrategy', '价格策略', '系统设置', '价格 租金 押金 计算'],
         ['/admin/settings#processingFeeRate', '支付方式与手续费', '系统设置', '支付 Stripe Square 银行转账 余额 手续费'],
         ['/admin/settings#bankName', '银行转账账户信息', '系统设置', '银行 BSB 账号 账户 转账'],
         ['/admin/settings#alipayQrUrl', '支付宝 / 微信收款码', '系统设置', '支付宝 微信 收款码 二维码 RMB 人民币 图片付款'],

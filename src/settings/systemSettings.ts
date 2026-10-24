@@ -12,7 +12,7 @@ export type SystemSettingsKey =
   | 'copyrightNotice' | 'cookiePolicy' | 'complaintsPolicy' | 'acceptableUsePolicy' | 'consumerRights'
   | 'userTermsEn' | 'rentalTermsEn' | 'serviceTermsEn' | 'privacyPolicyEn' | 'softwareTermsEn'
   | 'copyrightNoticeEn' | 'cookiePolicyEn' | 'complaintsPolicyEn' | 'acceptableUsePolicyEn' | 'consumerRightsEn'
-  | 'priceStrategy' | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings'
+  | 'paymentMethods' | 'bankDetails' | 'rmbPayment' | 'referralSettings'
   | 'companyDetails' | 'taxInvoiceTemplate' | 'rentalRules' | 'registrationSettings' | 'notificationSettings' | 'legalMetadata' | 'tallyFormUrl'
   | 'feedbackRewards'
 
@@ -263,7 +263,6 @@ export const systemSettings = {
 <h2>六、如何主张权利</h2><p>请先通过 {company_email} 或 {company_phone} 联系我们，并参阅<a href="/complaints">《投诉与争议解决政策》</a>。您也可以联系所在州或领地的公平交易机构或 ACCC。</p>
 <h2>七、联系我们</h2><p>{company_name}<br>地址：{company_address}<br>电话：{company_phone}<br>邮箱：{company_email}</p>`,
   rentalTerms,
-  priceStrategy: '标准定价：按日租金计费，超过租期按日累加。',
   paymentMethods: {
     stripe: true,
     square: false,

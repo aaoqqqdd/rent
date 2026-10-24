@@ -93,6 +93,18 @@ test('i18n runtime: 中文模式保持原文，且切换回英文可重复', () 
   assert.equal(heading.textContent, 'Order details')
 })
 
+test('i18n runtime: 账户页面的问句翻译只保留一个英文问号，切回中文恢复原文', () => {
+  const chinese = ['还没有账号？', '忘记密码？', '已有账号？', '已想起密码？']
+  const english = ["Don't have an account?", 'Forgot password?', 'Already have an account?', 'Remembered your password?']
+  const rig = boot(chinese.map(text => `<p>${text}</p>`).join(''), { storedLanguage: 'en' })
+  const texts = () => Array.from(rig.document.querySelectorAll('p'), (node: any) => node.textContent)
+  assert.deepEqual(texts(), english)
+  rig.window.setSiteLanguage('zh')
+  assert.deepEqual(texts(), chinese)
+  rig.window.setSiteLanguage('en')
+  assert.deepEqual(texts(), english)
+})
+
 test('i18n runtime: apply 幂等，反复执行结果不变且原始值不被覆盖', () => {
   const rig = boot(`<div><h1>订单管理</h1><input placeholder="请输入邮箱"></div>`, { storedLanguage: 'en' })
   const html = rig.document.body.textContent

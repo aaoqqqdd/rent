@@ -106,61 +106,6 @@
   overflow-y: auto !important;
 }
 
-@media (min-width: 761px) {
-  .app-page .sidebar {
-    display: flex !important;
-    flex-direction: column !important;
-    height: calc(100vh - 68px) !important;
-    overflow: hidden !important;
-  }
-
-  .app-page .sidebar-section {
-    flex: 1 1 auto !important;
-    height: 0 !important;
-    max-height: none !important;
-    min-height: 0 !important;
-    overflow-y: scroll !important;
-    overflow-x: hidden !important;
-  }
-
-  .app-page .sidebar-footer {
-    flex: 0 0 auto !important;
-  }
-}
-
-/* Long navigation stays inside the sidebar for every desktop role. */
-@media (min-width: 761px) {
-  .app-page .sidebar {
-    position: sticky;
-    top: 68px;
-    height: calc(100vh - 68px);
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .app-page .sidebar-section {
-    min-height: 0;
-    max-height: calc(100vh - 132px);
-    overflow-y: auto;
-    overflow-x: hidden;
-    scrollbar-width: thin;
-    scrollbar-color: #6b8092 transparent;
-  }
-
-  .app-page .sidebar-section::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .app-page .sidebar-section::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .app-page .sidebar-section::-webkit-scrollbar-thumb {
-    background: #6b8092;
-    border-radius: 99px;
-  }
-}
-
 .official-document__refund-total dt,
 .official-document__refund-total dd {
   color: #b45309 !important;
@@ -1335,20 +1280,6 @@ body {
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-body::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image: radial-gradient(circle at 1px 1px, #e4e4e7 1px, transparent 0);
-  background-size: 32px 32px;
-  opacity: 0.3;
-  pointer-events: none;
-  z-index: 0;
 }
 
 .mono {
@@ -3927,15 +3858,6 @@ body {
   letter-spacing: 0.005em;
 }
 
-body::before {
-  background-image:
-    linear-gradient(rgb(20 32 43 / 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(20 32 43 / 0.035) 1px, transparent 1px);
-  background-size: 32px 32px;
-  opacity: 1;
-  mask-image: linear-gradient(to bottom, black, transparent 72%);
-}
-
 ::selection {
   background: #bfd0ff;
   color: var(--graphite);
@@ -4114,30 +4036,6 @@ header {
 
 .sidebar-nav-group summary span {
   color: #6f8190;
-}
-
-.sidebar-nav-group:has(a.active) {
-  border-top-color: rgba(240, 163, 91, .65);
-}
-
-.sidebar-nav-group:has(a.active) summary {
-  color: #d8e2ea;
-}
-
-/* Dark control-room sidebar: keep group labels readable above theme overrides. */
-.app-page .sidebar .sidebar-nav-group>summary,
-.app-page .sidebar .sidebar-nav-group>summary span {
-  color: #aebdca !important;
-  opacity: 1 !important;
-  text-shadow: none;
-}
-
-.app-page .sidebar .sidebar-nav-group>summary:hover {
-  color: #f0a35b !important;
-}
-
-.app-page .sidebar .sidebar-nav-group>summary span {
-  color: #f0a35b !important;
 }
 
 .sidebar-section a {
@@ -5406,41 +5304,6 @@ tr:hover td {
   margin: 3px 0 0;
   color: var(--text-secondary);
   font-size: .78rem;
-}
-
-.price-strategy-editor {
-  width: min(100%, 1100px);
-  margin-bottom: 0;
-}
-
-.price-strategy-editor__label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 7px;
-}
-
-.price-strategy-editor__label-row .form-label {
-  margin-bottom: 0;
-}
-
-.price-strategy-editor__meta {
-  color: var(--text-tertiary);
-  font: 600 .68rem var(--font-mono);
-  letter-spacing: .04em;
-  white-space: nowrap;
-}
-
-.price-strategy-editor .form-control {
-  min-height: 96px;
-  margin-bottom: 8px;
-  line-height: 1.65;
-}
-
-.price-strategy-editor .form-text {
-  display: block;
-  margin: 0;
 }
 
 .form-subheading {
@@ -10493,7 +10356,8 @@ header.desktop-header {
   top: var(--h-header);
   flex: 0 0 var(--w-rail);
   width: var(--w-rail);
-  height: calc(100vh - var(--h-header));
+  height: calc(100dvh - var(--h-header));
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   padding: 14px 10px 0;
@@ -10539,6 +10403,7 @@ header.desktop-header {
   font-size: 0.83rem;
   font-weight: 400;
   color: var(--c-text-2);
+  border-left: 3px solid transparent;
   border-radius: var(--radius-sm);
   text-decoration: none;
   transition: background-color 120ms ease, color 120ms ease;
@@ -10549,6 +10414,7 @@ header.desktop-header {
 .sidebar-section a:hover {
   color: var(--c-text);
   background: var(--c-surface-3);
+  border-left-color: var(--c-line-hover);
   text-decoration: none;
 }
 
@@ -10556,6 +10422,7 @@ header.desktop-header {
   color: var(--c-accent-2) !important;
   font-weight: 600;
   background: var(--c-accent-tint) !important;
+  border-left-color: var(--c-accent);
   box-shadow: none !important;
 }
 
@@ -10700,6 +10567,8 @@ header.desktop-header {
 }
 
 @media (max-width: 760px) {
+  :root { --h-header: 54px; }
+
   .desktop-header { display: none !important; }
   .mobile-header { display: flex; }
 
@@ -10718,8 +10587,13 @@ header.desktop-header {
     box-shadow: var(--sh-pop) !important;
   }
 
-  body.mobile-nav-open .sidebar,
+  body.is-nav-open .sidebar,
   .sidebar.is-open { transform: translateX(0); }
+
+  .mobile-nav-scrim {
+    top: var(--h-header);
+    z-index: 1150;
+  }
 
   .content { padding: 14px 14px 92px; }
 }
@@ -11549,6 +11423,7 @@ select.form-control {
 
 .auth-page .page-centered {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   min-height: calc(100vh - 120px);
   padding: 40px 24px;
@@ -11564,6 +11439,21 @@ select.form-control {
   border-radius: var(--radius);
   box-shadow: var(--sh-2);
   overflow: hidden;
+}
+
+/* 注册等单列表单复用登录卡片，不预留左侧品牌列。 */
+.login-container:not(:has(.login-brand)) {
+  width: min(480px, 100%) !important;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.login-container:not(:has(.login-brand)) > .login-card {
+  grid-column: 1;
+  border-left: 0 !important;
+}
+
+.auth-page .page-centered > .panel {
+  max-width: 100%;
 }
 
 /* 左：品牌面。管理员在 /admin/settings 上传配图后，这里显示该图片；
@@ -11829,6 +11719,8 @@ select.form-control {
 /* --------------------------------------------------------------------------
    全局搜索 / 通知抽屉
    -------------------------------------------------------------------------- */
+
+.global-search { z-index: 1300; }
 
 .global-search__scrim { background: rgb(16 28 38 / 0.45); }
 

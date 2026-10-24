@@ -61,11 +61,6 @@ export function renderAdminSettings(user: any) {
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">RATE</span><div><h3>价格策略配置</h3><p>用于计算租金与押金的策略文本。</p></div></div>
-          <div class="form-group price-strategy-editor"><div class="price-strategy-editor__label-row"><label class="form-label" for="priceStrategy">策略内容</label><span class="price-strategy-editor__meta">管理员内部规则</span></div><textarea id="priceStrategy" name="priceStrategy" rows="3" class="form-control" aria-describedby="priceStrategyHint">${settings.priceStrategy}</textarea><small id="priceStrategyHint" class="form-text">可按行记录租金、押金等计算规则，保存后用于报价说明和后台计算依据。</small></div>
-        </section>
-
-        <section class="form-section">
           <div class="form-section-title"><span class="mono">PAY</span><div><h3>支付方式配置</h3><p>启用或停用面向客户的支付渠道，并设置支付手续费。</p></div></div>
           <div class="form-group">
             <label class="form-label" for="processingFeeRate">支付手续费比例（%）</label>
@@ -206,7 +201,6 @@ export function renderAdminSettings(user: any) {
           return kind === 'unavailable' ? { weekday: Number(row.querySelector('.pickup-weekday').value), start: values[0], end: values[1] } : { start: values[0], end: values[1] };
         });
         const newSettings = {
-          priceStrategy: formData.get('priceStrategy'),
           paymentMethods: {
             stripe: formData.has('enableStripe'),
             square: formData.has('enableSquare'),

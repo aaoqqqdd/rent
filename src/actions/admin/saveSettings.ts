@@ -98,7 +98,6 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       deliveryNote: String(payload.companyDetails?.deliveryNote ?? getSystemSettings().companyDetails.deliveryNote).trim(),
     },
     taxInvoiceTemplate,
-    priceStrategy: payload.priceStrategy ?? getSystemSettings().priceStrategy,
     paymentMethods: {
       stripe: Boolean(payload.paymentMethods?.stripe),
       square: Boolean(payload.paymentMethods?.square),
