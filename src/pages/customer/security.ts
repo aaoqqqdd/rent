@@ -14,7 +14,7 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>安全设置</h2><span class="section-note">管理您的账户安全。</span></div>
+      <div class="section-title"><h2>安全设置</h2></div>
       ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${esc(errorMessage)}</div>` : ''}
       ${successMessage ? `<div data-flash-notice class="page-notification page-notification--success">${esc(successMessage)}</div>` : ''}
 
@@ -76,7 +76,6 @@ export async function renderCustomerSecurity(c: Context, user: any, errorMessage
       </script>
 
       <h3 style="margin-top: 40px;">登录记录</h3>
-      <p>此处将显示您的近期登录活动。</p>
       <table class="table">
         <thead>
           <tr>

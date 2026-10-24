@@ -1835,7 +1835,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
         <section class="global-search__panel" role="dialog" aria-modal="true" aria-labelledby="global-search-title">
           <div class="global-search__head"><div><span class="section-code">QUICK NAVIGATION</span><h2 id="global-search-title">去哪里？</h2></div><button class="global-search__close" type="button" data-global-search-close aria-label="关闭搜索">Esc</button></div>
           <label class="global-search__input-wrap" for="global-search-input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg><input id="global-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="查找订单、客户、设备或设置功能" aria-controls="global-search-results" aria-autocomplete="list"></label>
-          <div class="global-search__meta" id="global-search-meta">从导航入口和订单中快速定位</div>
+          <div class="global-search__meta" id="global-search-meta">搜索页面与订单</div>
           <div class="global-search__results" id="global-search-results" role="listbox" aria-label="搜索结果"></div>
           <div class="global-search__foot"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> 关闭</span></div>
         </section>

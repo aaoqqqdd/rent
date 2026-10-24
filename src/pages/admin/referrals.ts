@@ -27,7 +27,7 @@ export function renderAdminReferrals(user: any, rewards: any[] = [], settlementD
   const pendingCount = rewards.filter((r: any) => r.status === 'PENDING').length
   const reviewCount = rewards.filter((r: any) => r.status === 'PENDING_REVIEW').length
   const availableTotal = rewards.filter((r: any) => r.status === 'AVAILABLE').reduce((sum: number, r: any) => sum + Number(r.reward_amount || 0), 0)
-  const body = `<div class="page-header"><div><p class="section-code">GROWTH / REFERRAL</p><h2>推荐奖励管理</h2><p>订单完成后奖励进入待结算状态，结算期（当前 ${settlementDays} 天）满且无未解决支付争议时自动发放到账户余额；高风险奖励会进入待风险审核，管理员确认后才可发放。</p></div></div>
+  const body = `<div class="page-header"><div><p class="section-code">GROWTH / REFERRAL</p><h2>推荐奖励管理</h2><p>结算期 ${settlementDays} 天。</p></div></div>
   <div class="stats-grid">
     <div class="stat-card ${pendingCount ? 'warning' : ''}"><h3>待结算</h3><div class="value">${pendingCount}</div></div>
     <div class="stat-card ${reviewCount ? 'warning' : ''}"><h3>待风险审核</h3><div class="value">${reviewCount}</div></div>

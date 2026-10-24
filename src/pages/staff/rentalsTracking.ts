@@ -55,7 +55,7 @@ export async function renderStaffRentalsTracking(c: Context, user: any, status?:
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>当前租赁中</h2><span class="section-note">追踪租赁中订单，处理到期提醒和归还。</span></div>
+      <div class="section-title"><h2>当前租赁中</h2></div>
 
       <!-- 筛选按钮 - 和合同页面保持一致的设计 -->
       <h3 style="margin-top: 0; margin-bottom: 16px;">租赁设备管理</h3>

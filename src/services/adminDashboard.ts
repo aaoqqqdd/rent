@@ -26,6 +26,10 @@ export interface AdminDashboardData {
     reservedDevices: number
     maintenanceDevices: number
     damagedDevices: number
+    idleDevices: number
+    utilizationRate: number
+    confirmedRevenue: number
+    awaitingCollection: number
   }
   recentOrders: Array<{
     id: string
@@ -87,7 +91,14 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
       (SELECT COUNT(*) FROM orders WHERE deposit_status = 'HELD') AS pendingDeposits,
       (SELECT COUNT(*) FROM devices WHERE lifecycle_status = 'RESERVED') AS reservedDevices,
       (SELECT COUNT(*) FROM devices WHERE lifecycle_status = 'MAINTENANCE') AS maintenanceDevices,
-      (SELECT COUNT(*) FROM devices WHERE lifecycle_status = 'DAMAGED') AS damagedDevices
+      (SELECT COUNT(*) FROM devices WHERE lifecycle_status = 'DAMAGED') AS damagedDevices,
+      -- 可租但当前没有订单占用的设备：利用率与「有没有闲置资产」的直接依据。
+      (SELECT COUNT(*) FROM devices d WHERE d.status = 'available'
+         AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.deviceId = d.id AND o.status IN ('active', 'paid', 'approved', 'pending_payment', 'pending_pickup'))) AS idleDevices,
+      -- 已确认但尚未开始/未完成的订单金额：与「总收入」区分，避免把在途租金算成收入。
+      (SELECT COALESCE(SUM(totalAmount), 0) FROM orders WHERE status IN ('pending_payment', 'approved', 'paid')) AS confirmedRevenue,
+      -- 待取货：已付款/已审核但租期还没开始，门店今天要准备的机器数量。
+      (SELECT COUNT(*) FROM orders WHERE status IN ('approved', 'paid') AND date(startDate) >= date('now')) AS awaitingCollection
   `
 
   const recentOrdersQuery = `
@@ -133,6 +144,12 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
       reservedDevices: Number(s.reservedDevices || 0),
       maintenanceDevices: Number(s.maintenanceDevices || 0),
       damagedDevices: Number(s.damagedDevices || 0),
+      idleDevices: Number(s.idleDevices || 0),
+      utilizationRate: Number(s.totalDevices || 0) > 0
+        ? Math.round((1 - Number(s.idleDevices || 0) / Number(s.totalDevices)) * 100)
+        : 0,
+      confirmedRevenue: Number(s.confirmedRevenue || 0),
+      awaitingCollection: Number(s.awaitingCollection || 0),
     },
     recentOrders: recentOrders.map((o: RecentOrderRow) => ({
       id: String(o.id),

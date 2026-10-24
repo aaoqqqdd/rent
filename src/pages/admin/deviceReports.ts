@@ -25,10 +25,10 @@ export function renderAdminDeviceReports(user: any, rows: any[] = []) {
     </tr>`
   }).join('')
 
-  const body = `<div class="page-header"><div><p class="section-code">OPERATIONS / DEVICE REPORT</p><h2>设备运营报表</h2><p>按设备汇总收入、租用天数、维护与损坏成本，用于评估设备的运营表现。</p></div><a class="button button-secondary" href="/admin/dashboard">返回控制台</a></div>
+  const body = `<div class="page-header"><div><p class="section-code">OPERATIONS / DEVICE REPORT</p><h2>设备运营报表</h2></div><a class="button button-secondary" href="/admin/dashboard">返回控制台</a></div>
   <div class="stats-grid">
     <div class="stat-card primary"><h3>车队利用率（近 30 天）</h3><div class="value">${fleetUtilisation.toFixed(1)}%</div><div class="trend">近 30 天新开始订单的租用天数 / (设备数 × 30)，为近似值</div></div>
-    <div class="stat-card"><h3>设备总收入（估算）</h3><div class="value">${formatCurrency(totalRevenue)}</div><div class="trend">仅租金，已扣除押金与服务费；未计退款与押金扣款，非账目数据</div></div>
+    <div class="stat-card"><h3>设备总收入（估算）</h3><div class="value">${formatCurrency(totalRevenue)}</div><div class="trend">估算值，非账目数据。</div></div>
     <div class="stat-card"><h3>设备数量</h3><div class="value">${rows.length}</div></div>
     <div class="stat-card ${totalDamageCost ? 'warning' : ''}"><h3>累计损坏成本</h3><div class="value">${formatCurrency(totalDamageCost)}</div></div>
   </div>

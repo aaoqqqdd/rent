@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, formatCurrency, formatDate, sanitizePlainText } from '../../site';
+import { escapeHtml } from '../../lib/html';
 
 export function renderCustomerDashboard(user: any, allOrders: any[], devices: any[], announcementData: { items: any[], page: number, pageCount: number } = { items: [], page: 1, pageCount: 1 }) {
   const announcements = announcementData.items || []
@@ -30,45 +31,52 @@ export function renderCustomerDashboard(user: any, allOrders: any[], devices: an
     return `${days} 天后到期`
   }
 
+  // 客户控制台：先看「我现在的状况」，再看「我需要做什么」，最后才是明细与操作。
+  const todoItems: Array<{ title: string; meta: string; href: string; tone?: 'alert' | 'warn' }> = []
+  if (pendingPayment) todoItems.push({ title: '有待付款订单', meta: `${pendingPayment} 笔`, href: '/customer/orders?status=pending_payment', tone: 'warn' })
+  if (negativeBalance) todoItems.push({ title: '余额为负，请充值', meta: formatCurrency(user.balance), href: '/customer/balance/top-up', tone: 'alert' })
+  for (const rental of currentRentals) {
+    const days = getDaysUntil(rental.endDate)
+    if (days !== null && days <= 3) todoItems.push({ title: `「${sanitizePlainText(rental.orderNo, 24)}」${days < 0 ? '已逾期' : days === 0 ? '今天到期' : days === 1 ? '明天到期' : `${days} 天后到期`}`, meta: `归还 ${formatDate(rental.endDate)}`, href: '/customer/rentals', tone: days < 0 ? 'alert' : 'warn' })
+  }
+
   const body = `
     <div class="hero">
       <h2>欢迎回来，${sanitizePlainText(user.name, 80)}</h2>
-      <p>管理您的设备租赁、查看订单状态、完成支付。</p>
     </div>
-    ${negativeBalance ? `<div class="page-notification page-notification--error"><strong>账户余额为负：${formatCurrency(user.balance)}</strong><p>请立即充值至非负余额。余额为负时不能提交新的租赁订单；已有订单的差价请在订单详情中使用其他支付方式补交。</p><a class="button button-sm button-primary" href="/customer/balance/top-up">立即充值</a></div>` : ''}
-    <div class="stats-grid">
-      <a class="stat-card primary dashboard-stat-link" href="/customer/rentals">
-        <h3>当前租赁</h3>
-        <div class="value">${currentRentals.length}</div>
-        <div class="trend">台设备使用中</div>
-      </a>
-      <a class="stat-card warning dashboard-stat-link" href="/customer/orders?status=pending_payment">
-        <h3>待付款</h3>
-        <div class="value">${pendingPayment}</div>
-        <div class="trend" style="color: var(--warning)">笔订单待处理</div>
-      </a>
-      <a class="stat-card success dashboard-stat-link balance-stat-link" href="/customer/balance">
-        <h3>账户余额</h3>
-        <div class="value mono">${formatCurrency(user.balance)}</div>
-        <div class="trend">查看余额明细 →</div>
-      </a>
-      <a class="stat-card accent dashboard-stat-link" href="/customer/orders?status=completed">
-        <h3>已完成订单</h3>
-        <div class="value">${completedOrders}</div>
-        <div class="trend">历史租赁</div>
-      </a>
-    </div>
+    ${negativeBalance ? `<div class="page-notification page-notification--error"><strong>账户余额为负：${formatCurrency(user.balance)}</strong><p>请充值至非负余额，否则无法提交新订单。</p><a class="button button-sm button-primary" href="/customer/balance/top-up">立即充值</a></div>` : ''}
+    <section class="summary" aria-label="账户摘要">
+      <div class="summary__lead">
+        <span class="summary__eyebrow">账户余额 / BALANCE</span>
+        <div class="summary__figure ${negativeBalance ? 'is-danger' : ''}">${formatCurrency(user.balance)}</div>
+        <p class="summary__note">${negativeBalance ? '余额为负' : '可用余额'}</p>
+      </div>
+      <div class="summary__aside">
+        <a class="summary__cell" href="/customer/rentals">
+          <h3>当前租赁</h3>
+          <div class="value">${currentRentals.length}<span class="unit">台</span></div>
+          <div class="trend">设备使用中</div>
+        </a>
+        <a class="summary__cell ${pendingPayment ? 'is-attention' : ''}" href="/customer/orders?status=pending_payment">
+          <h3>待付款</h3>
+          <div class="value">${pendingPayment}<span class="unit">笔</span></div>
+          <div class="trend">${pendingPayment ? '需要处理' : '暂无'}</div>
+        </a>
+        <a class="summary__cell" href="/customer/orders?status=completed">
+          <h3>已完成订单</h3>
+          <div class="value">${completedOrders}<span class="unit">笔</span></div>
+          <div class="trend">历史租赁</div>
+        </a>
+      </div>
+    </section>
+    ${todoItems.length ? `
+    <section class="attention" aria-labelledby="attention-title">
+      <div class="attention__head"><h3 id="attention-title">需要你处理</h3><span>共 ${todoItems.length} 项</span></div>
+      <ol>
+        ${todoItems.map((item) => `<li><a href="${item.href}"><span class="attention__title">${escapeHtml(item.title)}</span><span class="attention__meta ${item.tone === 'alert' ? 'is-alert' : item.tone === 'warn' ? 'is-warn' : ''}">${escapeHtml(item.meta)} ›</span></a></li>`).join('')}
+      </ol>
+    </section>` : ''}
     <div class="grid grid-3">
-      ${currentRentals.length > 0 ? `
-      <div class="card upcoming-rental">
-        <h3>即将到期提醒</h3>
-        <p><span class="mono">${sanitizePlainText(currentRentals[0].orderNo, 40)}</span> · ${getDueText(currentRentals[0].endDate)}</p>
-        <p class="dashboard-due-date">归还日期：${formatDate(currentRentals[0].endDate)}</p>
-        <p style="margin-top: 12px;">
-          <a class="button button-sm" href="/customer/rentals">续租申请</a>
-          <a class="button button-sm button-secondary" href="/customer/rentals" style="margin-left:8px;">提前归还</a>
-        </p>
-      </div>` : ''}
       <div class="card quick-actions">
         <div class="quick-actions__heading"><div><h3>快捷操作</h3></div></div>
         <div class="quick-actions__list">

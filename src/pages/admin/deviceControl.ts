@@ -66,7 +66,7 @@ export function renderAdminDeviceControl(user: any, device: any, commands: any[]
   const body = `<div class="page-header"><div><p class="section-code">REMOTE CONTROL</p><h2>${esc(device.name)}</h2><p>${esc(device.model)} · ${esc(device.serialNumber || device.serial_number || '无序列号')} · 生命周期 <span class="badge badge-info">${esc(device.lifecycle_status || device.lifecycleStatus || 'READY')}</span></p></div><div class="record-actions"><a class="button button-secondary" href="/admin/devices/${encodeURIComponent(device.id)}/edit">编辑设备</a><a class="button button-secondary" href="/admin/device-agent-bindings">绑定设备</a></div></div>` +
     (successMessage ? `<div data-flash-notice class="alert alert-success" style="margin-bottom:16px">${esc(successMessage)}</div>` : '') +
     `<div class="panel"><h3>远程操作</h3><p class="form-text">${onlineNote}</p><form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/commands"><div class="record-actions">${action('SYNC', '立即同步')}${action('REFRESH_DEVICE_INFO', '刷新设备信息')}${action('CHECK_UPDATE', '检查客户端更新')}${action('PAUSE_RENTAL', '暂停设备', 'button-warning')}${action('RESUME_RENTAL', '恢复设备', 'button-success')}</div><div class="grid grid-2" style="margin-top:14px"><input class="form-control" name="title" maxlength="120" placeholder="通知标题" ${isOnline ? '' : 'disabled'}><input class="form-control" name="message" maxlength="500" placeholder="通知内容" ${isOnline ? '' : 'disabled'}></div>${action('SHOW_MESSAGE', '发送设备通知')}</form></div>` +
-    `<div class="panel"><div class="section-title"><h3>维护生命周期</h3><span class="section-note">RETURNED → INSPECTION → MAINTENANCE → READY；损坏可退役</span></div>` +
+    `<div class="panel"><div class="section-title"><h3>维护生命周期</h3></div>` +
     `<form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/maintenance" class="grid grid-2" style="gap:10px;margin-bottom:16px">
         <label class="form-group"><span class="form-label">维护类型</span><select class="form-control" name="type"><option value="RETURN_PREPARATION">归还准备</option><option value="REPAIR">维修</option><option value="DATA_WIPE">数据清除</option><option value="SYSTEM_RESET">系统重置</option><option value="INSPECTION">检查</option></select></label>
         <label class="form-group"><span class="form-label">技师</span><input class="form-control" name="technician" maxlength="200"></label>
@@ -79,6 +79,6 @@ export function renderAdminDeviceControl(user: any, device: any, commands: any[]
         <button class="button button-danger" type="submit">退役设备</button>
       </form>` +
     `${hasOpen ? '' : '<p class="form-text">没有进行中的维护，设备可正常上架。</p>'}${maintenanceCards}</div>` +
-    `<div class="panel"><div class="section-title"><h3>最近 20 条远程命令</h3><span class="section-note">操作时间 · 类型 · 状态时间线 · 客户端返回</span></div><div class="table-wrapper"><table><thead><tr><th>操作时间</th><th>操作类型</th><th>执行状态</th><th>客户端返回结果</th></tr></thead><tbody>${rows}</tbody></table></div></div>`
+    `<div class="panel"><div class="section-title"><h3>最近 20 条远程命令</h3></div><div class="table-wrapper"><table><thead><tr><th>操作时间</th><th>操作类型</th><th>执行状态</th><th>客户端返回结果</th></tr></thead><tbody>${rows}</tbody></table></div></div>`
   return buildLayout(`设备远程控制 - ${device.name}`, body, user)
 }

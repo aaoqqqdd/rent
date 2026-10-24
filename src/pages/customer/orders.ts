@@ -40,7 +40,7 @@ export async function renderCustomerOrders(c: Context, user: any) {
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>我的订单</h2><span class="section-note">查看您的所有租赁订单及最新配送状态。</span></div>
+      <div class="section-title"><h2>我的订单</h2></div>
       <h3>待付款订单</h3>${renderTable(pendingOrders, '您目前没有待付款订单。', '去支付', '<a class="button button-primary" href="/customer/devices">去挑选设备</a>')}
       <h3 style="margin-top: 40px;">当前租赁中</h3>${renderTable(activeOrders, '您目前没有正在租赁的设备。', '查看', '<a class="button button-primary" href="/customer/devices">浏览可租设备</a>')}
       <h3 style="margin-top: 40px;">已完成订单</h3>${renderTable(completedOrders, '您目前没有已完成的订单。', '查看')}

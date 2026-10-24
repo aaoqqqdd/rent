@@ -24,11 +24,11 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
   const backSuffix = backQueryText && !/^(?:[a-z][a-z0-9+.-]*:|\/\/)|[\u0000-\u001f\u007f]/i.test(backQueryText) ? `?${backQueryText}` : ''
 
   const body = `
-    <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>编辑客户</h2><p>${customer.name} · 修改联系方式和退款账户。</p></div><a href="/staff/customers/${customer.id}${backSuffix}" class="button button-secondary">返回客户详情</a></div></div>
+    <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>EDIT RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>编辑客户</h2><p>${customer.name}</p></div><a href="/staff/customers/${customer.id}${backSuffix}" class="button button-secondary">返回客户详情</a></div></div>
     ${errorMessage ? `<div data-flash-notice class="page-notification page-notification--error">${errorMessage}</div>` : ''}
     <div class="panel record-panel single-column">
       <form method="POST" action="/staff/customers/${customer.id}/edit" class="record-form">
-        <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>基本资料</h3><p>客户身份及联系方式。</p></div></div>
+        <section class="form-section"><div class="form-section-title"><span class="mono">01</span><div><h3>基本资料</h3></div></div>
         <div class="grid grid-2">
           <div>
             <label class="form-label">名 / Given name</label>
@@ -42,7 +42,7 @@ export async function renderStaffCustomerEdit(c: Context, user: any, customerId:
             <label class="form-label">邮箱</label>
             <input class="form-control" name="email" value="${customer.email}" readonly />
           </div>
-        </div></section><section class="form-section"><div class="form-section-title"><span class="mono">02</span><div><h3>退款账户</h3><p>维护客户提供的银行退款信息；账户余额由管理员管理。</p></div></div>
+        </div></section><section class="form-section"><div class="form-section-title"><span class="mono">02</span><div><h3>退款账户</h3><p>账户余额由管理员管理。</p></div></div>
         <div class="grid grid-2">
           <div>
             <label class="form-label">手机</label>

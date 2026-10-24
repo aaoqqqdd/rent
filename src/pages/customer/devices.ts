@@ -11,7 +11,7 @@ export async function renderCustomerDevices(c: Context, user: any) {
 
   const body = `
     <div class="panel">
-      <div class="section-title"><h2>设备租赁</h2><span class="section-note">选择您需要的设备和租赁期限。</span></div>
+      <div class="section-title"><h2>设备租赁</h2></div>
       ${devices.length ? `
         <div class="device-list grid grid-3">
           ${devices.map(device => `

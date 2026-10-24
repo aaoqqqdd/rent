@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-import { buildLayout, formatCurrency } from '../../site';
+import { buildLayout, formatCurrency, formatMelbourneDate } from '../../site';
 import type { AdminDashboardData } from '../../services/adminDashboard';
 import { escapeHtml } from '../../lib/html';
 
@@ -39,39 +39,80 @@ export function renderAdminDashboard(
     'RESERVED': { text: '已预约', class: 'badge-info' },
   }
 
+  // —— 控制台的信息顺序：先「现在怎么样」，再「我该做什么」，最后才是「明细」。 ——
+  // 摘要区把管理者的四个问题各给一个数；待办区把需要动手的事项按优先级排成列表。
+  const attentionItems: Array<{ title: string; meta: string; href: string; tone?: 'alert' | 'warn' }> = []
+  const pushAttention = (count: number, title: string, href: string, tone?: 'alert' | 'warn') => {
+    if (!count) return
+    attentionItems.push({ title, meta: `${count} 项`, href, tone })
+  }
+  pushAttention(stats.overdueRentals, '逾期未归还', '/admin/orders?status=active', 'alert')
+  pushAttention(stats.pendingOrders, '待审核订单', '/admin/order-review', 'warn')
+  pushAttention(opsCounts?.pendingDamage || 0, '待验收损坏记录', '/admin/inspections', 'warn')
+  pushAttention(stats.pendingDeposits, '待结算押金', '/admin/refunds', 'warn')
+  pushAttention(opsCounts?.failedPayments || 0, '近 7 日失败付款', '/admin/orders?status=pending_payment', 'warn')
+  pushAttention(opsCounts?.failedCommands || 0, '失败的远程命令', '/admin/exceptions', 'warn')
+  pushAttention(stats.maintenanceDevices + stats.damagedDevices, '维修与损坏设备', '/admin/devices', 'warn')
+
   const body = `
     <div class="hero">
-      <h2>欢迎回来，${escapeHtml(user.name)}！</h2>
-      <p>这是您的管理员控制中心，管理整个系统的所有数据和设置。</p>
+      <h2>${escapeHtml(user.name)}，这是今天的经营概况</h2>
+      <p>${new Date().toLocaleDateString('zh-CN', { timeZone: 'Australia/Melbourne', month: 'long', day: 'numeric', weekday: 'long' })} · 取货 ${stats.todayPickups} · 归还 ${stats.todayReturns}${attentionItems.length ? ` · 待处理 ${attentionItems.length} 类` : ''}</p>
     </div>
-    <div class="stats-grid">
-      <div class="stat-card primary">
-        <h3>总收入</h3>
-        <div class="value">${formatCurrency(stats.totalRevenue)}</div>
-        <div class="trend">↑ 已支付/租赁中/已完成订单，不含已取消</div>
+    <section class="summary" aria-label="经营摘要">
+      <div class="summary__lead">
+        <span class="summary__eyebrow">已确认收入 / CONFIRMED REVENUE</span>
+        <div class="summary__figure">${formatCurrency(stats.totalRevenue)}</div>
+        <p class="summary__note">在途 <strong>${formatCurrency(stats.confirmedRevenue)}</strong></p>
       </div>
-      <div class="stat-card success">
-        <h3>活跃租赁</h3>
-        <div class="value">${stats.activeRentals} 笔</div>
-        <div class="trend">正在进行中的订单</div>
+      <div class="summary__aside">
+        <a class="summary__cell" href="/admin/orders?status=active">
+          <h3>进行中的租赁</h3>
+          <div class="value">${stats.activeRentals}<span class="unit">笔</span></div>
+          <div class="trend">今日到期 ${stats.todayReturns} 笔</div>
+        </a>
+        <a class="summary__cell ${stats.pendingOrders ? 'is-attention' : ''}" href="/admin/order-review">
+          <h3>待处理订单</h3>
+          <div class="value">${stats.pendingOrders}<span class="unit">笔</span></div>
+          <div class="trend">待审核 + 待支付</div>
+        </a>
+        <a class="summary__cell ${stats.utilizationRate >= 70 ? 'is-good' : ''}" href="/admin/devices">
+          <h3>设备利用率</h3>
+          <div class="value">${stats.utilizationRate}<span class="unit">%</span></div>
+          <div class="trend">${stats.availableDevices}/${stats.totalDevices} 台可租 · 闲置 ${stats.idleDevices} 台</div>
+        </a>
+        <a class="summary__cell ${stats.overdueRentals ? 'is-danger' : ''}" href="/admin/orders?status=active">
+          <h3>逾期未还</h3>
+          <div class="value">${stats.overdueRentals}<span class="unit">笔</span></div>
+          <div class="trend">${stats.overdueRentals ? '今日跟进' : '暂无'}</div>
+        </a>
+        <a class="summary__cell" href="/admin/users">
+          <h3>注册客户</h3>
+          <div class="value">${stats.totalUsers}<span class="unit">人</span></div>
+          
+        </a>
+        <a class="summary__cell" href="/admin/calendar">
+          <h3>待取货</h3>
+          <div class="value">${stats.awaitingCollection}<span class="unit">笔</span></div>
+          
+        </a>
       </div>
-      <div class="stat-card warning">
-        <h3>待处理订单</h3>
-        <div class="value">${stats.pendingOrders} 笔</div>
-        <div class="trend">需要处理的订单</div>
+    </section>
+    ${attentionItems.length ? `
+    <section class="attention" aria-labelledby="attention-title">
+      <div class="attention__head">
+        <h3 id="attention-title">现在需要你处理</h3>
+        <span>按影响面排序 · 共 ${attentionItems.length} 类</span>
       </div>
-      <div class="stat-card info">
-        <h3>可用设备</h3>
-        <div class="value">${stats.availableDevices}/${stats.totalDevices}</div>
-        <div class="trend">可租赁的设备数量</div>
-      </div>
-      <div class="stat-card" style="margin-top: 0;">
-        <h3>注册用户</h3>
-        <div class="value">${stats.totalUsers} 人</div>
-        <div class="trend">有效用户数（不含已删除访客账户）</div>
-      </div>
-    </div>
-    <div class="section-title" style="margin-top:24px"><h3>今日运营</h3></div>
+      <ol>
+        ${attentionItems.map((item) => `<li><a href="${item.href}"><span class="attention__title">${escapeHtml(item.title)}</span><span class="attention__meta ${item.tone === 'alert' ? 'is-alert' : item.tone === 'warn' ? 'is-warn' : ''}">${escapeHtml(item.meta)} ›</span></a></li>`).join('')}
+      </ol>
+    </section>` : `
+    <section class="attention">
+      <div class="attention__head"><h3>现在需要你处理</h3><span>全部事项已清空</span></div>
+      <p class="empty-state" style="margin:14px 16px;border:0;background:transparent;">没有逾期、待审核或待结算事项。可以查看下方订单与设备明细。</p>
+    </section>`}
+    <div class="section-title"><h3>今日运营</h3><span class="section-note">今日 = 澳洲东部时间当天；异常项以红色数字标出</span></div>
     <div class="stats-grid">
       <div class="stat-card"><h3>今日取货</h3><div class="value">${stats.todayPickups}</div></div>
       <div class="stat-card"><h3>今日归还</h3><div class="value">${stats.todayReturns}</div></div>

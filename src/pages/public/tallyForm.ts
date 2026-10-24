@@ -45,7 +45,7 @@ export function renderTallyForm(tallyFormUrl = '', feedbackToken = '') {
       </style>
       <div class="feedback-shell"><div class="feedback-shell__inner">
         <div class="feedback-shell__brand">PC Rental · Customer voice</div>
-        <div class="feedback-shell__intro"><div><p class="feedback-shell__eyebrow">YOUR EXPERIENCE MATTERS</p><h1>说说这次租赁，<br>让我们做得更好。</h1><p>您的反馈会帮助我们优化设备、配送与服务体验；提交后，符合条件的奖励会自动发放到您的账户。</p></div><span class="feedback-shell__meta">约 3 分钟</span></div>
+        <div class="feedback-shell__intro"><div><p class="feedback-shell__eyebrow">YOUR EXPERIENCE MATTERS</p><h1>说说这次租赁，<br>让我们做得更好。</h1></div><span class="feedback-shell__meta">约 3 分钟</span></div>
         <section class="feedback-shell__form"><iframe data-tally-src="${escapeAttribute(embedUrl)}" loading="lazy" height="620" frameborder="0" marginheight="0" marginwidth="0" title="客户反馈"></iframe></section>
         <p class="feedback-shell__note">问卷由 Tally 安全处理；请勿在反馈中填写银行卡或密码等敏感信息。</p>
       </div></div>
@@ -66,7 +66,7 @@ export function renderTallyFeedbackThanks() {
     .feedback-thanks .feedback-shell__eyebrow{margin:0 0 12px;color:#f0a35b;font:700 11px/1.2 var(--font-mono);letter-spacing:.16em}
     .feedback-thanks h1{margin:0;color:#fff;font:600 clamp(30px,5vw,46px)/1.05 var(--font-display);letter-spacing:-.04em}
     .feedback-thanks p{margin:16px 0 28px;color:#b9c8d3;line-height:1.65}.feedback-thanks .button{color:#172331;background:#f0a35b;border-color:#f0a35b}
-  </style><div class="feedback-thanks"><div class="feedback-thanks__card"><div class="feedback-thanks__mark">✓</div><p class="feedback-shell__eyebrow">FEEDBACK RECEIVED</p><h1>谢谢您的反馈！</h1><p>您的问卷已成功提交。若当前活动包含反馈奖励，系统会按规则自动发放，请留意客户中心的通知。</p><a class="button button-primary" href="/customer/dashboard">返回客户中心</a></div></div>`
+  </style><div class="feedback-thanks"><div class="feedback-thanks__card"><div class="feedback-thanks__mark">✓</div><p class="feedback-shell__eyebrow">FEEDBACK RECEIVED</p><h1>谢谢您的反馈！</h1><p>已提交。奖励将自动发放，请留意通知。</p><a class="button button-primary" href="/customer/dashboard">返回客户中心</a></div></div>`
   return buildLayout('感谢您的反馈 - PC Rental', body)
 }
 

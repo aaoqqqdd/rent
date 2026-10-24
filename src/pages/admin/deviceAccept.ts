@@ -15,7 +15,7 @@ export function renderAdminDeviceAccept(user: any, device: any, checkTypes: stri
     (successMessage ? `<div class="panel" data-flash-notice><p class="alert alert-success">${esc(successMessage)}</p></div>` : '') +
     (blockedReason ? `<div class="panel"><p class="alert alert-warning">${esc(blockedReason)}</p><p class="form-text">${isAdmin ? `请到<a href="/admin/devices/${encodeURIComponent(device.id)}/control">设备详情</a>页处理进行中的维护记录，或等待关联订单结束后再来验收。` : '请联系管理员处理进行中的维护记录，或等待关联订单结束后再来验收。'}</p></div>` : successMessage ? '' : `
     <div class="panel">
-      <div class="section-title"><h3>归还前十项验证</h3><span class="section-note">状况良好可一次性提交；十项全部通过后设备立即变为可用</span></div>
+      <div class="section-title"><h3>归还前十项验证</h3><span class="section-note">十项全部通过后设备立即变为可用</span></div>
       <form method="post" action="/admin/devices/${encodeURIComponent(device.id)}/accept">
         <div class="table-wrapper"><table><thead><tr><th>验证项</th><th>结果</th></tr></thead><tbody>
           ${checkTypes.map(type => `<tr><td>${CHECK_LABELS[type] || type}</td><td><label class="form-check" style="display:inline-flex;margin-right:16px"><input type="radio" name="check_${type}" value="1" checked> 通过</label><label class="form-check" style="display:inline-flex"><input type="radio" name="check_${type}" value="0"> 不通过</label></td></tr>`).join('')}
