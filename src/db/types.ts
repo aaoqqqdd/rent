@@ -119,6 +119,8 @@ export type DeviceLifecycleStatus = 'RESERVED' | 'READY' | 'RENTED' | 'RETURNED'
 
 export interface Order {
   is_manual?: number
+  rental_link_id?: string | null
+  booking_buffer_days?: number
   id: string
   orderNo: string | null
   userId: string

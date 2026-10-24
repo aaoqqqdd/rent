@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, getAccessLevel, getAccountTypeDisplay, splitPersonName, formatMelbourneDate, getCustomerRiskAssessment } from '../../site';
+import { renderPasswordSetupNotice } from '../partials/passwordSetupNotice';
 
 export async function renderAdminUsers(user: any, c: any) {
   const { getUsersAsync } = await import('../../site')
@@ -30,6 +31,7 @@ export async function renderAdminUsers(user: any, c: any) {
   };
 
   const body = `
+    ${renderPasswordSetupNotice(c.req.query('passwordSetup'))}
     <div class="panel">
       <div class="section-title">
         <div>

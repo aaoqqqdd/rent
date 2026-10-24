@@ -7,6 +7,8 @@
 import { Hono } from 'hono'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
+import { sendPasswordResetEmail } from './auth/passwordReset'
+import { expireRentalLinkDrafts } from './services/rentalLinks'
 import { serviceFeeRate } from './domain/pickupTimeSlots'
 import {
   renderNotFound,
@@ -656,7 +658,7 @@ function applySecurityHeaders(c: any): void {
   if (new URL(c.req.url).protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   // Do not allow browsers or intermediary caches to retain authenticated
   // pages, reset links, or contract signing pages containing credentials.
-  if (c.get('user') || c.req.path.startsWith('/admin/') || c.req.path.startsWith('/staff/') || c.req.path.startsWith('/customer/') || ['/login', '/forgot-password', '/reset-password', '/verify-email', '/contract/sign', '/sso/consume'].includes(c.req.path)) {
+  if (c.get('user') || c.req.path.startsWith('/admin/') || c.req.path.startsWith('/staff/') || c.req.path.startsWith('/customer/') || c.req.path.startsWith('/rent/') || ['/login', '/forgot-password', '/reset-password', '/verify-email', '/contract/sign', '/sso/consume'].includes(c.req.path)) {
     c.header('Cache-Control', 'private, no-store')
   }
   c.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.stripe.com https://tally.so https://web.squarecdn.com https://sandbox.web.squarecdn.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com https://api.stripe.com https://tally.so https://connect.squareup.com https://connect.squareupsandbox.com; frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com https://tally.so; frame-ancestors 'none'; form-action 'self' https://app.squareup.com")
@@ -775,6 +777,9 @@ app.use('*', async (c, next) => {
     : /^\/customer\/orders\/[^/]+\/bank-transfer-proof$/.test(c.req.path) ? ['bank-proof', 10, 3600] as const
     : /^\/staff\/orders\/[^/]+\/inspection$/.test(c.req.path) ? ['inspection-upload', 10, 3600] as const
     : c.req.path === '/admin/settings/upload-image' ? ['admin-settings-image', 10, 3600] as const
+    : c.req.method === 'POST' && ['/admin/users/new', '/staff/customers/new'].includes(c.req.path) ? ['managed-user-create', 30, 600] as const
+    : c.req.method === 'POST' && c.req.path.startsWith('/rent/') ? ['rental-link-booking', 10, 900] as const
+    : c.req.method === 'POST' && c.req.path.startsWith('/admin/rental-links') ? ['rental-link-admin', 30, 600] as const
     : c.req.method === 'POST' && (c.req.path === '/admin/orders/new' || /^\/admin\/orders\/[^/]+\/edit$/.test(c.req.path)) ? ['admin-manual-order', 60, 600] as const
     : c.req.path === '/verify' ? ['contract-verify', 30, 600] as const
     : c.req.path === '/admin/connectivity/check' ? ['connectivity-check', 10, 60] as const
@@ -1200,16 +1205,7 @@ app.post('/forgot-password', async (c) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.html(pages.renderForgotPassword('请输入有效的邮箱地址'), 400)
   const user = await findUserByEmail(c, email)
   if (user) {
-    const token = nanoid(48)
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
-    const tokenHash = Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
-    await c.env.RENT.prepare('UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL').bind(user.id).run()
-    await c.env.RENT.prepare('INSERT INTO password_resets (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, datetime(\'now\', \'+30 minutes\'))').bind(`reset-${nanoid(12)}`, user.id, tokenHash).run()
-    const { apiKey, from } = await resolveEmailCredentials(c)
-    if (apiKey && from) {
-      const resetUrl = `${new URL(c.req.url).origin}/reset-password?token=${encodeURIComponent(token)}`
-      await sendTransactionalEmail(c, { to: email, subject: '重置您的登录密码 - PC Rental', text: `您好 ${user.name || ''}，请在 30 分钟内打开以下链接重置密码：\n${resetUrl}` }).catch(error => console.error('Password reset email failed:', error))
-    }
+    await sendPasswordResetEmail(c, user)
   }
   return c.html(pages.renderForgotPassword('如果该邮箱已注册，重置链接将发送到您的邮箱。'))
 })
@@ -2544,10 +2540,12 @@ app.post('/staff/customers/new', async (c) => {
   const email = String(form.email || '').trim().toLowerCase()
   const password = String(form.password || '')
   if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email) return c.html(pages.renderStaffCustomerNew(user, '请完整填写名、姓和邮箱'), 400)
-  if (!isStrongPassword(password)) return c.html(pages.renderStaffCustomerNew(user, '密码至少需要 8 位，并同时包含字母、数字和符号'), 400)
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.html(pages.renderStaffCustomerNew(user, '请输入有效的邮箱地址'), 400)
+  if (password && !isStrongPassword(password)) return c.html(pages.renderStaffCustomerNew(user, '密码至少需要 8 位，并同时包含字母、数字和符号'), 400)
   if (await findUserByEmail(c, email)) return c.html(pages.renderStaffCustomerNew(user, '该邮箱已被使用'), 409)
   const customer = await insertUser(c, { id: await generateUniqueUserId(c, 'CUSTOMER'), name, email, phone: String(form.phone || '').trim(), password, role: 'CUSTOMER', status: 'active', staffId: user.id, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
-  return c.redirect(`/staff/customers/${customer.id}`)
+  const passwordSetup = password ? '' : ((await sendPasswordResetEmail(c, customer, 'setup').catch(() => false)) ? 'sent' : 'failed')
+  return c.redirect(`/staff/customers/${customer.id}${passwordSetup ? `?passwordSetup=${passwordSetup}` : ''}`, 303)
 })
 
 app.get('/staff/customers/:id/edit', async (c) => {
@@ -3121,6 +3119,9 @@ app.get('/staff/contract/view', async (c) => {
   }
   return c.html(await pages.renderStaffContractView(c, user, c.req.query('orderId') || ''))
 })
+
+app.get('/rent/:token', (c) => pages.renderPublicRentalLink(c))
+app.post('/rent/:token', (c) => actions.bookRentalLink(c))
 
 app.get('/contract/sign', async (c) => {
   const token = c.req.query('token') || c.req.query('number') || '';
@@ -3956,11 +3957,13 @@ app.post('/admin/users/new', async (c) => {
   const password = String(form.password || '')
   const role = String(form.role || 'CUSTOMER')
   const status = String(form.status || 'active')
-  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !email || !isStrongPassword(password) || !['CUSTOMER', 'STAFF', 'MANAGER', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user), 400)
-  if (await findUserByEmail(c, email)) return c.html(pages.renderAdminUserNew(user), 409)
+  if (!String(form.firstName || '').trim() || !String(form.lastName || '').trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !['CUSTOMER', 'STAFF', 'MANAGER', 'ADMIN'].includes(role) || !['active', 'inactive'].includes(status)) return c.html(pages.renderAdminUserNew(user, '请完整填写名、姓和有效邮箱，并选择正确的角色与状态'), 400)
+  if (password && !isStrongPassword(password)) return c.html(pages.renderAdminUserNew(user, '密码至少需要 8 位，并同时包含字母、数字和符号'), 400)
+  if (await findUserByEmail(c, email)) return c.html(pages.renderAdminUserNew(user, '该邮箱已被使用'), 409)
   const created = await insertUser(c, { id: await generateUniqueUserId(c, role === 'MANAGER' ? 'STAFF' : role as 'ADMIN' | 'STAFF' | 'CUSTOMER'), name, email, password, role: role === 'MANAGER' ? 'STAFF' : role, accessLevel: role, status, accountStatus: status, balance: 0, commissionBalance: 0, createdAt: new Date().toISOString() })
   await createAuditLog(c, { actor: user, action: 'USER_CREATED', targetType: 'USER', targetId: created.id, after: { role, status } })
-  return c.redirect('/admin/users')
+  const passwordSetup = password ? '' : ((await sendPasswordResetEmail(c, created, 'setup').catch(() => false)) ? 'sent' : 'failed')
+  return c.redirect(`/admin/users${passwordSetup ? `?passwordSetup=${passwordSetup}` : ''}`, 303)
 })
 
 app.get('/admin/users/:id', async (c) => {
@@ -4186,6 +4189,14 @@ app.get('/admin/orders', async (c) => {
   }
   return c.html(await pages.renderAdminOrders(c, user))
 })
+
+app.get('/admin/rental-links', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  return c.html(await pages.renderAdminRentalLinks(c, user))
+})
+app.post('/admin/rental-links', (c) => actions.createAdminRentalLink(c))
+app.post('/admin/rental-links/:id/toggle', (c) => actions.toggleAdminRentalLink(c))
 
 app.get('/admin/delivery', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
@@ -6246,6 +6257,7 @@ export default {
     if (event.cron === '*/15 * * * *') {
       ctx.waitUntil((async () => {
         await runScheduledJob(c, 'expire_missed_pickups', () => expireMissedPickupOrders(c))
+        await runScheduledJob(c, 'expire_rental_link_drafts', () => expireRentalLinkDrafts(c))
         await runScheduledJob(c, 'charge_overdue_returns', () => chargeOverdueReturns(c))
       })())
       return

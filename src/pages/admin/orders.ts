@@ -17,6 +17,7 @@ const ORDER_LIST_PAGE_SIZE = 200
 
 export const adminOrderStatusMap: Record<string, { text: string; class: string }> = {
   all: { text: '全部', class: 'badge-info' },
+  draft: { text: '待签约', class: 'badge-warning' },
   pending_approval: { text: '待审核', class: 'badge-warning' },
   pending_payment: { text: '待支付', class: 'badge-warning' },
   approved: { text: '已审核', class: 'badge-info' },
@@ -202,6 +203,7 @@ export async function renderAdminOrders(c: Context, user: any) {
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
           <a href="/admin/orders/new" class="button button-primary">手动添加订单</a>
+          <a href="/admin/rental-links" class="button button-secondary">自助租赁链接</a>
           <a href="/admin/orders/balance-topups" class="button button-secondary">余额充值订单</a>
           <a href="/admin/orders/export${exportQuery ? `?${exportQuery}` : ''}" class="button button-secondary" download>导出 CSV</a>
         </div>
@@ -339,7 +341,7 @@ export async function renderAdminOrders(c: Context, user: any) {
     return `
                 <tr>
                   <td><input type="checkbox" name="orderIds" value="${order.id}" class="order-checkbox" form="bulk-order-form" /></td>
-                  <td style="font-family: monospace;">${order.orderNo || order.id}${order.is_manual === 1 ? '<br><span class="badge badge-info">手动订单 · 无需合同</span>' : ''}</td>
+                  <td style="font-family: monospace;">${order.orderNo || order.id}${order.is_manual === 1 ? '<br><span class="badge badge-info">手动订单 · 无需合同</span>' : order.rental_link_id ? '<br><span class="badge badge-info">自助租赁</span>' : ''}</td>
                   <td>
                     <div><strong>${escapeHtml(order.customer?.name) || (order.is_manual === 1 ? '未关联客户' : '未知用户')}</strong>${order.customer?.accountType === 'guest' ? ' <span class="badge badge-warning">访客/临时账户</span>' : ''}</div>
                     <small style="color: var(--text-secondary);">${escapeHtml(order.customer?.email)}</small>

@@ -10,7 +10,8 @@ import { nanoid } from 'nanoid';
 import { calculateRentalFee } from '../../domain/rentalPricing';
 import { depositPaymentModeForRental } from '../../domain/paymentPlan';
 
-export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>): Promise<Response> {
+export async function handleCreateContractAction(c: Context, user: User, body: Record<string, string>, options: { errorPath?: string; rentalLinkId?: string; directSigning?: boolean } = {}): Promise<Response> {
+  const errorPath = options.errorPath || '/staff/contracts/new'
   const { deviceId, startDate, endDate, validFrom, validUntil, expiryDuration, deviceCondition, deviceAccessories, returnLocation } = body;
   const startPeriod = body.startPeriod === 'PM' ? 'PM' : 'AM'
   const endPeriod = body.endPeriod === 'PM' ? 'PM' : 'AM'
@@ -24,55 +25,55 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
   let pickupLocationValue = String(body.pickupLocation || '').trim()
   let deliveryAddressData: Record<string, string> = {}
   if (deliveryMethod === 'Pickup') {
-    if (!pickupLocationValue) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请选择自取地点')}`)
-    if (user.role !== 'ADMIN' && !allowedLocations.includes(pickupLocationValue)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('员工只能选择管理员配置的自取地点')}`)
+    if (!pickupLocationValue) return c.redirect(`${errorPath}?error=${encodeURIComponent('请选择自取地点')}`)
+    if (user.role !== 'ADMIN' && !allowedLocations.includes(pickupLocationValue)) return c.redirect(`${errorPath}?error=${encodeURIComponent('员工只能选择管理员配置的自取地点')}`)
   } else {
     const street = String(body.deliveryStreet || '').trim()
     const suburb = String(body.deliverySuburb || '').trim()
     const state = String(body.deliveryState || '').trim().toUpperCase()
     const postcode = String(body.deliveryPostcode || '').trim()
-    if (!street || !suburb || !['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].includes(state) || !/^\d{4}$/.test(postcode)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请填写完整有效的澳洲送货地址')}`)
+    if (!street || !suburb || !['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].includes(state) || !/^\d{4}$/.test(postcode)) return c.redirect(`${errorPath}?error=${encodeURIComponent('请填写完整有效的澳洲送货地址')}`)
     pickupLocationValue = `${street}, ${suburb} ${state} ${postcode}, Australia`
     deliveryAddressData = { delivery_address: pickupLocationValue, delivery_street: street, delivery_suburb: suburb, delivery_state: state, delivery_postcode: postcode, delivery_place_id: String(body.deliveryPlaceId || '').trim().slice(0, 300) }
   }
   if (returnMethod === 'CourierPickup') {
     returnLocationValue = pickupLocationValue
   } else if (!returnLocationValue || (user.role !== 'ADMIN' && !allowedLocations.includes(returnLocationValue))) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请选择管理员配置的归还店铺')}`)
+    return c.redirect(`${errorPath}?error=${encodeURIComponent('请选择管理员配置的归还店铺')}`)
   }
 
   if (!deviceId || !startDate || !endDate) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('设备、开始日期和结束日期均为必填项')}`);
+    return c.redirect(`${errorPath}?error=${encodeURIComponent('设备、开始日期和结束日期均为必填项')}`);
   }
   const lateFeePerDay = Number(body.lateFeePerDay)
   const repairCost = body.repairCost === '' ? null : Number(body.repairCost)
   if (!deviceCondition?.trim() || !Number.isFinite(lateFeePerDay) || lateFeePerDay < 0 || (deliveryMethod === 'Delivery' && !deliveryFeeText) || !Number.isFinite(deliveryFee) || deliveryFee < 0 || (repairCost !== null && (!Number.isFinite(repairCost) || repairCost < 0))) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('请填写设备状况、取还地点及有效的非负费用')}`);
+    return c.redirect(`${errorPath}?error=${encodeURIComponent('请填写设备状况、取还地点及有效的非负费用')}`);
   }
 
   const device = await getDeviceById(c, deviceId);
 
   const normalizedStatus = String(device?.status || '').toLowerCase();
-  if (!device || ['maintenance', 'retired'].includes(normalizedStatus)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('维修或退役设备不能新建合同')}`)
+  if (!device || ['maintenance', 'retired'].includes(normalizedStatus)) return c.redirect(`${errorPath}?error=${encodeURIComponent('维修或退役设备不能新建合同')}`)
   const rentalRules = await getDeviceRentalRules(c, deviceId)
   const start = new Date(startDate);
   const end = new Date(endDate);
   const todayValue = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   if (startDate < todayValue || endDate < todayValue) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('开始日期和结束日期必须是今天或之后的日期')}`);
+    return c.redirect(`${errorPath}?error=${encodeURIComponent('开始日期和结束日期必须是今天或之后的日期')}`);
   }
   if (start > end) {
-    return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
+    return c.redirect(`${errorPath}?error=${encodeURIComponent('租赁结束日期必须晚于开始日期')}`);
   }
   const melbourneNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Australia/Melbourne' }))
   const melbourneMinutes = melbourneNow.getHours() * 60 + melbourneNow.getMinutes()
   const periodPassed = (date: string, period: string) => date === todayValue && melbourneMinutes >= (period === 'AM' ? 12 * 60 : 23 * 60)
   const halfDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
-  if (halfDays <= 0) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('归还时段必须晚于取货时段')}`)
+  if (halfDays <= 0) return c.redirect(`${errorPath}?error=${encodeURIComponent('归还时段必须晚于取货时段')}`)
   const rentalPeriod = Math.ceil(halfDays / 2);
-  if (rentalPeriod < rentalRules.minimumRentalDays) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent(`最短租赁时间为 ${rentalRules.minimumRentalDays} 天`)}`)
+  if (rentalPeriod < rentalRules.minimumRentalDays) return c.redirect(`${errorPath}?error=${encodeURIComponent(`最短租赁时间为 ${rentalRules.minimumRentalDays} 天`)}`)
   const unavailable = new Set(rentalRules.unavailableDates)
-  for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) if (unavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备包含管理员设置的不可用日期')}`)
+  for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) if (unavailable.has(day.toISOString().slice(0, 10))) return c.redirect(`${errorPath}?error=${encodeURIComponent('该设备包含管理员设置的不可用日期')}`)
   const periodSlots = (period: string) => period === 'AM' ? ['morning_service', 'morning'] : ['afternoon', 'evening_service']
   const periodBlocked = (date: string, period: string) => periodSlots(period).every(slot => (rentalRules.unavailableTimeSlots?.[date] || []).includes(slot))
   for (let day = new Date(startDate); day <= new Date(endDate); day.setDate(day.getDate() + 1)) {
@@ -81,14 +82,14 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
       const index = Math.round(Date.parse(`${date}T00:00:00Z`) / 86400000) * 2 + (period === 'PM' ? 1 : 0)
       const requestStart = Math.round(Date.parse(`${startDate}T00:00:00Z`) / 86400000) * 2 + (startPeriod === 'PM' ? 1 : 0)
       const requestEnd = Math.round(Date.parse(`${endDate}T00:00:00Z`) / 86400000) * 2 + (endPeriod === 'PM' ? 1 : 0)
-      if (requestStart <= index && index < requestEnd && (periodBlocked(date, period) || periodPassed(date, period))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('所选上午/下午时段已过或不可用')}`)
+      if (requestStart <= index && index < requestEnd && (periodBlocked(date, period) || periodPassed(date, period))) return c.redirect(`${errorPath}?error=${encodeURIComponent('所选上午/下午时段已过或不可用')}`)
     }
   }
-  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays, startPeriod, endPeriod)) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备在所选日期或缓冲时间内已有订单')}`)
+  if (await hasDeviceBookingConflict(c, deviceId, startDate, endDate, undefined, rentalRules.bufferDays, startPeriod, endPeriod)) return c.redirect(`${errorPath}?error=${encodeURIComponent('该设备在所选日期或缓冲时间内已有订单')}`)
   const sameDayBookings = ((await c.env.RENT.prepare(`SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled') AND (startDate = ? OR endDate = ? OR startDate = ? OR endDate = ?)`)
     .bind(deviceId, startDate, startDate, endDate, endDate).all()).results || []) as any[]
-  if (sameDayBookings.some(item => (item.startDate === startDate && item.startPeriod === startPeriod) || (item.endDate === startDate && item.endPeriod === startPeriod))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备的取货时段已被出租')}`)
-  if (sameDayBookings.some(item => (item.startDate === endDate && item.startPeriod === endPeriod) || (item.endDate === endDate && item.endPeriod === endPeriod))) return c.redirect(`/staff/contracts/new?error=${encodeURIComponent('该设备的归还时段已被出租')}`)
+  if (sameDayBookings.some(item => (item.startDate === startDate && item.startPeriod === startPeriod) || (item.endDate === startDate && item.endPeriod === startPeriod))) return c.redirect(`${errorPath}?error=${encodeURIComponent('该设备的取货时段已被出租')}`)
+  if (sameDayBookings.some(item => (item.startDate === endDate && item.startPeriod === endPeriod) || (item.endDate === endDate && item.endPeriod === endPeriod))) return c.redirect(`${errorPath}?error=${encodeURIComponent('该设备的归还时段已被出租')}`)
 
   const dailyRate = device.pricePerDay;
   const depositAmount = device.depositAmount;
@@ -107,7 +108,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     try {
       coupon = await findEligibleCoupon(c, couponCode, device, couponFeeParts)
     } catch (error: any) {
-      return c.redirect(`/staff/contracts/new?error=${encodeURIComponent(error?.message || '优惠码无效')}`)
+      return c.redirect(`${errorPath}?error=${encodeURIComponent(error?.message || '优惠码无效')}`)
     }
     discountAmount = calculateCouponDiscount(coupon, couponFeeParts)
     appliedCouponCode = String(coupon.code).toUpperCase()
@@ -135,6 +136,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     rentalNote: String(body.rentalNote || '').trim().slice(0, 500) as any,
     rentalPeriod: rentalPeriod, // 添加 rentalPeriod
     status: 'draft',
+    rental_link_id: options.rentalLinkId || null, booking_buffer_days: options.rentalLinkId ? rentalRules.bufferDays : 0,
     paymentMethod: 'card',
     totalAmount: totalAmount,
     depositAmount: depositAmount,
@@ -147,8 +149,6 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     // created_by 在部分旧代码/表结构中存在，这里与 Order 类型对齐使用 createdAt
     // createdAtBy: user.id,
   } as any;
-  await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ? WHERE id = ?')
-    .bind('bank_transfer', depositPaymentModeForRental(rentalPeriod, false), orderId).run()
 
   // 设置签约链接过期时间，使用用户选择的天数
   const signExpiresDate = new Date();
@@ -168,7 +168,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     signedAt: null,
     signToken: signToken,
     createdAt: new Date().toISOString(),
-    signExpiresAt: signExpiresDate.toISOString(), // 设置过期时间
+    signExpiresAt: options.rentalLinkId ? new Date(Date.now() + 30 * 60000).toISOString() : signExpiresDate.toISOString(), // 设置过期时间
     validFrom: validFrom || null, // Add validFrom
     validUntil: validUntil || null, // Add validUntil
     createdBy: user.id, // 记录合同创建人，用于权限控制
@@ -202,13 +202,19 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     inspectionBy: user.name || user.id,
     source: 'contract_creation',
   })
-  await insertOrder(c, newOrder);
+  try { await insertOrder(c, newOrder) } catch (error) {
+    if (options.rentalLinkId && /RENTAL_LINK_/.test(String(error))) return c.redirect(`${errorPath}?error=${encodeURIComponent('所选租期已被预订，或租赁链接已停用，请重新选择。')}`, 303)
+    throw error
+  }
+  await c.env.RENT.prepare('UPDATE orders SET deposit_method = ?, deposit_payment_mode = ? WHERE id = ?')
+    .bind('bank_transfer', depositPaymentModeForRental(rentalPeriod, false), orderId).run()
   await insertContract(c, newContract);
   await c.env.RENT.prepare('UPDATE orders SET contractId = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(contractId, orderId).run();
   await c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, rental_id, inspection_type, snapshot_json, differences_json, performed_by) VALUES (?, ?, ?, \'before_rental\', ?, ?, ?)').bind(`inspection-${nanoid(12)}`, deviceId, orderId, JSON.stringify(inspectionSnapshot), JSON.stringify({}), user.id).run();
   await c.env.RENT.prepare('UPDATE devices SET inspection_requested_at = CURRENT_TIMESTAMP WHERE id = ?').bind(deviceId).run();
 
   const fullSignUrl = `${new URL(c.req.url).origin}/contract/sign?token=${newContract.signToken}&step=1`;
+  if (options.directSigning) return c.redirect(fullSignUrl, 303)
   const successPage = `
     <div class="panel">
       <h2>签约链接已生成</h2>

@@ -97,3 +97,5 @@ export * from './admin/deviceCalendar';
 export * from './admin/deviceAgentBindings';
 export * from './admin/delivery';
 export * from './admin/manualOrder';
+export * from './admin/rentalLinks';
+export * from './public/rentalLink';

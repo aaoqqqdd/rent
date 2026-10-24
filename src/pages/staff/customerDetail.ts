@@ -6,6 +6,7 @@
 import { buildLayout, getUserById, getOrdersForUser, getDevicesByIds, formatCurrency, splitPersonName, staffOrderPath } from '../../site';
 import { Context } from 'hono';
 import { escapeHtml } from '../../lib/html';
+import { renderPasswordSetupNotice } from '../partials/passwordSetupNotice';
 
 export async function renderStaffCustomerDetail(c: Context, user: any, customerId: string) {
   const customer = await getUserById(c, customerId)
@@ -23,6 +24,7 @@ export async function renderStaffCustomerDetail(c: Context, user: any, customerI
   const activeRiskFlags = (await c.env.RENT.prepare("SELECT flag_type, severity, reason FROM risk_flags WHERE customer_id = ? AND status = 'ACTIVE' ORDER BY CASE severity WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END, created_at DESC").bind(customer.id).all()).results as any[]
   const riskNotice = activeRiskFlags.length ? `<div class="page-notification page-notification--error"><strong>风险提示（${activeRiskFlags.length}）</strong>${activeRiskFlags.map((flag: any) => `<p>${escapeHtml(flag.flag_type)} · ${escapeHtml(flag.severity)} · ${escapeHtml(flag.reason)}</p>`).join('')}</div>` : ''
   const body = `
+    ${renderPasswordSetupNotice(c.req.query('passwordSetup'))}
     ${accountNotice}
     ${riskNotice}
     <div class="entity-header"><div class="identity-strip mono"><span>CUSTOMER / ${customer.id}</span><span>ACTIVE RECORD</span></div><div class="entity-heading"><div><p class="section-code">CUSTOMER RECORD</p><h2>${escapeHtml(customer.name)}</h2><p>${escapeHtml(customer.email)}</p></div><div class="entity-heading-actions"><a class="button button-secondary" href="/staff/customers">返回客户列表</a><a class="button" href="/staff/customers/${customer.id}/edit">编辑客户</a></div></div></div>
