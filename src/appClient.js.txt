@@ -36,21 +36,12 @@
     notice.dataset.toastType = failed ? 'error' : 'success';
     var timer;
     notice.dismissNotice = function () { window.clearTimeout(timer); notice.remove(); };
-    var pause = function () { window.clearTimeout(timer); };
-    var resume = function () {
-      pause();
-      if (!failed && !notice.matches(':hover, :focus-within')) timer = window.setTimeout(notice.dismissNotice, 10000);
-    };
     addNoticeClose(notice);
-    notice.addEventListener('mouseenter', pause);
-    notice.addEventListener('mouseleave', resume);
-    notice.addEventListener('focusin', pause);
-    notice.addEventListener('focusout', resume);
     var layer = getNoticeLayer();
     var previous = Array.from(layer.querySelectorAll('.site-toast')).filter(function (item) { return item.dataset.toastType === 'success'; });
     if (!failed && previous.length >= 3) previous[0].dismissNotice();
     layer.appendChild(notice);
-    resume();
+    if (!failed) timer = window.setTimeout(notice.dismissNotice, 5000);
     return notice;
   };
   function prepareFlashNotices(isReload) {

@@ -580,7 +580,7 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
   }
 
   // 1. 直接使用传入的 id 进行查询
-  let orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(actualId).first()
+  let orderRow = await db.prepare('SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL').bind(actualId).first()
   if (orderRow) {
     return normalizeOrderRow(orderRow)
   }
@@ -588,7 +588,7 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
   // 2. 如果查询结果为空，并且传入的 id 不以 o- 开头，则尝试添加 o- 前缀后再次查询
   if (!actualId.startsWith('o-')) {
     const prefixedId = `o-${actualId}`
-    orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(prefixedId).first()
+    orderRow = await db.prepare('SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL').bind(prefixedId).first()
     if (orderRow) {
       return normalizeOrderRow(orderRow)
     }
@@ -597,7 +597,7 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
   // 3. 如果查询结果为空，并且传入的 id 以 o- 开头，则尝试去除 o- 前缀后再次查询
   if (actualId.startsWith('o-')) {
     const unprefixedId = actualId.substring(2)
-    orderRow = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(unprefixedId).first()
+    orderRow = await db.prepare('SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL').bind(unprefixedId).first()
     if (orderRow) {
       return normalizeOrderRow(orderRow)
     }
@@ -608,13 +608,13 @@ export async function getOrderById(cOrContext: Context | string, id?: string): P
 
 export async function getOrderByOrderNo(c: Context, orderNo: string): Promise<Order | null> {
   const db = getDB(c)
-  const orderRow = await db.prepare('SELECT * FROM orders WHERE UPPER(orderNo) = ?').bind(orderNo.toUpperCase()).first()
+  const orderRow = await db.prepare('SELECT * FROM orders WHERE UPPER(orderNo) = ? AND deleted_at IS NULL').bind(orderNo.toUpperCase()).first()
   return orderRow ? normalizeOrderRow(orderRow) : null
 }
 
 export async function getOrders(c?: Context): Promise<Order[]> {
   const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM orders').all()
+  const result = await db.prepare('SELECT * FROM orders WHERE deleted_at IS NULL').all()
   return ((result.results || []) as any[]).map(normalizeOrderRow) || []
 }
 
@@ -622,7 +622,7 @@ export async function getOrdersForUser(cOrContext: Context | string, userId?: st
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualUserId = typeof cOrContext === 'string' ? cOrContext : userId
   if (!actualUserId) return []
-  const result = await db.prepare('SELECT * FROM orders WHERE userId = ?').bind(actualUserId).all()
+  const result = await db.prepare('SELECT * FROM orders WHERE userId = ? AND deleted_at IS NULL').bind(actualUserId).all()
   return ((result.results || []) as any[]).map(normalizeOrderRow) || []
 }
 
@@ -641,7 +641,7 @@ export async function getOrdersWithDetailsForUser(c: Context, userId: string): P
       d.name as deviceName
     FROM orders o
     LEFT JOIN devices d ON o.deviceId = d.id
-    WHERE o.userId = ?
+    WHERE o.userId = ? AND o.deleted_at IS NULL
     ORDER BY o.createdAt DESC
   `;
   const result = await db.prepare(query).bind(userId).all();
@@ -662,13 +662,13 @@ export async function getOrdersByIds(c: Context, ids: string[]): Promise<Order[]
   if (!ids.length) return []
   const db = getDB(c)
   const placeholders = ids.map(() => '?').join(', ')
-  const result = await db.prepare(`SELECT * FROM orders WHERE id IN (${placeholders})`).bind(...ids).all()
+  const result = await db.prepare(`SELECT * FROM orders WHERE id IN (${placeholders}) AND deleted_at IS NULL`).bind(...ids).all()
   return (result.results as Order[]) || []
 }
 
 export async function getOrdersAsync(c: Context): Promise<any[]> {
   const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM orders').all()
+  const result = await db.prepare('SELECT * FROM orders WHERE deleted_at IS NULL').all()
   return result.results || []
 }
 
@@ -781,7 +781,7 @@ export async function hasDeviceBookingConflict(c: Context, deviceId: string, sta
   if (!startPeriod || !endPeriod) {
     const row = await c.env.RENT.prepare(`
       SELECT id FROM orders
-      WHERE deviceId = ? AND id != ?
+      WHERE deviceId = ? AND id != ? AND deleted_at IS NULL
         AND status NOT IN ('completed', 'cancelled')
         AND startDate < ? AND endDate > ?
       LIMIT 1
@@ -793,7 +793,7 @@ export async function hasDeviceBookingConflict(c: Context, deviceId: string, sta
   const requestEnd = periodIndex(conflictEnd, bufferDays ? 'PM' : endPeriod)
   const rows = await c.env.RENT.prepare(`
     SELECT startDate, endDate, startPeriod, endPeriod FROM orders
-    WHERE deviceId = ? AND id != ?
+    WHERE deviceId = ? AND id != ? AND deleted_at IS NULL
       AND status NOT IN ('completed', 'cancelled')
       AND startDate IS NOT NULL AND endDate IS NOT NULL
   `).bind(deviceId, excludeOrderId || '').all() as any
@@ -808,7 +808,7 @@ export async function getDeviceById(cOrContext: Context | string, id?: string): 
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
   if (!actualId) return null
-  const deviceRow = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(actualId).first()
+  const deviceRow = await db.prepare('SELECT * FROM devices WHERE id = ? AND deleted_at IS NULL').bind(actualId).first()
   if (!deviceRow) return null
 
   // 统一处理snake_case和camelCase字段
@@ -843,12 +843,12 @@ export async function getDeviceById(cOrContext: Context | string, id?: string): 
 
 export async function getDeviceBySerialNumber(c: Context, serialNumber: string): Promise<Device | null> {
   const db = getDB(c)
-  return db.prepare('SELECT * FROM devices WHERE serialNumber = ?').bind(serialNumber).first() as Device | null
+  return db.prepare('SELECT * FROM devices WHERE serialNumber = ? AND deleted_at IS NULL').bind(serialNumber).first() as Device | null
 }
 
 export async function getDevices(c?: Context): Promise<Device[]> {
   const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM devices').all()
+  const result = await db.prepare('SELECT * FROM devices WHERE deleted_at IS NULL').all()
   if (!result.results) return []
 
   // 为每个设备统一处理snake_case和camelCase字段
@@ -887,7 +887,7 @@ export async function getDevicesByIds(c: Context, ids: string[]): Promise<Device
   if (!ids.length) return []
   const db = getDB(c)
   const placeholders = ids.map(() => '?').join(', ')
-  const result = await db.prepare(`SELECT * FROM devices WHERE id IN (${placeholders})`).bind(...ids).all()
+  const result = await db.prepare(`SELECT * FROM devices WHERE id IN (${placeholders}) AND deleted_at IS NULL`).bind(...ids).all()
   return (result.results as Device[]) || []
 }
 
@@ -987,7 +987,7 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   const sql = `INSERT INTO devices (${insertFields.join(', ')}) VALUES (${placeholders})`;
 
   await db.prepare(sql).bind(...insertValues).run()
-  const inserted = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
+  const inserted = await db.prepare('SELECT * FROM devices WHERE id = ? AND deleted_at IS NULL').bind(deviceId).first() as Device
   await syncSquareCatalogItem(c, inserted).catch(error => console.error(JSON.stringify({ message: 'Square catalog sync skipped', error: error instanceof Error ? error.message : String(error), deviceId })))
   return inserted
 }
@@ -1036,29 +1036,17 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   const values = setEntries.map(([, v]) => v)
 
   await db.prepare(`UPDATE devices SET ${setClause} WHERE id = ?`).bind(...values, deviceId).run()
-  const updated = await db.prepare('SELECT * FROM devices WHERE id = ?').bind(deviceId).first() as Device
+  const updated = await db.prepare('SELECT * FROM devices WHERE id = ? AND deleted_at IS NULL').bind(deviceId).first() as Device
   await syncSquareCatalogItem(c, updated).catch(error => console.error(JSON.stringify({ message: 'Square catalog update skipped', error: error instanceof Error ? error.message : String(error), deviceId })))
   return updated
 }
 
 export async function deleteDevice(c: Context, deviceId: string): Promise<boolean> {
   const db = getDB(c)
-  const references = [
-    ['orders', 'deviceId'], ['orders', 'device_id'],
-    ['rentals', 'device_id'], ['rentals', 'deviceId'],
-    ['contracts', 'device_id'], ['contracts', 'deviceId'],
-  ]
-  for (const [table, column] of references) {
-    try {
-      const row = await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).bind(deviceId).first() as any
-      if (Number(row?.count || 0) > 0) {
-        await updateDevice(c, deviceId, { status: 'retired' })
-        return false
-      }
-    } catch (_) { /* schema variant or table not present */ }
-  }
-  const result = await db.prepare('DELETE FROM devices WHERE id = ?').bind(deviceId).run()
-  return result.success
+  const activeOrder = await db.prepare("SELECT id FROM orders WHERE deviceId = ? AND deleted_at IS NULL AND status IN ('approved', 'pending_payment', 'paid', 'pending_pickup', 'active', 'extended', 'overdue', 'suspended', 'pending_return') LIMIT 1").bind(deviceId).first()
+  if (activeOrder) return false
+  const result = await db.prepare("UPDATE devices SET deleted_at = CURRENT_TIMESTAMP, status = 'retired', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL").bind(deviceId).run()
+  return Number(result.meta?.changes || 0) > 0
 }
 
 export async function updateDeviceStatus(c: Context, deviceId: string, status: string): Promise<void> {
@@ -1107,7 +1095,7 @@ export async function getContractById(cOrContext: Context | string, id?: string)
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualId = typeof cOrContext === 'string' ? cOrContext : id
   if (!actualId) return null
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE id = ?').bind(actualId).first()
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE id = ? AND deleted_at IS NULL').bind(actualId).first()
   if (!contractRow) return null
 
   // 统一处理snake_case和camelCase字段
@@ -1142,7 +1130,7 @@ export async function getContractByOrderId(cOrContext: Context | string, orderId
   const db = getDB(typeof cOrContext === 'string' ? undefined : cOrContext)
   const actualOrderId = typeof cOrContext === 'string' ? cOrContext : orderId
   if (!actualOrderId) return null
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE orderId = ?').bind(actualOrderId).first()
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE orderId = ? AND deleted_at IS NULL').bind(actualOrderId).first()
   if (!contractRow) return null
 
   // 统一处理snake_case和camelCase字段
@@ -1175,7 +1163,7 @@ export async function getContractByOrderId(cOrContext: Context | string, orderId
 
 export async function getAllContracts(c?: Context): Promise<Contract[]> {
   const db = getDB(c)
-  const result = await db.prepare('SELECT * FROM contracts').all()
+  const result = await db.prepare('SELECT * FROM contracts WHERE deleted_at IS NULL').all()
   return ((result.results || []) as any[]).map(normalizeContractRow) || []
 }
 
@@ -1183,7 +1171,7 @@ export async function getContractByContractNumber(c: Context, contractNumber: st
   const db = getDB(c)
   // 将输入的合同编号转为大写，数据库中存储的都是大写字母和数字，实现大小写不敏感查询
   const upperCaseContractNumber = contractNumber.toUpperCase()
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE UPPER(contractNumber) = ?').bind(upperCaseContractNumber).first()
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE UPPER(contractNumber) = ? AND deleted_at IS NULL').bind(upperCaseContractNumber).first()
   if (!contractRow) return null
 
   // 统一处理snake_case和camelCase字段
@@ -1216,7 +1204,7 @@ export async function getContractByContractNumber(c: Context, contractNumber: st
 
 export async function getContractBySignToken(c: Context, signToken: string): Promise<Contract | null> {
   const db = getDB(c)
-  const contractRow = await db.prepare('SELECT * FROM contracts WHERE signToken = ?').bind(signToken).first()
+  const contractRow = await db.prepare('SELECT * FROM contracts WHERE signToken = ? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM orders WHERE orders.id = contracts.orderId AND orders.deleted_at IS NULL)').bind(signToken).first()
   if (!contractRow) return null
 
   // 统一处理snake_case和camelCase字段

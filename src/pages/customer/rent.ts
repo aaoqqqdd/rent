@@ -28,7 +28,7 @@ export async function renderCustomerRent(c: Context, deviceId: string, user: any
   }
   const rentalRules = await getDeviceRentalRules(c, deviceId)
   const pickupSlots = pickupTimeSlots(rentalRules)
-  const bookingRanges = ((await c.env.RENT.prepare("SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled')").bind(deviceId).all()).results || []) as any[]
+  const bookingRanges = ((await c.env.RENT.prepare("SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND deleted_at IS NULL AND status NOT IN ('completed', 'cancelled')").bind(deviceId).all()).results || []) as any[]
 
   // Do not use toISOString() here: UTC can already be tomorrow while the
   // customer is still on the previous local calendar date.

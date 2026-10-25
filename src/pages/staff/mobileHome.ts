@@ -39,17 +39,17 @@ export async function loadMobileOverview(c: Context, user: any): Promise<MobileO
   const sql = `
     SELECT
       (SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.userId
-        WHERE date(o.startDate) = ? AND o.status IN ('approved', 'paid', 'pending_pickup')${staffFilter}) AS pickups,
+        WHERE o.deleted_at IS NULL AND date(o.startDate) = ? AND o.status IN ('approved', 'paid', 'pending_pickup')${staffFilter}) AS pickups,
       (SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.userId
-        WHERE date(o.endDate) = ? AND o.status IN ('active', 'extended', 'overdue', 'suspended', 'pending_return')${staffFilter}) AS returns,
+        WHERE o.deleted_at IS NULL AND date(o.endDate) = ? AND o.status IN ('active', 'extended', 'overdue', 'suspended', 'pending_return')${staffFilter}) AS returns,
       (SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.userId
-        WHERE o.status = 'overdue'${staffFilter}) AS overdue,
+        WHERE o.deleted_at IS NULL AND o.status = 'overdue'${staffFilter}) AS overdue,
       (SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.userId
-        WHERE o.status = 'pending_review'${staffFilter}) AS pending_review,
+        WHERE o.deleted_at IS NULL AND o.status = 'pending_review'${staffFilter}) AS pending_review,
       (SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.userId
-        WHERE o.status IN ('completed', 'returned') AND o.depositStatus IN ('held', 'pending')${staffFilter}) AS pending_deposits,
+        WHERE o.deleted_at IS NULL AND o.status IN ('completed', 'returned') AND o.depositStatus IN ('held', 'pending')${staffFilter}) AS pending_deposits,
       (SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.userId
-        WHERE o.status IN ('active', 'extended', 'overdue')${staffFilter}) AS active_rentals,
+        WHERE o.deleted_at IS NULL AND o.status IN ('active', 'extended', 'overdue')${staffFilter}) AS active_rentals,
       (SELECT COUNT(*) FROM users u WHERE u.role = 'CUSTOMER'${staffFilter}) AS customers
   `
   try {

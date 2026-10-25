@@ -12,7 +12,7 @@ export async function renderAdminDeviceCalendar(c: Context, user: any) {
     FROM orders o
     JOIN devices d ON d.id = o.deviceId
     LEFT JOIN users u ON u.id = o.userId
-    WHERE o.status != 'cancelled'
+    WHERE o.deleted_at IS NULL AND d.deleted_at IS NULL AND o.status != 'cancelled'
     ORDER BY o.startDate, d.name
   `).all()).results || []) as any[]
   const escape = (value: unknown) => sanitizePlainText(value, 300).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

@@ -40,7 +40,7 @@ export async function renderAdminEmailTemplates(c: any, user: any) {
     seed('site_notification', '站内通知（自动邮件）', '{title}',
       `<h2>{title}</h2><p>您好 {customer_name}：</p><p>{message}</p>${sign}${footer}`)
   ])
-  const rows = (await c.env.RENT.prepare('SELECT * FROM email_templates ORDER BY name').all()).results as any[]
+  const rows = (await c.env.RENT.prepare('SELECT * FROM email_templates WHERE deleted_at IS NULL ORDER BY name').all()).results as any[]
   const pageSize = 10
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize))
   const page = Math.min(Math.max(1, Number(new URL(c.req.url).searchParams.get('page') || 1) || 1), pageCount)

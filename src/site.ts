@@ -202,7 +202,7 @@ export type { ErrorLevel }
 import { recordBalanceTransaction, recordFinancialLedgerEntry } from './services/ledger'
 import {
   ensureNotificationsTable, createNotification, getNotifications,
-  deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications,
+  deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications, cleanupCompletedPaymentReviewNotifications,
   createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
   notifyOverdueBankTransferRefunds,
@@ -223,7 +223,7 @@ import { getPendingOrdersWithDetails, getStaffDashboardData } from './services/s
 export {
   recordBalanceTransaction, recordFinancialLedgerEntry,
   ensureNotificationsTable, createNotification, getNotifications,
-  deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications,
+  deleteRentalApplicationNotifications, cleanupCompletedRentalApplicationNotifications, cleanupCompletedPaymentReviewNotifications,
   createDueDateNotifications, enqueueAgreementUpdate, deliverPendingAgreementNotifications,
   deliverPendingAgreementEmails, deliverPendingAgreementUpdates, notifyOverduePaymentProofs,
   notifyOverdueBankTransferRefunds,
@@ -785,7 +785,7 @@ export async function cleanupExpiredAndCancelledContracts(c: Context): Promise<n
       WHERE status = 'pending_sign' AND (signExpiresAt < ? OR sign_expires_at < ?)
     `).bind(now, now).run()
     const deletedResult = await db.prepare(`
-      DELETE FROM contracts WHERE status = 'cancelled' AND updatedAt < ?
+      UPDATE contracts SET deleted_at = CURRENT_TIMESTAMP WHERE status = 'cancelled' AND updatedAt < ? AND deleted_at IS NULL
     `).bind(sevenDaysAgoISO).run()
 
     const changedCount = Number(expiredResult.meta?.changes || 0) + Number(deletedResult.meta?.changes || 0)
@@ -814,20 +814,7 @@ export async function cleanupExpiredGuestAccounts(c: Context): Promise<number> {
     c.env.RENT.prepare(`UPDATE users SET account_type = 'deleted_guest', status = 'inactive', email = 'deleted-guest-' || id || '@invalid.local', phone = NULL, bsb = NULL, account_number = NULL, password_hash = 'disabled', password_salt = 'disabled', guest_order_id = NULL, guest_expires_at = NULL, deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...ids),
   ])
 
-  // 再保留 30 天后删除没有业务外键引用的访客用户行。
-  // 仍被历史订单/付款引用的行保留为匿名墓碑，确保业务记录和外键完整。
-  const purgeResult = await c.env.RENT.prepare(`
-    DELETE FROM users
-    WHERE account_type = 'deleted_guest'
-      AND deleted_at IS NOT NULL
-      AND datetime(deleted_at) < datetime('now', '-30 days')
-      AND NOT EXISTS (SELECT 1 FROM orders WHERE orders.userId = users.id)
-      AND NOT EXISTS (SELECT 1 FROM payments WHERE payments.customer_id = users.id)
-      AND NOT EXISTS (SELECT 1 FROM referral_rewards WHERE referral_rewards.customer_id = users.id)
-      AND NOT EXISTS (SELECT 1 FROM referrals WHERE referrals.referrer_customer_id = users.id OR referrals.referee_customer_id = users.id)
-      AND NOT EXISTS (SELECT 1 FROM addresses WHERE addresses.user_id = users.id)
-  `).run() as any
-  return ids.length + Number(purgeResult.meta?.changes ?? purgeResult.changes ?? 0)
+  return ids.length
 }
 
 // 每次 loadSystemSettingsFromDB 都要跑一次 D1 查询 + 对约 10 个富文本字段做
@@ -845,7 +832,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
     return systemSettings
   }
   const db = getDB(c)
-  const rows = await db.prepare('SELECT key, value FROM systemSettings').all() as any
+  const rows = await db.prepare('SELECT key, value FROM systemSettings WHERE deleted_at IS NULL').all() as any
   systemSettingsLoadedAt = Date.now()
   const values = new Map<SystemSettingsKey, string>((rows.results || []).map((row: any) => [row.key, row.value]))
   const userTermsValue = values.get('userTerms')
@@ -976,12 +963,12 @@ export async function getDeviceRentalRules(c: Context, deviceId: string): Promis
   if (!device) return globalRules
 
   const deviceDates = ((await c.env.RENT.prepare(
-    'SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date'
+    'SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? AND deleted_at IS NULL ORDER BY unavailable_date'
   ).bind(deviceId).all().catch(() => ({ results: [] }))).results || [])
     .map((row: any) => String(row.unavailable_date).slice(0, 10))
 
   const deviceSlots = ((await c.env.RENT.prepare(
-    'SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? ORDER BY unavailable_date, time_slot'
+    'SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? AND deleted_at IS NULL ORDER BY unavailable_date, time_slot'
   ).bind(deviceId).all().catch(() => ({ results: [] }))).results || []) as any[]
   const unavailableTimeSlots: Record<string, string[]> = Object.fromEntries(
     Object.entries(globalRules.unavailableTimeSlots || {}).map(([date, slots]) => [date, [...slots]])
@@ -1015,9 +1002,9 @@ export async function updateSystemSettings(c: Context, updates: Partial<typeof s
     await db.prepare(`
       INSERT INTO systemSettings (key, value)
       VALUES (?, ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL
     `).bind(key, serialized).run()
-    const saved = await db.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(key).first() as any
+    const saved = await db.prepare('SELECT value FROM systemSettings WHERE key = ? AND deleted_at IS NULL').bind(key).first() as any
     if (String(saved?.value ?? '') !== serialized) throw new Error(`系统设置保存校验失败：${key}`)
   }
 

@@ -57,7 +57,7 @@ async function readStored(c: Context): Promise<StoredChannelConfig> {
   if (cached) return cached
   let value: StoredChannelConfig = {}
   try {
-    const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'notificationChannels'").first() as any
+    const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'notificationChannels' AND deleted_at IS NULL").first() as any
     if (row?.value) value = JSON.parse(row.value) as StoredChannelConfig
   } catch { value = {} }
   ;(c as any).__notifyChannelConfig = value
@@ -117,7 +117,7 @@ export async function getNotifyChannelsSummary(c: Context) {
 
 export async function saveNotifyChannels(c: Context, input: Record<string, any>): Promise<void> {
   if (input?.clear === true) {
-    await c.env.RENT.prepare("DELETE FROM systemSettings WHERE key = 'notificationChannels'").run()
+    await c.env.RENT.prepare("UPDATE systemSettings SET deleted_at = CURRENT_TIMESTAMP WHERE key = 'notificationChannels'").run()
     ;(c as any).__notifyChannelConfig = undefined
     return
   }
@@ -172,7 +172,7 @@ export async function saveNotifyChannels(c: Context, input: Record<string, any>)
   if (next.webhookEnabled && !next.webhookUrl) throw new Error('启用通用 Webhook 前请填写 Webhook 地址')
 
   await c.env.RENT.prepare(
-    "INSERT INTO systemSettings (key, value, updatedAt) VALUES ('notificationChannels', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP"
+    "INSERT INTO systemSettings (key, value, updatedAt) VALUES ('notificationChannels', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL"
   ).bind(JSON.stringify(next)).run()
   ;(c as any).__notifyChannelConfig = next
 }

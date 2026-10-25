@@ -66,7 +66,7 @@ async function decrypt(c: Context, value: string): Promise<string> {
 
 async function readStoredConfig(c: Context): Promise<StoredDeliveryConfig> {
   try {
-    const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'deliveryConfig'").first() as any
+    const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'deliveryConfig' AND deleted_at IS NULL").first() as any
     return row?.value ? JSON.parse(row.value) as StoredDeliveryConfig : {}
   } catch {
     return {}
@@ -144,7 +144,7 @@ export async function getDeliveryConfigSummary(c: Context) {
 
 export async function saveDeliveryConfig(c: Context, input: Record<string, any>): Promise<void> {
   if (input.clear === true) {
-    await c.env.RENT.prepare("DELETE FROM systemSettings WHERE key = 'deliveryConfig'").run()
+    await c.env.RENT.prepare("UPDATE systemSettings SET deleted_at = CURRENT_TIMESTAMP WHERE key = 'deliveryConfig'").run()
     return
   }
   const current = await readStoredConfig(c)
@@ -171,5 +171,5 @@ export async function saveDeliveryConfig(c: Context, input: Record<string, any>)
   if (next.pickupEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next.pickupEmail)) throw new Error('配送取货邮箱格式不正确')
   if (next.apiBaseUrl && !/^https:\/\//i.test(next.apiBaseUrl)) throw new Error('Zoom2u API 地址必须是 HTTPS')
   if (next.webhookUrl && !/^https:\/\//i.test(next.webhookUrl)) throw new Error('Zoom2u Web Hook Url 必须是 HTTPS')
-  await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('deliveryConfig', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP").bind(JSON.stringify(next)).run()
+  await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('deliveryConfig', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL").bind(JSON.stringify(next)).run()
 }

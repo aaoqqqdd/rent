@@ -188,7 +188,7 @@ export async function handleCreateContractAction(c: Context, user: User, body: R
     contract_data: { invoice_number: '', delivery_method: deliveryMethod, delivery_fee: deliveryFee.toFixed(2), return_method: returnMethod, pickup_location: pickupLocationValue, return_location: returnLocationValue, ...deliveryAddressData, agreement_version: '1.0' },
   };
 
-  const latestInspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE device_id = ? ORDER BY created_at DESC LIMIT 1").bind(deviceId).first() as any
+  const latestInspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE deleted_at IS NULL AND device_id = ? ORDER BY created_at DESC LIMIT 1").bind(deviceId).first() as any
   let inspectionSnapshot: Record<string, any> = {}
   try { inspectionSnapshot = JSON.parse(latestInspection?.snapshot_json || '{}') } catch (_) {}
   if (String(device.agent_status || '').toLowerCase() === 'online') {

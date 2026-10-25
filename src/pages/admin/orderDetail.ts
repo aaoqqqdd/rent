@@ -360,7 +360,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
       </div>
       <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
         <a href="/admin/orders" class="button button-secondary" style="padding: 12px 32px; border-radius: 10px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">← 返回订单列表</a>
-        <form method="POST" action="/admin/orders/${order.id}/delete" data-site-confirm="删除订单是不可恢复的操作。请确认已核对订单及相关记录。" data-confirm-variant="danger" data-confirm-title="删除订单？" data-confirm-label="删除订单" data-confirm-text="删除订单">
+        <form method="POST" action="/admin/orders/${order.id}/delete" data-site-confirm="订单将从网站隐藏，付款和合同等历史记录会保留。" data-confirm-variant="danger" data-confirm-title="删除订单？" data-confirm-label="删除订单" data-confirm-text="删除订单">
           <button type="submit" class="button button-danger" style="padding: 12px 32px; border-radius: 10px;">删除订单</button>
         </form>
       </div>

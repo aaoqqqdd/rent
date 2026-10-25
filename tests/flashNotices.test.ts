@@ -70,13 +70,13 @@ function loadNotices(href: string, type = 'navigate', classes = ['page-notificat
   return { notices, timers, window, context, body, toasts: () => body.querySelectorAll('.site-toast') }
 }
 
-test('success feedback moves into a stack, expires in ten seconds and consumes only feedback parameters', () => {
+test('success feedback moves into a stack, expires in five seconds and consumes only feedback parameters', () => {
   const { notices, timers, window, toasts } = loadNotices('https://rent.example/admin/rental-links?created=1&error=old&status=active&page=2#links', 'navigate', ['alert-success', 'page-notification--success'])
   assert.equal(window.location.href, 'https://rent.example/admin/rental-links?status=active&page=2#links')
   assert.equal(notices.every(notice => notice.removed), true)
   assert.equal(toasts().length, 2)
   assert.equal(toasts()[0].attributes.role, 'status')
-  assert.deepEqual([...timers.values()].map(timer => timer.delay), [10000, 10000])
+  assert.deepEqual([...timers.values()].map(timer => timer.delay), [5000, 5000])
   ;[...timers.values()].forEach(timer => timer.callback())
   assert.equal(toasts().length, 0)
 })
@@ -112,19 +112,11 @@ test('reload suppresses transient success but retains actionable errors', () => 
   assert.equal(window.location.href, 'https://rent.example/customer/orders/1?token=keep')
 })
 
-test('hover and keyboard focus pause expiry; manual close cancels the timer', () => {
+test('success feedback expires after five seconds even while hovered; manual close cancels the timer', () => {
   const { timers, toasts } = loadNotices('https://rent.example/')
   const notice = toasts()[0]
   notice.hovered = true
-  notice.events.mouseenter()
-  assert.equal(timers.size, 0)
-  notice.focused = true
-  notice.hovered = false
-  notice.events.mouseleave()
-  assert.equal(timers.size, 0)
-  notice.focused = false
-  notice.events.focusout()
-  assert.equal(timers.size, 1)
+  assert.equal([...timers.values()][0].delay, 5000)
   notice.querySelector('button')!.events.click()
   assert.equal(notice.removed, true)
   assert.equal(timers.size, 0)

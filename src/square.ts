@@ -50,7 +50,7 @@ async function decrypt(c: Context, value: string): Promise<string> {
 }
 
 async function readStoredConfig(c: Context): Promise<SquareStoredConfig | null> {
-  const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'squareConfig'").first() as any
+  const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'squareConfig' AND deleted_at IS NULL").first() as any
   if (!row?.value) return null
   try { return JSON.parse(row.value) as SquareStoredConfig } catch { return null }
 }
@@ -89,7 +89,7 @@ export async function getSquareConfigSummary(c: Context) {
 
 export async function saveSquareConfig(c: Context, input: Record<string, any>): Promise<void> {
   if (input.clear === true) {
-    await c.env.RENT.prepare("DELETE FROM systemSettings WHERE key = 'squareConfig'").run()
+    await c.env.RENT.prepare("UPDATE systemSettings SET deleted_at = CURRENT_TIMESTAMP WHERE key = 'squareConfig'").run()
     return
   }
   const current = await readStoredConfig(c)
@@ -109,7 +109,7 @@ export async function saveSquareConfig(c: Context, input: Record<string, any>): 
 
   await c.env.RENT.prepare(`
     INSERT INTO systemSettings (key, value, updatedAt) VALUES ('squareConfig', ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP
+    ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL
   `).bind(JSON.stringify({ applicationId, locationId, accessToken, webhookSignatureKey, webhookUrl, environment })).run()
 }
 

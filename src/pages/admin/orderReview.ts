@@ -16,7 +16,7 @@ export async function renderAdminOrderReview(c: Context, user: any) {
     FROM orders o
     LEFT JOIN users u ON u.id = o.userId
     LEFT JOIN devices d ON d.id = o.deviceId
-    WHERE o.status = 'pending_approval'
+    WHERE o.status = 'pending_approval' AND o.deleted_at IS NULL
     ORDER BY datetime(o.createdAt) ASC
   `).all()).results || []) as any[]
 

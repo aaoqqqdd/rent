@@ -11,7 +11,7 @@ export async function renderAdminRentalLinks(c: Context, user: any) {
   await loadSystemSettingsFromDB(c)
   const [devices, links] = await Promise.all([
     getDevices(c),
-    c.env.RENT.prepare('SELECT l.*, d.name AS device_name, d.serialNumber, (SELECT COUNT(*) FROM orders o WHERE o.rental_link_id = l.id) AS order_count FROM rental_links l JOIN devices d ON d.id = l.device_id ORDER BY l.created_at DESC').all(),
+    c.env.RENT.prepare('SELECT l.*, d.name AS device_name, d.serialNumber, (SELECT COUNT(*) FROM orders o WHERE o.rental_link_id = l.id AND o.deleted_at IS NULL) AS order_count FROM rental_links l JOIN devices d ON d.id = l.device_id WHERE d.deleted_at IS NULL ORDER BY l.created_at DESC').all(),
   ])
   const locations = getSystemSettings().companyDetails.pickupLocations
   const input = (name: string, label: string, extra = '') => `<div class="form-group"><label class="form-label" for="link-${name}">${label}</label><input class="form-control" id="link-${name}" name="${name}" ${extra}></div>`

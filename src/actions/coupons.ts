@@ -63,7 +63,7 @@ export async function findEligibleCoupon(c: Context, code: string, device: Coupo
   const feeParts: CouponFeeParts = typeof parts === 'number' ? { rentalFee: parts } : parts
   const normalized = String(code || '').trim().toUpperCase().slice(0, 40)
   if (!normalized) throw new Error('请输入优惠码')
-  const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(normalized).first() as any
+  const coupon = await c.env.RENT.prepare("SELECT * FROM coupons WHERE code = ? COLLATE NOCASE AND deleted_at IS NULL AND active = 1 AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP) AND (expires_at IS NULL OR expires_at >= CURRENT_TIMESTAMP) AND (max_uses IS NULL OR used_count < max_uses)").bind(normalized).first() as any
   if (!coupon) throw new Error('优惠码无效、已过期或已达到使用次数上限')
   const deviceText = buildDeviceText(device)
   const couponDeviceIds = String(coupon.device_id || '').split(',').map((value: string) => value.trim()).filter(Boolean)

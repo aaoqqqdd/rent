@@ -80,7 +80,7 @@ test('下单成功提示被展示一次并替换为自动消失的 toast', () =>
   assert.equal(notice.removed, true)
   const toasts = body.querySelectorAll('.site-toast')
   assert.equal(toasts.length, 1)
-  assert.equal([...timers.values()][0].delay, 10000)
+  assert.equal([...timers.values()][0].delay, 5000)
 })
 
 test('刷新页面不会重复弹出同一条成功提示', () => {

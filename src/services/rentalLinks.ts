@@ -13,7 +13,7 @@ export interface RentalLink {
 
 export async function getRentalLink(c: Context, token: string): Promise<RentalLink | null> {
   if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return null
-  return c.env.RENT.prepare("SELECT l.* FROM rental_links l JOIN users u ON u.id = l.created_by WHERE l.token = ? AND l.enabled = 1 AND u.role = 'ADMIN' AND u.status = 'active'").bind(token).first()
+  return c.env.RENT.prepare("SELECT l.* FROM rental_links l JOIN users u ON u.id = l.created_by JOIN devices d ON d.id = l.device_id WHERE l.token = ? AND l.enabled = 1 AND d.deleted_at IS NULL AND u.role = 'ADMIN' AND u.status = 'active'").bind(token).first()
 }
 
 // 自助签约只短暂保留档期，离开页面不完成签约的访问者不会一直占用设备。

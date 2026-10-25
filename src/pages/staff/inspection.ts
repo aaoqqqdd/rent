@@ -10,7 +10,7 @@ export async function renderStaffInspection(c: Context, user: any, orderId: stri
   const order = await getOrderById(c, orderId)
   if (!order || !['active', 'extended', 'overdue', 'suspended', 'pending_return'].includes(order.status)) return buildLayout('无法验机', '<div class="panel"><h2>当前订单不能执行归还验机</h2></div>', user)
   const device = await getDeviceById(c, order.deviceId)
-  const latestInspection = await c.env.RENT.prepare("SELECT snapshot_json, created_at FROM device_inspections WHERE device_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.deviceId).first() as any
+  const latestInspection = await c.env.RENT.prepare("SELECT snapshot_json, created_at FROM device_inspections WHERE deleted_at IS NULL AND device_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.deviceId).first() as any
   let automatic: any = {}
   try { automatic = JSON.parse(latestInspection?.snapshot_json || '{}') } catch (_) {}
   const value = (key: string) => sanitizePlainText(String((device as any)?.[key] || ''), 300)

@@ -43,7 +43,7 @@ export async function renderStaffMobileOperations(c: Context, user: any) {
                WHEN 'morning_service' THEN 0 WHEN 'morning' THEN 1 WHEN 'delivery_morning' THEN 1
                WHEN 'afternoon' THEN 2 WHEN 'delivery_afternoon' THEN 2 WHEN 'evening_service' THEN 3 ELSE 9 END AS task_order
       FROM orders o JOIN users u ON u.id = o.userId JOIN devices d ON d.id = o.deviceId
-      WHERE date(o.startDate) = ? AND o.status IN ('approved', 'paid', 'pending_pickup')${staffFilter}
+      WHERE o.deleted_at IS NULL AND date(o.startDate) = ? AND o.status IN ('approved', 'paid', 'pending_pickup')${staffFilter}
       UNION ALL
       SELECT o.id AS order_id, o.orderNo AS order_no, o.status, u.name AS customer_name, d.name AS device_name,
              o.endDate AS task_date, 'return' AS task_type,
@@ -53,7 +53,7 @@ export async function renderStaffMobileOperations(c: Context, user: any) {
                WHEN 'morning_service' THEN 0 WHEN 'morning' THEN 1 WHEN 'delivery_morning' THEN 1
                WHEN 'afternoon' THEN 2 WHEN 'delivery_afternoon' THEN 2 WHEN 'evening_service' THEN 3 ELSE 9 END AS task_order
       FROM orders o JOIN users u ON u.id = o.userId JOIN devices d ON d.id = o.deviceId
-      WHERE date(o.endDate) = ? AND o.status IN ('active', 'extended', 'overdue', 'suspended', 'pending_return')${staffFilter}
+      WHERE o.deleted_at IS NULL AND date(o.endDate) = ? AND o.status IN ('active', 'extended', 'overdue', 'suspended', 'pending_return')${staffFilter}
     )
     SELECT * FROM tasks
     WHERE ${stage ? 'task_type = ? AND (' : '('}LOWER(COALESCE(order_id, '')) LIKE ?

@@ -102,7 +102,7 @@ async function decrypt(c: Context, value: string): Promise<string> {
 
 async function readStoredConfig(c: Context): Promise<StoredCloudinaryConfig | null> {
   try {
-    const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'cloudinaryConfig'").first() as any
+    const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'cloudinaryConfig' AND deleted_at IS NULL").first() as any
     if (!row?.value) return null
     const parsed = JSON.parse(row.value) as StoredCloudinaryConfig
     if (!parsed.cloudName || !parsed.apiKey || !parsed.apiSecret) return null
@@ -152,7 +152,7 @@ export async function getCloudinaryConfigSummary(c: Context) {
 
 export async function saveCloudinaryConfig(c: Context, input: Record<string, any>): Promise<void> {
   if (input.clear === true) {
-    await c.env.RENT.prepare("DELETE FROM systemSettings WHERE key = 'cloudinaryConfig'").run()
+    await c.env.RENT.prepare("UPDATE systemSettings SET deleted_at = CURRENT_TIMESTAMP WHERE key = 'cloudinaryConfig'").run()
     return
   }
   const current = await readStoredConfig(c)
@@ -162,7 +162,7 @@ export async function saveCloudinaryConfig(c: Context, input: Record<string, any
   const apiKey = apiKeyPlain ? await encrypt(c, apiKeyPlain) : current?.apiKey
   const apiSecret = apiSecretPlain ? await encrypt(c, apiSecretPlain) : current?.apiSecret
   if (!cloudName || !apiKey || !apiSecret) throw new Error('请完整填写 Cloudinary Cloud Name、API Key 和 API Secret')
-  await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('cloudinaryConfig', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP")
+  await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('cloudinaryConfig', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL")
     .bind(JSON.stringify({ cloudName, apiKey, apiSecret })).run()
 }
 

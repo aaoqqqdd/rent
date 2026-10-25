@@ -3,23 +3,23 @@ import { buildLayout, sanitizePlainText, formatMelbourneDateTime } from '../../s
 
 export async function renderInspectionRecords(c: Context, user: any) {
   const esc = (value: unknown) => sanitizePlainText(String(value ?? '—'), 240)
-  const rows = ((await c.env.RENT.prepare(`SELECT d.id, d.name, d.model, COUNT(i.id) AS inspection_count, MAX(i.created_at) AS latest_at FROM devices d LEFT JOIN device_inspections i ON i.device_id = d.id GROUP BY d.id ORDER BY CASE WHEN latest_at IS NULL THEN 1 ELSE 0 END, latest_at DESC`).all()).results || []) as any[]
+  const rows = ((await c.env.RENT.prepare(`SELECT d.id, d.name, d.model, COUNT(i.id) AS inspection_count, MAX(i.created_at) AS latest_at FROM devices d LEFT JOIN device_inspections i ON i.device_id = d.id AND i.deleted_at IS NULL WHERE d.deleted_at IS NULL GROUP BY d.id ORDER BY CASE WHEN latest_at IS NULL THEN 1 ELSE 0 END, latest_at DESC`).all()).results || []) as any[]
   const tableRows = rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong><br><small>${esc(row.model)}</small></td><td>${esc(row.inspection_count)} 条</td><td>${row.latest_at ? esc(formatMelbourneDateTime(row.latest_at)) : '暂无记录'}</td><td><a class="button button-sm button-secondary" href="/staff/inspections/device/${encodeURIComponent(row.id)}">查看验机记录</a></td></tr>`).join('')
   const body = `<div class="page-header"><div><p class="section-code">DEVICE INSPECTIONS</p><h2>验机记录</h2></div><a class="button button-primary" href="/staff/contracts/new">新建合同</a></div><div class="panel"><div class="table-wrapper"><table><thead><tr><th>设备</th><th>记录数量</th><th>最近记录</th><th>操作</th></tr></thead><tbody>${tableRows || '<tr><td colspan="4">暂无设备。</td></tr>'}</tbody></table></div></div>`
   return buildLayout('验机记录', body, user)
 }
 
 export async function renderInspectionDevice(c: Context, user: any, deviceId: string, pageValue = '1') {
-  const device = await c.env.RENT.prepare('SELECT id, name, model FROM devices WHERE id = ?').bind(deviceId).first() as any
+  const device = await c.env.RENT.prepare('SELECT id, name, model FROM devices WHERE id = ? AND deleted_at IS NULL').bind(deviceId).first() as any
   if (!device) return buildLayout('设备不存在', '<div class="panel"><h2>设备不存在</h2></div>', user)
   const page = Math.max(1, Number.parseInt(pageValue, 10) || 1)
   const pageSize = 10
-  const totalRow = await c.env.RENT.prepare("SELECT COUNT(*) AS total FROM device_inspections WHERE device_id = ? AND inspection_type IN ('before_rental', 'after_return', 'automated_health')").bind(deviceId).first() as any
+  const totalRow = await c.env.RENT.prepare("SELECT COUNT(*) AS total FROM device_inspections WHERE deleted_at IS NULL AND device_id = ? AND inspection_type IN ('before_rental', 'after_return', 'automated_health')").bind(deviceId).first() as any
   const total = Number(totalRow?.total || 0)
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const currentPage = Math.min(page, totalPages)
   const offset = (currentPage - 1) * pageSize
-  const rows = ((await c.env.RENT.prepare("SELECT i.*, u.name AS editor_name FROM device_inspections i LEFT JOIN users u ON u.id = i.edited_by WHERE i.device_id = ? AND i.inspection_type IN ('before_rental', 'after_return', 'automated_health') ORDER BY i.created_at DESC LIMIT ? OFFSET ?").bind(deviceId, pageSize, offset).all()).results || []) as any[]
+  const rows = ((await c.env.RENT.prepare("SELECT i.*, u.name AS editor_name FROM device_inspections i LEFT JOIN users u ON u.id = i.edited_by WHERE i.deleted_at IS NULL AND i.device_id = ? AND i.inspection_type IN ('before_rental', 'after_return', 'automated_health') ORDER BY i.created_at DESC LIMIT ? OFFSET ?").bind(deviceId, pageSize, offset).all()).results || []) as any[]
   const esc = (value: unknown) => sanitizePlainText(String(value ?? '—'), 240)
   const typeLabel: Record<string, string> = { before_rental: '出租前', after_return: '归还后', automated_health: '每日自动上报' }
   const tableRows = rows.map((row) => { let snapshot: any = {}; try { snapshot = JSON.parse(row.snapshot_json || '{}') } catch (_) {} ; const checks = [['屏幕', snapshot.screen], ['键盘', snapshot.keyboard], ['触控板', snapshot.touchpad], ['摄像头', snapshot.camera], ['Wi-Fi', snapshot.wifi], ['电源', snapshot.power]].filter(([, value]) => value).map(([label, value]) => `${label}：${esc(value)}`).join('<br>') || '无自动检测数据'; const editor = row.edited_by ? `${esc(row.editor_name || row.edited_by)}<br><small>${esc(formatMelbourneDateTime(row.edited_at))}</small>` : '未人工编辑'; return `<tr><td><span class="badge badge-neutral">${typeLabel[row.inspection_type] || esc(row.inspection_type)}</span></td><td>${checks}</td><td>${esc(formatMelbourneDateTime(row.created_at))}</td><td>${row.rental_id ? esc(row.rental_id) : '—'}</td><td>${editor}<br><a class="button button-sm button-secondary" href="/staff/inspections/${encodeURIComponent(row.id)}/edit">编辑</a></td></tr>` }).join('')
@@ -29,7 +29,7 @@ export async function renderInspectionDevice(c: Context, user: any, deviceId: st
 }
 
 export async function renderInspectionEdit(c: Context, user: any, inspectionId: string) {
-  const record = await c.env.RENT.prepare('SELECT i.*, d.name AS device_name FROM device_inspections i JOIN devices d ON d.id = i.device_id WHERE i.id = ?').bind(inspectionId).first() as any
+  const record = await c.env.RENT.prepare('SELECT i.*, d.name AS device_name FROM device_inspections i JOIN devices d ON d.id = i.device_id WHERE i.deleted_at IS NULL AND i.id = ? AND d.deleted_at IS NULL').bind(inspectionId).first() as any
   if (!record) return buildLayout('验机记录不存在', '<div class="panel"><h2>验机记录不存在</h2></div>', user)
   let snapshot: any = {}
   try { snapshot = JSON.parse(record.snapshot_json || '{}') } catch (_) {}

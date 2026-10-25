@@ -325,7 +325,7 @@ export async function deliverPendingAgreementNotifications(c: Context): Promise<
   const names = rows.map((row) => String(row.agreement_label)).join('、')
   const batchKey = rows.map((row) => `${row.agreement_key}:${row.revision}`).join('|')
   const dedupeKey = `agreement_update:${batchKey}`
-  const companyRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'companyDetails'").first() as any
+  const companyRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'companyDetails' AND deleted_at IS NULL").first() as any
   const storedCompanyDetails = safeJsonParse<any>(companyRow?.value) || {}
   const companyDetails = { ...getSystemSettings().companyDetails, ...storedCompanyDetails }
   const companyName = String(companyDetails?.name || '')
@@ -601,9 +601,22 @@ export async function cleanupCompletedRentalApplicationNotifications(c: Context,
   await c.env.RENT.prepare(`UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE type = 'rental_application' AND deleted_at IS NULL${recipientFilter} AND EXISTS (SELECT 1 FROM orders WHERE orders.id = notifications.order_id AND orders.status <> 'pending_approval')`).bind(...bindings).run()
 }
 
+export async function cleanupCompletedPaymentReviewNotifications(c: Context, recipientId?: string): Promise<void> {
+  await ensureNotificationsTable(c)
+  const recipientFilter = recipientId ? ' AND recipient_id = ?' : ''
+  await c.env.RENT.prepare(`UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP
+    WHERE type IN ('payment_review_submitted', 'payment_review_overdue') AND deleted_at IS NULL${recipientFilter}
+      AND order_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id
+        WHERE p.rental_id = notifications.order_id AND pp.status = 'submitted'
+      )`).bind(...(recipientId ? [recipientId] : [])).run()
+}
+
 export async function getNotifications(c: Context, recipientId: string): Promise<any[]> {
   await ensureNotificationsTable(c)
   await cleanupCompletedRentalApplicationNotifications(c, recipientId)
+  await cleanupCompletedPaymentReviewNotifications(c, recipientId)
   const result = await c.env.RENT.prepare("SELECT * FROM notifications WHERE recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 100").bind(recipientId).all()
   return result.results || []
 }

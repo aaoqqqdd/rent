@@ -105,6 +105,7 @@ import {
   , getNotifications
   , deleteRentalApplicationNotifications
   , cleanupCompletedRentalApplicationNotifications
+  , cleanupCompletedPaymentReviewNotifications
   , createDueDateNotifications
   , sanitizePlainText
   , renderNotificationMarkdown
@@ -399,7 +400,7 @@ app.get('/api/search', async (c) => {
     FROM orders o
     LEFT JOIN users u ON u.id = o.userId
     LEFT JOIN devices d ON d.id = o.deviceId
-    WHERE (${searchClauses.join(' OR ')}) AND ${accessClause}
+    WHERE o.deleted_at IS NULL AND (${searchClauses.join(' OR ')}) AND ${accessClause}
     ORDER BY o.createdAt DESC
     LIMIT 12
   `).bind(...params).all() as any
@@ -1737,7 +1738,7 @@ app.get('/notifications', async (c) => {
   const sentAnnouncements: any[] = []
   const recipients = user.role === 'ADMIN' || user.role === 'STAFF' ? (await getUsers(c)).filter((account: any) => (user.role === 'ADMIN' ? ['CUSTOMER', 'STAFF'].includes(account.role) : account.role === 'CUSTOMER' && account.staffId === user.id) && account.status !== 'inactive') : []
   if (user.role === 'ADMIN' || user.role === 'STAFF') await ensureInAppNotificationTemplates(c)
-  const inAppNotificationTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM in_app_notification_templates WHERE enabled = 1 ORDER BY name").all()).results || []) as any[] : []
+  const inAppNotificationTemplates = user.role === 'ADMIN' || user.role === 'STAFF' ? ((await c.env.RENT.prepare("SELECT id, name FROM in_app_notification_templates WHERE enabled = 1 AND deleted_at IS NULL ORDER BY name").all()).results || []) as any[] : []
   const inAppNotificationTemplateOptions = `<option value="custom">自定义通知</option>${inAppNotificationTemplates.map((item: any) => `<option value="${sanitizePlainText(item.id, 120)}">使用模板：${sanitizePlainText(item.name, 120)}</option>`).join('')}`
   const recipientOptions = recipients.map((account: any) => `<option value="${sanitizePlainText(account.id, 120)}">${sanitizePlainText(account.name || account.email, 120)} · ${sanitizePlainText(account.email, 160)}</option>`).join('')
   const body = `<div class="panel"><div class="section-title"><h2>通知中心</h2><span class="section-note">订单和归还提醒</span></div>${user.role === 'ADMIN' ? `<form method="post" action="/notifications/announcement" class="panel notification-compose"><h3>发布通告</h3><p class="form-text">通告会发送给所有活跃员工和客户，并在他们登录后显示。</p><div class="form-group"><label class="form-label" for="announcementTitle">通告标题</label><input class="form-control" id="announcementTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="announcementMessage">通告内容（支持 HTML）</label><textarea class="form-control html-editor" id="announcementMessage" name="message" maxlength="2000" required></textarea></div><button class="button button-primary" type="submit">发布通告</button></form>` : ''}${user.role === 'ADMIN' || user.role === 'STAFF' ? `<form method="post" action="/notifications/send" class="panel notification-compose"><h3>发送通知</h3><div class="form-group"><label class="form-label" for="notificationRecipient">收件人（可多选）</label><input class="form-control recipient-search" id="notificationRecipientSearch" type="search" placeholder="搜索姓名或邮箱…" autocomplete="off"><div class="recipient-picker-actions"><button type="button" class="button button-sm button-secondary" id="selectVisibleRecipients">全选当前结果</button><button type="button" class="button button-sm button-secondary" id="clearRecipients">清空选择</button><span id="recipientCount" class="section-note">已选 0 人</span></div><select class="form-control recipient-select" id="notificationRecipient" name="recipientId" multiple size="7" required>${recipientOptions}</select><small class="form-text">可搜索后全选当前结果，也可以按住 Command（Mac）或 Ctrl（Windows）逐个选择。</small></div><div class="form-group"><label class="form-label" for="notificationTitle">标题（自定义通知时必填）</label><input class="form-control" id="notificationTitle" name="title" maxlength="120" required></div><div class="form-group"><label class="form-label" for="notificationMessage">内容（支持 HTML，自定义通知时必填）</label><textarea class="form-control html-editor" id="notificationMessage" name="message" maxlength="1000" required></textarea></div><button class="button button-primary" type="submit">发送通知</button></form><script>(()=>{const search=document.getElementById('notificationRecipientSearch'),select=document.getElementById('notificationRecipient'),count=document.getElementById('recipientCount'),template=document.getElementById('notificationTemplate'),title=document.getElementById('notificationTitle'),message=document.getElementById('notificationMessage');if(!search||!select)return;const update=()=>{const query=search.value.trim().toLowerCase();Array.from(select.options).forEach(option=>{option.hidden=Boolean(query&&!option.textContent.toLowerCase().includes(query));});count.textContent='已选 '+Array.from(select.selectedOptions).length+' 人';};const syncTemplateFields=()=>{const custom=!template||template.value==='custom';[title,message].forEach(field=>{if(!field)return;field.required=custom;field.setAttribute('aria-required',String(custom));});};search.addEventListener('input',update);select.addEventListener('change',update);template?.addEventListener('change',syncTemplateFields);document.getElementById('selectVisibleRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>{if(!option.hidden)option.selected=true;});update();});document.getElementById('clearRecipients')?.addEventListener('click',()=>{Array.from(select.options).forEach(option=>option.selected=false);update();});update();syncTemplateFields();})();</script>` : ''}${user.role === 'ADMIN' && sentAnnouncements.length ? `<section class="panel"><h3>已发布通告历史</h3><div class="notification-list">${sentAnnouncements.map((item: any) => `<article class="notification-item"><div><strong>${sanitizePlainText(item.title, 120)}</strong><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div><small>${formatMelbourneDateTime(item.created_at)}</small></div><form method="post" action="/notifications/announcements/${item.id}/delete" data-site-confirm="删除后这条通告及其历史记录将从所有收件人处撤回，无法恢复。" data-confirm-variant="danger" data-confirm-title="删除这条通告？" data-confirm-label="删除通告"><button class="button button-sm button-danger" type="submit">删除</button></form></article>`).join('')}</div></section>` : ''}${notifications.length ? `<div class="notification-list">${notifications.map((item: any) => `<a class="notification-item ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><div><strong>${sanitizePlainText(item.title, 200)}</strong><div class="notification-message">${renderNotificationMarkdown(notificationListMessage(item))}</div><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div>${item.order_id ? `<span class="button button-sm button-secondary">查看订单</span>` : ''}</a>`).join('')}</div>` : '<p class="empty-state">暂无通知</p>'}</div>`
@@ -1754,7 +1755,7 @@ app.get('/admin/notifications', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await ensureNotificationsTable(c)
   const notifications = (await getNotifications(c, user.id)).filter((item: any) => item.type !== 'announcement')
-  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核、推荐风险审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => { const typeLabel = item.type === 'rental_application' ? '租赁申请' : item.type === 'referral_risk_review' ? '推荐风险审核' : item.type || '系统通知'; return `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(typeLabel, 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>` }).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
+  const body = `<div class="page-header"><div><p class="section-code">ADMIN INBOX</p><h2>管理员通知中心</h2><p>这里显示充值、退款、付款审核、推荐风险审核和其他系统业务通知。</p></div><a class="button button-secondary" href="/notifications">发布通知</a></div><section class="panel"><div class="section-title"><h3>业务通知</h3><span class="section-note">共 ${notifications.length} 条</span></div>${notifications.length ? `<div class="admin-notification-cards">${notifications.map((item: any) => { const typeLabel = item.type === 'rental_application' ? '租赁申请' : item.type === 'referral_risk_review' ? '推荐风险审核' : item.type === 'payment_review_submitted' ? '付款凭证待审核' : item.type === 'payment_review_overdue' ? '付款审核逾期' : item.type || '系统通知'; return `<a class="admin-notification-card ${item.read_at ? '' : 'is-unread'}" href="/notifications/${encodeURIComponent(item.id)}"><span class="admin-notification-card__type">${sanitizePlainText(typeLabel, 40)}</span><div class="admin-notification-card__content"><strong>${sanitizePlainText(item.title, 200)}</strong><p>${sanitizePlainText(notificationPlainText(item.message), 180)}</p><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><b aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></b></a>` }).join('')}</div>` : '<p class="empty-state">暂无业务通知</p>'}</section>`
   return c.html(buildLayout('管理员通知中心', body, user))
 })
 
@@ -1870,7 +1871,7 @@ app.post('/admin/email-templates/send', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const form = await c.req.parseBody()
   const template = form.templateId && String(form.templateId) !== 'custom'
-    ? await c.env.RENT.prepare('SELECT subject, body, theme_color FROM email_templates WHERE id = ? AND enabled = 1').bind(String(form.templateId)).first() as any
+    ? await c.env.RENT.prepare('SELECT subject, body, theme_color FROM email_templates WHERE id = ? AND enabled = 1 AND deleted_at IS NULL').bind(String(form.templateId)).first() as any
     : { subject: String(form.subject || '').trim().slice(0, 200), body: String(form.body || '').trim().slice(0, 20000), theme_color: '#71818d' }
   const to = String(form.to || '').trim().toLowerCase()
   const channel = ['site', 'email', 'both'].includes(String(form.channel)) ? String(form.channel) : 'email'
@@ -1919,7 +1920,7 @@ app.post('/admin/email-templates/:id', async (c) => {
   try { await c.env.RENT.prepare("ALTER TABLE email_templates ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#f0a35b'").run() } catch (_) { }
   const format = 'html'
   const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#71818d'
-  await c.env.RENT.prepare('UPDATE email_templates SET subject = ?, body = ?, format = ?, theme_color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(subject, body, format, themeColor, c.req.param('id')).run()
+  await c.env.RENT.prepare('UPDATE email_templates SET subject = ?, body = ?, format = ?, theme_color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').bind(subject, body, format, themeColor, c.req.param('id')).run()
   return c.redirect('/admin/email-templates')
 })
 
@@ -1928,7 +1929,7 @@ app.post('/admin/email-templates/:id/delete', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const id = c.req.param('id')
   if (!id.startsWith('custom_')) return c.text('内置模板不能删除', 400)
-  await c.env.RENT.prepare('DELETE FROM email_templates WHERE id = ?').bind(id).run()
+  await c.env.RENT.prepare('UPDATE email_templates SET deleted_at = CURRENT_TIMESTAMP, enabled = 0 WHERE id = ? AND deleted_at IS NULL').bind(id).run()
   return c.redirect('/admin/email-templates')
 })
 
@@ -1959,7 +1960,7 @@ app.post('/admin/in-app-notification-templates/:id', async (c) => {
   const message = sanitizeRichHtml(String(form.message || '').trim()).slice(0, 10000)
   if (!title || !message) return c.text('通知标题和正文不能为空', 400)
   await ensureInAppNotificationTemplates(c)
-  await c.env.RENT.prepare('UPDATE in_app_notification_templates SET title = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(title, message, c.req.param('id')).run()
+  await c.env.RENT.prepare('UPDATE in_app_notification_templates SET title = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').bind(title, message, c.req.param('id')).run()
   return c.redirect('/admin/in-app-notification-templates')
 })
 
@@ -1969,7 +1970,7 @@ app.post('/admin/in-app-notification-templates/:id/delete', async (c) => {
   const id = c.req.param('id')
   if (!id.startsWith('custom_')) return c.text('内置模板不能删除', 400)
   await ensureInAppNotificationTemplates(c)
-  await c.env.RENT.prepare('DELETE FROM in_app_notification_templates WHERE id = ?').bind(id).run()
+  await c.env.RENT.prepare('UPDATE in_app_notification_templates SET deleted_at = CURRENT_TIMESTAMP, enabled = 0 WHERE id = ? AND deleted_at IS NULL').bind(id).run()
   return c.redirect('/admin/in-app-notification-templates')
 })
 
@@ -2092,9 +2093,9 @@ app.get('/admin/marketing-emails', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await loadSystemSettingsFromDB(c)
   await ensureMarketingEmailTables(c.env.RENT)
-  const templates = ((await c.env.RENT.prepare('SELECT * FROM marketing_email_templates ORDER BY updated_at DESC').all()).results || []) as any[]
+  const templates = ((await c.env.RENT.prepare('SELECT * FROM marketing_email_templates WHERE deleted_at IS NULL ORDER BY updated_at DESC').all()).results || []) as any[]
   const campaigns = ((await c.env.RENT.prepare('SELECT * FROM marketing_campaigns ORDER BY created_at DESC LIMIT 50').all()).results || []) as any[]
-  const coupons = ((await c.env.RENT.prepare("SELECT id, code, discount_type, discount_value FROM coupons WHERE active = 1 AND status = 'ACTIVE' ORDER BY created_at DESC").all()).results || []) as any[]
+  const coupons = ((await c.env.RENT.prepare("SELECT id, code, discount_type, discount_value FROM coupons WHERE deleted_at IS NULL AND active = 1 AND status = 'ACTIVE' ORDER BY created_at DESC").all()).results || []) as any[]
   const activeCustomers = (await getUsers(c)).filter((account: any) => account.role === 'CUSTOMER' && account.status === 'active' && account.email)
   const customers = activeCustomers.filter((account: any) => !isMarketingOptedOut(account))
   const optedOutCount = activeCustomers.length - customers.length
@@ -2190,14 +2191,14 @@ app.post('/admin/marketing-emails/templates/:id', async (c) => {
   const body = String(form.body || '').trim().slice(0, 10000)
   if (!name || !subject || !body) return c.text('模板名称、主题和正文不能为空', 400)
   const themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#f0a35b'
-  await c.env.RENT.prepare('UPDATE marketing_email_templates SET name = ?, subject = ?, body = ?, theme_color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(name, subject, body, themeColor, c.req.param('id')).run()
+  await c.env.RENT.prepare('UPDATE marketing_email_templates SET name = ?, subject = ?, body = ?, theme_color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').bind(name, subject, body, themeColor, c.req.param('id')).run()
   return c.redirect('/admin/marketing-emails')
 })
 
 app.post('/admin/marketing-emails/templates/:id/delete', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  await c.env.RENT.prepare('DELETE FROM marketing_email_templates WHERE id = ?').bind(c.req.param('id')).run()
+  await c.env.RENT.prepare('UPDATE marketing_email_templates SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').bind(c.req.param('id')).run()
   return c.redirect('/admin/marketing-emails')
 })
 
@@ -2212,7 +2213,7 @@ app.post('/admin/marketing-emails/send', async (c) => {
   let body = String(form.body || '').trim().slice(0, 20000)
   let themeColor = /^#[0-9a-f]{6}$/i.test(String(form.theme_color || '')) ? String(form.theme_color) : '#f0a35b'
   if (templateId !== 'custom') {
-    const template = await c.env.RENT.prepare('SELECT subject, body, theme_color FROM marketing_email_templates WHERE id = ?').bind(templateId).first() as any
+    const template = await c.env.RENT.prepare('SELECT subject, body, theme_color FROM marketing_email_templates WHERE id = ? AND deleted_at IS NULL').bind(templateId).first() as any
     if (template) { subject = template.subject; body = template.body; themeColor = template.theme_color || themeColor }
   }
   if (!name || !subject || !body) return c.text('批次名称、邮件主题和正文不能为空', 400)
@@ -2233,7 +2234,7 @@ app.post('/admin/marketing-emails/send', async (c) => {
   let uniqueConfig: { discountType: string; discountValue: number; maxDiscountAmount: number | null; minimumOrderAmount: number | null; expiresAt: string | null; prefix: string } | null = null
   let discountText = ''
   if (couponMode === 'shared') {
-    sharedCoupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ? AND active = 1').bind(String(form.couponId || '')).first() as any
+    sharedCoupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ? AND deleted_at IS NULL AND active = 1').bind(String(form.couponId || '')).first() as any
     if (!sharedCoupon) return c.text('请选择一个有效的优惠码', 400)
     discountText = marketingDiscountText(sharedCoupon.discount_type, sharedCoupon.discount_value, sharedCoupon.max_discount_amount)
   } else if (couponMode === 'unique') {
@@ -2308,6 +2309,7 @@ app.get('/notifications/unread', async (c) => {
   if (!user) return c.json({ notifications: [] }, 401)
   await ensureNotificationsTable(c)
   await cleanupCompletedRentalApplicationNotifications(c, user.id)
+  await cleanupCompletedPaymentReviewNotifications(c, user.id)
   const query = "SELECT id, type, title, message, order_id, created_at FROM notifications WHERE recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 10"
   let result: any
   try {
@@ -2327,6 +2329,7 @@ app.get('/notifications/recent', async (c) => {
   const user = c.get('user')
   if (!user) return c.json({ notifications: [], unreadCount: 0 }, 401)
   await cleanupCompletedRentalApplicationNotifications(c, user.id)
+  await cleanupCompletedPaymentReviewNotifications(c, user.id)
   const result = await c.env.RENT.prepare("SELECT id, type, title, message, order_id, created_at, read_at FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid)))) ORDER BY created_at DESC LIMIT 10").bind(user.id).all() as any
   const unread = await c.env.RENT.prepare("SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND type != 'announcement' AND deleted_at IS NULL AND read_at IS NULL AND NOT (type = 'agreement_update' AND EXISTS (SELECT 1 FROM notifications newer WHERE newer.recipient_id = notifications.recipient_id AND newer.type = notifications.type AND newer.title = notifications.title AND newer.message = notifications.message AND (newer.created_at > notifications.created_at OR (newer.created_at = notifications.created_at AND newer.rowid > notifications.rowid))))").bind(user.id).first() as any
   return c.json({ notifications: (result.results || []).map((item: any) => ({ ...item, message: notificationListMessage(item) })), unreadCount: Number(unread?.count || 0) })
@@ -2336,6 +2339,7 @@ app.get('/notifications/:id', async (c) => {
   const user = c.get('user')
   if (!user) return c.redirect('/login')
   await cleanupCompletedRentalApplicationNotifications(c, user.id)
+  await cleanupCompletedPaymentReviewNotifications(c, user.id)
   const item = await c.env.RENT.prepare("SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)").bind(c.req.param('id'), user.id).first() as any
   if (!item) return c.html(renderNotFound(), 404)
   await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
@@ -2395,7 +2399,7 @@ app.post('/notifications/send', async (c) => {
   let message = String(form.message || '').trim().slice(0, 1000)
   if (templateId !== 'custom') {
     await ensureInAppNotificationTemplates(c)
-    const template = await c.env.RENT.prepare('SELECT title, message FROM in_app_notification_templates WHERE id = ? AND enabled = 1').bind(templateId).first() as any
+    const template = await c.env.RENT.prepare('SELECT title, message FROM in_app_notification_templates WHERE id = ? AND enabled = 1 AND deleted_at IS NULL').bind(templateId).first() as any
     if (!template) return c.text('通知模板不存在或已停用', 400)
     title = String(template.title || '').trim().slice(0, 120)
     message = String(template.message || '').trim().slice(0, 1000)
@@ -2433,7 +2437,7 @@ app.post('/customer/rent/:id', async (c) => {
   if (Number(account?.balance || 0) < 0) return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, `您的账户余额为负（${Number(account.balance).toFixed(2)} AUD），请先充值至非负后再下单。`), 403)
   const device = await getDeviceById(c, c.req.param('id'))
   const rentalRules = await getDeviceRentalRules(c, c.req.param('id'))
-  const deviceUnavailable = new Set(((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).all()).results || []).map((row: any) => row.unavailable_date))
+  const deviceUnavailable = new Set(((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? AND deleted_at IS NULL').bind(c.req.param('id')).all()).results || []).map((row: any) => row.unavailable_date))
   const form = await c.req.parseBody()
   const startDate = String(form.startDate || '')
   const endDate = String(form.endDate || '')
@@ -2453,7 +2457,7 @@ app.post('/customer/rent/:id', async (c) => {
   const halfDays = Math.round((end.getTime() - start.getTime()) / 86400000) * 2 + (endPeriod === 'PM' ? 1 : 0) - (startPeriod === 'PM' ? 1 : 0)
   const deviceUnavailableSlots = new Set<string>()
   try {
-    const rows = (await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ?').bind(c.req.param('id')).all()).results || []
+    const rows = (await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? AND deleted_at IS NULL').bind(c.req.param('id')).all()).results || []
     for (const row of rows as any[]) deviceUnavailableSlots.add(`${String(row.unavailable_date || '').slice(0, 10)}:${String(row.time_slot || '')}`)
   } catch (_) { }
   const unavailable = new Set(rentalRules.unavailableDates)
@@ -2485,7 +2489,7 @@ app.post('/customer/rent/:id', async (c) => {
   if (startDate && endDate && Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
     const conflictStart = new Date(start); conflictStart.setUTCDate(conflictStart.getUTCDate() - Math.max(0, rentalRules.bufferDays || 0))
     const conflictEnd = new Date(end); conflictEnd.setUTCDate(conflictEnd.getUTCDate() + Math.max(0, rentalRules.bufferDays || 0))
-    const rows = ((await c.env.RENT.prepare("SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND status NOT IN ('completed', 'cancelled')").bind(device?.id || '').all()).results || []) as any[]
+    const rows = ((await c.env.RENT.prepare("SELECT startDate, endDate, startPeriod, endPeriod FROM orders WHERE deviceId = ? AND deleted_at IS NULL AND status NOT IN ('completed', 'cancelled')").bind(device?.id || '').all()).results || []) as any[]
     periodConflict = rows.some((row) => rentalPeriodsOverlap(
       conflictStart.toISOString().slice(0, 10), rentalRules.bufferDays ? 'AM' : startPeriod, conflictEnd.toISOString().slice(0, 10), rentalRules.bufferDays ? 'PM' : endPeriod,
       String(row.startDate || '').slice(0, 10), String(row.startPeriod || 'AM'), String(row.endDate || '').slice(0, 10), String(row.endPeriod || 'AM'),
@@ -2526,7 +2530,7 @@ app.post('/customer/rent/:id', async (c) => {
     try {
       await reserveCouponForOrder(c, { coupon: eligibleCoupon, customerId: user.id, orderId, discountAmount })
     } catch (error: any) {
-      await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(orderId).run()
+      await c.env.RENT.prepare('UPDATE orders SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').bind(orderId).run()
       return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, error?.message || '优惠码申请失败，请重新提交订单', rentPrefill), 409)
     }
   }
@@ -2722,7 +2726,7 @@ app.get('/staff/orders/:orderId/handover', async (c) => {
   const squareDepositUnconfirmed = String(order?.paymentProvider || order?.payment_provider || '') === 'square' && Number(order?.depositAmount || order?.deposit_amount || 0) > 0 && String(order?.deposit_status || '').toUpperCase() !== 'PAID'
   if (!order || squareDepositUnconfirmed || !(['paid', 'pending_pickup'].includes(String(order.status)) || (order.status === 'approved' && handoverContract?.status === 'signed')) || (user.role === 'STAFF' && customer?.staffId !== user.id)) return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, order.deviceId)
-  const beforeInspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE rental_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+  const beforeInspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE deleted_at IS NULL AND rental_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
   let beforeSnapshot: Record<string, any> = {}
   try { beforeSnapshot = JSON.parse(beforeInspection?.snapshot_json || '{}') } catch (_) { }
   const inspectionFields = renderManualInspectionFields(beforeSnapshot)
@@ -2757,7 +2761,7 @@ app.post('/staff/orders/:orderId/pickup', async (c) => {
   if (missing.length) return wantsJson ? c.json({ success: false, message: `请填写：${missing.join('、')}` }, 400) : c.text(`请填写：${missing.join('、')}`, 400)
   if (serialNumber !== String(device?.serialNumber || '')) return wantsJson ? c.json({ success: false, message: '设备序列号与订单设备不一致' }, 409) : c.text('设备序列号与订单设备不一致', 409)
   if (batteryCycles !== null && (!Number.isInteger(batteryCycles) || batteryCycles < 0)) return wantsJson ? c.json({ success: false, message: '电池循环次数无效' }, 400) : c.text('电池循环次数无效', 400)
-  const beforeInspection = await c.env.RENT.prepare("SELECT id, snapshot_json FROM device_inspections WHERE rental_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(orderId).first() as any
+  const beforeInspection = await c.env.RENT.prepare("SELECT id, snapshot_json FROM device_inspections WHERE deleted_at IS NULL AND rental_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(orderId).first() as any
   let beforeSnapshot: Record<string, any> = {}
   try { beforeSnapshot = JSON.parse(beforeInspection?.snapshot_json || '{}') } catch (_) { }
   Object.assign(beforeSnapshot, inspectionInput.checks, { batteryCycles, batteryHealth, inspectionNotes, inspectionDate: new Date().toISOString().slice(0, 10), inspectionBy: user.name || user.id, source: 'handover_manual' })
@@ -2928,7 +2932,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   const now = new Date().toISOString()
   const contract = await c.env.RENT.prepare('SELECT id FROM contracts WHERE orderId = ? AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 1').bind(order.id).first() as any
   if (!contract) return c.text('订单缺少合同', 409)
-  const beforeInspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE device_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.deviceId).first() as any
+  const beforeInspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE deleted_at IS NULL AND device_id = ? AND inspection_type = 'before_rental' ORDER BY created_at DESC LIMIT 1").bind(order.deviceId).first() as any
   let inspectionSnapshot: Record<string, any> = {}
   try { inspectionSnapshot = JSON.parse(beforeInspection?.snapshot_json || '{}') } catch (_) { }
   let damagePhotos = ''
@@ -3128,7 +3132,7 @@ app.get('/staff/inspections/:id/edit', async (c) => {
 app.post('/staff/inspections/:id/edit', async (c) => {
   const user = c.get('user') as any
   if (!user || !['STAFF', 'ADMIN'].includes(user.role)) return c.html(renderForbidden(), 403)
-  const record = await c.env.RENT.prepare('SELECT snapshot_json FROM device_inspections WHERE id = ?').bind(c.req.param('id')).first() as any
+  const record = await c.env.RENT.prepare('SELECT snapshot_json FROM device_inspections WHERE deleted_at IS NULL AND id = ?').bind(c.req.param('id')).first() as any
   if (!record) return c.html(renderNotFound(), 404)
   const form = await c.req.parseBody()
   let snapshot: any = {}
@@ -3244,7 +3248,7 @@ app.post('/public/order-lookup', async (c) => {
   const orderNo = String(body.orderNo || '').trim().toUpperCase()
   const email = String(body.email || '').trim().toLowerCase()
   if (!orderNo || !email) return c.json({ ok: false, message: '请输入订单编号和申请邮箱。' }, 400)
-  const order = await c.env.RENT.prepare(`SELECT o.id, o.orderNo, o.status, o.startDate, o.endDate, o.totalAmount, o.depositAmount, o.deliveryMethod, o.pickupLocation, o.userId, u.email, u.account_type, d.name AS deviceName FROM orders o JOIN users u ON u.id = o.userId LEFT JOIN devices d ON d.id = o.deviceId WHERE UPPER(o.orderNo) = ? AND lower(u.email) = ?`).bind(orderNo, email).first() as any
+  const order = await c.env.RENT.prepare(`SELECT o.id, o.orderNo, o.status, o.startDate, o.endDate, o.totalAmount, o.depositAmount, o.deliveryMethod, o.pickupLocation, o.userId, u.email, u.account_type, d.name AS deviceName FROM orders o JOIN users u ON u.id = o.userId LEFT JOIN devices d ON d.id = o.deviceId WHERE UPPER(o.orderNo) = ? AND lower(u.email) = ? AND o.deleted_at IS NULL`).bind(orderNo, email).first() as any
   if (!order) return c.json({ ok: false, message: '没有找到匹配的订单，请检查订单编号和邮箱。' }, 404)
   if (String(order.account_type || 'formal') !== 'guest') return c.json({ ok: true, registered: true, message: '该邮箱已注册，请进入账号中心登录查看订单。', loginUrl: '/login' })
   const temporaryPassword = generateTemporaryPassword()
@@ -3869,6 +3873,7 @@ app.get('/admin/devices/reports', async (c) => {
     LEFT JOIN (
       SELECT device_id, MAX(created_at) AS retired_at FROM device_lifecycle_events WHERE next_status = 'RETIRED' GROUP BY device_id
     ) ret ON ret.device_id = d.id
+    WHERE d.deleted_at IS NULL
     ORDER BY total_revenue DESC
   `).all()).results || []
   return c.html(pages.renderAdminDeviceReports(user, rows as any[]))
@@ -4445,7 +4450,7 @@ app.post('/admin/orders/:id/changes', async (c) => {
   // 设计文档/优惠码：改租期 / 换机 / 改价后，若可打折基数跌破优惠码最低消费，
   // 该优惠码不再成立——释放名额、移除折扣、把折扣额加回订单总价，并留痕。
   if (['EXTENSION', 'DEVICE_SWAP', 'PRICE_ADJUSTMENT'].includes(type) && (order as any).coupon_id && Number(after.discountAmount || 0) > 0) {
-    const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ?').bind((order as any).coupon_id).first() as any
+    const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ? AND deleted_at IS NULL').bind((order as any).coupon_id).first() as any
     if (coupon && coupon.minimum_order_amount) {
       const dailyRate = type === 'DEVICE_SWAP'
         ? Number((await getDeviceById(c, after.deviceId) as any)?.pricePerDay || (order as any).dailyRate || 0)
@@ -4542,6 +4547,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
       c.env.RENT.prepare("UPDATE orders SET deposit_status = 'PAID', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND deposit_status = 'PENDING'").bind(depositAmount, order.id),
     ])
     await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title: '押金付款审核已通过', message: `您的订单 ${order.orderNo || order.id} 押金转账凭证已审核通过，押金 AUD$ ${depositAmount.toFixed(2)} 已确认到账。`, orderId: order.id })
+    await cleanupCompletedPaymentReviewNotifications(c)
     await createAuditLog(c, { actor: user, action: 'DEPOSIT_PAYMENT_PROOF_APPROVED', targetType: 'PAYMENT_PROOF', targetId: proof.id, after: { orderId: order.id, reference: proof.reference_number, depositAmount } })
     return c.redirect('/admin/exceptions')
   }
@@ -4555,6 +4561,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
     ])
     await settleBalancePriceAdjustment(c, order.id, proof.adjustment_id)
     await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title: '差价付款审核已通过', message: `您的订单 ${order.orderNo || order.id} 差价付款凭证已审核通过，补交 ${Number(proof.adjustment_amount || 0).toFixed(2)} AUD。`, orderId: order.id })
+    await cleanupCompletedPaymentReviewNotifications(c)
     await createAuditLog(c, { actor: user, action: 'PRICE_ADJUSTMENT_PAYMENT_APPROVED', targetType: 'ORDER_PRICE_ADJUSTMENT', targetId: proof.adjustment_id, after: { orderId: order.id, reference: proof.reference_number } })
     return c.redirect('/admin/exceptions')
   }
@@ -4592,6 +4599,7 @@ app.post('/admin/orders/:id/transfer-proof/approve', async (c) => {
   const title = '付款审核已通过'
   const message = `您的订单 ${order.orderNo || order.id} 付款凭证已审核通过，订单已确认。`
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_approved', title, message, orderId: order.id })
+  await cleanupCompletedPaymentReviewNotifications(c)
   await sendPaymentReviewEmail(c, customer, title, message, order.id)
   await createAuditLog(c, { actor: user, action: 'PAYMENT_PROOF_APPROVED', targetType: 'PAYMENT_PROOF', targetId: proof.id, after: { orderId: order.id, reference: proof.reference_number } })
   return c.redirect('/admin/exceptions')
@@ -4609,6 +4617,7 @@ app.post('/admin/orders/:id/transfer-proof/reject', async (c) => {
   const title = '付款审核未通过'
   const message = `您的订单 ${order.orderNo || order.id} 付款凭证未通过审核。原因：${reason}。请重新提交正确的付款凭证。`
   await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'payment_rejected', title, message, orderId: order.id })
+  await cleanupCompletedPaymentReviewNotifications(c)
   await sendPaymentReviewEmail(c, customer, title, message, order.id)
   await createAuditLog(c, { actor: user, action: 'PAYMENT_PROOF_REJECTED', targetType: 'ORDER', targetId: order.id, reason })
   return c.redirect('/admin/exceptions')
@@ -4841,19 +4850,13 @@ app.post('/admin/orders/:id/delete', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   const order = await getOrderById(c, c.req.param('id'))
   if (!order) return c.redirect('/admin/orders?error=' + encodeURIComponent('订单不存在或已被删除'))
-  if (['paid', 'active', 'completed'].includes(order.status)) {
+  if (!['draft', 'pending_approval', 'approved', 'pending_payment', 'cancelled'].includes(order.status)) {
     return c.redirect('/admin/orders?error=' + encodeURIComponent('只能删除未付款或已取消的订单，请先确认订单状态'))
   }
   await releaseCouponForOrder(c, order.id)
-  await c.env.RENT.prepare('DELETE FROM invoices WHERE order_id = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM order_time_change_history WHERE order_id = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM inspection_disputes WHERE order_id = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM payment_refunds WHERE order_id = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM payment_proofs WHERE payment_id IN (SELECT id FROM payments WHERE rental_id = ?)').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM payments WHERE rental_id = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM sign_sessions WHERE contract_token IN (SELECT sign_token FROM contracts WHERE orderId = ? AND sign_token IS NOT NULL)').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM contracts WHERE orderId = ?').bind(order.id).run()
-  await c.env.RENT.prepare('DELETE FROM orders WHERE id = ?').bind(order.id).run()
+  await c.env.RENT.prepare('UPDATE orders SET deleted_at = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').bind(order.id).run()
+  await c.env.RENT.prepare('UPDATE contracts SET deleted_at = CURRENT_TIMESTAMP WHERE orderId = ? AND deleted_at IS NULL').bind(order.id).run()
+  await c.env.RENT.prepare("UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP WHERE order_id = ? AND deleted_at IS NULL").bind(order.id).run()
   return c.redirect('/admin/orders?success=' + encodeURIComponent('订单已删除'))
 })
 
@@ -5060,15 +5063,15 @@ app.post('/admin/connectivity/check', async (c) => {
 app.get('/admin/coupons', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const coupons = (await c.env.RENT.prepare('SELECT * FROM coupons ORDER BY created_at DESC').all()).results || []
-  const devices = (await c.env.RENT.prepare('SELECT id, name, brand, model FROM devices ORDER BY name').all()).results || []
+  const coupons = (await c.env.RENT.prepare('SELECT * FROM coupons WHERE deleted_at IS NULL ORDER BY created_at DESC').all()).results || []
+  const devices = (await c.env.RENT.prepare('SELECT id, name, brand, model FROM devices WHERE deleted_at IS NULL ORDER BY name').all()).results || []
   return c.html(pages.renderAdminCoupons(admin, coupons as any[], devices as any[]))
 })
 
 app.get('/admin/device-agent-bindings', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
-  const monitorToken = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  const monitorToken = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash' AND deleted_at IS NULL").first() as any
   return c.html(await pages.renderAdminDeviceAgentBindings(c, user, { monitorApiConfigured: Boolean(monitorToken?.value) }))
 })
 
@@ -5077,9 +5080,9 @@ app.post('/admin/device-agent-bindings/monitor-token', async (c) => {
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '')
   const tokenHash = await hashAgentValue(token)
-  const existing = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  const existing = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash' AND deleted_at IS NULL").first() as any
   await c.env.RENT.prepare(`INSERT INTO systemSettings (key, value) VALUES ('monitorApiTokenHash', ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP`).bind(tokenHash).run()
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL`).bind(tokenHash).run()
   invalidateMonitorApiTokenCache()
   await createAuditLog(c, { actor: user, action: existing?.value ? 'MONITOR_API_TOKEN_ROTATED' : 'MONITOR_API_TOKEN_CREATED', targetType: 'SYSTEM', targetId: 'monitor-api' })
   c.header('Cache-Control', 'no-store')
@@ -5184,8 +5187,8 @@ app.get('/admin/devices/:id/edit', async (c) => {
   if (!device) {
     return c.redirect('/admin/devices')
   }
-  const unavailableDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? ORDER BY unavailable_date').bind(device.id).all()).results || []).map((row: any) => row.unavailable_date)
-  const unavailableTimeSlots = ((await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? ORDER BY unavailable_date, time_slot').bind(device.id).all().catch(() => ({ results: [] }))).results || []).reduce((result: Record<string, string[]>, row: any) => {
+  const unavailableDates = ((await c.env.RENT.prepare('SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = ? AND deleted_at IS NULL ORDER BY unavailable_date').bind(device.id).all()).results || []).map((row: any) => row.unavailable_date)
+  const unavailableTimeSlots = ((await c.env.RENT.prepare('SELECT unavailable_date, time_slot FROM device_unavailable_time_slots WHERE device_id = ? AND deleted_at IS NULL ORDER BY unavailable_date, time_slot').bind(device.id).all().catch(() => ({ results: [] }))).results || []).reduce((result: Record<string, string[]>, row: any) => {
     const date = String(row.unavailable_date)
       ; (result[date] ||= []).push(String(row.time_slot))
     return result
@@ -5507,8 +5510,8 @@ app.post('/admin/devices/:id/edit', async (c) => {
     })
   }
   const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]
-  await c.env.RENT.prepare('DELETE FROM device_unavailable_dates WHERE device_id = ?').bind(c.req.param('id')).run()
-  if (dates.length) await c.env.RENT.batch(dates.map(date => c.env.RENT.prepare('INSERT INTO device_unavailable_dates (device_id, unavailable_date) VALUES (?, ?)').bind(c.req.param('id'), date)))
+  await c.env.RENT.prepare('UPDATE device_unavailable_dates SET deleted_at = CURRENT_TIMESTAMP WHERE device_id = ? AND deleted_at IS NULL').bind(c.req.param('id')).run()
+  if (dates.length) await c.env.RENT.batch(dates.map(date => c.env.RENT.prepare('INSERT INTO device_unavailable_dates (device_id, unavailable_date) VALUES (?, ?) ON CONFLICT(device_id, unavailable_date) DO UPDATE SET deleted_at = NULL').bind(c.req.param('id'), date)))
   const allowedDeviceTimeSlots = new Set(['morning_service', 'morning', 'afternoon', 'evening_service', 'delivery_morning', 'delivery_afternoon'])
   const timeSlots = new Map<string, string[]>()
   for (const line of String(form.unavailableTimeSlots || '').split(/\n+/)) {
@@ -5519,8 +5522,8 @@ app.post('/admin/devices/:id/edit', async (c) => {
     const slots = [...new Set(line.slice(separator + 1).split(',').map(value => value.trim()).filter(value => allowedDeviceTimeSlots.has(value)))]
     if (slots.length) timeSlots.set(date, slots)
   }
-  await c.env.RENT.prepare('DELETE FROM device_unavailable_time_slots WHERE device_id = ?').bind(c.req.param('id')).run()
-  const timeSlotStatements = [...timeSlots.entries()].flatMap(([date, slots]) => slots.map(slot => c.env.RENT.prepare('INSERT INTO device_unavailable_time_slots (device_id, unavailable_date, time_slot) VALUES (?, ?, ?)').bind(c.req.param('id'), date, slot)))
+  await c.env.RENT.prepare('UPDATE device_unavailable_time_slots SET deleted_at = CURRENT_TIMESTAMP WHERE device_id = ? AND deleted_at IS NULL').bind(c.req.param('id')).run()
+  const timeSlotStatements = [...timeSlots.entries()].flatMap(([date, slots]) => slots.map(slot => c.env.RENT.prepare('INSERT INTO device_unavailable_time_slots (device_id, unavailable_date, time_slot) VALUES (?, ?, ?) ON CONFLICT(device_id, unavailable_date, time_slot) DO UPDATE SET deleted_at = NULL').bind(c.req.param('id'), date, slot)))
   if (timeSlotStatements.length) await c.env.RENT.batch(timeSlotStatements)
   return c.redirect(`/admin/devices/${encodeURIComponent(c.req.param('id'))}/edit?success=设备资料已保存`)
 })
@@ -5531,7 +5534,7 @@ app.post('/admin/devices/:id/delete', async (c) => {
     return c.redirect('/login')
   }
   const deleted = await deleteDevice(c, c.req.param('id'))
-  if (!deleted) return c.text('该设备已有订单、租赁或合同记录，已改为退役，历史数据保持不变。', 409)
+  if (!deleted) return c.text('设备有进行中的订单，或已被删除', 409)
   return c.redirect('/admin/devices')
 })
 
@@ -5729,16 +5732,16 @@ app.post('/admin/coupons', async (c) => {
 app.get('/admin/coupons/:id/edit', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ?').bind(c.req.param('id')).first() as any
+  const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ? AND deleted_at IS NULL').bind(c.req.param('id')).first() as any
   if (!coupon) return c.html(renderNotFound(), 404)
-  const devices = (await c.env.RENT.prepare('SELECT id, name, brand, model FROM devices ORDER BY name').all()).results || []
+  const devices = (await c.env.RENT.prepare('SELECT id, name, brand, model FROM devices WHERE deleted_at IS NULL ORDER BY name').all()).results || []
   return c.html(pages.renderAdminCouponEdit(admin, coupon, devices as any[]))
 })
 
 app.post('/admin/coupons/:id', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ?').bind(c.req.param('id')).first() as any
+  const coupon = await c.env.RENT.prepare('SELECT * FROM coupons WHERE id = ? AND deleted_at IS NULL').bind(c.req.param('id')).first() as any
   if (!coupon) return c.text('优惠码不存在', 404)
   const form = await c.req.parseBody()
   const locked = Number(coupon.used_count) > 0
@@ -5746,7 +5749,7 @@ app.post('/admin/coupons/:id', async (c) => {
   if (!locked && !fields.valid) return c.redirect(`/admin/coupons/${encodeURIComponent(coupon.id)}/edit?error=` + encodeURIComponent('请检查折扣值和使用次数限制'))
   const discountType = locked ? coupon.discount_type : fields.discountType
   const discountValue = locked ? coupon.discount_value : fields.discountValue
-  await c.env.RENT.prepare(`UPDATE coupons SET discount_type = ?, discount_value = ?, max_uses = ?, starts_at = ?, expires_at = ?, device_id = ?, brand = ?, config_keyword = ?, max_discount_amount = ?, minimum_order_amount = ?, max_uses_per_customer = ?, new_customer_only = ?, stackable = ?, restore_on_cancellation = ?, status = ?, active = ?, applicable_components = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+  await c.env.RENT.prepare(`UPDATE coupons SET discount_type = ?, discount_value = ?, max_uses = ?, starts_at = ?, expires_at = ?, device_id = ?, brand = ?, config_keyword = ?, max_discount_amount = ?, minimum_order_amount = ?, max_uses_per_customer = ?, new_customer_only = ?, stackable = ?, restore_on_cancellation = ?, status = ?, active = ?, applicable_components = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL`)
     .bind(discountType, discountValue, fields.maxUses, fields.startsAt, fields.expiresAt, fields.deviceId, fields.brand, fields.configKeyword, fields.maxDiscountAmount, fields.minimumOrderAmount, fields.maxUsesPerCustomer, fields.newCustomerOnly, fields.stackable, fields.restoreOnCancellation, fields.status, fields.status === 'ACTIVE' ? 1 : 0, fields.applicableComponents, admin.id, coupon.id).run()
   await createAuditLog(c, { actor: admin, action: 'COUPON_UPDATED', targetType: 'COUPON', targetId: coupon.id, before: { discountType: coupon.discount_type, discountValue: coupon.discount_value, status: coupon.status }, after: { discountType, discountValue, status: fields.status } })
   return c.redirect('/admin/coupons?success=' + encodeURIComponent('优惠码已更新'))
@@ -5755,20 +5758,18 @@ app.post('/admin/coupons/:id', async (c) => {
 app.post('/admin/coupons/:id/delete', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const coupon = await c.env.RENT.prepare('SELECT used_count FROM coupons WHERE id = ?').bind(c.req.param('id')).first() as any
+  const coupon = await c.env.RENT.prepare('SELECT id FROM coupons WHERE id = ? AND deleted_at IS NULL').bind(c.req.param('id')).first() as any
   if (!coupon) return c.redirect('/admin/coupons?error=' + encodeURIComponent('优惠码不存在'))
-  const redemption = await c.env.RENT.prepare('SELECT id FROM coupon_redemptions WHERE coupon_id = ? LIMIT 1').bind(c.req.param('id')).first()
-  if (Number(coupon.used_count) > 0 || redemption) return c.redirect('/admin/coupons?error=' + encodeURIComponent('该优惠码已有使用记录，无法删除，请改为停用'))
-  await c.env.RENT.prepare('DELETE FROM coupons WHERE id = ?').bind(c.req.param('id')).run()
+  await c.env.RENT.prepare("UPDATE coupons SET deleted_at = CURRENT_TIMESTAMP, active = 0, status = 'DISABLED', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL").bind(c.req.param('id')).run()
   return c.redirect('/admin/coupons?success=' + encodeURIComponent('优惠码已删除'))
 })
 
 app.post('/admin/coupons/:id/toggle', async (c) => {
   const admin = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!admin || admin.role !== 'ADMIN') return c.redirect('/login')
-  const before = await c.env.RENT.prepare('SELECT active, status FROM coupons WHERE id = ?').bind(c.req.param('id')).first() as any
+  const before = await c.env.RENT.prepare('SELECT active, status FROM coupons WHERE id = ? AND deleted_at IS NULL').bind(c.req.param('id')).first() as any
   if (!before) return c.redirect('/admin/coupons?error=' + encodeURIComponent('优惠码不存在'))
-  await c.env.RENT.prepare("UPDATE coupons SET active = CASE active WHEN 1 THEN 0 ELSE 1 END, status = CASE active WHEN 1 THEN 'DISABLED' ELSE 'ACTIVE' END, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(c.req.param('id')).run()
+  await c.env.RENT.prepare("UPDATE coupons SET active = CASE active WHEN 1 THEN 0 ELSE 1 END, status = CASE active WHEN 1 THEN 'DISABLED' ELSE 'ACTIVE' END, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL").bind(c.req.param('id')).run()
   await createAuditLog(c, { actor: admin, action: before.active ? 'COUPON_DISABLED' : 'COUPON_ENABLED', targetType: 'COUPON', targetId: c.req.param('id'), before: { active: Boolean(before.active), status: before.status }, after: { active: !before.active, status: before.active ? 'DISABLED' : 'ACTIVE' } })
   return c.redirect('/admin/coupons')
 })
@@ -5818,8 +5819,8 @@ app.get('/admin/templates/:kind', async (c) => {
   await loadSystemSettingsFromDB(c)
   const settingKey = EDITABLE_AGREEMENTS[kind].settingKey
   const settingKeyEn = EDITABLE_AGREEMENTS[kind].settingKeyEn
-  const databaseSetting = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
-  const databaseSettingEn = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKeyEn).first() as any
+  const databaseSetting = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ? AND deleted_at IS NULL').bind(settingKey).first() as any
+  const databaseSettingEn = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ? AND deleted_at IS NULL').bind(settingKeyEn).first() as any
   return c.html(pages.renderAdminAgreementEditor(
     user,
     kind as any,
@@ -5849,9 +5850,9 @@ app.post('/admin/templates/:kind', async (c) => {
     const settingKeyEn = EDITABLE_AGREEMENTS[kind].settingKeyEn
     const metadata = getSystemSettings().legalMetadata || {}
     // 直接读取数据库中的正文，避免 isolate 级设置缓存让“未变化”被误判为变化。
-    const previous = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
+    const previous = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ? AND deleted_at IS NULL').bind(settingKey).first() as any
     const before = sanitizeRichHtml(previous?.value || '')
-    const previousEn = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKeyEn).first() as any
+    const previousEn = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ? AND deleted_at IS NULL').bind(settingKeyEn).first() as any
     const beforeEn = sanitizeRichHtml(previousEn?.value || '')
     // Either language changing counts as an update worth notifying about —
     // an English-only revision (e.g. fixing the machine-translation placeholder)
@@ -5870,11 +5871,11 @@ app.post('/admin/templates/:kind', async (c) => {
       : (contentChanged || !/^\d{4}-\d{2}-\d{2}$/.test(existingDate) ? melbourneToday : existingDate)
     const legalMetadata = { ...metadata, [kind]: { version: String(payload?.version || '1.0').trim().slice(0, 30) || '1.0', lastUpdatedDate } }
     await c.env.RENT.batch([
-      c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP').bind(settingKey, content),
-      c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP').bind(settingKeyEn, contentEn),
-      c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP').bind('legalMetadata', JSON.stringify(legalMetadata)),
+      c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL').bind(settingKey, content),
+      c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL').bind(settingKeyEn, contentEn),
+      c.env.RENT.prepare('INSERT INTO systemSettings (key, value, updatedAt) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL').bind('legalMetadata', JSON.stringify(legalMetadata)),
     ])
-    const saved = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ?').bind(settingKey).first() as any
+    const saved = await c.env.RENT.prepare('SELECT value FROM systemSettings WHERE key = ? AND deleted_at IS NULL').bind(settingKey).first() as any
     if (String(saved?.value ?? '') !== content) throw new Error('协议保存校验失败，请重试')
     invalidateSystemSettingsCache()
     await loadSystemSettingsFromDB(c)
@@ -6151,7 +6152,7 @@ async function loadMonitorApiTokenHash(c: any): Promise<string | null> {
   if (monitorApiTokenHashCache && Date.now() - monitorApiTokenHashCache.loadedAt < MONITOR_API_TOKEN_TTL_MS) {
     return monitorApiTokenHashCache.value
   }
-  const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash'").first() as any
+  const tokenRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'monitorApiTokenHash' AND deleted_at IS NULL").first() as any
   const value = tokenRow?.value ? String(tokenRow.value) : null
   monitorApiTokenHashCache = { value, loadedAt: Date.now() }
   return value
@@ -6181,7 +6182,7 @@ async function hasValidMonitorApiToken(c: any): Promise<boolean> {
 async function getAgentDevice(c: any): Promise<any | null> {
   const header = String(c.req.header('Authorization') || '')
   if (!header.startsWith('Bearer ')) return null
-  return await c.env.RENT.prepare('SELECT * FROM devices WHERE agent_token_hash = ?').bind(await hashAgentValue(header.slice(7).trim())).first()
+  return await c.env.RENT.prepare('SELECT * FROM devices WHERE agent_token_hash = ? AND deleted_at IS NULL').bind(await hashAgentValue(header.slice(7).trim())).first()
 }
 
 app.post('/api/device-agent/register', async (c) => {
@@ -6191,7 +6192,7 @@ app.post('/api/device-agent/register', async (c) => {
   const setupCode = String(payload.setupCode || '').trim()
   if (!/^\d{6}$/.test(setupCode)) return c.json({ ok: false, error: 'setupCode must be exactly 6 digits' }, 400)
   const setupCodeHash = await hashAgentValue(setupCode)
-  const device = await c.env.RENT.prepare('SELECT id, name, serialNumber FROM devices WHERE agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP').bind(setupCodeHash).first() as any
+  const device = await c.env.RENT.prepare('SELECT id, name, serialNumber FROM devices WHERE agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP AND deleted_at IS NULL').bind(setupCodeHash).first() as any
   if (!device) return c.json({ ok: false, error: 'Invalid or expired setup code' }, 401)
   const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '')
   const registration = await c.env.RENT.prepare(`UPDATE devices SET agent_token_hash = ?, agent_setup_code_hash = NULL, agent_setup_code_expires_at = NULL, agent_registered_at = CURRENT_TIMESTAMP, agent_status = 'offline', updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND agent_setup_code_hash = ? AND agent_setup_code_expires_at > CURRENT_TIMESTAMP`).bind(await hashAgentValue(token), device.id, setupCodeHash).run()
@@ -6213,11 +6214,11 @@ app.post('/api/device-agent/inspection', async (c) => {
   const payload = await c.req.json().catch(() => ({})) as any
   const type = ['before_rental', 'after_return', 'automated_health'].includes(payload.inspectionType) ? payload.inspectionType : 'automated_health'
   const snapshot = JSON.stringify(payload.snapshot || {})
-  const previous = await c.env.RENT.prepare('SELECT snapshot_json FROM device_inspections WHERE device_id = ? ORDER BY created_at DESC LIMIT 1').bind(device.id).first() as any
+  const previous = await c.env.RENT.prepare('SELECT snapshot_json FROM device_inspections WHERE deleted_at IS NULL AND device_id = ? ORDER BY created_at DESC LIMIT 1').bind(device.id).first() as any
   const before = previous ? JSON.parse(previous.snapshot_json || '{}') : {}
   const current = payload.snapshot || {}
   if (type === 'automated_health' && device.inspection_requested_at) {
-    const pendingRentalInspection = await c.env.RENT.prepare("SELECT i.id FROM device_inspections i JOIN orders o ON o.id = i.rental_id WHERE i.device_id = ? AND i.inspection_type = 'before_rental' AND o.status = 'draft' ORDER BY i.created_at DESC LIMIT 1").bind(device.id).first() as any
+    const pendingRentalInspection = await c.env.RENT.prepare("SELECT i.id FROM device_inspections i JOIN orders o ON o.id = i.rental_id WHERE i.deleted_at IS NULL AND i.device_id = ? AND i.inspection_type = 'before_rental' AND o.status = 'draft' ORDER BY i.created_at DESC LIMIT 1").bind(device.id).first() as any
     if (pendingRentalInspection?.id) {
       await c.env.RENT.batch([
         c.env.RENT.prepare('UPDATE device_inspections SET snapshot_json = ?, differences_json = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?').bind(snapshot, JSON.stringify({}), pendingRentalInspection.id),
@@ -6230,7 +6231,7 @@ app.post('/api/device-agent/inspection', async (c) => {
   const id = `inspection-${nanoid(12)}`
   if (type === 'automated_health') {
     await c.env.RENT.batch([
-      c.env.RENT.prepare("DELETE FROM device_inspections WHERE device_id = ? AND inspection_type = 'automated_health' AND date(created_at) < date('now')").bind(device.id),
+      c.env.RENT.prepare("UPDATE device_inspections SET deleted_at = CURRENT_TIMESTAMP WHERE device_id = ? AND inspection_type = 'automated_health' AND date(created_at) < date('now') AND deleted_at IS NULL").bind(device.id),
       c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, ?, ?)').bind(id, device.id, type, snapshot, JSON.stringify(differences)),
     ])
   } else {
@@ -6486,7 +6487,7 @@ export default {
         await runScheduledJob(c, 'notify_overdue_payment_proofs', () => notifyOverduePaymentProofs(c))
         await runScheduledJob(c, 'deliver_pending_agreement_updates', () => deliverPendingAgreementUpdates(c))
         await runScheduledJob(c, 'purge_old_device_inspections', async () => {
-          const result = await env.RENT.prepare("DELETE FROM device_inspections WHERE created_at < datetime('now', '-1 year')").run()
+          const result = await env.RENT.prepare("UPDATE device_inspections SET deleted_at = CURRENT_TIMESTAMP WHERE created_at < datetime('now', '-1 year') AND deleted_at IS NULL").run()
           return Number(result.meta?.changes || 0)
         })
         await runScheduledJob(c, 'run_data_consistency_checks', () => runDataConsistencyChecks(c))

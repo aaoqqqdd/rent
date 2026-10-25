@@ -20,7 +20,7 @@ async function getOngoingStatusOrders(c: Context, statuses: Iterable<string>, us
   const placeholders = list.map(() => '?').join(', ')
   const privileged = user?.role === 'ADMIN'
   const ownership = privileged ? '' : 'AND u.staff_id = ?'
-  const result = await db.prepare(`SELECT o.* FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.status IN (${placeholders}) ${ownership} ORDER BY o.createdAt DESC, o.id DESC`)
+  const result = await db.prepare(`SELECT o.* FROM orders o LEFT JOIN users u ON u.id = o.userId WHERE o.status IN (${placeholders}) AND o.deleted_at IS NULL ${ownership} ORDER BY o.createdAt DESC, o.id DESC`)
     .bind(...list, ...(privileged ? [] : [user.id]))
     .all()
   return (result.results || []) as any[]

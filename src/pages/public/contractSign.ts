@@ -161,7 +161,7 @@ export async function renderContractSignPage(c: Context, tokenOrNumber: string, 
   const hasSavedCard = Boolean((order as any).stripe_payment_method_id)
   await loadSystemSettingsFromDB(c)
   const systemSettings = getSystemSettings();
-  const rentalTermsRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'rentalTerms'").first() as any
+  const rentalTermsRow = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'rentalTerms' AND deleted_at IS NULL").first() as any
   const rentalTerms = sanitizeRichHtml(rentalTermsRow?.value ?? systemSettings.rentalTerms)
   const [device, contractCustomer, variableData] = await Promise.all([
     getDeviceById(c, order.deviceId),

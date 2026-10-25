@@ -60,7 +60,7 @@ function normalizeAdminOrderFilters(filters?: AdminOrderFilters) {
 // row query and the aggregate stats query, so the two stay consistent.
 function buildAdminOrderWhere(filters?: AdminOrderFilters) {
   const { userIdFilter, statusFilter, searchTerm, dateFrom, dateTo } = normalizeAdminOrderFilters(filters);
-  const clauses: string[] = ['1=1'];
+  const clauses: string[] = ['o.deleted_at IS NULL'];
   const params: any[] = [];
 
   if (userIdFilter) {

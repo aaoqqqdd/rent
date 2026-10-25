@@ -44,7 +44,7 @@ async function decrypt(c: Context, value: string): Promise<string> {
 }
 
 async function readStoredConfig(c: Context): Promise<StripeStoredConfig | null> {
-  const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'stripeConfig'").first() as any
+  const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'stripeConfig' AND deleted_at IS NULL").first() as any
   if (!row?.value) return null
   try {
     return JSON.parse(row.value) as StripeStoredConfig
@@ -75,7 +75,7 @@ export async function getStripeConfigSummary(c: Context) {
 
 export async function saveStripeConfig(c: Context, input: Record<string, any>): Promise<void> {
   if (input.clear === true) {
-    await c.env.RENT.prepare("DELETE FROM systemSettings WHERE key = 'stripeConfig'").run()
+    await c.env.RENT.prepare("UPDATE systemSettings SET deleted_at = CURRENT_TIMESTAMP WHERE key = 'stripeConfig'").run()
     return
   }
   const current = await readStoredConfig(c)
@@ -97,7 +97,7 @@ export async function saveStripeConfig(c: Context, input: Record<string, any>): 
 
   await c.env.RENT.prepare(`
     INSERT INTO systemSettings (key, value, updatedAt) VALUES ('stripeConfig', ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP
+    ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL
   `).bind(JSON.stringify({ publishableKey, secretKey, webhookSecret })).run()
 }
 

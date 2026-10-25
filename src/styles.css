@@ -3397,6 +3397,58 @@ body:not(.has-navigated) .content>.page-header {
   margin-top: 4px;
 }
 
+/* 站内通知模板工作台 */
+.in-app-template-hero,
+.in-app-template-composer,
+.in-app-template-library {
+  max-width: 1100px;
+  margin: 0 auto 18px;
+}
+
+.in-app-template-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+  gap: 28px;
+  align-items: center;
+  padding: clamp(22px, 3vw, 38px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.in-app-template-hero h2 { margin: 6px 0 18px; font-size: clamp(1.6rem, 2.5vw, 2.2rem); }
+.in-app-template-hero__stats { display: flex; flex-wrap: wrap; gap: 8px; }
+.in-app-template-hero__stats span { padding: 7px 11px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); font-size: .83rem; }
+.in-app-template-hero__stats b { color: var(--text); }
+.in-app-template-preview { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-subtle); }
+.in-app-template-preview__bar { display: flex; align-items: center; gap: 8px; padding: 11px 15px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: .78rem; }
+.in-app-template-preview__bar time { margin-left: auto; }
+.in-app-template-preview__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+.in-app-template-preview__content { padding: 18px; }
+.in-app-template-preview__content strong { display: block; color: var(--text); }
+.in-app-template-preview__content p { margin: 8px 0 18px; color: var(--text-secondary); line-height: 1.55; }
+.in-app-template-preview__content small { color: var(--text-tertiary); }
+.in-app-template-composer,
+.in-app-template-library { padding: clamp(20px, 3vw, 30px); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.in-app-template-composer__head,
+.in-app-template-library__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.in-app-template-composer__head h3,
+.in-app-template-library__head h3 { margin: 4px 0; font-size: 1.25rem; }
+.in-app-template-composer__head p:last-child { margin: 5px 0 0; color: var(--text-secondary); font-size: .88rem; }
+.in-app-template-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.in-app-template-form > div { min-width: 0; }
+.in-app-template-form .form-control { width: 100%; }
+.in-app-template-form__footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 8px; color: var(--text-secondary); font-size: .83rem; }
+.in-app-template-card__copy { min-width: 0; display: grid; gap: 3px; }
+.in-app-template-card__copy small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-secondary); }
+
+@media (max-width: 760px) {
+  .in-app-template-hero { grid-template-columns: 1fr; }
+  .in-app-template-library__head,
+  .in-app-template-form__footer { align-items: flex-start; flex-direction: column; }
+}
+
 @media (max-width: 640px) {
   .record-archive__count {
     margin-left: 0;
@@ -12339,7 +12391,43 @@ select.form-control {
 
 .notification-drawer__head h2 { font-size: 1rem; }
 
-.notification-drawer__body { padding: 12px !important; }
+.notification-drawer__body {
+  min-width: 0;
+  padding: 12px !important;
+  overflow-x: hidden;
+}
+
+.notification-drawer__item {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.notification-drawer__item strong,
+.notification-drawer__item p,
+.notification-drawer__item small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.notification-drawer__item p {
+  margin: 7px 0 10px;
+}
+
+.notification-drawer__item small {
+  line-height: 1.5;
+}
+
+.notification-drawer__item:hover,
+.notification-drawer__item:focus-visible {
+  background: var(--c-surface-2) !important;
+}
 
 .notification-drawer__item,
 .notification-list > .notification-item {

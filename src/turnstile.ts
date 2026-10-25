@@ -36,7 +36,7 @@ async function decrypt(c: Context, value: string) {
 
 async function read(c: Context): Promise<StoredTurnstileConfig | null> {
   try {
-    const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'turnstileConfig'").first() as any
+    const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'turnstileConfig' AND deleted_at IS NULL").first() as any
     if (!row?.value) return null
     return JSON.parse(row.value) as StoredTurnstileConfig
   } catch {
@@ -71,7 +71,7 @@ export async function getTurnstileConfigSummary(c: Context) {
 
 export async function saveTurnstileConfig(c: Context, input: Record<string, any>) {
   if (input.clear === true) {
-    await c.env.RENT.prepare("DELETE FROM systemSettings WHERE key = 'turnstileConfig'").run()
+    await c.env.RENT.prepare("UPDATE systemSettings SET deleted_at = CURRENT_TIMESTAMP WHERE key = 'turnstileConfig'").run()
     return
   }
   const current = await read(c)
@@ -79,7 +79,7 @@ export async function saveTurnstileConfig(c: Context, input: Record<string, any>
   const secretKeyPlain = String(input.secretKey || '').trim()
   const secretKey = secretKeyPlain ? await encrypt(c, secretKeyPlain) : current?.secretKey
   if (!siteKey || !secretKey) throw new Error('请完整填写 Turnstile Site Key 和 Secret Key')
-  await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('turnstileConfig', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP")
+  await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('turnstileConfig', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL")
     .bind(JSON.stringify({ siteKey, secretKey })).run()
 }
 

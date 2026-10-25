@@ -90,7 +90,7 @@ async function issueCouponReward(c: Context, rewardId: string, reward: ReturnTyp
   await c.env.RENT.prepare(`INSERT OR IGNORE INTO coupons (id, code, discount_type, discount_value, max_uses, starts_at, expires_at, created_by, device_id, brand, config_keyword, max_discount_amount, minimum_order_amount, max_uses_per_customer, new_customer_only, stackable, restore_on_cancellation, status, active, applicable_components)
     VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, ?, NULL, NULL, NULL, NULL, NULL, ?, 1, 0, 0, 1, 'ACTIVE', 1, 'RENTAL_FEE')`)
     .bind(couponId, code, reward.couponDiscountType, randomRewardValue(reward.couponDiscountValueMin, reward.couponDiscountValueMax), expiresAt, reward.couponMinimumOrderAmount || null).run()
-  const coupon = await c.env.RENT.prepare('SELECT id, code, discount_type, discount_value, expires_at FROM coupons WHERE id = ?').bind(couponId).first() as any
+  const coupon = await c.env.RENT.prepare('SELECT id, code, discount_type, discount_value, expires_at FROM coupons WHERE id = ? AND deleted_at IS NULL').bind(couponId).first() as any
   if (!coupon) throw new Error('反馈奖励优惠码创建失败')
   return { couponId: coupon.id, code: coupon.code, discountType: coupon.discount_type, discountValue: coupon.discount_value, expiresAt: coupon.expires_at, sourceRewardId: rewardId }
 }

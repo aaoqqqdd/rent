@@ -25,7 +25,7 @@ async function decrypt(c: Context, value: string) {
 }
 
 async function read(c: Context): Promise<StoredEmailConfig | null> {
-  const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'emailTransport'").first() as any
+  const row = await c.env.RENT.prepare("SELECT value FROM systemSettings WHERE key = 'emailTransport' AND deleted_at IS NULL").first() as any
   if (!row?.value) return null
   try { return JSON.parse(row.value) as StoredEmailConfig } catch { return null }
 }
@@ -39,7 +39,7 @@ export async function getEmailConfigSummary(c: Context) {
 }
 
 export async function saveEmailConfig(c: Context, input: Record<string, any>) {
-  if (input.clear === true) { await c.env.RENT.prepare("DELETE FROM systemSettings WHERE key = 'emailTransport'").run(); return }
+  if (input.clear === true) { await c.env.RENT.prepare("UPDATE systemSettings SET deleted_at = CURRENT_TIMESTAMP WHERE key = 'emailTransport'").run(); return }
   const current = await read(c)
   const passwordPlain = String(input.password || '').trim()
   const password = passwordPlain ? await encrypt(c, passwordPlain) : current?.password
@@ -49,7 +49,7 @@ export async function saveEmailConfig(c: Context, input: Record<string, any>) {
   const from = String(input.from || current?.from || '').trim()
   const encryption = ['starttls', 'ssl', 'none'].includes(input.encryption) ? input.encryption : (current?.encryption || 'starttls')
   if (!host || !user || !password || !from) throw new Error('请完整填写 SMTP 主机、用户名、密码和发件邮箱')
-  await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('emailTransport', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP").bind(JSON.stringify({ host, port, user, password, from, encryption })).run()
+  await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('emailTransport', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL").bind(JSON.stringify({ host, port, user, password, from, encryption })).run()
 }
 
 export async function getEmailRuntimeConfig(c: Context) {

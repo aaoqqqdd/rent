@@ -26,8 +26,8 @@ export async function renderNewContractPage(c: Context, user: any, prefill: NewC
   const locationOptions = pickupLocations.map(location => `<option value="${escape(location)}">${escape(location)}</option>`).join('')
   const allDevices = await getDevices(c);
   const devices = allDevices.filter(device => !['maintenance', 'retired'].includes(String(device.status || '').toLowerCase()))
-  const deviceDateRows = ((await c.env.RENT.prepare('SELECT device_id, unavailable_date FROM device_unavailable_dates').all().catch(() => ({ results: [] }))).results || []) as any[]
-  const deviceSlotRows = ((await c.env.RENT.prepare('SELECT device_id, unavailable_date, time_slot FROM device_unavailable_time_slots').all().catch(() => ({ results: [] }))).results || []) as any[]
+  const deviceDateRows = ((await c.env.RENT.prepare('SELECT device_id, unavailable_date FROM device_unavailable_dates WHERE deleted_at IS NULL').all().catch(() => ({ results: [] }))).results || []) as any[]
+  const deviceSlotRows = ((await c.env.RENT.prepare('SELECT device_id, unavailable_date, time_slot FROM device_unavailable_time_slots WHERE deleted_at IS NULL').all().catch(() => ({ results: [] }))).results || []) as any[]
   const deviceRentalRules = Object.fromEntries(devices.map(device => {
     const unavailableTimeSlots: Record<string, string[]> = Object.fromEntries(Object.entries(rentalRules.unavailableTimeSlots || {}).map(([date, slots]) => [date, [...slots]]))
     for (const row of deviceSlotRows.filter(item => item.device_id === device.id)) {
@@ -50,8 +50,8 @@ export async function renderNewContractPage(c: Context, user: any, prefill: NewC
     const groupName = `${String(device.name || '未命名设备')}\u0000${String(device.model || '未登记型号')}`
     deviceGroups.set(groupName, [...(deviceGroups.get(groupName) || []), device])
   }
-  const bookingRanges = ((await c.env.RENT.prepare(`SELECT id, deviceId, startDate, endDate, status FROM orders WHERE status NOT IN ('completed', 'cancelled') ORDER BY startDate`).all()).results || []) as any[]
-  const inspectionRecords = ((await c.env.RENT.prepare(`SELECT id, device_id, inspection_type, created_at, snapshot_json FROM device_inspections WHERE rental_id IS NULL ORDER BY created_at DESC`).all()).results || []).map((record: any) => {
+  const bookingRanges = ((await c.env.RENT.prepare(`SELECT id, deviceId, startDate, endDate, status FROM orders WHERE deleted_at IS NULL AND status NOT IN ('completed', 'cancelled') ORDER BY startDate`).all()).results || []) as any[]
+  const inspectionRecords = ((await c.env.RENT.prepare(`SELECT id, device_id, inspection_type, created_at, snapshot_json FROM device_inspections WHERE deleted_at IS NULL AND rental_id IS NULL ORDER BY created_at DESC`).all()).results || []).map((record: any) => {
     let snapshot: any = {}
     try { snapshot = JSON.parse(record.snapshot_json || '{}') } catch (_) {}
     return { id: record.id, deviceId: record.device_id, type: record.inspection_type, createdAt: record.created_at, summary: [snapshot.screen, snapshot.keyboard, snapshot.touchpad, snapshot.camera, snapshot.wifi, snapshot.power].filter(Boolean).join(' · ') || '系统巡检快照' }
