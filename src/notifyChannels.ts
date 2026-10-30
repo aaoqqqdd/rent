@@ -13,9 +13,10 @@
 import type { Context } from 'hono'
 import { renderPlainTextEmailHtml } from './lib/html'
 import { getSystemSettings } from './settings/systemSettings'
+import { getEmailConfigSummary } from './emailConfig'
 
-export type EmailProvider = 'resend' | 'brevo' | 'mailersend'
-const EMAIL_PROVIDERS: EmailProvider[] = ['resend', 'brevo', 'mailersend']
+export type EmailProvider = 'smtp' | 'resend' | 'brevo' | 'mailersend'
+const EMAIL_PROVIDERS: EmailProvider[] = ['smtp', 'resend', 'brevo', 'mailersend']
 
 type StoredChannelConfig = {
   emailProvider?: EmailProvider
@@ -77,6 +78,7 @@ const maskUrl = (value: string) => {
 
 export async function getNotifyChannelsSummary(c: Context) {
   const stored = await readStored(c)
+  const smtp = await getEmailConfigSummary(c)
   const [resendApiKey, brevoApiKey, mailersendApiKey, webhookUrl] = await Promise.all([
     safeDecrypt(c, stored.resendApiKey),
     safeDecrypt(c, stored.brevoApiKey),
@@ -89,6 +91,15 @@ export async function getNotifyChannelsSummary(c: Context) {
   const activeProvider = stored.emailProvider || 'resend'
   return {
     emailProvider: activeProvider,
+    smtp: {
+      configured: Boolean(smtp.configured),
+      host: smtp.host,
+      port: smtp.port,
+      user: smtp.user,
+      from: smtp.from,
+      encryption: smtp.encryption,
+      passwordMasked: smtp.passwordMasked,
+    },
     resend: {
       from: stored.resendFrom || '',
       apiKeyMasked: mask(resendApiKey),
@@ -190,7 +201,10 @@ export async function resolveEmailCredentials(c: Context): Promise<{ provider: E
   const selectedProvider = stored.emailProvider
   const candidates: EmailProvider[] = selectedProvider ? [selectedProvider] : EMAIL_PROVIDERS
   for (const provider of candidates) {
-    if (provider === 'resend') {
+    if (provider === 'smtp') {
+      const smtp = await getEmailConfigSummary(c)
+      if (smtp.configured) return { provider, apiKey: '', from: smtp.from }
+    } else if (provider === 'resend') {
       const apiKey = await safeDecrypt(c, stored.resendApiKey)
       const envApiKey = String((c.env as any).RESEND_API_KEY || '').trim()
       if (apiKey || envApiKey) return { provider, apiKey: apiKey || envApiKey, from: await resolveFrom(c, stored.resendFrom, 'EMAIL_FROM') }
@@ -226,6 +240,7 @@ export interface EmailSendResult { ok: boolean; id: string | null; error: string
 export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): Promise<EmailSendResult> {
   try {
     const { provider, apiKey, from } = await resolveEmailCredentials(c)
+    if (provider === 'smtp') return { ok: false, id: null, error: '当前 Cloudflare Worker 尚未接入 SMTP 发信网关，请先配置 SMTP Relay URL' }
     if (!apiKey || !from) return { ok: false, id: null, error: 'Email transport is not configured' }
     const recipients = Array.isArray(email.to) ? email.to : [email.to]
     const html = email.html || renderPlainTextEmailHtml(email.subject, email.text, getSystemSettings().companyDetails.name || 'PC Rental')
