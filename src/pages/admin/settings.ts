@@ -20,7 +20,7 @@ export function renderAdminSettings(user: any) {
 
       <form id="systemSettingsForm" class="asset-editor" novalidate>
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">SMTP</span><div><h3>邮件 SMTP 配置</h3><p>用于邮箱验证、收据、合同、退款和其他通知。密码加密保存，留空表示保留原密码。<a href="/admin/email-templates">完整邮件变量索引</a>。</p></div></div>
+          <div class="form-section-title"><span class="mono">COMPANY</span><div><h3>公司资料</h3><p>用于网站、合同和通知中的公司信息。<a href="/admin/email-templates">完整邮件变量索引</a>。</p></div></div>
           <div class="grid grid-2">
             <div><label class="form-label" for="companyName">公司名称</label><input id="companyName" name="companyName" class="form-control" value="${settings.companyDetails.name}"></div>
             <div><label class="form-label" for="companyAbn">公司 ABN</label><input id="companyAbn" name="companyAbn" class="form-control" value="${settings.companyDetails.abn}" placeholder="11 位 ABN"></div>
@@ -210,14 +210,6 @@ export function renderAdminSettings(user: any) {
             wechat: formData.has('enableWechat'),
             processingFeeRate: Number(formData.get('processingFeeRate') || 0) / 100,
             squareProcessingFeeRate: Number(formData.get('squareProcessingFeeRate') || 0) / 100,
-          },
-          emailTransport: {
-            host: inputValue('smtpHost'),
-            port: inputValue('smtpPort'),
-            user: inputValue('smtpUser'),
-            password: inputValue('smtpPassword'),
-            from: inputValue('smtpFrom'),
-            encryption: inputValue('smtpEncryption') || 'tls',
           },
           registrationSettings: {
             requireEmailVerification: document.getElementById('requireEmailVerification').checked,

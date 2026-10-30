@@ -129,6 +129,7 @@ import { getSquareConfigSummary } from './square'
 import { getTurnstileConfigSummary, getTurnstileRuntimeConfig, getTurnstileSiteKey } from './turnstile'
 import { getDeliveryConfigSummary } from './deliveryConfig'
 import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, sendTransactionalEmail, dispatchChannelAlert } from './notifyChannels'
+import { getEmailConfigSummary } from './emailConfig'
 import { ensureInAppNotificationTemplates } from './services/inAppNotificationTemplates'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
 import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer, expireMissedPickupOrders, chargeOverdueReturns } from './actions/stripePayments'
@@ -5564,7 +5565,7 @@ app.get('/admin/api-settings', async (c) => {
   const user = await findUserBySession(c, c.req.header('cookie') ?? null)
   if (!user || user.role !== 'ADMIN') return c.redirect('/login')
   await loadSystemSettingsFromDB(c)
-  return c.html(pages.renderAdminApiSettings(user, await getStripeConfigSummary(c), await getNotifyChannelsSummary(c), await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), await getDeliveryConfigSummary(c), await getCloudinaryConfigSummary(c)))
+  return c.html(pages.renderAdminApiSettings(user, await getStripeConfigSummary(c), await getNotifyChannelsSummary(c), await getTurnstileConfigSummary(c), await getSquareConfigSummary(c), await getDeliveryConfigSummary(c), await getCloudinaryConfigSummary(c), await getEmailConfigSummary(c)))
 })
 
 app.get('/admin/tax-invoice-template', async (c) => {
