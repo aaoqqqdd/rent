@@ -231,8 +231,8 @@ async function sendLoggedEmail(c: any, input: { eventType: string, recipient: st
 
 async function sendPaymentReviewEmail(c: any, customer: any, subject: string, message: string, orderId: string): Promise<void> {
   const email = String(customer?.email || '').trim()
-  const { apiKey, from } = await resolveEmailCredentials(c)
-  if (!apiKey || !from || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return
+  const { provider, apiKey, from } = await resolveEmailCredentials(c)
+  if ((provider !== 'smtp' && !apiKey) || !from || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return
   try {
     const key = `payment-review:${orderId}:${email}:${subject}`
     const claimed = await c.env.RENT.prepare("INSERT OR IGNORE INTO email_events (id, event_type, recipient, order_id, idempotency_key, status) VALUES (?, 'PAYMENT_REVIEW', ?, ?, ?, 'PENDING')").bind(`email-${nanoid(12)}`, email, orderId, key).run() as any
@@ -5646,8 +5646,9 @@ app.post('/admin/notify-channels/test', async (c) => {
     const email = String(user.email || '').trim()
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       const { provider, apiKey, from } = await resolveEmailCredentials(c)
-      if (!apiKey || !from) results.push({ channel: `email (${provider})`, ok: false, detail: !apiKey ? '尚未配置当前邮件服务商 API Key' : '尚未配置发件邮箱' })
-      else {
+      if ((provider !== 'smtp' && !apiKey) || !from) {
+        results.push({ channel: `email (${provider})`, ok: false, detail: !from ? '尚未配置发件邮箱' : '尚未配置当前邮件服务商 API Key' })
+      } else {
         const sent = await sendTransactionalEmail(c, { to: email, subject: title, text: message })
         results.push({ channel: `email (${provider})`, ok: sent.ok, detail: sent.ok ? `已发送至 ${email}` : (sent.error || '发送失败') })
       }
