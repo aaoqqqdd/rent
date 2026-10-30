@@ -134,6 +134,7 @@ import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook
 import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
+import { parseUnavailableDates } from './domain/unavailableDates'
 import { computeOrderSettlementStatus } from './domain/orderSettlement'
 import { getAudCnyRate, roundCnyUp } from './rmbExchange'
 import { monitorOverallStatus, monitorHttpStatus, parseBearerToken, worstHealthLevel } from './domain/monitoring'
@@ -5461,6 +5462,9 @@ app.post('/admin/devices/:id/edit', async (c) => {
   }
   const body = await c.req.text()
   const form = parseFormBody(body)
+  let dates: string[]
+  try { dates = parseUnavailableDates(String(form.unavailableDates || '')) }
+  catch (error) { return c.text(error instanceof Error ? error.message : '不可用日期格式无效', 400) }
   if (![form.name, form.brand, form.model, form.serialNumber].every(value => value?.trim())) return c.text('请完整填写设备名称、品牌、型号和序列号', 400)
   if (!Number.isFinite(Number(form.pricePerDay)) || Number(form.pricePerDay) < 0 || !Number.isFinite(Number(form.depositAmount)) || Number(form.depositAmount) < 0) return c.text('日租金和押金必须是有效的非负金额', 400)
   const weeklyDiscountPercent = parseDeviceDiscountPercent(form.weeklyDiscountPercent)
@@ -5509,7 +5513,6 @@ app.post('/admin/devices/:id/edit', async (c) => {
       after: { status: form.status, agentStatus: form.agentStatus, deviceMode: form.deviceMode },
     })
   }
-  const dates = [...new Set(String(form.unavailableDates || '').split(/[,\s]+/).map(value => value.trim()).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)))]
   await c.env.RENT.prepare('UPDATE device_unavailable_dates SET deleted_at = CURRENT_TIMESTAMP WHERE device_id = ? AND deleted_at IS NULL').bind(c.req.param('id')).run()
   if (dates.length) await c.env.RENT.batch(dates.map(date => c.env.RENT.prepare('INSERT INTO device_unavailable_dates (device_id, unavailable_date) VALUES (?, ?) ON CONFLICT(device_id, unavailable_date) DO UPDATE SET deleted_at = NULL').bind(c.req.param('id'), date)))
   const allowedDeviceTimeSlots = new Set(['morning_service', 'morning', 'afternoon', 'evening_service', 'delivery_morning', 'delivery_afternoon'])

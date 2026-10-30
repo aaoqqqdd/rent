@@ -4,6 +4,7 @@
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
 import { buildLayout, sanitizePlainText } from '../../site'
+import { formatUnavailableDates } from '../../domain/unavailableDates'
 
 export function renderAdminDeviceEdit(user: any, device: any, commandHistory: any[] = []) {
   if (!device) return buildLayout('编辑设备 - 电脑租赁管理系统', '<div class="panel"><h2>设备未找到</h2><p>您请求的设备不存在。</p></div>', user)
@@ -48,7 +49,7 @@ export function renderAdminDeviceEdit(user: any, device: any, commandHistory: an
             <div class="form-group"><label class="form-label" for="storage">存储</label><input class="form-control" id="storage" name="storage" value="${agentStorage !== '—' ? agentStorage : value('storage')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="gpu">显卡</label><input class="form-control" id="gpu" name="gpu" value="${value('gpu')}" maxlength="200"></div>
             <div class="form-group"><label class="form-label" for="os">操作系统</label><input class="form-control" id="os" name="os" value="${hardwareValue('os', 'os', 'agentOsVersion', 'agent_os_version')}" maxlength="200"></div>
-            <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><input class="form-control" id="unavailableDates" name="unavailableDates" value="${esc((device.unavailableDates || []).join(', '))}" placeholder="2026-12-25, 2026-12-26"><small class="form-text">多个日期用逗号分隔；这些日期不能被客户或员工安排租赁。</small></div>
+            <div class="form-group"><label class="form-label" for="unavailableDates">不可用日期</label><input class="form-control" id="unavailableDates" name="unavailableDates" value="${esc(formatUnavailableDates(device.unavailableDates || []))}" placeholder="2026-12-25:2027-01-05, 2027-01-10"><small class="form-text">日期范围用 :，多项用逗号分隔。</small></div>
             <div class="form-group"><label class="form-label" for="unavailableTimeSlots">按日期设置不可用时间段</label><textarea class="form-control" id="unavailableTimeSlots" name="unavailableTimeSlots" rows="4" placeholder="2026-12-25: afternoon, evening_service">${esc(unavailableTimeSlotsText)}</textarea><small class="form-text">可用时段：morning_service、morning、afternoon、evening_service、delivery_morning、delivery_afternoon。</small></div>
           </div>
           <div class="form-group"><label class="form-label" for="description">补充描述</label><textarea class="form-control" id="description" name="description" rows="4" maxlength="2000">${value('description')}</textarea></div>

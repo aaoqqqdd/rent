@@ -51,6 +51,28 @@ async function setup(t: any) {
 const dates = { startDate: '2090-01-02', endDate: '2090-01-09', startPeriod: 'AM', endPeriod: 'AM' }
 const nextDates = { startDate: '2090-01-12', endDate: '2090-01-19', startPeriod: 'AM', endPeriod: 'AM' }
 
+test('admin unavailable date ranges survive editing and block rentals throughout the range', async t => {
+  const { sqlite, request, create } = await setup(t)
+  const link = await create()
+  const form = { name: '游戏笔记本', brand: 'Test', model: 'RTX 4060', serialNumber: 'LINK-SN', pricePerDay: '30', depositAmount: '200', status: 'available', agentStatus: 'unregistered', deviceMode: 'normal', unavailableDates: '2090-01-02 ： 2090-12-31, 2091-01-05' }
+  const save = await request('/admin/devices/link-device/edit', form, 'admin')
+  assert.equal(save.status, 302)
+  const activeDates = () => sqlite.prepare("SELECT unavailable_date FROM device_unavailable_dates WHERE device_id = 'link-device' AND deleted_at IS NULL ORDER BY unavailable_date").all().map(row => row.unavailable_date)
+  assert.equal(activeDates().length, 365)
+  assert.equal(activeDates()[0], '2090-01-02')
+  assert.equal(activeDates().at(-2), '2090-12-31')
+  const html = await (await request('/admin/devices/link-device/edit', undefined, 'admin')).text()
+  assert.match(html, /name="unavailableDates" value="2090-01-02:2090-12-31, 2091-01-05"/)
+  for (const range of [dates, { ...dates, startDate: '2090-06-01', endDate: '2090-06-08' }]) assert.match((await request(link.path, range)).headers.get('location')!, /\?error=/)
+  const before = activeDates()
+  const invalid = await request('/admin/devices/link-device/edit', { ...form, name: '不应保存', unavailableDates: '2090-02-30:2090-03-05' }, 'admin')
+  assert.equal(invalid.status, 400)
+  assert.deepEqual(activeDates(), before)
+  assert.equal(sqlite.prepare("SELECT name FROM devices WHERE id = 'link-device'").get()?.name, form.name)
+  assert.equal((await request('/admin/devices/link-device/edit', { ...form, unavailableDates: '' }, 'admin')).status, 302)
+  assert.equal(activeDates().length, 0)
+})
+
 test('only admins can create and toggle permanent links, and list pages render valid scripts', async t => {
   const { sqlite, request, create } = await setup(t)
   assert.equal((await request('/admin/rental-links')).status, 403)
