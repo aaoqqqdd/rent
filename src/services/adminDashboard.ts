@@ -73,7 +73,7 @@ export async function getAdminDashboardData(c: Context): Promise<AdminDashboardD
   // date('now') 与旧代码里的 new Date().toISOString().slice(0,10) 一样是 UTC 日期，保持口径一致。
   const statsQuery = `
     SELECT
-      (SELECT COALESCE(SUM(totalAmount), 0) FROM orders WHERE status IN ('completed', 'paid', 'active')) AS totalRevenue,
+      (SELECT COALESCE(SUM(rental_amount), 0) FROM payments WHERE status IN ('paid', 'refunded')) AS totalRevenue,
       (SELECT COUNT(*) FROM orders WHERE status IN ('active', 'paid')
          AND date(startDate) <= date('now') AND date(endDate) >= date('now')) AS activeRentals,
       (SELECT COUNT(*) FROM orders WHERE status IN ('pending_approval', 'pending_payment')) AS pendingOrders,

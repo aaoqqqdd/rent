@@ -406,7 +406,7 @@ export async function completeOrderSetupIntent(c: Context, user: any, orderId: s
 
 // 订单支付（自助结账 + 签约付款步骤共用）：为一笔待付款订单创建 / 更新 PaymentIntent，
 // 并把 payments 行的金额、手续费、stripe_payment_intent_id 落库为 pending。
-export async function createOrderPaymentIntent(c: Context, user: any, orderId: string, confirmNow = false): Promise<{ clientSecret: string; publishableKey: string; amountCents: number; alreadyPaid?: boolean }> {
+export async function createOrderPaymentIntent(c: Context, user: any, orderId: string, confirmNow = false): Promise<{ clientSecret: string; publishableKey: string; amountCents: number; alreadyPaid?: boolean; authorized?: boolean }> {
   await loadSystemSettingsFromDB(c)
   if (!getSystemSettings().paymentMethods.stripe) throw new Error('Stripe 支付当前未启用')
   if (user?.role !== 'CUSTOMER') throw new Error('Stripe 付款必须使用客户资料')
@@ -474,6 +474,22 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     ? stripeAuthorizationAmount(order.totalAmount, depositAmount, orderServiceFee(order))
     : chargedCents
 
+  // 旧官网申请只冻结押金；先释放旧授权，再建立合并授权，避免同时冻结两笔押金。
+  const legacyAuthorizationId = String((order as any).stripe_deposit_payment_intent_id || '')
+  if (useFullAuthorization && legacyAuthorizationId && legacyAuthorizationId !== String(existing?.stripe_payment_intent_id || '')) {
+    const legacyPayment = await c.env.RENT.prepare("SELECT id FROM payments WHERE rental_id = ? AND stripe_payment_intent_id = ? AND status = 'pending' AND rental_amount = 0 AND deposit_amount > 0").bind(order.id, legacyAuthorizationId).first() as any
+    if (legacyPayment) {
+      const legacyIntent = await stripeRequest(c, `payment_intents/${legacyAuthorizationId}`)
+      if (String(legacyIntent.metadata?.order_id || '') !== order.id || Number(legacyIntent.amount) !== cents(depositAmount) || String(legacyIntent.currency).toLowerCase() !== 'aud') throw new Error('Stripe 订单预授权数据不匹配')
+      if (legacyIntent.status === 'requires_capture') await stripeRequest(c, `payment_intents/${legacyAuthorizationId}/cancel`, new URLSearchParams(), `replace-deposit-auth-${order.id}`)
+      else if (legacyIntent.status !== 'canceled') throw new Error('已有信用卡预授权，金额或支付方式变更前请先取消原授权')
+      await c.env.RENT.batch([
+        c.env.RENT.prepare("UPDATE payments SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(legacyPayment.id),
+        c.env.RENT.prepare("UPDATE orders SET stripe_deposit_payment_intent_id = NULL, deposit_status = 'PENDING', deposit_held_amount = 0 WHERE id = ? AND stripe_deposit_payment_intent_id = ?").bind(order.id, legacyAuthorizationId),
+      ])
+    }
+  }
+
   const intent = await upsertPaymentIntent(c, {
     existingIntentId: reuseExistingPayment && existing?.stripe_payment_intent_id ? String(existing.stripe_payment_intent_id) : '',
     amountCents: authorizationCents,
@@ -496,6 +512,8 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
     description: `${orderPaymentLabel(order)}｜${useFullAuthorization ? '租金+押金预授权' : '租金及服务费'}`,
   })
   const alreadyPaid = intent.status === 'succeeded'
+  const authorized = useFullAuthorization && intent.status === 'requires_capture' && confirmNow
+  if (authorized && (Number(intent.amount) !== authorizationCents || Number(intent.amount_capturable) !== authorizationCents || String(intent.currency).toLowerCase() !== 'aud' || intent.capture_method !== 'manual' || String(intent.metadata?.order_id || '') !== order.id || String(intent.metadata?.customer_id || '') !== String(user.id) || intent.metadata?.type !== 'rental_authorization')) throw new Error('Stripe 订单预授权数据不匹配')
   if (!alreadyPaid && !intent.client_secret) throw new Error('Stripe 未返回有效支付凭据')
   const paymentStatus = alreadyPaid ? 'paid' : 'pending'
 
@@ -511,6 +529,15 @@ export async function createOrderPaymentIntent(c: Context, user: any, orderId: s
   if (useFullAuthorization && intent.status === 'requires_capture' && savedPaymentMethodId) {
     await c.env.RENT.prepare("UPDATE orders SET stripe_deposit_payment_intent_id = ?, deposit_payment_mode = 'PREAUTH', deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = ? WHERE id = ?")
       .bind(intent.id, depositAmount, order.id).run()
+  }
+  // 官网在申请时已完成授权，Webhook 可能早于审核；审核后直接确认该授权，不再次扣款。
+  if (authorized) {
+    await c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', stripe_deposit_payment_intent_id = ?, deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'").bind(intent.id, depositAmount, order.id).run()
+    await ensureOrderNumber(c, order.id, intent.id)
+    await recordDeviceLifecycle(c, order.deviceId, 'RESERVED', { orderId: order.id, reason: '信用卡预授权成功' })
+    await refreshStripePaymentDescriptions(c, order.id)
+    await enqueueRentalUserCreation(c, await getOrderById(c, order.id))
+    return { clientSecret: '', publishableKey: '', amountCents: authorizationCents, alreadyPaid: true, authorized: true }
   }
   if (alreadyPaid) {
     // 先分配正式订单号，这样接下来（若有）单独建立的押金预授权 PaymentIntent
@@ -949,7 +976,7 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
         c.env.RENT.prepare("UPDATE orders SET status = 'paid', order_status = 'CONFIRMED', payment_status = 'PAID', rental_status = 'READY_FOR_PICKUP', paymentMethod = 'card', stripe_payment_method_id = COALESCE(NULLIF(?, ''), stripe_payment_method_id), stripe_deposit_payment_intent_id = ?, deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending_payment'")
           .bind(paymentMethodId, session.id, Number(payment.deposit_amount), order.id),
       )
-      authorizedOrderId = order.id
+      if (order.status === 'pending_payment') authorizedOrderId = order.id
     }
   } else if (event.type === 'payment_intent.succeeded') {
     // 站内 Payment Element 路径：付款对象是 PaymentIntent（session 即该对象），

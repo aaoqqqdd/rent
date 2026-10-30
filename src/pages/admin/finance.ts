@@ -7,8 +7,7 @@ import { buildLayout, formatCurrency } from '../../site';
 
 export function renderAdminFinance(user: any, orders: any[] = [], refunds: any[] = [], withdrawals: any[] = []) {
   const totalRevenue = orders
-    .filter(o => o.status === 'completed' || o.status === 'paid' || o.status === 'active')
-    .reduce((sum, order) => sum + (order.totalAmount || order.total_amount || 0), 0)
+    .reduce((sum, order) => sum + Number(order.collectedRevenue || 0), 0)
 
   const totalExpense = refunds.reduce((sum, item) => sum + Number(item.refund_amount || 0), 0) + withdrawals.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   const netProfit = Math.round((totalRevenue - totalExpense) * 100) / 100
@@ -64,7 +63,6 @@ export function renderAdminFinance(user: any, orders: any[] = [], refunds: any[]
     <div class="panel">
       <div class="section-title">
         <h2>财务总览</h2>
-        <span class="section-note">仅统计已支付、租赁中、已完成订单。</span>
       </div>
 
       <div class="finance-overview">

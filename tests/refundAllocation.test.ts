@@ -135,6 +135,16 @@ test('a pending payment is excluded from paidTotal and flagged instead of vacuou
   assert.match(r.infos[0].detail, /待确认/)
 })
 
+test('a completed card authorization is neither collected revenue nor an unconfirmed payment', () => {
+  const result = evaluatePaymentReconciliation({ payments: [{ id: 'auth', amount: 1051.25, status: 'pending', is_authorization: 1 }, { id: 'transfer', amount: 50, status: 'pending' }], paymentAllocations: [], refunds: [], refundAllocations: [] })
+  assert.equal(result.paidTotal, 0)
+  assert.equal(result.authorizedTotal, 1051.25)
+  assert.deepEqual(result.authorizedPaymentIds, ['auth'])
+  assert.equal(result.pendingTotal, 50)
+  assert.equal(result.infos.length, 1)
+  assert.match(result.infos[0].detail, /transfer/)
+})
+
 test('an unallocated refund with no linked payment asks for a manual check', () => {
   const r = evaluatePaymentReconciliation({
     payments: [{ id: 'p1', amount: 300, status: 'paid' }],

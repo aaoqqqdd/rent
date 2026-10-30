@@ -41,7 +41,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const contract = existingContract || (order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
-    c.env.RENT.prepare("SELECT id, payment_method, amount, status, processing_fee, stripe_payment_intent_id FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_method, payment_provider, amount, status, processing_fee, stripe_payment_intent_id FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ]);
   const canModifyOrder = !['completed', 'cancelled'].includes(String(order.status));

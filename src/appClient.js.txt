@@ -712,6 +712,7 @@
         if (window.hasUnsavedChanges && window.hasUnsavedChanges() && !window.confirm('当前内容尚未保存，确定要离开吗？')) { event.preventDefault(); event.stopImmediatePropagation(); return false; }
         if (window.hasUnsavedChanges && window.hasUnsavedChanges()) window.hasUnsavedChanges = null;
         if (link.target === '_blank' || link.hasAttribute('download') || link.dataset.fullNavigation === 'true') return false;
+        if (link.closest('.sidebar')) return false;
         const url = new URL(link.href, window.location.href);
         return url.origin === window.location.origin && url.pathname !== '/logout' && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/webhooks/');
       };
@@ -727,7 +728,7 @@
       const prefetch = function (url) {
         if (pageCache.has(url.href)) return;
         pageCache.set(url.href, fetch(url.href, { headers: { 'X-Site-Navigation': 'partial', Accept: 'text/html' }, credentials: 'same-origin' }).then(function (response) {
-          if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('prefetch failed');
+          if (!response.ok || response.redirected || !response.headers.get('content-type')?.includes('text/html')) throw new Error('prefetch failed');
           return response.text();
         }).catch(function () { pageCache.delete(url.href); return null; }));
       };
@@ -772,9 +773,10 @@
           if (addHistory) window.history.pushState({}, '', url.href);
           prepareFlashNotices(false);
         } catch (error) {
-          // 局部导航失败时保留当前页面，避免退回整页刷新；用户可手动重试。
+          // 局部导航失败时回退到浏览器导航，避免侧边栏链接被拦截后毫无反应。
           document.body.classList.remove('is-navigating');
           console.error('局部页面切换失败:', error);
+          window.location.assign(url.href);
         } finally {
           document.getElementById('navigation-loading')?.remove();
         }
@@ -790,7 +792,7 @@
       document.addEventListener('pointerover', function (event) {
         const target = event.target instanceof Element ? event.target : null;
         const link = target?.closest('a');
-        if (!link || link.dataset.fullNavigation === 'true' || link.target === '_blank' || link.hasAttribute('download')) return;
+        if (!link || link.closest('.sidebar') || link.dataset.fullNavigation === 'true' || link.target === '_blank' || link.hasAttribute('download')) return;
         const url = new URL(link.href, window.location.href);
         if (url.origin === window.location.origin && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/webhooks/')) prefetch(url);
       }, { passive: true });

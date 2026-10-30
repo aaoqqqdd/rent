@@ -60,7 +60,7 @@ export function buildRefundAllocation(
 }
 
 export interface ReconInput {
-  payments: { id: string; amount: number; processing_fee?: number; status: string }[]
+  payments: { id: string; amount: number; processing_fee?: number; status: string; is_authorization?: boolean | number }[]
   paymentAllocations: { payment_id: string; amount: number }[]
   refunds: { id: string; payment_id: string | null; refund_amount: number; status: string }[]
   refundAllocations: { refund_id: string; payment_id: string; amount: number }[]
@@ -74,8 +74,11 @@ export interface ReconResult {
   balanced: boolean
   paidTotal: number
   refundedTotal: number
-  /** 状态为 pending、尚未计入 paidTotal 的付款合计（未确认收款，不代表"账已收"）。 */
+  /** 尚待确认的付款合计，不含已经完成的信用卡预授权。 */
   pendingTotal: number
+  /** 已冻结但尚未扣款，不计入 paidTotal。 */
+  authorizedTotal: number
+  authorizedPaymentIds: string[]
   issues: ReconIssue[]
   errors: ReconIssue[]
   warnings: ReconIssue[]
@@ -93,7 +96,9 @@ export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
   const paidTotalC = paidPayments.reduce((s, p) => s + toCents(p.amount), 0)
   const paymentIds = new Set(input.payments.map(p => p.id))
 
-  const pendingPayments = input.payments.filter(p => p.status === 'pending')
+  const authorizedPayments = input.payments.filter(p => p.status === 'pending' && p.is_authorization)
+  const authorizedTotalC = authorizedPayments.reduce((sum, p) => sum + toCents(p.amount), 0)
+  const pendingPayments = input.payments.filter(p => p.status === 'pending' && !p.is_authorization)
   const pendingTotalC = pendingPayments.reduce((s, p) => s + toCents(p.amount), 0)
   for (const p of pendingPayments) {
     issues.push({ code: 'PENDING_PAYMENT', severity: 'info', detail: `付款 ${p.id}（${money(toCents(p.amount))}）状态为待确认（pending），尚未计入实付统计` })
@@ -141,6 +146,8 @@ export function evaluatePaymentReconciliation(input: ReconInput): ReconResult {
     paidTotal: paidTotalC / 100,
     refundedTotal: refundedTotalC / 100,
     pendingTotal: pendingTotalC / 100,
+    authorizedTotal: authorizedTotalC / 100,
+    authorizedPaymentIds: authorizedPayments.map(p => p.id),
     issues,
     errors,
     warnings,

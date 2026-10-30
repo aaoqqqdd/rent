@@ -95,6 +95,7 @@ import {
 } from './domain/riskFlags'
 import type { RiskFlagType, RiskFlagLike, CustomerRiskFacts, CustomerRiskAssessment, ReferralRiskFacts, ReferralRiskAssessment } from './domain/riskFlags'
 import { deviceUtilisationRate, paymentMethodBreakdown, rentalRefundAmount } from './domain/operationsReport'
+import { pickupTimeSlots } from './domain/pickupTimeSlots'
 import type { PaymentMethodRow, PaymentMethodShare } from './domain/operationsReport'
 import {
   RETENTION_ACTIONS, retentionCutoffDate, isPastRetention, retentionSweepActionable,
@@ -420,7 +421,11 @@ export async function runDataConsistencyChecks(c: Context): Promise<number> {
       issueType: 'PAID_ORDER_WITHOUT_PAYMENT',
       entityType: 'ORDER',
       autoSuspend: true,
-      sql: `SELECT o.id FROM orders o WHERE o.payment_status = 'PAID' AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.rental_id = o.id AND p.status = 'paid')`,
+      sql: `SELECT o.id FROM orders o WHERE o.payment_status = 'PAID' AND NOT EXISTS (
+        SELECT 1 FROM payments p WHERE p.rental_id = o.id AND (p.status = 'paid' OR (
+          p.status = 'pending' AND p.payment_method = 'card' AND p.stripe_payment_intent_id = o.stripe_deposit_payment_intent_id
+          AND o.deposit_payment_mode = 'PREAUTH' AND o.deposit_status = 'HELD'
+          AND p.rental_amount >= MAX(o.totalAmount - COALESCE(o.depositAmount, 0), 0))))`,
     },
     {
       issueType: 'ACTIVE_ORDER_WITHOUT_HANDOVER',
@@ -752,7 +757,10 @@ export async function markWebhookFailed(c: Context, recordId: string, reason: st
 export async function reconcileOrderPayments(c: Context, orderId: string): Promise<ReconResult> {
   const db = getDB(c)
   const [payments, refunds] = await Promise.all([
-    db.prepare('SELECT id, amount, processing_fee, status FROM payments WHERE rental_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
+    db.prepare(`SELECT p.id, p.amount, p.processing_fee, p.status,
+      CASE WHEN p.status = 'pending' AND p.payment_method = 'card' AND p.stripe_payment_intent_id = o.stripe_deposit_payment_intent_id
+        AND o.deposit_payment_mode = 'PREAUTH' AND o.deposit_status = 'HELD' THEN 1 ELSE 0 END AS is_authorization
+      FROM payments p LEFT JOIN orders o ON o.id = p.rental_id WHERE p.rental_id = ?`).bind(orderId).all().then((r: any) => (r.results || []) as any[]),
     db.prepare('SELECT id, payment_id, refund_amount, status FROM payment_refunds WHERE order_id = ?').bind(orderId).all().then((r: any) => (r.results || []) as any[]),
   ])
   const paymentRows = payments as any[]
@@ -1150,6 +1158,13 @@ export async function logSensitiveDataAccess(
   ).bind(`sda-${nanoid(14)}`, input.actorId, input.targetUserId, input.field, String(input.purpose || '').slice(0, 200)).run()
 }
 
+function contractTimeSlot(value: unknown): string {
+  const slot = String(value || '')
+  if (slot === 'delivery_morning') return '9:00–12:00'
+  if (slot === 'delivery_afternoon') return '13:00–19:00'
+  return pickupTimeSlots(systemSettings.rentalRules).find(([key]) => key === slot)?.[1].split('（')[0] || slot
+}
+
 export function renderContractVariables(content: string, contract: Contract, order?: any, device?: any, customer?: any, extra: Record<string, unknown> = {}, includeInternal = false, revealSensitive = false): string {
   const rentOnly = Math.max(0, Number(order?.totalAmount ?? order?.total_amount ?? 0) - Number(order?.depositAmount ?? order?.deposit_amount ?? 0))
   const stored = typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : (contract.contract_data || {})
@@ -1201,8 +1216,12 @@ export function renderContractVariables(content: string, contract: Contract, ord
     deposit_amount: Number(order?.depositAmount ?? order?.deposit_amount ?? 0).toFixed(2),
     late_fee_per_day: Number(stored.late_fee_per_day ?? contract.late_fee_per_day ?? 0).toFixed(2),
     repair_cost: stored.repair_cost ?? (contract.repair_cost == null ? '' : Number(contract.repair_cost).toFixed(2)),
-    pickup_location: stored.pickup_location || contract.pickup_location,
-    return_location: stored.return_location || contract.return_location,
+    pickup_location: stored.pickup_location || contract.pickup_location || order?.pickupLocation || order?.pickup_location,
+    return_location: stored.return_location || contract.return_location || order?.returnLocation || order?.return_location,
+    pickup_time: stored.pickup_time || extra.pickup_time || contractTimeSlot(order?.pickupTimeSlot || order?.pickup_time_slot),
+    return_time: stored.return_time || extra.return_time || contractTimeSlot(order?.returnTimeSlot || order?.return_time_slot),
+    return_method: stored.return_method || extra.return_method || (order && (order.returnLocation === '到店归还' || order.return_location === '到店归还' || (order.deliveryMethod || order.delivery_method || 'Pickup') === 'Pickup') ? 'StoreReturn' : ''),
+    return_date: stored.return_date || extra.return_date || order?.endDate || order?.end_date,
     payment_method: order?.paymentMethod ?? order?.payment_method,
     bank_name: systemSettings.bankDetails.bankName,
     bank_bsb: systemSettings.bankDetails.bsb,
@@ -1236,7 +1255,9 @@ export function renderContractVariables(content: string, contract: Contract, ord
     const signature = name === 'esign_signature' || name === 'company_signature'
     const raw = String(value ?? '')
     const forceMaskSensitive = SENSITIVE_CONTRACT_FIELDS.has(name) && !revealSensitive
-    const safe = signature && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(raw)
+    const safe = !raw.trim()
+      ? (name === 'deleted' && !includeInternal ? '' : 'NA')
+      : signature && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(raw)
       ? `<img src="${raw}" alt="电子签名" style="max-width:280px;max-height:100px;object-fit:contain">`
       : escapeContractValue(forceMaskSensitive || !includeInternal ? maskContractValue(name, value) : value)
     return result.replace(new RegExp(`\\$\\{${name}\\}|\\{${name}\\}`, 'g'), safe)
@@ -1277,7 +1298,11 @@ export async function getContractVariableData(c: Context, contract: Contract, or
   const stored = typeof contract.contract_data === 'string' ? (safeJsonParse<Record<string, unknown>>(contract.contract_data) || {}) : (contract.contract_data || {})
   const [payments, reference, refund, creator] = await Promise.all([
     c.env.RENT.prepare("SELECT COALESCE(SUM(amount),0) paid, COALESCE(SUM(deposit_amount),0) deposit_paid, COALESCE(SUM(rental_amount),0) rent_paid, MAX(paid_at) payment_date, MAX(currency) currency FROM payments WHERE rental_id = ? AND status = 'paid'").bind(order.id).first(),
-    c.env.RENT.prepare("SELECT pp.reference_number FROM payment_proofs pp JOIN payments p ON p.id = pp.payment_id WHERE p.rental_id = ? ORDER BY pp.created_at DESC LIMIT 1").bind(order.id).first(),
+    c.env.RENT.prepare(`SELECT p.stripe_payment_intent_id, p.stripe_checkout_session_id, p.transaction_id, pp.reference_number
+      FROM payments p LEFT JOIN payment_proofs pp ON pp.payment_id = p.id AND pp.status = 'approved'
+      WHERE p.rental_id = ? AND (p.status = 'paid' OR (p.status = 'pending' AND p.stripe_payment_intent_id = ? AND ? = 'HELD'))
+      ORDER BY CASE WHEN p.status = 'paid' THEN 0 ELSE 1 END, p.paid_at DESC, p.created_at DESC, pp.created_at DESC LIMIT 1`)
+      .bind(order.id, order.stripe_deposit_payment_intent_id || '', order.deposit_status || '').first(),
     c.env.RENT.prepare("SELECT type, refund_amount, deduction_amount, created_at FROM payment_refunds WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1").bind(order.id).first(),
     (contract.createdBy || contract.created_by) ? getUserById(c, contract.createdBy || contract.created_by || '') : Promise.resolve(null),
   ]) as any[]
@@ -1300,8 +1325,8 @@ export async function getContractVariableData(c: Context, contract: Contract, or
     deposit_paid: Number(payments?.deposit_paid || 0).toFixed(2),
     rent_paid: Number(payments?.rent_paid || 0).toFixed(2),
     amount_due: Math.max(0, total - paid).toFixed(2),
-    payment_date: payments?.payment_date || '',
-    payment_reference: reference?.reference_number || '',
+    payment_date: formatMelbourneDateTime(payments?.payment_date),
+    payment_reference: reference?.stripe_payment_intent_id || reference?.reference_number || reference?.transaction_id || reference?.stripe_checkout_session_id || '',
     subtotal: rentSubtotal.toFixed(2),
     gst_amount: systemSettings.companyDetails.gstIncluded ? (rentSubtotal / 11).toFixed(2) : '0.00',
     refund_amount: Number(refund?.refund_amount || 0).toFixed(2),
@@ -1497,6 +1522,7 @@ export async function ensureContractForOrder(c: Context, order: Order, createdBy
       invoice_number: '',
       delivery_method: order.deliveryMethod || 'Pickup',
       delivery_fee: Number(order.deliveryFee || order.delivery_fee || 0).toFixed(2),
+      return_method: 'StoreReturn',
       pickup_location: order.pickupLocation || '',
       return_location: order.returnLocation || '',
       agreement_version: '1.0',

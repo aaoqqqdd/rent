@@ -36,7 +36,7 @@ export async function getStaffDashboardData(c: Context, staffId?: string): Promi
 
   const statsQuery = `
     SELECT
-      (SELECT SUM(totalAmount) FROM orders WHERE status IN ('paid', 'active', 'completed')) as totalRevenue,
+      (SELECT COALESCE(SUM(rental_amount), 0) FROM payments WHERE status IN ('paid', 'refunded')) as totalRevenue,
       (SELECT COUNT(*) FROM orders WHERE status = 'active' OR status = 'paid') as activeRentals,
       (SELECT COUNT(*) FROM orders WHERE status = 'pending_approval' OR status = 'pending_payment') as pendingOrders,
       (SELECT COUNT(*) FROM devices WHERE status = 'available') as availableDevices,

@@ -5,6 +5,7 @@
 
 // @ts-nocheck
 import { Hono } from 'hono'
+import { websiteSessionStatus } from './auth/websiteSession'
 import * as pages from './pages/index'
 import * as actions from './actions/index'
 import { sendPasswordResetEmail } from './auth/passwordReset'
@@ -693,7 +694,7 @@ function sqlIdentifier(value: unknown): string {
 
 // 这些路径的响应包体可能包含认证态数据（会话、合同、订单、重置链接），
 // 一律禁止浏览器与中间缓存留存。
-const NO_STORE_EXACT_PATHS = new Set(['/login', '/forgot-password', '/reset-password', '/verify-email', '/verify-email/pending', '/contract/sign', '/sso/consume', '/api/search', '/api/payment/status', '/api/monitor'])
+const NO_STORE_EXACT_PATHS = new Set(['/login', '/forgot-password', '/reset-password', '/verify-email', '/verify-email/pending', '/contract/sign', '/sso/consume', '/public/session', '/api/search', '/api/payment/status', '/api/monitor'])
 const NO_STORE_PATH_PREFIXES = ['/admin/', '/staff/', '/customer/', '/rent/', '/notifications', '/contract/', '/orders/']
 
 function isNoStorePath(pathname: string): boolean {
@@ -838,6 +839,7 @@ app.use('*', async (c, next) => {
     : c.req.path === '/public/order-lookup' && c.req.method === 'POST' ? ['public-order-lookup', 6, 900] as const
     // 以下是安全加固补齐的高风险写 / 查询接口（会话握手、改密、付款初始化、上传、导出）。
     // 追加在链尾，不改变上面既有规则的匹配优先级。
+    : c.req.path === '/public/session' ? ['website-session', 120, 60] as const
     : c.req.path === '/sso/consume' ? ['sso-consume', 30, 600] as const
     : c.req.path === '/logout' && c.req.method === 'POST' ? ['logout', 60, 600] as const
     : c.req.path === '/customer/profile/password' || c.req.path === '/profile/password' ? ['password-change', 10, 900] as const
@@ -989,6 +991,8 @@ app.post('/login', async (c) => {
   response.headers.set('Set-Cookie', serializeAuthCookie(session.token, { maxAge: session.maxAge, secure: isSecureRequest(c) }))
   return response
 })
+
+app.get('/public/session', websiteSessionStatus)
 
 // 官网（rent-web）单点登录握手。官网已在共享 auth_sessions 建好会话，并签发了一个
 // 一次性 token（sso_handoff_tokens，60s 过期、用一次即废）。这里校验后在 rent 域
@@ -2344,6 +2348,7 @@ app.get('/notifications/:id', async (c) => {
   const item = await c.env.RENT.prepare("SELECT * FROM notifications WHERE id = ? AND recipient_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)").bind(c.req.param('id'), user.id).first() as any
   if (!item) return c.html(renderNotFound(), 404)
   await c.env.RENT.prepare('UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND recipient_id = ?').bind(item.id, user.id).run()
+  if (user.role === 'ADMIN' && item.type === 'rental_application') return c.redirect('/admin/order-review')
   const orderPath = item.order_id ? (user.role === 'ADMIN' ? `/admin/orders/${item.order_id}` : user.role === 'STAFF' ? `/staff/orders/${item.order_id}` : `/customer/orders/${item.order_id}`) : ''
   const body = `<div class="panel notification-detail"><div class="section-title"><div><p class="section-code">NOTIFICATION DETAIL</p><h2>${sanitizePlainText(item.title, 200)}</h2><small>${sanitizePlainText(formatMelbourneDateTime(item.created_at), 80)}</small></div><a class="button button-secondary" href="/notifications">返回通知中心</a></div><div class="notification-message">${renderNotificationMarkdown(normalizeDisplayedNotification(item))}</div>${orderPath ? `<a class="button button-secondary" href="${orderPath}">查看订单</a>` : ''}</div>`
   return c.html(buildLayout('通知详情', body, user))
@@ -2841,18 +2846,16 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
       privacy_policy_accepted_at: existingData.privacy_policy_accepted_at || signedAt,
     }
     const signedContract = { ...contract, contract_data: signedData, signedAt, privacy_policy_accepted: true, privacy_policy_version: signedData.privacy_policy_version, privacy_policy_accepted_at: signedData.privacy_policy_accepted_at }
-    const signedContent = renderContractVariables(contract.content, signedContract, order, device, customer, await getContractVariableData(c, signedContract, order))
-    const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signedContent))), byte => byte.toString(16).padStart(2, '0')).join('')
-    const verificationToken = `${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`
-    await c.env.RENT.prepare('UPDATE contracts SET contract_data = ?, signed_content = ?, content_hash = ?, verification_token = ? WHERE id = ?')
-      .bind(JSON.stringify(signedData), signedContent, contentHash, verificationToken, contract.id).run()
+    await c.env.RENT.prepare('UPDATE contracts SET contract_data = ? WHERE id = ?').bind(JSON.stringify(signedData), contract.id).run()
     await updateContractStatusInDB(c, contract.id, 'signed', signedAt)
     await c.env.RENT.prepare("UPDATE contracts SET contractNumber = ? WHERE id = ? AND status = 'signed'").bind(generateContractNumber(now), contract.id).run()
 
     await updateOrderStatus(c, order.id, 'pending_payment')
     try {
       const result = await createOrderPaymentIntent(c, customer, order.id, true)
-      if (result.alreadyPaid) {
+      if (result.authorized) {
+        await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_charged', title: '合同已生效，信用卡预授权已确认', message: '您的租赁申请已审核通过，合同已生效。', orderId: order.id })
+      } else if (result.alreadyPaid) {
         await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_charged', title: '合同已生效，租金已自动扣款', message: `您的设备租赁申请已由${user.name || '工作人员'}审核通过，合同已自动确认生效，并已使用您预留的信用卡自动扣取租金${Number((order as any).deliveryFee || 0) > 0 ? `（含配送费用 ${Number((order as any).deliveryFee).toFixed(2)} AUD）` : ''}。押金已按之前约定的方式预授权/保存卡片处理。`, orderId: order.id })
       } else {
         await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
@@ -2861,6 +2864,12 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
       await logError(c, 'ERROR', 'Auto-charge rent on approval failed', error, { orderId: order.id })
       await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_payment_pending', title: '合同已生效，请完成租金付款', message: '合同已自动确认生效，但自动扣款未成功，请登录账户手动完成租金付款。', orderId: order.id })
     }
+    const confirmedOrder = await getOrderById(c, order.id) || order
+    const signedContent = renderContractVariables(contract.content, signedContract, confirmedOrder, device, customer, await getContractVariableData(c, signedContract, confirmedOrder))
+    const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signedContent))), byte => byte.toString(16).padStart(2, '0')).join('')
+    const verificationToken = `${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`
+    await c.env.RENT.prepare('UPDATE contracts SET signed_content = ?, content_hash = ?, verification_token = ? WHERE id = ?')
+      .bind(signedContent, contentHash, verificationToken, contract.id).run()
     return c.redirect(staffOrderPath(order))
   }
 

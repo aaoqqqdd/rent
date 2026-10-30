@@ -45,17 +45,18 @@ const card = (bg: string, border: string, text: string, icon: string, title: str
   </div>`
 
 function statusCard(recon: ReconResult, readOnly: boolean): string {
-  const pendingBlock = recon.infos.length
+  const authorizationBlock = recon.authorizedPaymentIds.length
+    ? card('#eff6ff', '#bfdbfe', '#1e3a8a', '✓', `已预授权 ${formatCurrency(recon.authorizedTotal)}`, '<p style="margin:6px 0 0;font-size:0.82rem">归还结算时扣款。</p>') : ''
+  const pendingBlock = authorizationBlock + (recon.infos.length
     ? card('#eff6ff', '#bfdbfe', '#1e3a8a', '⏳', `${recon.infos.length} 笔付款待确认（合计 ${formatCurrency(recon.pendingTotal)}）`,
-        '<p style="margin:6px 0 0;font-size:0.82rem;color:#1d4ed8">尚未到账，不计入实付，也未参与下方对账检查。到账后状态会变为已付。</p>' +
         issueList(recon.infos, '#1d4ed8'))
-    : ''
+    : '')
 
   // 已确认金额为 0（只有 pending 付款，还没有任何实付/退款）时，"账目一致"是在夸一个
   // 空集合，跟上面的"待确认"提示放在一起反而像自相矛盾——这种情况只留待确认卡，不画蛇添足。
   const hasConfirmedActivity = recon.paidTotal > 0 || recon.refundedTotal > 0
   if (recon.errors.length === 0 && recon.warnings.length === 0) {
-    if (!hasConfirmedActivity && recon.infos.length) return pendingBlock
+    if (!hasConfirmedActivity && (recon.infos.length || recon.authorizedPaymentIds.length)) return pendingBlock
     return pendingBlock + card('#ecfdf5', '#a7f3d0', '#065f46', '✓', recon.infos.length ? '已确认部分账目一致' : '账目一致',
       '<p style="margin:6px 0 0;font-size:0.85rem;color:#047857">分配合计与实付 / 退款完全相符，无超退。</p>')
   }
@@ -93,7 +94,7 @@ export function renderReconciliationPanel(
   const margin = opts.margin ?? '0 0 24px'
 
   const paymentTable = `<div class="table-wrapper"><table><thead><tr><th>付款来源</th><th>方式</th><th>金额</th><th>手续费</th><th>状态</th></tr></thead><tbody>${
-    paymentSources.map((p: any) => `<tr><td class="mono">${esc(p.id)}</td><td>${esc(p.payment_provider === 'square' ? 'Square 礼品卡' : p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${esc(p.status)}</td></tr>`).join('')
+    paymentSources.map((p: any) => `<tr><td class="mono">${esc(p.id)}</td><td>${esc(p.payment_provider === 'square' ? 'Square 礼品卡' : ({ card: '信用卡（Stripe）', bank_transfer: '银行转账', balance: '账户余额', alipay: '支付宝', wechat: '微信' } as Record<string, string>)[p.payment_method] || p.payment_method)}</td><td>${formatCurrency(p.amount)}</td><td>${formatCurrency(p.processing_fee || 0)}</td><td>${esc(reconciliation.authorizedPaymentIds.includes(p.id) ? '已预授权' : ({ pending: '待确认', paid: '已扣款', refunded: '已退款', failed: '已失效' } as Record<string, string>)[p.status] || p.status)}</td></tr>`).join('')
       || '<tr><td colspan="5" class="empty-state">无付款记录</td></tr>'
   }</tbody></table></div>`
 
@@ -104,7 +105,7 @@ export function renderReconciliationPanel(
     : ''
 
   return `<section class="panel" style="margin: ${margin};">
-      <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">${readOnly ? '只读 · ' : ''}实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}${reconciliation.pendingTotal > 0 ? ` · 待确认 ${formatCurrency(reconciliation.pendingTotal)}` : ''}</span></div>
+      <div class="section-title"><h3>付款与退款对账</h3><span class="section-note">${readOnly ? '只读 · ' : ''}实付 ${formatCurrency(reconciliation.paidTotal)} · 已退 ${formatCurrency(reconciliation.refundedTotal)}${reconciliation.authorizedTotal > 0 ? ` · 已预授权 ${formatCurrency(reconciliation.authorizedTotal)}` : ''}${reconciliation.pendingTotal > 0 ? ` · 待确认 ${formatCurrency(reconciliation.pendingTotal)}` : ''}</span></div>
       ${statusCard(reconciliation, readOnly)}
       ${paymentTable}
       ${refundTable}

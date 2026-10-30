@@ -30,6 +30,11 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   // index.ts 已经完成 admin 权限校验，这里不再依赖 c.get('user')。
   const bodyText = await c.req.text()
   const payload = JSON.parse(bodyText || '{}')
+  const hasSystemSettingsInput = [
+    'tallyFormUrl', 'feedbackRewards', 'companyDetails', 'taxInvoiceTemplate',
+    'paymentMethods', 'bankDetails', 'rmbPayment', 'referralSettings',
+    'rentalRules', 'registrationSettings',
+  ].some(key => Object.prototype.hasOwnProperty.call(payload, key))
 
   // Always hydrate the current values before merging the settings form.
   // Otherwise a fresh worker can overwrite database-backed agreements with
@@ -81,7 +86,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     companyDetails: {
       name: String(payload.companyDetails?.name ?? getSystemSettings().companyDetails.name).trim(),
       abn: String(payload.companyDetails?.abn ?? getSystemSettings().companyDetails.abn).trim(),
-      gstIncluded: Boolean(payload.companyDetails?.gstIncluded),
+      gstIncluded: payload.companyDetails?.gstIncluded ?? getSystemSettings().companyDetails.gstIncluded,
       address: String(payload.companyDetails?.address ?? getSystemSettings().companyDetails.address).trim(),
       contact: String(payload.companyDetails?.contact ?? getSystemSettings().companyDetails.contact).trim(),
       phone: String(payload.companyDetails?.phone ?? getSystemSettings().companyDetails.phone).trim(),
@@ -99,12 +104,12 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
     },
     taxInvoiceTemplate,
     paymentMethods: {
-      stripe: Boolean(payload.paymentMethods?.stripe),
-      square: Boolean(payload.paymentMethods?.square),
-      bankTransfer: Boolean(payload.paymentMethods?.bankTransfer),
-      balancePayment: Boolean(payload.paymentMethods?.balancePayment),
-      alipay: Boolean(payload.paymentMethods?.alipay),
-      wechat: Boolean(payload.paymentMethods?.wechat),
+      stripe: payload.paymentMethods?.stripe ?? getSystemSettings().paymentMethods.stripe,
+      square: payload.paymentMethods?.square ?? getSystemSettings().paymentMethods.square,
+      bankTransfer: payload.paymentMethods?.bankTransfer ?? getSystemSettings().paymentMethods.bankTransfer,
+      balancePayment: payload.paymentMethods?.balancePayment ?? getSystemSettings().paymentMethods.balancePayment,
+      alipay: payload.paymentMethods?.alipay ?? getSystemSettings().paymentMethods.alipay,
+      wechat: payload.paymentMethods?.wechat ?? getSystemSettings().paymentMethods.wechat,
       processingFeeRate: Math.min(1, Math.max(0, Number(payload.paymentMethods?.processingFeeRate ?? getSystemSettings().paymentMethods.processingFeeRate ?? 0.025))),
       squareProcessingFeeRate: Math.min(1, Math.max(0, Number(payload.paymentMethods?.squareProcessingFeeRate ?? getSystemSettings().paymentMethods.squareProcessingFeeRate ?? 0.022))),
     },
@@ -136,7 +141,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       bufferDays: Math.max(0, Math.floor(Number(payload.rentalRules?.bufferDays ?? getSystemSettings().rentalRules.bufferDays) || 0)),
     },
     registrationSettings: {
-      requireEmailVerification: Boolean(payload.registrationSettings?.requireEmailVerification),
+      requireEmailVerification: payload.registrationSettings?.requireEmailVerification ?? getSystemSettings().registrationSettings.requireEmailVerification,
     },
   }
 
@@ -213,8 +218,10 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   ))
   if (shouldSaveDeliveryConfig) await saveDeliveryConfig(c, deliveryConfigInput)
 
-  await updateSystemSettings(c, next as any)
-  await loadSystemSettingsFromDB(c)
+  if (hasSystemSettingsInput) {
+    await updateSystemSettings(c, next as any)
+    await loadSystemSettingsFromDB(c)
+  }
 
   return c.json({ success: true, settings: getSystemSettings(), stripe: await getStripeConfigSummary(c), square: await getSquareConfigSummary(c), email: await getEmailConfigSummary(c), notify: await getNotifyChannelsSummary(c), turnstile: await getTurnstileConfigSummary(c), delivery: await getDeliveryConfigSummary(c), cloudinary: await getCloudinaryConfigSummary(c) })
 }

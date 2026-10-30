@@ -32,9 +32,11 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
   const contract = existingContract || (order.is_manual !== 1 && order.status === 'approved' ? await ensureContractForOrder(c, order, user.id) : null)
   const [reconciliation, paymentSources, refundRows] = await Promise.all([
     reconcileOrderPayments(c, order.id),
-    c.env.RENT.prepare("SELECT id, payment_method, payment_provider, amount, status, processing_fee FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
+    c.env.RENT.prepare("SELECT id, payment_method, payment_provider, amount, status, processing_fee, stripe_payment_intent_id FROM payments WHERE rental_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
     c.env.RENT.prepare("SELECT id, payment_id, type, refund_amount, refund_method, status, created_at FROM payment_refunds WHERE order_id = ? ORDER BY created_at").bind(order.id).all().then((r: any) => (r.results || []) as any[]),
   ])
+  const cardAuthorization = order.deposit_payment_mode === 'PREAUTH' && order.deposit_status === 'HELD'
+    ? paymentSources.find((payment: any) => payment.stripe_payment_intent_id === order.stripe_deposit_payment_intent_id && payment.status === 'pending') : null
   const contractExpired = contract ? isContractExpired(contract) : false
   const alertMessage = message ? `<div data-flash-notice class="page-notification page-notification--${type}">${message}</div>` : ''
   // 从订单列表带过来的 back 参数（searchTerm/page…）白名单回填，用于「返回列表」。
@@ -56,11 +58,12 @@ export async function renderStaffOrderDetail(c: Context, user: any, orderId: str
         <div class="order-info-card">
           <h3>订单信息</h3>
           <p><strong>订单状态:</strong> ${renderOrderStatusBadge(order.status)}</p>
-          <p><strong>下单时间:</strong> ${order.orderDate}</p>
+          <p><strong>下单时间:</strong> ${esc(formatMelbourneDateTime(order.createdAt || order.orderDate)) || '—'}</p>
           <p><strong>租期:</strong> ${order.startDate} 至 ${order.endDate}</p>
           <p><strong>总金额:</strong> ${formatCurrency(order.totalAmount)}</p>
           <p><strong>押金:</strong> ${formatCurrency(order.depositAmount)}</p>
           <p><strong>租金:</strong> ${formatCurrency(order.totalAmount - order.depositAmount)}</p>
+          ${cardAuthorization ? `<p><strong>Stripe 支付手续费:</strong> ${formatCurrency(Number(cardAuthorization.processing_fee || 0))}</p><p><strong>信用卡预授权总额:</strong> ${formatCurrency(Number(cardAuthorization.amount))}</p>` : ''}
           <p><strong>客户:</strong> ${customer?.name ?? '未知'} (${customer?.email ?? ''})</p>
           <p><strong>设备:</strong> ${device?.name ?? '未知'} (${device?.serialNumber ?? ''})</p>
         </div>

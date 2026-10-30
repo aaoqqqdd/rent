@@ -110,7 +110,7 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
         <div class="order-info-card">
           <h3>订单信息</h3>
           <p><strong>订单状态:</strong> ${renderOrderStatusBadge(order.status)}</p>
-          <p><strong>下单时间:</strong> ${order.orderDate}</p>
+          <p><strong>下单时间:</strong> ${esc(formatMelbourneDateTime(order.createdAt || order.orderDate)) || '—'}</p>
           <p><strong>租期:</strong> ${order.startDate} ${order.startPeriod === 'PM' ? '下午' : '上午'} 至 ${order.endDate} ${order.endPeriod === 'PM' ? '下午' : '上午'}（${order.rentalPeriod || 0} 天）</p>
           <p><strong>领取/归还地点:</strong> ${order.pickupLocation || '待确认'} / ${order.returnLocation || '待确认'}</p>
           <p><strong>预约时间:</strong> ${order.pickupTimeSlot || '待确认'} / ${order.returnTimeSlot || '待确认'}</p>

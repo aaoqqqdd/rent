@@ -41,3 +41,14 @@ test('a fully paid order still shows the plain "consistent" card', () => {
   assert.match(html, /账目一致/)
   assert.doesNotMatch(html, /待确认/)
 })
+
+test('an authorized card shows return settlement and zero collected funds without pending warnings', () => {
+  const payments = [{ id: 'auth', payment_method: 'card', amount: 1051.25, processing_fee: 1.25, status: 'pending', is_authorization: true }]
+  const reconciliation = evaluatePaymentReconciliation({ payments, paymentAllocations: [], refunds: [], refundAllocations: [] })
+  const html = renderReconciliationPanel({ reconciliation, paymentSources: payments, refundRows: [] })
+  assert.match(html, /已预授权 AUD\$1051\.25/)
+  assert.match(html, /归还结算时扣款/)
+  assert.match(html, /实付 AUD\$0\.00/)
+  assert.match(html, /<td>已预授权<\/td>/)
+  assert.doesNotMatch(html, /待确认|pending|账目一致/)
+})

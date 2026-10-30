@@ -21,7 +21,7 @@ export const adminOrderStatusMap: Record<string, { text: string; class: string }
   pending_approval: { text: '待审核', class: 'badge-warning' },
   pending_payment: { text: '待支付', class: 'badge-warning' },
   approved: { text: '已审核', class: 'badge-info' },
-  paid: { text: '已支付', class: 'badge-primary' },
+  paid: { text: '已确认', class: 'badge-primary' },
   active: { text: '租赁中', class: 'badge-primary' },
   completed: { text: '已完成', class: 'badge-success' },
   cancelled: { text: '已取消', class: 'badge-danger' }
@@ -147,7 +147,7 @@ export async function getAdminOrderStats(c: Context, filters?: AdminOrderFilters
   const sql = `
     SELECT
       COUNT(*) AS total,
-      SUM(CASE WHEN LOWER(o.status) IN ('paid', 'active', 'completed') THEN o.totalAmount ELSE 0 END) AS revenue,
+      COALESCE(SUM((SELECT COALESCE(SUM(p.rental_amount), 0) FROM payments p WHERE p.rental_id = o.id AND p.status IN ('paid', 'refunded'))), 0) AS revenue,
       SUM(CASE WHEN o.status IN ('pending_approval', 'pending_payment', 'approved') THEN 1 ELSE 0 END) AS pendingCount,
       SUM(CASE WHEN o.status IN ('paid', 'active') THEN 1 ELSE 0 END) AS activeCount,
       SUM(CASE WHEN o.status = 'completed' THEN 1 ELSE 0 END) AS completedCount
@@ -235,7 +235,7 @@ export async function renderAdminOrders(c: Context, user: any) {
           <div style="font-size: 1.8rem; font-weight: 700;">${completedCount}</div>
         </div>
         <div class="panel" style="padding: 18px; background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); border: 1px solid #ddd6fe;">
-          <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 8px;">营收（已支付/租赁中/已完成）</div>
+          <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 8px;">已收租金</div>
           <div style="font-size: 1.6rem; font-weight: 700;">${formatCurrency(totalRevenue)}</div>
         </div>
       </div>

@@ -12,9 +12,16 @@ import { createHmac } from 'node:crypto'
 import { Hono } from 'hono'
 import { createOrderPaymentIntent, handleStripeWebhook, refundDeposit } from '../src/actions/stripePayments'
 import { saveStripeConfig } from '../src/stripe'
-import { reconcileOrderPayments } from '../src/site'
+import { createAuthSession, formatMelbourneDateTime, reconcileOrderPayments, runDataConsistencyChecks } from '../src/site'
+import worker from '../src/index'
 import { renderAdminOrderDetail } from '../src/pages/admin/orderDetail'
 import { renderCustomerOrderDetail } from '../src/pages/customer/orderDetail'
+import { renderStaffOrderDetail } from '../src/pages/staff/orderDetail'
+import { getAdminDashboardData } from '../src/services/adminDashboard'
+import { getStaffDashboardData } from '../src/services/staffDashboard'
+import { getAdminOrderStats } from '../src/pages/admin/orders'
+import { getRevenueData, renderAdminRevenueStats } from '../src/pages/admin/revenueStats'
+import { renderAdminFinance } from '../src/pages/admin/finance'
 import { extractInlineScripts } from './helpers'
 
 async function setup(t: any, options: { rental?: number; status?: string; mode?: string } = {}) {
@@ -56,6 +63,7 @@ async function setup(t: any, options: { rental?: number; status?: string; mode?:
     assert.ok(String(url).startsWith('https://api.stripe.com/'), `Unexpected request: ${url}`)
     if (path.startsWith('customers?')) return Response.json({ data: [] })
     if (path.startsWith('customers')) return Response.json({ id: 'cus_test' })
+    if (path.startsWith('payment_methods/')) return Response.json({ id: 'pm_card', customer: 'cus_test', card: { brand: 'visa' } })
     if (path === 'payment_intents/pi_auth/capture') intent = { ...intent, status: 'succeeded', amount_received: Number(params.get('amount_to_capture')), amount_capturable: 0 }
     else if (path === 'payment_intents/pi_auth/cancel') intent = { ...intent, status: 'canceled', amount_capturable: 0 }
     else assert.ok(path.startsWith('payment_intents'), `Unexpected Stripe request: ${path}`)
@@ -138,6 +146,146 @@ test('existing uncaptured intent is reused while the authorization webhook is pe
   assert.equal(result.clientSecret, 'pi_auth_secret_test')
   assert.equal(result.amountCents, 30250)
   assert.ok(!calls.some(c => c.path === 'payment_intents' && c.method === 'POST'))
+})
+
+test('approval confirms an existing full authorization without a second hold or capture', async t => {
+  const { sqlite, calls, context } = await setup(t, { status: 'pending_payment' })
+  const result = await createOrderPaymentIntent(context, { id: 'customer', role: 'CUSTOMER', email: 'customer@example.test' }, 'order', true)
+  assert.equal(result.authorized, true)
+  assert.equal(result.alreadyPaid, true)
+  assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'paid')
+  assert.equal(sqlite.prepare('SELECT status FROM payments').get()?.status, 'pending')
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM invoices').get()?.count, 0)
+  assert.ok(!calls.some(call => call.path === 'payment_intents' && call.method === 'POST' || call.path.endsWith('/capture')))
+})
+
+for (const state of ['authorized', 'paid', 'failed']) {
+  test(`website approval snapshots the Stripe ${state} result after payment processing`, async t => {
+    const { sqlite, context, setIntent } = await setup(t, { status: 'pending_approval' })
+    sqlite.exec("UPDATE orders SET stripe_payment_method_id = 'pm_card', startDate = '2090-01-01', endDate = '2090-01-06'; UPDATE contract_templates SET content = '<p>{payment_date}|{payment_reference}</p>' WHERE id = 'default';")
+    if (state === 'paid') {
+      sqlite.exec("UPDATE orders SET rentalPeriod = 40, endDate = '2090-02-10'")
+      setIntent({ status: 'succeeded', amount: 10250, amount_received: 10250, amount_capturable: 0, metadata: { order_id: 'order', customer_id: 'customer', type: 'rental_payment' } })
+    } else if (state === 'failed') {
+      sqlite.exec("UPDATE orders SET deposit_status = 'PENDING', stripe_deposit_payment_intent_id = NULL")
+      const fetchBefore = globalThis.fetch
+      globalThis.fetch = (async (url: any, init: any) => {
+        if (String(url).includes('/payment_intents')) throw new Error('Stripe unavailable in test')
+        return fetchBefore(url, init)
+      }) as typeof fetch
+    }
+    const session = await createAuthSession(context, 'admin')
+    const response = await worker.fetch(new Request('https://rent.example.test/staff/orders/order/approve', {
+      method: 'POST', body: new URLSearchParams({ deliveryMethod: 'Pickup' }),
+      headers: { Cookie: `session=${session.token}`, Origin: 'https://rent.example.test', 'Sec-Fetch-Site': 'same-origin' },
+    }), context.env, { waitUntil() {} } as any)
+    assert.equal(response.status, 302, await response.text())
+    const snapshot = sqlite.prepare('SELECT status, signed_content, content_hash FROM contracts WHERE orderId = ?').get('order') as any
+    assert.equal(snapshot.status, 'signed')
+    if (state === 'paid') {
+      const payment = sqlite.prepare("SELECT paid_at FROM payments WHERE status = 'paid'").get() as any
+      assert.ok(payment?.paid_at)
+      assert.equal(snapshot.signed_content, `<p>${formatMelbourneDateTime(payment.paid_at)}|pi_auth</p>`)
+    } else {
+      assert.equal(snapshot.signed_content, state === 'authorized' ? '<p>NA|pi_auth</p>' : '<p>NA|NA</p>')
+      assert.equal(sqlite.prepare('SELECT paid_at FROM payments').get()?.paid_at, null)
+    }
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(snapshot.signed_content))), byte => byte.toString(16).padStart(2, '0')).join('')
+    assert.equal(snapshot.content_hash, hash)
+  })
+}
+
+for (const invalid of [{ amount_capturable: 1 }, { capture_method: 'automatic' }, { metadata: { order_id: 'order', customer_id: 'other', type: 'rental_authorization' } }]) {
+  test(`approval rejects invalid full authorization: ${JSON.stringify(invalid)}`, async t => {
+    const { sqlite, context, setIntent } = await setup(t, { status: 'pending_payment' })
+    setIntent(invalid)
+    await assert.rejects(() => createOrderPaymentIntent(context, { id: 'customer', role: 'CUSTOMER', email: 'customer@example.test' }, 'order', true), /Stripe 订单预授权数据不匹配/)
+    assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'pending_payment')
+  })
+}
+
+test('website authorization received before approval does not confirm or provision the rental', async t => {
+  const { sqlite, context, intent, calls } = await setup(t, { status: 'pending_approval' })
+  const app = new Hono()
+  app.post('/', c => handleStripeWebhook(c))
+  const body = JSON.stringify({ id: 'evt_before_approval', type: 'payment_intent.amount_capturable_updated', data: { object: intent } })
+  const timestamp = Math.floor(Date.now() / 1000)
+  const signature = createHmac('sha256', 'whsec_example').update(`${timestamp}.${body}`).digest('hex')
+  const response = await app.request('https://example.test/', { method: 'POST', body, headers: { 'stripe-signature': `t=${timestamp},v1=${signature}` } }, context.env)
+  assert.equal(response.status, 200, await response.text())
+  assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'pending_approval')
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM rental_status_history').get()?.count, 0)
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM device_commands').get()?.count, 0)
+  assert.ok(!calls.some(call => call.path.endsWith('/capture')))
+})
+
+test('old deposit-only authorization is released before creating the full rental authorization', async t => {
+  const { sqlite, context, calls, setIntent } = await setup(t, { status: 'pending_payment' })
+  sqlite.exec("UPDATE orders SET totalAmount = 1050, depositAmount = 1000; UPDATE payments SET amount = 1000, deposit_amount = 1000, rental_amount = 0, processing_fee = 0;")
+  setIntent({ amount: 100000, amount_capturable: 100000, metadata: { type: 'deposit_authorization', order_id: 'order', customer_id: 'customer' } })
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = (async (url: any, init: any) => {
+    if (String(url) === 'https://api.stripe.com/v1/payment_intents' && init?.method === 'POST') {
+      setIntent({ id: 'pi_combined', status: 'requires_payment_method', amount: 105125, amount_capturable: 0, metadata: { type: 'rental_authorization', order_id: 'order', customer_id: 'customer' } })
+    }
+    return previousFetch(url, init)
+  }) as typeof fetch
+  const result = await createOrderPaymentIntent(context, { id: 'customer', role: 'CUSTOMER', email: 'customer@example.test' }, 'order')
+  assert.equal(result.amountCents, 105125)
+  const cancel = calls.findIndex(call => call.path === 'payment_intents/pi_auth/cancel')
+  const create = calls.findIndex(call => call.path === 'payment_intents' && call.method === 'POST')
+  assert.ok(cancel >= 0 && create > cancel)
+  assert.equal(calls[create].params.get('amount'), '105125')
+  assert.equal(sqlite.prepare("SELECT status FROM payments WHERE id = 'payment'").get()?.status, 'failed')
+  assert.equal(sqlite.prepare("SELECT amount FROM payments WHERE stripe_payment_intent_id = 'pi_combined'").get()?.amount, 1051.25)
+})
+
+test('staff and customer order details display the stored creation time in Melbourne', async t => {
+  const { sqlite, context } = await setup(t, { status: 'pending_payment' })
+  sqlite.exec("UPDATE orders SET createdAt = '2026-10-30T14:05:03.089Z'")
+  for (const html of [await renderStaffOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order'), await renderCustomerOrderDetail(context, { id: 'customer', role: 'CUSTOMER' }, 'order')]) {
+    assert.match(html, /<strong>下单时间:<\/strong> 2026-10-31 01:05/)
+    assert.doesNotMatch(html, /<strong>下单时间:<\/strong> undefined/)
+  }
+  const staffHtml = await renderStaffOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order')
+  assert.match(staffHtml, /<strong>总金额:<\/strong> AUD\$300\.00/)
+  assert.match(staffHtml, /<strong>Stripe 支付手续费:<\/strong> AUD\$2\.50/)
+  assert.match(staffHtml, /<strong>信用卡预授权总额:<\/strong> AUD\$302\.50/)
+})
+
+test('held authorization is separate from cash until return settlement across finance views', async t => {
+  const { sqlite, context, settle } = await setup(t)
+  const before = await reconcileOrderPayments(context, 'order')
+  assert.equal(before.paidTotal, 0)
+  assert.equal(before.authorizedTotal, 302.5)
+  assert.equal(before.pendingTotal, 0)
+  assert.equal((await getAdminDashboardData(context)).stats.totalRevenue, 0)
+  assert.equal((await getStaffDashboardData(context)).stats.totalRevenue, 0)
+  assert.equal((await getAdminOrderStats(context)).revenue, 0)
+  assert.equal((await getRevenueData(context)).orders[0].collectedRevenue, 0)
+  assert.equal((await settle({ refundAmount: '200', refundMethod: 'original' })).status, 303)
+  const after = await reconcileOrderPayments(context, 'order')
+  assert.equal(after.paidTotal, 102.5)
+  assert.equal(after.authorizedTotal, 0)
+  assert.equal((await getAdminDashboardData(context)).stats.totalRevenue, 100)
+  assert.equal((await getStaffDashboardData(context)).stats.totalRevenue, 100)
+  assert.equal((await getAdminOrderStats(context)).revenue, 100)
+  assert.equal((await getRevenueData(context)).orders[0].collectedRevenue, 100)
+  assert.equal(sqlite.prepare('SELECT status FROM payments').get()?.status, 'paid')
+  sqlite.exec("UPDATE payments SET paid_at = '2027-02-15T00:00:00Z'; INSERT INTO payments (id, rental_id, customer_id, payment_method, amount, rental_amount, deposit_amount, status, paid_at) VALUES ('extra', 'order', 'customer', 'balance', 20, 20, 0, 'paid', '2027-03-15T00:00:00Z')")
+  const data = await getRevenueData(context)
+  const html = renderAdminRevenueStats({ id: 'admin', role: 'ADMIN' }, data)
+  assert.match(html, /2027-02<\/td><td class="mono"[^>]*>AUD\$100\.00/)
+  assert.match(html, /2027-03<\/td><td class="mono"[^>]*>AUD\$20\.00/)
+  assert.match(renderAdminFinance({ id: 'admin', role: 'ADMIN' }, data.orders), /AUD\$120\.00/)
+})
+
+test('an authorized booking is not suspended for having no captured payment yet', async t => {
+  const { sqlite, context } = await setup(t, { status: 'paid' })
+  sqlite.exec("UPDATE orders SET payment_status = 'PAID'")
+  await runDataConsistencyChecks(context)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM data_consistency_issues WHERE issue_type = 'PAID_ORDER_WITHOUT_PAYMENT'").get()?.count, 0)
+  assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'paid')
 })
 
 test('new combined authorization requests manual card capture and extended validity', async t => {
