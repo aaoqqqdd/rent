@@ -3065,7 +3065,7 @@ app.post('/staff/devices/new', async (c) => {
   const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
   const status = String(form.status || 'available') as any
   if (!name || !model || !serialNumber || !Number.isFinite(pricePerDay) || pricePerDay < 0 || weeklyDiscountPercent === null || monthlyDiscountPercent === null || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(pages.renderStaffDeviceNew(user, '请填写完整有效的设备资料和 0%–100% 的折扣'), 400)
-  const device = await insertDevice(c, { name, category: String(form.category || '其他'), model, serialNumber, pricePerDay, depositAmount: 0, weeklyDiscountPercent, monthlyDiscountPercent, status, description: '' })
+  const device = await insertDevice(c, { name, category: String(form.category || '其他'), model, serialNumber, pricePerDay, depositAmount: 0, weeklyDiscountPercent, monthlyDiscountPercent, demoMode: form.demoMode === '1', status, description: '' })
   return c.redirect(`/staff/devices/${device.id}`)
 })
 
@@ -3084,7 +3084,7 @@ app.post('/staff/devices/:id/edit', async (c) => {
   const monthlyDiscountPercent = parseDeviceDiscountPercent(form.monthlyDiscountPercent)
   const status = String(form.status || 'available')
   if (!String(form.name || '').trim() || !String(form.model || '').trim() || !String(form.serialNumber || '').trim() || !Number.isFinite(pricePerDay) || pricePerDay < 0 || weeklyDiscountPercent === null || monthlyDiscountPercent === null || !['available', 'rented', 'maintenance', 'retired'].includes(status)) return c.html(await pages.renderStaffDeviceEdit(c, user, c.req.param('id'), '请填写完整有效的设备资料和 0%–100% 的折扣'), 400)
-  await updateDevice(c, c.req.param('id'), { name: String(form.name), category: String(form.category || '其他'), model: String(form.model), serialNumber: String(form.serialNumber), pricePerDay, weeklyDiscountPercent, monthlyDiscountPercent, status: status as any })
+  await updateDevice(c, c.req.param('id'), { name: String(form.name), category: String(form.category || '其他'), model: String(form.model), serialNumber: String(form.serialNumber), pricePerDay, weeklyDiscountPercent, monthlyDiscountPercent, demoMode: form.demoMode === '1', status: status as any })
   return c.redirect(`/staff/devices/${c.req.param('id')}`)
 })
 
@@ -5171,6 +5171,7 @@ app.post('/admin/devices/new', async (c) => {
       depositAmount: Number(form.depositAmount) || 0,
       weeklyDiscountPercent,
       monthlyDiscountPercent,
+      demoMode: form.demoMode === '1',
       status: (form.status as any) || 'available',
       description: form.description || form.remark || '',
       agentTokenHash
@@ -5503,6 +5504,7 @@ app.post('/admin/devices/:id/edit', async (c) => {
     monthlyDiscountPercent,
     minimumRentalDays,
     bufferDays,
+    demoMode: form.demoMode === '1',
     status: form.status as any,
     agentStatus: form.agentStatus as any,
     deviceMode: form.deviceMode as any,

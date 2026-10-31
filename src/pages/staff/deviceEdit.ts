@@ -38,6 +38,7 @@ export async function renderStaffDeviceEdit(c: Context, user: any, deviceId: str
           <option value="maintenance" ${device.status === 'maintenance' ? 'selected' : ''}>维护中</option>
           <option value="retired" ${device.status === 'retired' ? 'selected' : ''}>已退役</option>
         </select>
+        <label class="form-label" for="demoMode"><input type="checkbox" role="switch" id="demoMode" name="demoMode" value="1" ${device.demo_available_from || device.demoAvailableFrom ? 'checked' : ''}> 演示</label>
         <button class="button button-primary" type="submit" style="margin-top: 20px;">保存修改</button>
       </form>
     </div>

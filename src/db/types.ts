@@ -90,6 +90,8 @@ export interface Device {
   minimum_rental_days?: number | null
   bufferDays?: number | null
   buffer_days?: number | null
+  demoAvailableFrom?: string | null
+  demo_available_from?: string | null
 
   // snake_case 兼容旧页面
   price_per_day?: number

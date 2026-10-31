@@ -2338,7 +2338,9 @@ const nav: Readonly<Record<string, string>> = {}
 const table: Readonly<Record<string, string>> = {}
 
 // @domain forms —— 表单标签、placeholder、按钮、校验提示
-const forms: Readonly<Record<string, string>> = {}
+const forms: Readonly<Record<string, string>> = {
+  '演示': 'Demo',
+}
 
 // @domain status —— 订单 / 设备 / 合同 / 支付状态与徽标
 const status: Readonly<Record<string, string>> = {}

@@ -22,6 +22,7 @@ import { hashPassword, verifyPassword } from '../lib/password'
 import { syncSquareCatalogItem, syncSquareCustomerProfile } from '../square'
 import { canTransitionDeviceLifecycle } from '../domain/deviceLifecycle'
 import type { ManualOrderData } from '../domain/manualOrders'
+import { createDemoAvailableFrom } from '../domain/deviceDemo'
 
 // ---------------------------------------------------------------------------
 // 私有：设备生命周期映射 + 行归一化
@@ -895,7 +896,7 @@ export async function getDevicesAsync(c: Context): Promise<Device[]> {
   return getDevices(c)
 }
 
-export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id?: string }): Promise<Device> {
+export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id?: string; demoMode?: boolean }): Promise<Device> {
   const db = getDB(c)
   const { nanoid } = await import('nanoid')
   const deviceId = device.id || `d-${nanoid(8)}`
@@ -983,6 +984,11 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
     insertValues.push(String((device as any).monthlyDiscountPercent ?? (device as any).monthly_discount_percent ?? 0));
   }
 
+  if (device.demoMode) {
+    insertFields.push('demo_available_from')
+    insertValues.push(createDemoAvailableFrom())
+  }
+
   const placeholders = insertFields.map(() => '?').join(', ');
   const sql = `INSERT INTO devices (${insertFields.join(', ')}) VALUES (${placeholders})`;
 
@@ -992,7 +998,7 @@ export async function insertDevice(c: Context, device: Omit<Device, 'id'> & { id
   return inserted
 }
 
-export async function updateDevice(c: Context, deviceId: string, data: Partial<Device>): Promise<Device | null> {
+export async function updateDevice(c: Context, deviceId: string, data: Partial<Device> & { demoMode?: boolean }): Promise<Device | null> {
   const db = getDB(c)
   const existing = await getDeviceById(c, deviceId)
   if (!existing) return null
@@ -1017,6 +1023,9 @@ export async function updateDevice(c: Context, deviceId: string, data: Partial<D
   }
   const plainTextFields = new Set(['name', 'category', 'brand', 'model', 'assetTag', 'asset_tag', 'cpu', 'ram', 'storage', 'gpu', 'os', 'description', 'serialNumber', 'serial_number'])
   const setEntries: [string, any][] = []
+  if (data.demoMode !== undefined) {
+    setEntries.push(['demo_available_from', data.demoMode ? (existing.demo_available_from || existing.demoAvailableFrom || createDemoAvailableFrom()) : null])
+  }
   for (const [key, value] of Object.entries(data)) {
     let column = columnMapping[key]
     if (column === 'asset_tag' && !columns.has(column) && columns.has('assetTag')) column = 'assetTag'
