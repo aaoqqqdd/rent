@@ -13,11 +13,13 @@ import { createAuthSession } from '../src/site'
 import { createDemoAvailableFrom } from '../src/domain/deviceDemo'
 import { extractInlineScripts } from './helpers'
 
-test('demo dates fall after Melbourne today and within six calendar months', () => {
+test('demo dates fall between one and six calendar months after Melbourne today', () => {
   for (const [now, first, last] of [
-    ['2026-10-31T00:00:00Z', '2026-11-01', '2027-04-30'],
-    ['2027-08-31T00:00:00Z', '2027-09-01', '2028-02-29'],
-    ['2026-10-30T14:00:00Z', '2026-11-01', '2027-04-30'],
+    ['2026-10-31T00:00:00Z', '2026-11-30', '2027-04-30'],
+    ['2027-08-31T00:00:00Z', '2027-09-30', '2028-02-29'],
+    ['2026-10-30T14:00:00Z', '2026-11-30', '2027-04-30'],
+    ['2027-01-31T00:00:00Z', '2027-02-28', '2027-07-31'],
+    ['2028-01-31T00:00:00Z', '2028-02-29', '2028-07-31'],
   ]) {
     assert.equal(createDemoAvailableFrom(new Date(now), 0), first)
     assert.equal(createDemoAvailableFrom(new Date(now), 0.999999), last)
