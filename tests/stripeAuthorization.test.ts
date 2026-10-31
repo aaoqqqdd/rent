@@ -10,12 +10,13 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { URL } from 'node:url'
 import { createHmac } from 'node:crypto'
 import { Hono } from 'hono'
-import { createOrderPaymentIntent, handleStripeWebhook, refundDeposit } from '../src/actions/stripePayments'
+import { createOrderPaymentIntent, handleStripeWebhook, refundDeposit, settleCompletedOrderAuthorization } from '../src/actions/stripePayments'
 import { saveStripeConfig } from '../src/stripe'
 import { createAuthSession, formatMelbourneDateTime, reconcileOrderPayments, runDataConsistencyChecks } from '../src/site'
 import worker from '../src/index'
 import { renderAdminOrderDetail } from '../src/pages/admin/orderDetail'
 import { renderCustomerOrderDetail } from '../src/pages/customer/orderDetail'
+import { renderStaffInspection } from '../src/pages/staff/inspection'
 import { renderStaffOrderDetail } from '../src/pages/staff/orderDetail'
 import { getAdminDashboardData } from '../src/services/adminDashboard'
 import { getStaffDashboardData } from '../src/services/staffDashboard'
@@ -50,13 +51,14 @@ async function setup(t: any, options: { rental?: number; status?: string; mode?:
       catch (error) { sqlite.exec('ROLLBACK'); throw error }
     },
   }
-  const env = { RENT: db, SETTINGS_ENCRYPTION_KEY: 'test-only-encryption-key' }
+  const env = { RENT: db, SETTINGS_ENCRYPTION_KEY: 'test-only-encryption-key', CLOUDINARY_CLOUD_NAME: 'demo', CLOUDINARY_API_KEY: 'test-key', CLOUDINARY_API_SECRET: 'test-secret' }
   const context = { env } as any
   await saveStripeConfig(context, { publishableKey: 'pk_test_example', secretKey: 'sk_test_example', webhookSecret: 'whsec_example' })
   const calls: Array<{ path: string; params: URLSearchParams; method: string }> = []
   let intent: any = { id: 'pi_auth', status: 'requires_capture', currency: 'aud', amount: Math.round((rental * 1.025 + 200) * 100), amount_capturable: Math.round((rental * 1.025 + 200) * 100), amount_received: 0, capture_method: 'manual', metadata: { order_id: 'order', customer_id: 'customer', type: 'rental_authorization' }, client_secret: 'pi_auth_secret_test' }
   const fetchBefore = globalThis.fetch
   globalThis.fetch = (async (url: any, init: any) => {
+    if (String(url) === 'https://api.cloudinary.com/v1_1/demo/image/upload') return Response.json({ secure_url: 'https://res.cloudinary.com/demo/image/upload/damage.jpg' })
     const path = String(url).replace('https://api.stripe.com/v1/', '')
     const params = new URLSearchParams(init?.body)
     calls.push({ path, params, method: init?.method || 'GET' })
@@ -77,6 +79,118 @@ async function setup(t: any, options: { rental?: number; status?: string; mode?:
   }
   return { sqlite, db, context, calls, settle, intent, setIntent: (value: any) => { intent = { ...intent, ...value } } }
 }
+
+async function requestAsAdmin(context: any, path: string, form: Record<string, string | File>) {
+  const body = new FormData()
+  for (const [key, value] of Object.entries(form)) body.set(key, value)
+  const session = await createAuthSession(context, 'admin')
+  return worker.fetch(new Request(`https://rent.example.test${path}`, {
+    method: 'POST', body,
+    headers: { Cookie: `session=${session.token}`, Origin: 'https://rent.example.test', 'Sec-Fetch-Site': 'same-origin' },
+  }), context.env, { waitUntil() {} } as any)
+}
+
+const inspectionForm = (damage = 0) => ({
+  screenCondition: '正常', keyboardCondition: '正常', trackpadCondition: '正常', bodyCondition: '正常',
+  cameraCondition: '正常', wifiCondition: '正常', powerTest: '正常', replacementCost: String(damage),
+  ...(damage ? { damageDescription: '设备损坏', damagePhotoFiles: new File(['image'], 'damage.png', { type: 'image/png' }) } : {}),
+})
+
+for (const damage of [0, 25, 200]) {
+  test(`completing return inspection captures rent, fee and ${damage} damage automatically`, async t => {
+    const { sqlite, calls, context } = await setup(t, { status: 'active' })
+    sqlite.exec("UPDATE orders SET refundMethod = 'original'; INSERT INTO contracts (id, orderId, contractNumber, content) VALUES ('contract', 'order', 'CONTRACT1', '<p>合同</p>')")
+    const html = await renderStaffInspection(context, { id: 'admin', role: 'ADMIN' }, 'order')
+    assert.match(html, /保存验机并结算/)
+    assert.match(html, /损坏扣款金额（AUD）/)
+    const response = await requestAsAdmin(context, '/staff/orders/order/inspection', inspectionForm(damage))
+    assert.equal(response.status, 302, await response.text())
+    assert.equal(response.headers.get('location'), '/admin/orders/order')
+    assert.equal(calls.find(c => c.path.endsWith('/capture'))?.params.get('amount_to_capture'), String(10250 + damage * 100))
+    assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'completed')
+    assert.equal(sqlite.prepare('SELECT settlement_status FROM orders').get()?.settlement_status, 'SETTLED')
+    assert.equal(sqlite.prepare('SELECT status FROM deposit_settlements').get()?.status, 'EXECUTED')
+    assert.equal(sqlite.prepare('SELECT deposit_deduction_amount FROM orders').get()?.deposit_deduction_amount, damage)
+    if (damage) assert.equal(sqlite.prepare("SELECT status FROM devices WHERE id = 'device'").get()?.status, 'maintenance')
+    assert.equal((await requestAsAdmin(context, '/staff/orders/order/inspection', inspectionForm(damage))).status, 409)
+    assert.equal(calls.filter(c => c.path.endsWith('/capture')).length, 1)
+  })
+}
+
+test('force completion settles the stored rent and fee without inventing a fee for an old authorization', async t => {
+  const { sqlite, calls, context, setIntent } = await setup(t, { status: 'active' })
+  sqlite.exec("UPDATE orders SET refundMethod = 'original'; UPDATE payments SET processing_fee = 0, amount = 300")
+  setIntent({ amount: 30000, amount_capturable: 30000 })
+  const response = await requestAsAdmin(context, '/admin/orders/order/update', { status: 'completed', force: '1' })
+  assert.equal(response.status, 302, await response.text())
+  assert.equal(calls.find(c => c.path.endsWith('/capture'))?.params.get('amount_to_capture'), '10000')
+  assert.equal(sqlite.prepare('SELECT settlement_status FROM orders').get()?.settlement_status, 'SETTLED')
+})
+
+test('a failed automatic capture preserves the return and approved amounts for admin retry', async t => {
+  const { sqlite, calls, context, setIntent } = await setup(t, { status: 'active' })
+  sqlite.exec("UPDATE orders SET refundMethod = 'original'; INSERT INTO contracts (id, orderId, contractNumber, content) VALUES ('contract', 'order', 'CONTRACT1', '<p>合同</p>')")
+  setIntent({ amount_capturable: 100 })
+  const response = await requestAsAdmin(context, '/staff/orders/order/inspection', inspectionForm(25))
+  assert.equal(response.status, 409, await response.text())
+  assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'completed')
+  assert.equal(sqlite.prepare('SELECT settlement_status FROM orders').get()?.settlement_status, 'PENDING')
+  assert.equal(sqlite.prepare('SELECT status FROM deposit_settlements').get()?.status, 'APPROVED')
+  const html = await renderAdminOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order')
+  assert.match(html, /action="\/admin\/orders\/order\/deposit-refund"/)
+  const form = { refundAmount: '175', refundMethod: 'original', deductionCategory: 'DAMAGE', deductionReason: '设备损坏' }
+  assert.equal((await requestAsAdmin(context, '/admin/orders/order/deposit-refund', { ...form, refundAmount: '200' })).status, 409)
+  setIntent({ amount_capturable: 30250 })
+  assert.equal((await requestAsAdmin(context, '/admin/orders/order/deposit-refund', form)).status, 303)
+  assert.equal((await requestAsAdmin(context, '/admin/orders/order/deposit-refund', form)).status, 409)
+  assert.equal(calls.filter(c => c.path.endsWith('/capture')).length, 1)
+})
+
+test('automatic settlement includes overdue deductions already recorded against an uncaptured deposit', async t => {
+  const { sqlite, calls, context } = await setup(t)
+  sqlite.exec("UPDATE orders SET refundMethod = 'original', deposit_status = 'PARTIALLY_DEDUCTED', overdue_deposit_applied = 25, deposit_deduction_amount = 25")
+  const app = new Hono()
+  app.post('/', async c => (await settleCompletedOrderAuthorization(c, { id: 'admin' }, 'order')) || c.text('done'))
+  const response = await app.request('https://example.test/', { method: 'POST' }, context.env)
+  assert.equal(response.status, 303, await response.text())
+  assert.equal(calls.find(c => c.path.endsWith('/capture'))?.params.get('amount_to_capture'), '12750')
+  assert.equal(sqlite.prepare('SELECT settlement_status FROM orders').get()?.settlement_status, 'SETTLED')
+  assert.equal((await app.request('https://example.test/', { method: 'POST' }, context.env)).status, 200)
+  assert.equal(calls.filter(c => c.path.endsWith('/capture')).length, 1)
+})
+
+test('automatic settlement retries a captured authorization after a database failure without charging twice', async t => {
+  const { sqlite, calls, context } = await setup(t)
+  sqlite.exec("UPDATE orders SET refundMethod = 'original'")
+  const originalBatch = context.env.RENT.batch
+  let failOnce = true
+  context.env.RENT.batch = async (statements: any[]) => {
+    if (failOnce && calls.some(c => c.path.endsWith('/capture'))) {
+      failOnce = false
+      throw new Error('Database unavailable after capture')
+    }
+    return originalBatch(statements)
+  }
+  const app = new Hono()
+  app.post('/', async c => (await settleCompletedOrderAuthorization(c, { id: 'admin' }, 'order')) || c.text('done'))
+  assert.equal((await app.request('https://example.test/', { method: 'POST' }, context.env)).status, 502)
+  assert.equal(sqlite.prepare('SELECT status FROM deposit_settlements').get()?.status, 'APPROVED')
+  assert.equal((await app.request('https://example.test/', { method: 'POST' }, context.env)).status, 303)
+  assert.equal(calls.filter(c => c.path.endsWith('/capture')).length, 1)
+  assert.equal(sqlite.prepare('SELECT settlement_status FROM orders').get()?.settlement_status, 'SETTLED')
+})
+
+test('concurrent automatic settlements capture and credit the balance only once', async t => {
+  const { sqlite, calls, context } = await setup(t)
+  const app = new Hono()
+  app.post('/', async c => (await settleCompletedOrderAuthorization(c, { id: 'admin' }, 'order')) || c.text('done'))
+  const responses = await Promise.all([0, 1].map(() => app.request('https://example.test/', { method: 'POST' }, context.env)))
+  assert.deepEqual(responses.map(r => r.status).sort(), [303, 409])
+  assert.equal(calls.filter(c => c.path.endsWith('/capture')).length, 1)
+  assert.equal(sqlite.prepare('SELECT balance FROM users WHERE id = ?').get('customer')?.balance, 212)
+  assert.equal(sqlite.prepare('SELECT settlement_status FROM orders').get()?.settlement_status, 'SETTLED')
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM payment_refunds').get()?.count, 1)
+})
 
 for (const deduction of [0, 25, 200]) {
   test(`authorization settlement captures rent plus ${deduction} deduction and releases the rest`, async t => {

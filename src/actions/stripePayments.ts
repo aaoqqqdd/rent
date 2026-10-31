@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono'
 import { nanoid } from 'nanoid'
-import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation, logError, updateOrderStatus } from '../site'
+import { ensureOrderNumber, getOrderById, getUserById, getSystemSettings, loadSystemSettingsFromDB, issueInvoice, issueCreditNote, enqueueRentalUserCreation, recordBalanceTransaction, recordExternalRentalFlow, recordFinancialLedgerEntry, generateReferenceNumber, recordDeviceLifecycle, revokeReferralRewardForOrder, claimWebhookEvent, markWebhookProcessed, markWebhookFailed, buildRefundAllocation, mapStripeDisputeStatus, applyPendingPaymentCancellation, logError, updateOrderStatus, createAuditLog } from '../site'
 import { createNotification } from '../services/notifications'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { squareRequest } from '../square'
@@ -1289,7 +1289,7 @@ async function settlePreauthorizedDeposit(c: Context, admin: any, order: any, fo
       .bind(captureAmount > 0 ? 'paid' : 'refunded', captureAmount, authorizationId, captureAmount, payment.id),
     c.env.RENT.prepare("UPDATE orders SET refundMethod = ?, deposit_status = ?, deposit_deduction_amount = ?, deposit_refund_amount = ?, deposit_held_amount = 0, deposit_refund_at = CURRENT_TIMESTAMP, settlement_status = ? WHERE id = ?")
       .bind(selectedRefundMethod, nextStatus, deductionAmount, refundToBalance ? totalReleased : 0, computeOrderSettlementStatus({ status: order.status, deposit_status: nextStatus }), order.id),
-    c.env.RENT.prepare('UPDATE devices SET status = \'available\' WHERE id = ?').bind(order.deviceId),
+    c.env.RENT.prepare("UPDATE devices SET status = 'available' WHERE id = ? AND lifecycle_status NOT IN ('DAMAGED', 'MAINTENANCE', 'RETIRED')").bind(order.deviceId),
     // 原路释放没有实际退款；退余额则记录实际入账的可退押金。
     c.env.RENT.prepare(`INSERT INTO payment_refunds (id, refund_number, order_id, payment_id, type, refundable_amount, refund_amount, refunded_processing_fee, deduction_amount, deduction_category, deduction_reason, status, processed_by, refund_method)
       VALUES (?, ?, ?, ?, 'deposit', ?, ?, 0, ?, ?, ?, 'succeeded', ?, ?)`)
@@ -1347,7 +1347,10 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (order.status !== 'completed') return c.text('只有已归还并完成的订单才能处理押金', 409)
   const depositMode = depositPaymentModeForOrder(order)
   if (depositMode === 'PREAUTH') {
-    if (!['HELD', 'REFUND_PENDING'].includes(String(order.deposit_status || ''))) return c.text('该笔信用卡预授权已结算或未完成授权，不能重复处理', 409)
+    // 逾期任务会提前把押金标为扣除，但预授权仍需在归还时实际请款。
+    const settled = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' LIMIT 1").bind(order.id).first()
+    const overdueDeduction = Number(order.overdue_deposit_applied || 0) > 0 && ['PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status || ''))
+    if (settled || (!['HELD', 'REFUND_PENDING'].includes(String(order.deposit_status || '')) && !overdueDeduction)) return c.text('该笔信用卡预授权已结算或未完成授权，不能重复处理', 409)
     return settlePreauthorizedDeposit(c, admin, order, form)
   }
   if (depositMode === 'SETUP_INTENT') return settleSetupIntentDeposit(c, admin, order, form)
@@ -1432,6 +1435,59 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
     if (refundAmount > 0) await issueCreditNoteSafely(c, order.id, refundAmount, refundedProcessingFee, `deposit-${nanoid(12)}`, 'refundDeposit')
   }
   return c.redirect(`/admin/orders/${order.id}`, 303)
+}
+
+export async function executeApprovedDepositSettlement(c: Context, actor: any, settlementId: string, orderId: string, form: Record<string, any>): Promise<Response> {
+  const claim = await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'EXECUTED', executed_by = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'APPROVED'").bind(actor.id, settlementId).run() as any
+  if (!claim.meta?.changes) return c.text('该押金结算单已被处理，请刷新页面', 409)
+  let response: Response
+  try {
+    await c.env.RENT.prepare("UPDATE orders SET deposit_status = 'REFUND_PENDING', settlement_status = 'PENDING' WHERE id = ? AND deposit_payment_mode = 'PREAUTH'").bind(orderId).run()
+    response = await refundDeposit(c, actor, orderId, form)
+  } catch (error: any) {
+    response = c.text(error.message || '押金退款失败', 502)
+  }
+  if (response.status >= 400) {
+    await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'APPROVED', executed_by = NULL, executed_at = NULL WHERE id = ? AND status = 'EXECUTED'").bind(settlementId).run()
+  } else {
+    await createAuditLog(c, { actor, action: 'DEPOSIT_SETTLEMENT_EXECUTED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlementId, before: { status: 'APPROVED' }, after: { status: 'EXECUTED' } })
+  }
+  return response
+}
+
+/** 设备归还后结算完整预授权；失败保留批准的金额，供管理员原样重试。 */
+export async function settleCompletedOrderAuthorization(c: Context, actor: any, orderId: string): Promise<Response | null> {
+  const order = await getOrderById(c, orderId)
+  if (!order || order.status !== 'completed' || depositPaymentModeForOrder(order) !== 'PREAUTH') return null
+  const settled = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' LIMIT 1").bind(order.id).first()
+  if (settled) return null
+  let settlement = await c.env.RENT.prepare('SELECT * FROM deposit_settlements WHERE order_id = ?').bind(order.id).first() as any
+  if (!settlement) {
+    const inspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE rental_id = ? AND inspection_type = 'after_return' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any
+    const snapshot = JSON.parse(inspection?.snapshot_json || '{}')
+    const damageAmount = Number(snapshot.replacementCost || 0)
+    const overdueAmount = Math.max(0, Number(order.overdue_deposit_applied || 0))
+    const deductionAmount = Number((damageAmount + overdueAmount).toFixed(2))
+    const depositAmount = orderDeposit(order)
+    const form = { deductionCategory: damageAmount > 0 ? 'DAMAGE' : overdueAmount > 0 ? 'LATE_FEE' : '', deductionReason: [damageAmount > 0 ? String(snapshot.damageDescription || '').trim() : '', overdueAmount > 0 ? `逾期费用 AUD$${overdueAmount.toFixed(2)}` : ''].filter(Boolean).join('；') }
+    const deduction = validateDepositDeduction(form, depositAmount, deductionAmount)
+    if (!Number.isFinite(damageAmount) || damageAmount < 0) return c.text('扣款金额无效', 400)
+    if (deduction instanceof Response) return deduction
+    const refundAmount = Number((depositAmount - deductionAmount).toFixed(2))
+    const refundMethod = order.refundMethod === 'balance' ? 'balance' : 'original'
+    const settlementId = `dst-${nanoid(12)}`
+    const document = { orderId: order.id, depositAmount, refundAmount, deductionAmount, ...form, refundMethod, requestedBy: actor.id }
+    await c.env.RENT.prepare("INSERT INTO deposit_settlements (id, order_id, deposit_amount, refund_amount, deduction_amount, deduction_category, deduction_reason, refund_method, status, requested_by, settlement_number, document_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, ?) ON CONFLICT(order_id) DO NOTHING")
+      .bind(settlementId, order.id, depositAmount, refundAmount, deductionAmount, form.deductionCategory || null, form.deductionReason || null, refundMethod, actor.id, generateReferenceNumber('DST'), JSON.stringify(document)).run()
+    settlement = await c.env.RENT.prepare('SELECT * FROM deposit_settlements WHERE order_id = ?').bind(order.id).first() as any
+  }
+  if (settlement?.status !== 'APPROVED') return c.text('该押金结算单已被处理，请刷新页面', 409)
+  const response = await executeApprovedDepositSettlement(c, actor, settlement.id, order.id, {
+    refundAmount: Number(settlement.refund_amount).toFixed(2), refundMethod: settlement.refund_method,
+    deductionCategory: settlement.deduction_category || '', deductionReason: settlement.deduction_reason || '',
+  })
+  if (response.status >= 400) await logError(c, 'ERROR', '归还后信用卡预授权结算失败', new Error(await response.clone().text()), { orderId })
+  return response
 }
 
 export async function refundUnusedRentalDays(c: Context, admin: any, order: any, returnedDate: string): Promise<void> {

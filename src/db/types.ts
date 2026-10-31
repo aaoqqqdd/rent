@@ -167,6 +167,7 @@ export interface Order {
   stripe_deposit_payment_intent_id?: string | null
   deposit_status?: string
   deposit_deduction_amount?: number
+  overdue_deposit_applied?: number
   settlement_status?: 'NOT_APPLICABLE' | 'PENDING' | 'SETTLED'
   couponCode?: string | null
   discountAmount?: number

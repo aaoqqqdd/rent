@@ -132,7 +132,7 @@ import { getNotifyChannelsSummary, saveNotifyChannels, resolveEmailCredentials, 
 import { getEmailConfigSummary } from './emailConfig'
 import { ensureInAppNotificationTemplates } from './services/inAppNotificationTemplates'
 import { notifyAgreementUpdate } from './actions/admin/saveSettings'
-import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer, expireMissedPickupOrders, chargeOverdueReturns } from './actions/stripePayments'
+import { createOrderPaymentIntent, createBalanceTopUpIntent, handleStripeWebhook, refundDeposit, executeApprovedDepositSettlement, settleCompletedOrderAuthorization, cancelAndRefund, retryCancellationRefund, ignorePendingRefund, refundUnusedRentalDays, completeBankTransferRefund, createOrderPriceAdjustmentIntent, createOrderPriceAdjustmentTransferPayment, applyOrderPriceAdjustment, applyBalanceOrderPriceIncrease, settleBalancePriceAdjustment, cancelPendingPaymentOrderByCustomer, expireMissedPickupOrders, chargeOverdueReturns } from './actions/stripePayments'
 import { getSquareGiftCardConfigForOrder, createSquareGiftCardPayment, completeSquareGiftCardPayment, getSquareGiftCardConfigForBalanceTopUp, createSquareGiftCardBalanceTopUp, getSquareGiftCardConfigForPriceAdjustment, createSquareGiftCardPriceAdjustmentPayment, handleSquareWebhook } from './actions/squarePayments'
 import { findEligibleCoupon, calculateCouponDiscount, checkCustomerCouponEligibility, reserveCouponForOrder, releaseCouponForOrder, couponDiscountableBase } from './actions/coupons'
 import { calculateRentalFee, parseDeviceDiscountPercent } from './domain/rentalPricing'
@@ -2949,6 +2949,10 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   let damagePhotos = ''
   try { damagePhotos = (await resolveImageUrls(form.damagePhotoFiles, form.damagePhotos, c, 'rent/damage-photos', 5)).join('\n') } catch (error: any) { return c.text(error.message, 400) }
   if (damageDescription && !damagePhotos) return c.text('记录损坏时必须提供至少一张损坏照片链接', 400)
+  if (order.deposit_payment_mode === 'PREAUTH') {
+    if (!/^\d+(\.\d{1,2})?$/.test(String(form.replacementCost || '0')) || (replacementCost > 0 && !damageDescription)) return c.text('请填写有效的损坏扣款金额和损坏说明', 400)
+    if (replacementCost + Number(order.overdue_deposit_applied || 0) > Number(order.depositAmount || 0)) return c.text('扣款金额不能高于押金金额', 400)
+  }
   try {
     await refundUnusedRentalDays(c, user, order, now.slice(0, 10))
   } catch (error: any) {
@@ -2962,14 +2966,16 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
   const settlementStatusOnCompletion = computeOrderSettlementStatus({ status: 'completed', deposit_status: order.deposit_status })
   await c.env.RENT.batch([
     c.env.RENT.prepare("UPDATE orders SET status = 'completed', order_status = 'COMPLETED', payment_status = COALESCE(payment_status, 'PAID'), rental_status = 'COMPLETED', return_received_at = COALESCE(return_received_at, CURRENT_TIMESTAMP), return_received_by = COALESCE(return_received_by, ?), settlement_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").bind(user.id, settlementStatusOnCompletion, order.id),
-    c.env.RENT.prepare("INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, 'RETURNED', 'MANUAL', ?, ?), (?, ?, 'RETURNED', 'COMPLETED', 'SYSTEM', ?, ?)").bind(`rsh-${nanoid(16)}`, order.id, order.rental_status || 'RETURN_PENDING', user.id, '工作人员收到设备并开始归还验机', `rsh-${nanoid(16)}`, order.id, user.id, '归还验机完成，订单结算完成'),
+    c.env.RENT.prepare("INSERT INTO rental_status_history (id, rental_id, old_status, new_status, trigger_type, triggered_by, reason) VALUES (?, ?, ?, 'RETURNED', 'MANUAL', ?, ?), (?, ?, 'RETURNED', 'COMPLETED', 'SYSTEM', ?, ?)").bind(`rsh-${nanoid(16)}`, order.id, order.rental_status || 'RETURN_PENDING', user.id, '工作人员收到设备并开始归还验机', `rsh-${nanoid(16)}`, order.id, user.id, '归还验机完成'),
     c.env.RENT.prepare('INSERT INTO device_inspections (id, device_id, rental_id, inspection_type, snapshot_json, differences_json) VALUES (?, ?, ?, \'after_return\', ?, ?)').bind(inspectionId, order.deviceId, order.id, JSON.stringify(inspectionSnapshot), JSON.stringify({})),
     c.env.RENT.prepare("INSERT OR IGNORE INTO order_fulfillment_records (id, order_id, record_type, device_serial_number, accessories_json, condition_snapshot_json, notes, recorded_by) VALUES (?, ?, 'RETURN', ?, '[]', ?, ?, ?)").bind(`return-${nanoid(12)}`, order.id, String(returnDevice?.serialNumber || ''), JSON.stringify(inspectionSnapshot), damageDescription || null, user.id),
     ...(damageDescription ? [c.env.RENT.prepare("INSERT INTO damage_cases (id, order_id, device_id, description, photo_urls, estimated_cost_cents, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(`damage-${nanoid(12)}`, order.id, order.deviceId, damageDescription, damagePhotos, Math.round(replacementCost * 100), user.id)] : []),
   ])
   await recordDeviceLifecycle(c, order.deviceId, damageDescription ? 'DAMAGED' : 'RETURNED', { orderId: order.id, reason: damageDescription || '归还验机完成', changedBy: user.id })
   await createAuditLog(c, { actor: user, action: damageDescription ? 'RETURN_INSPECTION_COMPLETED_WITH_DAMAGE' : 'RETURN_INSPECTION_COMPLETED', targetType: 'ORDER', targetId: order.id, before: { status: order.status, rentalStatus: order.rental_status }, after: { status: 'completed', rentalStatus: 'COMPLETED', inspectionId, damageReported: Boolean(damageDescription) }, reason: damageDescription || '归还验机完成' })
-  return c.redirect(staffOrderPath(order))
+  const settlementResponse = await settleCompletedOrderAuthorization(c, user, order.id)
+  if (settlementResponse && settlementResponse.status >= 400) return settlementResponse
+  return c.redirect(user.role === 'ADMIN' ? `/admin/orders/${order.id}` : staffOrderPath(order))
 })
 
 // 必须注册在 /staff/orders/:orderId/handover、/staff/orders/:orderId/inspection 等二段式字面量路由之后，
@@ -4533,7 +4539,11 @@ app.post('/admin/orders/:id/update', async (c) => {
   await updateOrderStatus(c, order.id, status, { reason, triggeredBy: user.id })
   if (status === 'suspended') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_suspended', title: '租赁已暂停', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}暂停，原因：${reason}。`, orderId: order.id })
   if (status === 'cancelled') await createNotification(c, { recipientId: order.userId, senderId: user.id, type: 'rental_cancelled', title: '订单已取消', message: `您的订单 ${order.orderNo || order.id} 已由${user.name || '管理员'}取消，原因：${reason}。`, orderId: order.id })
-  if (status === 'completed') await enqueueRentalUserDeletion(c, order)
+  if (status === 'completed') {
+    await enqueueRentalUserDeletion(c, order)
+    const settlementResponse = await settleCompletedOrderAuthorization(c, user, order.id)
+    if (settlementResponse && settlementResponse.status >= 400) return wantsJson ? c.json({ ok: false, error: await settlementResponse.text() }, settlementResponse.status as any) : settlementResponse
+  }
   if (status === 'cancelled' || status === 'completed') await releaseDeviceIfUnbooked(c, order.deviceId)
   if (status === 'paid') await ensureOrderNumber(c, order.id)
   if (wantsJson) return c.json({ ok: true })
@@ -4710,24 +4720,7 @@ app.post('/admin/orders/:id/deposit-refund', async (c) => {
     const submittedAmount = isSetupIntentDeposit ? Number(form.deductionAmount || 0) : Number(form.refundAmount)
     const approvedAmount = isSetupIntentDeposit ? Number(settlement.deduction_amount || 0) : Number(settlement.refund_amount)
     if (submittedAmount !== approvedAmount || String(form.deductionCategory || '') !== String(settlement.deduction_category || '') || String(form.deductionReason || '').trim() !== String(settlement.deduction_reason || '')) return c.text('执行金额或扣款说明必须与已批准的结算单一致', 409)
-    // 先原子性地把结算单从 APPROVED 抢占为 EXECUTED，再执行实际打款；
-    // 避免并发/重复提交在旧的「先打款、后置状态」顺序下让同一结算单被执行两次（重复退款/重复入账）。
-    const claim = await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'EXECUTED', executed_by = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'APPROVED'").bind(user.id, settlement.id).run() as any
-    if (!claim.meta?.changes) return c.text('该押金结算单已被处理，请刷新页面', 409)
-    let response: Response
-    try {
-      response = await refundDeposit(c, user, c.req.param('id'), form)
-    } catch (error: any) {
-      await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'APPROVED', executed_by = NULL, executed_at = NULL WHERE id = ? AND status = 'EXECUTED'").bind(settlement.id).run()
-      return c.text(error.message || '押金退款失败', 502)
-    }
-    if (response.status < 400) {
-      await createAuditLog(c, { actor: user, action: 'DEPOSIT_SETTLEMENT_EXECUTED', targetType: 'DEPOSIT_SETTLEMENT', targetId: settlement.id, before: { status: 'APPROVED' }, after: { status: 'EXECUTED' } })
-    } else {
-      // 打款未成功（校验失败/银行卡拒绝等）：释放占用，允许重新提交。
-      await c.env.RENT.prepare("UPDATE deposit_settlements SET status = 'APPROVED', executed_by = NULL, executed_at = NULL WHERE id = ? AND status = 'EXECUTED'").bind(settlement.id).run()
-    }
-    return response
+    return executeApprovedDepositSettlement(c, user, settlement.id, c.req.param('id'), form)
   } catch (error: any) {
     return c.text(error.message || '押金退款失败', 502)
   }
