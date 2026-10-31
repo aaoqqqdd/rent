@@ -1076,25 +1076,23 @@ export async function recordDeviceLifecycle(c: Context, deviceId: string, nextSt
   ])
 }
 
-export async function releaseDeviceIfUnbooked(c: Context, deviceId: string): Promise<void> {
+export async function releaseDeviceIfUnbooked(c: Context, deviceId: string, options: { orderId?: string, reason?: string, changedBy?: string } = {}): Promise<void> {
   const activeOrder = await c.env.RENT.prepare(`
     SELECT id FROM orders
-    WHERE deviceId = ? AND deleted_at IS NULL AND status IN ('paid', 'active', 'extended', 'overdue', 'suspended', 'pending_pickup', 'pending_return')
+    WHERE deviceId = ? AND deleted_at IS NULL AND status IN ('paid', 'active', 'extended', 'overdue', 'suspended', 'pending_pickup', 'pending_return', 'returned')
     LIMIT 1
   `).bind(deviceId).first()
   if (activeOrder) return
-  // 之前这里只改 legacy status 列，lifecycle_status（管理后台展示用）不同步，
-  // 导致订单被取消/强制完成后设备已经可租了，仪表盘却仍卡在“已归还待验收”等旧状态。
-  // 只在状态机允许直接跳到 READY 时才走 recordDeviceLifecycle；不允许时（如 DAMAGED、
-  // RETIRED）保持原有行为，不强行纠正 lifecycle_status。
+  // 验机完成直接恢复可租；未完成维护、损坏和退役设备继续保留当前状态。
+  const openMaintenance = await c.env.RENT.prepare("SELECT id FROM maintenance_records WHERE device_id = ? AND status IN ('OPEN','IN_PROGRESS','DATA_CLEAN','SYSTEM_RESET','CLIENT_CHECK') LIMIT 1").bind(deviceId).first()
+  if (openMaintenance) return
   const device = await c.env.RENT.prepare('SELECT lifecycle_status FROM devices WHERE id = ?').bind(deviceId).first() as any
   const currentLifecycle = String(device?.lifecycle_status || 'READY')
+  if (!device || ['DAMAGED', 'MAINTENANCE', 'RETIRED'].includes(currentLifecycle)) return
   if (currentLifecycle === 'READY') {
     await updateDeviceStatus(c, deviceId, 'available')
   } else if (canTransitionDeviceLifecycle(currentLifecycle, 'READY')) {
-    await recordDeviceLifecycle(c, deviceId, 'READY', { reason: '关联订单已取消/完成，设备已释放' })
-  } else {
-    await updateDeviceStatus(c, deviceId, 'available')
+    await recordDeviceLifecycle(c, deviceId, 'READY', { reason: '关联订单已取消/完成，设备已释放', ...options })
   }
 }
 

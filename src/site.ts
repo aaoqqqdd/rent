@@ -375,7 +375,7 @@ export async function applyPendingPaymentCancellation(c: Context, order: { id: s
 // 订单取消时同步告诉 Stripe 放弃这笔订单尚未结算的 PaymentIntent（常规收款或短租
 // 一次性预授权），避免站内订单已取消，Stripe 那边的授权额度却继续占用客户信用卡。
 // 尽力而为：单个 PaymentIntent 请求失败不阻断订单取消本身。
-async function releaseStripePendingPaymentIntents(c: Context, orderId: string): Promise<void> {
+export async function releaseStripePendingPaymentIntents(c: Context, orderId: string): Promise<void> {
   const pendingPayments = await c.env.RENT.prepare(
     "SELECT stripe_payment_intent_id FROM payments WHERE rental_id = ? AND status = 'pending' AND stripe_payment_intent_id IS NOT NULL"
   ).bind(orderId).all() as any
@@ -644,7 +644,7 @@ export async function runMonitoringSweep(c: Context): Promise<{ metrics: number;
   return { metrics: metrics.length, alerts, resolved }
 }
 
-export async function updateOrderStatus(c: Context, orderId: string, status: string, options?: { reason?: string; triggeredBy?: string }): Promise<void> {
+export async function updateOrderStatus(c: Context, orderId: string, status: string, options?: { reason?: string; triggeredBy?: string; expectedStatus?: string }): Promise<boolean> {
   const db = getDB(c);
   const mapping: Record<string, { order: string, payment: string, rental: string }> = {
     pending_approval: { order: 'PENDING', payment: 'UNPAID', rental: 'PENDING' },
@@ -664,7 +664,9 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
   }
   const next = mapping[status] || { order: status.toUpperCase(), payment: 'UNPAID', rental: status.toUpperCase() }
   const previous = await db.prepare('SELECT deviceId, rental_status, deposit_status, depositAmount, deposit_payment_mode FROM orders WHERE id = ?').bind(orderId).first() as any
-  await db.prepare('UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').bind(status, next.order, next.payment, next.rental, orderId).run();
+  const result = await db.prepare(`UPDATE orders SET status = ?, order_status = ?, payment_status = ?, rental_status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?${options?.expectedStatus ? ' AND status = ?' : ''}`)
+    .bind(status, next.order, next.payment, next.rental, orderId, ...(options?.expectedStatus ? [options.expectedStatus] : [])).run();
+  if (options?.expectedStatus && !Number(result.meta?.changes ?? result.changes ?? 0)) return false
   if (next.payment === 'PAID' && Number(previous?.depositAmount || 0) > 0 && String(previous?.deposit_payment_mode || 'PAID') === 'PAID' && ['PENDING', 'PAID'].includes(String(previous?.deposit_status || 'PENDING'))) {
     // Any path that lands the order on RETURNED/COMPLETED must stamp return_received_at,
     // otherwise the RETURNED_ORDER_WITHOUT_RETURN_RECORD consistency check flags it. The
@@ -704,6 +706,7 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
     const { releaseCouponForOrder } = await import('./actions/coupons')
     await releaseCouponForOrder(c, orderId)
   }
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -1879,7 +1882,7 @@ export function buildLayout(title: string, body: string, currentUser?: User | nu
             ${renderNavGroup('通知中心', [['/admin/notifications', '业务通知'], ['/admin/notifications/settings', '通知设置'], ['/notifications', '发布通知']])}
             ${renderNavGroup('租赁管理', [['/admin/order-review', '网站订单审核'], ['/admin/orders', '租赁订单'], ['/admin/delivery', '配送管理'], ['/admin/calendar', '租赁日历']])}
             ${renderNavGroup('合同管理', [['/admin/contracts', '合同列表'], ['/admin/templates/contract', '合同模板'], ['/admin/templates', '协议模板']])}
-            ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
+            ${renderNavGroup('设备管理', [['/admin/devices', '设备管理'], ['/admin/devices/relist', '设备上架'], ['/admin/device-agent-bindings', '绑定设备'], ['/admin/inspections', '验机记录'], ['/admin/devices/reports', '设备运营报表']])}
             ${renderNavGroup('财务管理', [['/admin/finance', '财务总览'], ['/admin/reports', '运营分析报表'], ['/admin/refunds', '退款管理'], ['/admin/withdrawals', '佣金提现']])}
             ${renderNavGroup('营销增长', [['/admin/coupons', '优惠码管理'], ['/admin/marketing-emails', '营销邮件'], ['/admin/marketing-emails/data', '营销数据'], ['/admin/referrals', '推荐奖励管理'], ['/admin/feedback-rewards', '反馈奖励记录'], ['/admin/feedback-gift-cards', '礼品卡库存']])}
             ${renderNavGroup('系统设置', [['/admin/email-templates', '邮件通知模板'], ['/admin/in-app-notification-templates', '站内通知模板'], ['/admin/tax-invoice-template', 'Tax Invoice PDF 模板'], ['/admin/settings', '系统设置'], ['/admin/api-settings', 'API 设置'], ['/admin/connectivity', '通讯检测'], ['/admin/exceptions', '异常任务中心'], ['/admin/monitoring', '系统健康监控'], ['/admin/data-retention', '数据保留策略']])}

@@ -10,6 +10,7 @@ import * as pages from './pages/index'
 import * as actions from './actions/index'
 import { sendPasswordResetEmail } from './auth/passwordReset'
 import { expireRentalLinkDrafts } from './services/rentalLinks'
+import { resolveRentalApplicationConflicts, RENTAL_APPLICATION_CONFLICT_MESSAGE } from './services/rentalApplications'
 import { serviceFeeRate } from './domain/pickupTimeSlots'
 import { isCardDepositSettled } from './domain/paymentPlan'
 import {
@@ -2532,7 +2533,7 @@ app.post('/customer/rent/:id', async (c) => {
     depositAmount: device.depositAmount, dailyRate: device.pricePerDay, contractId: '', signedAt: null, pickupLocation: deliveryMethod === 'Pickup' ? '到店自取' : deliveryAddress, returnLocation: '到店归还',
     pickupTimeSlot: deliveryMethod === 'Pickup' ? pickupTimeSlot : undefined, returnTimeSlot: deliveryMethod === 'Pickup' ? returnTimeSlot : undefined,
     deliveryMethod, deliveryFee: 0, serviceFee, rentalNote, couponCode: appliedCouponCode, discountAmount,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(), booking_buffer_days: rentalRules.bufferDays || 0
   } as any)
   if (couponCode) {
     try {
@@ -2541,6 +2542,11 @@ app.post('/customer/rent/:id', async (c) => {
       await c.env.RENT.prepare('UPDATE orders SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').bind(orderId).run()
       return c.html(await pages.renderCustomerRent(c, c.req.param('id'), user, error?.message || '优惠码申请失败，请重新提交订单', rentPrefill), 409)
     }
+  }
+  await resolveRentalApplicationConflicts(c, device.id, orderId, rentalRules.bufferDays)
+  if ((await getOrderById(c, orderId))?.status === 'cancelled') {
+    await actions.releaseCouponForOrder(c, orderId)
+    return c.redirect(`/customer/orders/${orderId}?error=${encodeURIComponent(RENTAL_APPLICATION_CONFLICT_MESSAGE)}`)
   }
   const customer = await getUserById(c, user.id)
   const recipients = customer?.staffId ? [customer.staffId] : (await getUsers(c)).filter((account: any) => account.role === 'ADMIN' && account.status !== 'inactive').map((account: any) => account.id)
@@ -2823,7 +2829,7 @@ app.post('/staff/orders/:orderId/approve', async (c) => {
   order.deliveryMethod = requestedDeliveryMethod
   order.deliveryFee = deliveryFee
   order.totalAmount = totalAmount
-  await updateOrderStatus(c, order.id, 'approved')
+  if (!await updateOrderStatus(c, order.id, 'approved', { expectedStatus: 'pending_approval' })) return c.text('订单状态无效或设备档期冲突', 409)
   await deleteRentalApplicationNotifications(c, order.id)
   const contract = await ensureContractForOrder(c, order, user.id)
 
@@ -2972,8 +2978,8 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
     c.env.RENT.prepare("INSERT OR IGNORE INTO order_fulfillment_records (id, order_id, record_type, device_serial_number, accessories_json, condition_snapshot_json, notes, recorded_by) VALUES (?, ?, 'RETURN', ?, '[]', ?, ?, ?)").bind(`return-${nanoid(12)}`, order.id, String(returnDevice?.serialNumber || ''), JSON.stringify(inspectionSnapshot), damageDescription || null, user.id),
     ...(damageDescription ? [c.env.RENT.prepare("INSERT INTO damage_cases (id, order_id, device_id, description, photo_urls, estimated_cost_cents, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(`damage-${nanoid(12)}`, order.id, order.deviceId, damageDescription, damagePhotos, Math.round(replacementCost * 100), user.id)] : []),
   ])
-  await recordDeviceLifecycle(c, order.deviceId, damageDescription ? 'DAMAGED' : 'RETURNED', { orderId: order.id, reason: damageDescription || '归还验机完成', changedBy: user.id })
-  if (!damageDescription) await releaseDeviceIfUnbooked(c, order.deviceId)
+  if (damageDescription) await recordDeviceLifecycle(c, order.deviceId, 'DAMAGED', { orderId: order.id, reason: damageDescription, changedBy: user.id })
+  else await releaseDeviceIfUnbooked(c, order.deviceId, { orderId: order.id, reason: '归还验机完成', changedBy: user.id })
   await createAuditLog(c, { actor: user, action: damageDescription ? 'RETURN_INSPECTION_COMPLETED_WITH_DAMAGE' : 'RETURN_INSPECTION_COMPLETED', targetType: 'ORDER', targetId: order.id, before: { status: order.status, rentalStatus: order.rental_status }, after: { status: 'completed', rentalStatus: 'COMPLETED', inspectionId, damageReported: Boolean(damageDescription) }, reason: damageDescription || '归还验机完成' })
   const settlementResponse = await settleCompletedOrderAuthorization(c, user, order.id)
   if (settlementResponse && settlementResponse.status >= 400) return settlementResponse
@@ -5114,13 +5120,18 @@ app.get('/admin/devices', async (c) => {
   return c.html(pages.renderAdminDevices(user, devices))
 })
 
+app.get('/admin/devices/relist', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  return c.html(pages.renderAdminDeviceRelistList(user, await actions.getRelistableDevices(c)))
+})
+
 app.get('/admin/devices/:id/relist', async (c) => {
   const user = c.get('user')
   if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
   const device = await getDeviceById(c, c.req.param('id'))
   if (!device) return c.text('设备不存在', 404)
-  if (String(device.lifecycle_status || device.lifecycleStatus) !== 'RETURNED') return c.text('只有已归还待上架的设备才能上架', 409)
-  return c.html(pages.renderAdminDeviceRelist(user, device))
+  return c.html(pages.renderAdminDeviceRelist(user, device, await actions.deviceRelistBlockReason(c, device)))
 })
 
 app.post('/admin/devices/:id/relist', async (c) => {
@@ -5400,13 +5411,14 @@ app.post('/admin/maintenance/:id/advance', async (c) => {
   if (record.status === 'CLIENT_CHECK') {
     const passed = await c.env.RENT.prepare('SELECT COUNT(*) AS n FROM maintenance_preparation_checks WHERE maintenance_id = ? AND passed = 1').bind(record.id).first() as any
     if (Number(passed?.n || 0) < 10) return c.text(`还有 ${10 - Number(passed?.n || 0)} 项设备验证未通过，不能完成维护`, 409)
+    const manualRelist = record.maintenance_type === 'REPAIR'
     await c.env.RENT.batch([
       c.env.RENT.prepare("UPDATE maintenance_records SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'CLIENT_CHECK'").bind(record.id),
-      c.env.RENT.prepare("UPDATE devices SET status = 'available', device_mode = 'normal' WHERE id = ?").bind(record.device_id),
+      c.env.RENT.prepare('UPDATE devices SET status = ?, device_mode = ? WHERE id = ?').bind(manualRelist ? 'maintenance' : 'available', manualRelist ? 'maintenance' : 'normal', record.device_id),
     ])
-    await recordDeviceLifecycle(c, record.device_id, 'READY', { reason: '维护完成，十项设备验证通过', changedBy: user.id })
+    await recordDeviceLifecycle(c, record.device_id, manualRelist ? 'MAINTENANCE' : 'READY', { reason: '维护完成，十项设备验证通过', changedBy: user.id })
     await createAuditLog(c, { actor: user, action: 'MAINTENANCE_ADVANCED', targetType: 'MAINTENANCE_RECORD', targetId: record.id, before: { status: 'CLIENT_CHECK' }, after: { status: 'COMPLETED' } })
-    return c.redirect(`/admin/devices/${record.device_id}/control`, 303)
+    return c.redirect(`/admin/devices/${record.device_id}/${manualRelist ? 'relist' : 'control'}`, 303)
   }
   const next = ({ OPEN: 'IN_PROGRESS', IN_PROGRESS: 'DATA_CLEAN', DATA_CLEAN: 'SYSTEM_RESET', SYSTEM_RESET: 'CLIENT_CHECK' } as Record<string, string>)[record.status]
   if (!next) return c.text('维护状态无效', 409)
@@ -6360,15 +6372,16 @@ app.post('/api/device-agent/command-results', async (c) => {
     c.env.RENT.prepare('INSERT OR IGNORE INTO device_command_results (id, command_id, device_id, success, result_code, result_message, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(`result-${nanoid(12)}`, commandId, device.id, success ? 1 : 0, resultCode, String(payload.message || '').slice(0, 500), executedAt),
   ])
   if (success) {
-    const maintenance = await c.env.RENT.prepare("SELECT id FROM maintenance_records WHERE device_id = ? AND status = 'CLIENT_CHECK' ORDER BY started_at DESC LIMIT 1").bind(device.id).first() as any
+    const maintenance = await c.env.RENT.prepare("SELECT id, maintenance_type FROM maintenance_records WHERE device_id = ? AND status = 'CLIENT_CHECK' ORDER BY started_at DESC LIMIT 1").bind(device.id).first() as any
     if (maintenance) {
       const checks = await c.env.RENT.prepare('SELECT COUNT(*) AS total FROM maintenance_preparation_checks WHERE maintenance_id = ? AND passed = 1').bind(maintenance.id).first() as any
       if (Number(checks?.total || 0) === 10) {
+        const manualRelist = maintenance.maintenance_type === 'REPAIR'
         await c.env.RENT.batch([
           c.env.RENT.prepare("UPDATE maintenance_records SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'CLIENT_CHECK'").bind(maintenance.id),
-          c.env.RENT.prepare("UPDATE devices SET status = 'available', device_mode = 'normal' WHERE id = ?").bind(device.id),
+          c.env.RENT.prepare('UPDATE devices SET status = ?, device_mode = ? WHERE id = ?').bind(manualRelist ? 'maintenance' : 'available', manualRelist ? 'maintenance' : 'normal', device.id),
         ])
-        await recordDeviceLifecycle(c, device.id, 'READY', { reason: '维护、数据清除、系统重置与十项设备验证均通过' })
+        await recordDeviceLifecycle(c, device.id, manualRelist ? 'MAINTENANCE' : 'READY', { reason: '维护、数据清除、系统重置与十项设备验证均通过' })
       }
     }
   }

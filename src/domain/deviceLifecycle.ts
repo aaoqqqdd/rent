@@ -6,7 +6,8 @@
 // 设备生命周期状态机 (TODO.md P1 #4 / 完善.md)
 //
 //   RESERVED → RENTED
-//   RENTED → RETURNED → INSPECTION → MAINTENANCE → READY
+//   RENTED → INSPECTION → READY
+//   RETURNED → INSPECTION → READY
 //   INSPECTION → DAMAGED → MAINTENANCE → READY
 //   MAINTENANCE / DAMAGED → RETIRED
 // 这是推荐流转；管理员在设备编辑页仍可手动纠正，但“存在未完成维护时不得置为

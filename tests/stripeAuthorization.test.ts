@@ -127,6 +127,17 @@ test('force completion settles the stored rent and fee without inventing a fee f
   assert.equal(sqlite.prepare('SELECT settlement_status FROM orders').get()?.settlement_status, 'SETTLED')
 })
 
+test('a healthy returned device is available immediately even when authorization settlement needs retry', async t => {
+  const { sqlite, context, setIntent } = await setup(t, { status: 'active' })
+  sqlite.exec("UPDATE orders SET refundMethod = 'original'; INSERT INTO contracts (id, orderId, contractNumber, content) VALUES ('contract', 'order', 'CONTRACT1', '<p>合同</p>')")
+  setIntent({ amount_capturable: 1 })
+  assert.equal((await requestAsAdmin(context, '/staff/orders/order/inspection', inspectionForm())).status, 409)
+  assert.equal(sqlite.prepare('SELECT status FROM orders').get()?.status, 'completed')
+  assert.equal(sqlite.prepare('SELECT settlement_status FROM orders').get()?.settlement_status, 'PENDING')
+  assert.equal(sqlite.prepare('SELECT lifecycle_status FROM devices').get()?.lifecycle_status, 'READY')
+  assert.equal(sqlite.prepare('SELECT status FROM devices').get()?.status, 'available')
+})
+
 test('a failed automatic capture preserves the return and approved amounts for admin retry', async t => {
   const { sqlite, calls, context, setIntent } = await setup(t, { status: 'active' })
   sqlite.exec("UPDATE orders SET refundMethod = 'original'; INSERT INTO contracts (id, orderId, contractNumber, content) VALUES ('contract', 'order', 'CONTRACT1', '<p>合同</p>')")

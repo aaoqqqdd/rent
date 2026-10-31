@@ -308,10 +308,15 @@ const common: Readonly<Record<string, string>> = {
   '上架': 'List for rental',
   '设备上架': 'List device for rental',
   '确认上架': 'Confirm listing',
+  '返回上架列表': 'Back to devices awaiting listing',
+  '暂无待上架设备。': 'No devices awaiting listing.',
   '设备上架 - 电脑租赁管理系统': 'List device for rental - Computer Rental Management System',
   '设备已上架': 'Device listed for rental',
   '管理员上架设备': 'Administrator listed the device for rental',
-  '只有已归还待上架的设备才能上架': 'Only returned devices awaiting listing can be listed for rental',
+  '只有已归还或维修完成的设备才能上架': 'Only returned or repaired devices can be listed for rental',
+  '请先完成设备维修': 'Complete the device repair first',
+  '维修完成': 'Repair completed',
+  '暂不能上架': 'Cannot be listed for rental yet',
   '设备仍有关联的未完成订单，暂不能上架': 'The device has an unfinished order and cannot be listed for rental yet',
   '待结算押金': 'Deposits awaiting settlement',
   '支付争议': 'Payment disputes',
@@ -2500,7 +2505,6 @@ const admin: Readonly<Record<string, string>> = {
   '待风险审核': 'Pending risk review',
   '市中心门店': 'City store',
   '查看租赁订单': 'View rental orders',
-  '已归还待上架': 'Returned, awaiting listing',
   '等待归还验机': 'Awaiting return inspection',
   '修改取还地点': 'Change pickup/return location',
   '执行押金结算': 'Settle deposit',
@@ -3897,6 +3901,7 @@ const staff: Readonly<Record<string, string>> = {
 
 // @domain customer —— 客户 / 访客端页面文案
 const customer: Readonly<Record<string, string>> = {
+  '所选租期与其他申请冲突，申请未通过。请重新选择租期或设备。': 'Your application was declined because the rental period conflicts with another application. Please choose different dates or another device.',
   '当前推荐等级': 'Current referral level',
   '当前租金分成比例': 'Current rent commission rate',
   '有效推荐人数': 'Qualifying referrals',
