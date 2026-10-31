@@ -3,6 +3,11 @@
 
 import { readFile } from 'node:fs/promises'
 
+export async function resolve(specifier, context, nextResolve) {
+  if (specifier === 'cloudflare:sockets') return { url: new URL('./fixtures/cloudflareSockets.ts', import.meta.url).href, shortCircuit: true }
+  return nextResolve(specifier, context)
+}
+
 export async function load(url, context, nextLoad) {
   if (url.endsWith('.html') || url.endsWith('.css') || url.endsWith('.txt')) {
     const content = await readFile(new URL(url), 'utf8')

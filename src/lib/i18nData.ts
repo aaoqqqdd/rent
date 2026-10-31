@@ -4432,7 +4432,43 @@ const legal: Readonly<Record<string, string>> = {
 }
 
 // @domain errors —— 错误与空状态提示
-const errors: Readonly<Record<string, string>> = {}
+const errors: Readonly<Record<string, string>> = {
+  '该订单已忽略退款': 'The refund for this order has already been dismissed',
+  '该订单没有待处理退款': 'This order has no pending refund',
+  '连接': 'Connection',
+  '握手': 'Handshake',
+  '升级': 'Upgrade',
+  '认证': 'Authentication',
+  '发件人校验': 'Sender validation',
+  '收件人校验': 'Recipient validation',
+  '投递准备': 'Message submission',
+  '投递': 'Delivery',
+  '邮件头包含无效字符': 'The email header contains invalid characters',
+  '邮件地址格式不正确': 'The email address is invalid',
+  '请填写收件邮箱': 'Enter a recipient email address',
+  '附件类型无效': 'The attachment type is invalid',
+  '附件内容无效': 'The attachment content is invalid',
+  'SMTP 主机格式不正确': 'The SMTP hostname is invalid',
+  'SMTP 端口无效': 'The SMTP port is invalid',
+  'Cloudflare Workers 不支持 SMTP 端口 25，请使用 465 或 587': 'Cloudflare Workers does not support SMTP port 25. Use port 465 or 587.',
+  'SMTP 加密方式无效': 'The SMTP encryption setting is invalid',
+  'SMTP 用户名或密码无效': 'The SMTP username or password is invalid',
+  'SMTP 连接已关闭': 'The SMTP connection was closed',
+  'SMTP 响应过长': 'The SMTP response is too long',
+  'SMTP 响应无效': 'The SMTP response is invalid',
+  'SMTP 连接或发送超时': 'The SMTP connection or delivery timed out',
+  'SMTP 服务器不支持 STARTTLS': 'The SMTP server does not support STARTTLS',
+  'SMTP 服务器不支持 PLAIN 或 LOGIN 认证': 'The SMTP server does not support PLAIN or LOGIN authentication',
+  'SMTP 连接失败': 'SMTP connection failed',
+  'SMTP 握手失败': 'SMTP handshake failed',
+  'SMTP TLS 升级失败': 'SMTP TLS upgrade failed',
+  'SMTP 认证失败': 'SMTP authentication failed',
+  'SMTP 发件人校验失败': 'SMTP sender validation failed',
+  'SMTP 收件人校验失败': 'SMTP recipient validation failed',
+  'SMTP 投递准备失败': 'SMTP message submission failed',
+  'SMTP 投递失败': 'SMTP delivery failed',
+  'SMTP 连接及认证成功': 'SMTP connection and authentication succeeded',
+}
 
 export const i18nDomainGroups: readonly I18nDomainGroup[] = [
   { domain: 'common', messages: common },

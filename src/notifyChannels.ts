@@ -3,7 +3,7 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-// 通知渠道配置：邮件发送（Resend / Brevo / MailerSend 三选一）+ 通用推送 Webhook。
+// 通知渠道配置：邮件发送（SMTP / Resend / Brevo / MailerSend）+ 通用推送 Webhook。
 // 密钥用 SETTINGS_ENCRYPTION_KEY 加密后存 systemSettings 表，
 // 与 stripe.ts / emailConfig.ts 完全同一套做法。运行期通过 resolveEmailCredentials
 // 取当前生效的邮件服务商凭据（后台配置优先，回落到 env），sendTransactionalEmail
@@ -13,7 +13,8 @@
 import type { Context } from 'hono'
 import { renderPlainTextEmailHtml } from './lib/html'
 import { getSystemSettings } from './settings/systemSettings'
-import { getEmailConfigSummary } from './emailConfig'
+import { getEmailConfigSummary, getEmailRuntimeConfig } from './emailConfig'
+import { sendSmtpEmail } from './services/smtp'
 
 export type EmailProvider = 'smtp' | 'resend' | 'brevo' | 'mailersend'
 const EMAIL_PROVIDERS: EmailProvider[] = ['smtp', 'resend', 'brevo', 'mailersend']
@@ -240,8 +241,7 @@ export interface EmailSendResult { ok: boolean; id: string | null; error: string
 export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): Promise<EmailSendResult> {
   try {
     const { provider, apiKey, from } = await resolveEmailCredentials(c)
-    if (provider === 'smtp') return { ok: false, id: null, error: '当前 Cloudflare Worker 尚未接入 SMTP 发信网关，请先配置 SMTP Relay URL' }
-    if (!apiKey || !from) return { ok: false, id: null, error: 'Email transport is not configured' }
+    if ((provider !== 'smtp' && !apiKey) || !from) return { ok: false, id: null, error: 'Email transport is not configured' }
     const recipients = Array.isArray(email.to) ? email.to : [email.to]
     const html = email.html || renderPlainTextEmailHtml(email.subject, email.text, getSystemSettings().companyDetails.name || 'PC Rental')
     const attachments = email.attachments?.filter(attachment => attachment.filename && attachment.content).map(attachment => ({
@@ -249,6 +249,11 @@ export async function sendTransactionalEmail(c: Context, email: OutgoingEmail): 
       content: attachment.content,
       contentType: attachment.contentType || 'application/octet-stream',
     }))
+
+    if (provider === 'smtp') {
+      const id = await sendSmtpEmail(await getEmailRuntimeConfig(c), { ...email, html, attachments })
+      return { ok: true, id, error: null }
+    }
 
     if (provider === 'brevo') {
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {

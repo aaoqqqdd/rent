@@ -189,6 +189,9 @@ export interface Order {
 
   // refunds 旧逻辑
   needsRefund?: boolean
+  refund_ignored_at?: string | null
+  refund_ignored_by?: string | null
+  refund_ignore_reason?: string | null
   refundMethod?: 'balance' | 'original'
   refundBsb?: string
   refundAccountNumber?: string

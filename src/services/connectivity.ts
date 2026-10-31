@@ -8,6 +8,8 @@ import { getStripeRuntimeConfig } from '../stripe'
 import { getSquareRuntimeConfig } from '../square'
 import { resolveEmailCredentials, getNotifyChannelsSummary } from '../notifyChannels'
 import { getTurnstileRuntimeConfig } from '../turnstile'
+import { getEmailRuntimeConfig } from '../emailConfig'
+import { verifySmtpConnection } from './smtp'
 
 export type ConnectivityStatus = 'ok' | 'warning' | 'error' | 'unconfigured'
 
@@ -30,7 +32,7 @@ export const CONNECTIVITY_PROBES: ConnectivityProbeDefinition[] = [
   { id: 'database', label: 'Cloudflare D1', category: 'CORE', endpoint: 'RENT binding', description: '验证 Worker 到主数据库的查询通道。' },
   { id: 'stripe', label: 'Stripe API', category: 'PAYMENT', endpoint: 'api.stripe.com/v1/account', description: '使用已保存的密钥读取 Stripe 账户，不创建付款。' },
   { id: 'square', label: 'Square API', category: 'PAYMENT', endpoint: 'connect.squareup.com/v2/locations', description: '使用已保存的密钥读取 Square 门店，不创建付款。' },
-  { id: 'email', label: '邮件发送 API', category: 'MESSAGING', endpoint: 'Resend / Brevo / MailerSend', description: '验证当前生效的邮件服务商密钥及连通性，不发送邮件。' },
+  { id: 'email', label: '邮件发送 API', category: 'MESSAGING', endpoint: 'SMTP / Resend / Brevo / MailerSend', description: '验证当前生效的邮件服务商密钥及连通性，不发送邮件。' },
   { id: 'notifyWebhook', label: '通用推送 Webhook', category: 'MESSAGING', endpoint: '已配置的 Webhook 地址', description: '检查通用推送 Webhook 是否已配置并启用，不发送请求。' },
   { id: 'exchange', label: 'AUD/CNY 汇率', category: 'PAYMENT', endpoint: 'api.frankfurter.app/latest', description: '读取澳元兑人民币实时汇率。' },
   { id: 'github', label: 'GitHub 客户端发布', category: 'DEVICE', endpoint: 'api.github.com/releases/latest', description: '验证 Windows 客户端更新检查通道。' },
@@ -76,8 +78,8 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
     } else if (definition.id === 'email') {
       const { provider, apiKey } = await resolveEmailCredentials(c)
       if (provider === 'smtp') {
-        status = 'warning'
-        detail = 'SMTP 配置已读取；Cloudflare Worker 尚未接入 SMTP Relay'
+        await verifySmtpConnection(await getEmailRuntimeConfig(c))
+        detail = 'SMTP 连接及认证成功'
       } else if (!apiKey) { status = 'unconfigured'; detail = '尚未配置邮件服务商 API Key（后台「通知渠道」或对应环境变量）' }
       else if (provider === 'brevo') {
         const response = await timedFetch('https://api.brevo.com/v3/account', { headers: { 'api-key': apiKey, Accept: 'application/json' } })
@@ -148,7 +150,7 @@ async function runProbe(c: Context, definition: ConnectivityProbeDefinition): Pr
   } catch (error: any) {
     console.error(`Connectivity probe ${definition.id} failed:`, error?.message || error)
     const message = String(error?.name === 'AbortError' ? '请求超时（8 秒）' : error?.message || '请求失败')
-    if ((definition.id === 'stripe' && message.includes('尚未配置 Stripe')) || (definition.id === 'square' && message.includes('尚未配置 Square'))) status = 'unconfigured'
+    if ((definition.id === 'stripe' && message.includes('尚未配置 Stripe')) || (definition.id === 'square' && message.includes('尚未配置 Square')) || (definition.id === 'email' && message.includes('尚未配置 SMTP'))) status = 'unconfigured'
     else status = 'error'
     detail = message.slice(0, 160)
   }

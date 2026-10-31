@@ -111,6 +111,12 @@ npx wrangler secret put SETTINGS_ENCRYPTION_KEY
 
 不要将 `.dev.vars`、Stripe 密钥、Cloudflare API Token 或 `SETTINGS_ENCRYPTION_KEY` 提交到版本控制。
 
+### 配置 SMTP 发信
+
+在管理员「API 设置」中选择 SMTP，填写主机、用户名、密码和发件邮箱。端口 `465` 使用 `SSL/TLS`；端口 `587` 使用 `STARTTLS`。Worker 通过原生 TCP 直接连接 SMTP 服务器，无需 SMTP Relay URL；Cloudflare 禁止连接端口 `25`。
+
+连通性检测会连接服务器并验证登录，不发送邮件。SMTP 支持中文、纯文本、HTML 和收据附件。
+
 ### 配置图片上传（Cloudinary Free）
 
 人民币支付宝 / 微信收款码、付款凭证和设备损坏照片通过 Worker 服务端上传到 Cloudinary，D1 只保存返回的 HTTPS 图片地址。请在 Cloudinary 控制台的 API Keys 页面创建凭证，然后登录管理员后台的 `/admin/settings`，在「Cloudinary 图片上传」中填写 Cloud Name、API Key 和 API Secret。密钥会使用 `SETTINGS_ENCRYPTION_KEY` 加密保存；旧部署也可以继续使用 `CLOUDINARY_CLOUD_NAME`、`CLOUDINARY_API_KEY` 和 `CLOUDINARY_API_SECRET` Wrangler Secrets 作为回退。

@@ -1,6 +1,13 @@
-import type { Context } from 'hono'
+/* Copyright (c) 2026 jiongjiong123441. All rights reserved.
+ * Licensed under PolyForm Noncommercial 1.0.0.
+ * Noncommercial use, modification, and distribution are permitted.
+ * Keep this notice and the LICENSE file with all copies and modified versions. */
 
-type StoredEmailConfig = { host: string; port: number; user: string; password: string; from: string; encryption: 'starttls' | 'ssl' | 'none' }
+import type { Context } from 'hono'
+import { validateSmtpConfig } from './services/smtp'
+
+export type SmtpConfig = { host: string; port: number; user: string; password: string; from: string; encryption: 'starttls' | 'ssl' | 'none' }
+type StoredEmailConfig = SmtpConfig
 
 const encode = (bytes: Uint8Array) => { let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary) }
 const decode = (value: string) => new Uint8Array(Array.from(atob(value), char => char.charCodeAt(0)))
@@ -44,11 +51,12 @@ export async function saveEmailConfig(c: Context, input: Record<string, any>) {
   const passwordPlain = String(input.password || '').trim()
   const password = passwordPlain ? await encrypt(c, passwordPlain) : current?.password
   const host = String(input.host || current?.host || '').trim()
-  const port = Math.min(65535, Math.max(1, Number(input.port || current?.port || 587)))
+  const port = Number(input.port ?? current?.port ?? 587)
   const user = String(input.user || current?.user || '').trim()
   const from = String(input.from || current?.from || '').trim()
   const encryption = ['starttls', 'ssl', 'none'].includes(input.encryption) ? input.encryption : (current?.encryption || 'starttls')
   if (!host || !user || !password || !from) throw new Error('请完整填写 SMTP 主机、用户名、密码和发件邮箱')
+  validateSmtpConfig({ host, port, user, password: passwordPlain || await decrypt(c, password), from, encryption })
   await c.env.RENT.prepare("INSERT INTO systemSettings (key, value, updatedAt) VALUES ('emailTransport', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updatedAt = CURRENT_TIMESTAMP, deleted_at = NULL").bind(JSON.stringify({ host, port, user, password, from, encryption })).run()
 }
 
