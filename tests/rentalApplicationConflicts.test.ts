@@ -7,6 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { readdirSync, readFileSync } from 'node:fs'
+import { URL } from 'node:url'
 import worker from '../src/index'
 import { createAuthSession, updateOrderStatus } from '../src/site'
 import { resolveRentalApplicationConflicts } from '../src/services/rentalApplications'
@@ -145,4 +146,40 @@ test('simultaneous conflict resolution rejects and notifies each loser once', as
   assert.equal(status('first'), 'pending_approval')
   assert.equal(status('second'), 'cancelled')
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM notifications WHERE type = 'rental_application_rejected'").get()?.n, 1)
+})
+
+test('rejection cancels contracts, clears review notifications and releases the reserved coupon', async t => {
+  const { sqlite, insert, context } = await setup(t)
+  insert('winner')
+  insert('loser', { end: '2090-01-05' })
+  sqlite.exec(`INSERT INTO contracts (id, orderId, contractNumber, content, status) VALUES ('contract', 'loser', 'C1', '<p>合同</p>', 'draft');
+    INSERT INTO notifications (id, recipient_id, type, title, message, order_id) VALUES ('review', 'admin', 'rental_application', '租赁申请', '待审核', 'loser');
+    INSERT INTO coupons (id, code, discount_type, discount_value, used_count) VALUES ('coupon', 'TEST', 'fixed', 10, 1);
+    INSERT INTO coupon_redemptions (id, coupon_id, coupon_code, customer_id, order_id, discount_amount, status)
+    VALUES ('redemption', 'coupon', 'TEST', 'a', 'loser', 10, 'RESERVED');`)
+  await resolveRentalApplicationConflicts(context, 'device', 'loser')
+  assert.equal(sqlite.prepare("SELECT status FROM contracts WHERE id = 'contract'").get()?.status, 'cancelled')
+  assert.ok(sqlite.prepare("SELECT deleted_at FROM notifications WHERE id = 'review'").get()?.deleted_at)
+  assert.equal(sqlite.prepare("SELECT status FROM coupon_redemptions WHERE id = 'redemption'").get()?.status, 'RELEASED')
+  assert.equal(sqlite.prepare("SELECT used_count FROM coupons WHERE id = 'coupon'").get()?.used_count, 0)
+  assert.equal(sqlite.prepare("SELECT lifecycle_status FROM devices WHERE id = 'device'").get()?.lifecycle_status, 'READY')
+})
+
+test('buffer days participate in race conflict detection', async t => {
+  const { insert, context, status } = await setup(t)
+  insert('longer')
+  insert('shorter', { start: '2090-01-10', end: '2090-01-12' })
+  assert.deepEqual(await resolveRentalApplicationConflicts(context, 'device', 'shorter', 2), ['shorter'])
+  assert.equal(status('longer'), 'pending_approval')
+})
+
+test('completed, cancelled and deleted applications do not compete', async t => {
+  const { sqlite, insert, context, status } = await setup(t)
+  insert('completed', { status: 'completed' })
+  insert('cancelled', { status: 'cancelled' })
+  insert('deleted')
+  sqlite.exec("UPDATE orders SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'deleted'")
+  insert('new', { end: '2090-01-03' })
+  assert.deepEqual(await resolveRentalApplicationConflicts(context, 'device', 'new'), [])
+  assert.equal(status('new'), 'pending_approval')
 })
