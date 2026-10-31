@@ -1079,7 +1079,7 @@ export async function recordDeviceLifecycle(c: Context, deviceId: string, nextSt
 export async function releaseDeviceIfUnbooked(c: Context, deviceId: string): Promise<void> {
   const activeOrder = await c.env.RENT.prepare(`
     SELECT id FROM orders
-    WHERE deviceId = ? AND status IN ('paid', 'active', 'pending_pickup', 'pending_return')
+    WHERE deviceId = ? AND deleted_at IS NULL AND status IN ('paid', 'active', 'extended', 'overdue', 'suspended', 'pending_pickup', 'pending_return')
     LIMIT 1
   `).bind(deviceId).first()
   if (activeOrder) return
@@ -1089,7 +1089,9 @@ export async function releaseDeviceIfUnbooked(c: Context, deviceId: string): Pro
   // RETIRED）保持原有行为，不强行纠正 lifecycle_status。
   const device = await c.env.RENT.prepare('SELECT lifecycle_status FROM devices WHERE id = ?').bind(deviceId).first() as any
   const currentLifecycle = String(device?.lifecycle_status || 'READY')
-  if (canTransitionDeviceLifecycle(currentLifecycle, 'READY')) {
+  if (currentLifecycle === 'READY') {
+    await updateDeviceStatus(c, deviceId, 'available')
+  } else if (canTransitionDeviceLifecycle(currentLifecycle, 'READY')) {
     await recordDeviceLifecycle(c, deviceId, 'READY', { reason: '关联订单已取消/完成，设备已释放' })
   } else {
     await updateDeviceStatus(c, deviceId, 'available')

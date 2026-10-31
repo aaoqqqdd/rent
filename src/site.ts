@@ -675,6 +675,7 @@ export async function updateOrderStatus(c: Context, orderId: string, status: str
     await db.prepare("UPDATE orders SET deposit_status = 'HELD', deposit_paid_at = COALESCE(deposit_paid_at, CURRENT_TIMESTAMP), deposit_held_amount = depositAmount WHERE id = ?").bind(orderId).run()
   }
   if (status === 'completed') {
+    if (previous?.deviceId) await releaseDeviceIfUnbooked(c, previous.deviceId)
     // “已完成”只代表租赁流程走完，跟押金是否结清是两回事——这里单独刷新
     // settlement_status，读取本次调用之后的最终 deposit_status（上面 HELD 分支
     // 可能刚改过）。updateOrderStatus 是所有普通状态流转的统一入口，在这里做

@@ -2972,6 +2972,7 @@ app.post('/staff/orders/:orderId/inspection', async (c) => {
     ...(damageDescription ? [c.env.RENT.prepare("INSERT INTO damage_cases (id, order_id, device_id, description, photo_urls, estimated_cost_cents, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(`damage-${nanoid(12)}`, order.id, order.deviceId, damageDescription, damagePhotos, Math.round(replacementCost * 100), user.id)] : []),
   ])
   await recordDeviceLifecycle(c, order.deviceId, damageDescription ? 'DAMAGED' : 'RETURNED', { orderId: order.id, reason: damageDescription || '归还验机完成', changedBy: user.id })
+  if (!damageDescription) await releaseDeviceIfUnbooked(c, order.deviceId)
   await createAuditLog(c, { actor: user, action: damageDescription ? 'RETURN_INSPECTION_COMPLETED_WITH_DAMAGE' : 'RETURN_INSPECTION_COMPLETED', targetType: 'ORDER', targetId: order.id, before: { status: order.status, rentalStatus: order.rental_status }, after: { status: 'completed', rentalStatus: 'COMPLETED', inspectionId, damageReported: Boolean(damageDescription) }, reason: damageDescription || '归还验机完成' })
   const settlementResponse = await settleCompletedOrderAuthorization(c, user, order.id)
   if (settlementResponse && settlementResponse.status >= 400) return settlementResponse
@@ -4544,7 +4545,7 @@ app.post('/admin/orders/:id/update', async (c) => {
     const settlementResponse = await settleCompletedOrderAuthorization(c, user, order.id)
     if (settlementResponse && settlementResponse.status >= 400) return wantsJson ? c.json({ ok: false, error: await settlementResponse.text() }, settlementResponse.status as any) : settlementResponse
   }
-  if (status === 'cancelled' || status === 'completed') await releaseDeviceIfUnbooked(c, order.deviceId)
+  if (status === 'cancelled') await releaseDeviceIfUnbooked(c, order.deviceId)
   if (status === 'paid') await ensureOrderNumber(c, order.id)
   if (wantsJson) return c.json({ ok: true })
   return c.redirect(`/admin/orders/${c.req.param('id')}`)
