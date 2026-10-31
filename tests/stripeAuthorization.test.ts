@@ -220,11 +220,47 @@ for (const deduction of [0, 25, 200]) {
     const adminHtml = await renderAdminOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order')
     const customerHtml = await renderCustomerOrderDetail(context, { id: 'customer', role: 'CUSTOMER' }, 'order')
     assert.match(adminHtml, /已释放剩余押金/)
+    assert.doesNotMatch(adminHtml, /REFUNDED: 已退款|name="refundAmount"|action="\/admin\/orders\/order\/deposit-settlements"/)
     assert.doesNotMatch(adminHtml, /action="[^"]*deposit-(?:refund|settlements)"/)
     assert.match(customerHtml, /预授权已结算，剩余押金已释放/)
     for (const script of extractInlineScripts(adminHtml + customerHtml)) assert.doesNotThrow(() => new Function(script))
   })
 }
+
+test('a released authorization with stale status cannot be submitted for settlement again', async t => {
+  const { sqlite, calls, settle, context } = await setup(t)
+  assert.equal((await settle({ refundAmount: '200', refundMethod: 'original' })).status, 303)
+  sqlite.exec("UPDATE orders SET deposit_status = 'REFUND_PENDING', refundMethod = 'balance', deposit_refund_at = NULL")
+  const html = await renderAdminOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order')
+  assert.match(html, /预授权已结算，剩余押金已释放/)
+  assert.doesNotMatch(html, /name="refundAmount"|已通过账户余额处理押金退款/)
+  const response = await requestAsAdmin(context, '/admin/orders/order/deposit-settlements', { refundAmount: '200', refundMethod: 'balance' })
+  assert.equal(response.status, 409, await response.text())
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM deposit_settlements').get()?.count, 0)
+  assert.equal((await settle({ refundAmount: '200', refundMethod: 'balance' })).status, 409)
+  assert.equal(calls.filter(call => call.path.endsWith('/capture')).length, 1)
+  assert.equal(calls.filter(call => call.path.startsWith('refunds')).length, 0)
+  assert.equal(sqlite.prepare("SELECT balance FROM users WHERE id = 'customer'").get()?.balance, 12)
+})
+
+for (const deduction of [0, 25]) test(`SetupIntent settlement with ${deduction} deduction cannot be repeated`, async t => {
+  const { sqlite, calls, settle, context, setIntent } = await setup(t, { mode: 'SETUP_INTENT' })
+  sqlite.exec("UPDATE orders SET stripe_payment_method_id = 'pm_card'")
+  setIntent({ id: 'pi_deduction', status: 'succeeded', amount_received: deduction * 100, amount_capturable: 0 })
+  const form = { deductionAmount: String(deduction), ...(deduction ? { deductionCategory: 'DAMAGE', deductionReason: '设备损坏' } : {}) }
+  const response = await settle(form)
+  assert.equal(response.status, 303, await response.text())
+  const html = await renderAdminOrderDetail(context, { id: 'admin', role: 'ADMIN' }, 'order')
+  const customerHtml = await renderCustomerOrderDetail(context, { id: 'customer', role: 'CUSTOMER' }, 'order')
+  assert.match(html, /押金已结算/)
+  assert.match(customerHtml, /押金已结算/)
+  assert.doesNotMatch(html, /name="deductionAmount"|已通过账户余额处理押金退款|REFUNDED: 已退款/)
+  assert.equal((await settle(form)).status, 409)
+  assert.equal((await requestAsAdmin(context, '/admin/orders/order/deposit-settlements', form)).status, 409)
+  assert.equal(calls.filter(call => call.path === 'payment_intents' && call.method === 'POST').length, deduction ? 1 : 0)
+  assert.equal(calls.filter(call => call.path.startsWith('refunds')).length, 0)
+  for (const script of extractInlineScripts(html + customerHtml)) assert.doesNotThrow(() => new Function(script))
+})
 
 test('legacy deposit-only authorization with no deductions is canceled without a capture', async t => {
   const { sqlite, calls, settle } = await setup(t, { rental: 0 })

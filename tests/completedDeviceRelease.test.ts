@@ -10,6 +10,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { URL } from 'node:url'
 import worker from '../src/index'
 import { createAuthSession, updateOrderStatus } from '../src/site'
+import { renderAdminDevices } from '../src/pages/admin/devices'
 
 async function setup(t: any, depositStatus = 'HELD', mode = 'PAID') {
   const sqlite = new DatabaseSync(':memory:')
@@ -32,8 +33,8 @@ async function setup(t: any, depositStatus = 'HELD', mode = 'PAID') {
   }
   const context = { env: { RENT: db } } as any
   const session = await createAuthSession(context, 'release-admin')
-  const request = (path: string, form: Record<string, string>) => worker.fetch(new Request(`https://rent.example.test${path}`, {
-    method: 'POST', body: new URLSearchParams(form), headers: { Cookie: `session=${session.token}`, Origin: 'https://rent.example.test', 'Sec-Fetch-Site': 'same-origin' },
+  const request = (path: string, form: Record<string, string>, method = 'POST') => worker.fetch(new Request(`https://rent.example.test${path}`, {
+    method, body: method === 'GET' ? undefined : new URLSearchParams(form), headers: { Cookie: `session=${session.token}`, Origin: 'https://rent.example.test', 'Sec-Fetch-Site': 'same-origin' },
   }), context.env, { waitUntil() {} } as any)
   return { sqlite, context, request }
 }
@@ -82,4 +83,43 @@ for (const status of ['extended', 'overdue', 'suspended']) test(`another ${statu
   sqlite.prepare("INSERT INTO orders (id, userId, deviceId, rentalPeriod, totalAmount, depositAmount, status, is_manual) VALUES ('other-rental', 'release-customer', 'release-device', 0, 0, 0, ?, 1)").run(status)
   await updateOrderStatus(context, 'release-order', 'completed')
   assert.equal(sqlite.prepare("SELECT status FROM devices WHERE id = 'release-device'").get()?.status, 'rented')
+})
+
+test('device listing opens a separate confirmation page before updating lifecycle and audit history', async t => {
+  const { sqlite, request } = await setup(t)
+  sqlite.exec("UPDATE orders SET status = 'completed'; UPDATE devices SET lifecycle_status = 'RETURNED'")
+  const html = renderAdminDevices({ id: 'release-admin', role: 'ADMIN' }, [{ id: 'release-device', name: '电脑', status: 'rented', lifecycleStatus: 'RETURNED' }])
+  assert.match(html, /href="\/admin\/devices\/release-device\/relist">上架<\/a>/)
+  assert.doesNotMatch(html, /action="\/admin\/devices\/release-device\/relist"/)
+  const before = sqlite.prepare('SELECT status, lifecycle_status FROM devices').get()
+  const page = await request('/admin/devices/release-device/relist', {}, 'GET')
+  assert.equal(page.status, 200)
+  const pageHtml = await page.text()
+  assert.match(pageHtml, /<h2>设备上架<\/h2>/)
+  assert.match(pageHtml, /RELEASE-SN/)
+  assert.match(pageHtml, /<form method="post" action="\/admin\/devices\/release-device\/relist"/)
+  assert.match(pageHtml, />确认上架<\/button>/)
+  assert.deepEqual(sqlite.prepare('SELECT status, lifecycle_status FROM devices').get(), before)
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM device_lifecycle_events').get()?.count, 0)
+  assert.equal((await request('/admin/devices/release-device/relist', {})).status, 303)
+  assert.equal(sqlite.prepare('SELECT status FROM devices').get()?.status, 'available')
+  assert.equal(sqlite.prepare('SELECT lifecycle_status FROM devices').get()?.lifecycle_status, 'READY')
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM device_lifecycle_events WHERE next_status = 'READY'").get()?.count, 1)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'DEVICE_STATUS_CHANGED'").get()?.count, 1)
+  assert.equal((await request('/admin/devices/release-device/relist', {})).status, 409)
+  assert.equal((await request('/admin/devices/release-device/relist', {}, 'GET')).status, 409)
+})
+
+for (const blockedBy of ['active-order', 'maintenance', 'damaged', 'unauthorized']) test(`device listing rejects ${blockedBy}`, async t => {
+  const { sqlite, request } = await setup(t)
+  sqlite.exec("UPDATE devices SET lifecycle_status = 'RETURNED'")
+  if (blockedBy !== 'active-order') sqlite.exec("UPDATE orders SET status = 'completed'")
+  if (blockedBy === 'maintenance') sqlite.exec("INSERT INTO maintenance_records (id, device_id, maintenance_type, status, description, created_by) VALUES ('maintenance', 'release-device', 'REPAIR', 'OPEN', '维修', 'release-admin')")
+  if (blockedBy === 'damaged') sqlite.exec("UPDATE devices SET lifecycle_status = 'DAMAGED'")
+  if (blockedBy === 'unauthorized') sqlite.exec("UPDATE users SET role = 'CUSTOMER' WHERE id = 'release-admin'")
+  if (blockedBy === 'unauthorized' || blockedBy === 'damaged') assert.equal((await request('/admin/devices/release-device/relist', {}, 'GET')).status, blockedBy === 'unauthorized' ? 403 : 409)
+  const before = sqlite.prepare('SELECT status, lifecycle_status FROM devices').get()
+  const response = await request('/admin/devices/release-device/relist', {})
+  assert.equal(response.status, blockedBy === 'unauthorized' ? 403 : 409, await response.text())
+  assert.deepEqual(sqlite.prepare('SELECT status, lifecycle_status FROM devices').get(), before)
 })

@@ -11,6 +11,7 @@ import * as actions from './actions/index'
 import { sendPasswordResetEmail } from './auth/passwordReset'
 import { expireRentalLinkDrafts } from './services/rentalLinks'
 import { serviceFeeRate } from './domain/pickupTimeSlots'
+import { isCardDepositSettled } from './domain/paymentPlan'
 import {
   renderNotFound,
   renderForbidden,
@@ -4733,6 +4734,8 @@ app.post('/admin/orders/:id/deposit-settlements', async (c) => {
   const order = await getOrderById(c, c.req.param('id'))
   if (!order) return c.text('订单不存在', 404)
   if (order.status !== 'completed') return c.text('只有已归还并完成的订单才能提交押金结算', 409)
+  const completedDepositRefund = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' LIMIT 1").bind(order.id).first()
+  if (isCardDepositSettled(order, Boolean(completedDepositRefund))) return c.text('该笔押金已结算，不能重复处理', 409)
   const existing = await c.env.RENT.prepare("SELECT id FROM deposit_settlements WHERE order_id = ? AND status IN ('PENDING_MANAGER_APPROVAL', 'APPROVED', 'EXECUTED')").bind(order.id).first()
   if (existing) return c.text('该订单已有待处理或已完成的押金结算单', 409)
   const form = await c.req.parseBody()
@@ -5109,6 +5112,21 @@ app.get('/admin/devices', async (c) => {
   const { getDevicesAsync } = await import('./site')
   const devices = await getDevicesAsync(c)
   return c.html(pages.renderAdminDevices(user, devices))
+})
+
+app.get('/admin/devices/:id/relist', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  const device = await getDeviceById(c, c.req.param('id'))
+  if (!device) return c.text('设备不存在', 404)
+  if (String(device.lifecycle_status || device.lifecycleStatus) !== 'RETURNED') return c.text('只有已归还待上架的设备才能上架', 409)
+  return c.html(pages.renderAdminDeviceRelist(user, device))
+})
+
+app.post('/admin/devices/:id/relist', async (c) => {
+  const user = c.get('user')
+  if (!user || user.role !== 'ADMIN') return c.html(renderForbidden(), 403)
+  return actions.relistReturnedDevice(c, user, c.req.param('id'))
 })
 
 app.get('/admin/devices/new', async (c) => {

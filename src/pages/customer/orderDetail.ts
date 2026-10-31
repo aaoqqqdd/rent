@@ -7,7 +7,7 @@ import { buildLayout, getOrderById, getDeviceById, formatCurrency, formatMelbour
 import { Context } from 'hono';
 import { renderStripePaymentBox } from '../partials/stripePaymentSection';
 import { renderSquareGiftCardPaymentBox } from '../partials/squareGiftCardPayment';
-import { depositPaymentModeForOrder, normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
+import { depositPaymentModeForOrder, isCardDepositSettled, normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
 import { getOrderPriceAdjustmentSummary } from '../../actions/stripePayments';
 import { getDeliveryBookingsForOrder, safeDeliveryTrackingUrl, type DeliveryBookingView } from '../../services/deliveryViews';
 import { decryptSecret } from '../../lib/secretBox';
@@ -69,9 +69,11 @@ export async function renderCustomerOrderDetail(c: Context, user: any, orderId: 
   }
   const report = (data: any, keys: string[]) => `<dl class="data-list">${keys.map(key => `<div><dt>${esc(key)}</dt><dd>${esc(data[key])}</dd></div>`).join('')}</dl>`
   const deducted = Number(depositRefund?.deduction_amount || 0) > 0
-  const preauthSettled = depositMode === 'PREAUTH' && order.refundMethod === 'original' && ['REFUNDED', 'PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status || ''))
+  const cardDepositSettled = isCardDepositSettled(order, Boolean(depositRefund))
+  const settledDepositRefund = refundRows.find((refund: any) => refund.type === 'deposit')
+  const preauthSettled = depositMode === 'PREAUTH' && cardDepositSettled && (settledDepositRefund ? settledDepositRefund.refund_method === 'stripe' && Number(settledDepositRefund.refund_amount) === 0 : order.refundMethod === 'original')
   const releasedDeposit = Math.max(0, deposit - Number(order.deposit_deduction_amount || 0))
-  const refundLabel = preauthSettled ? '预授权已结算，剩余押金已释放' : refundStatus?.status === 'pending' ? '退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? '部分退款' : '已退款') : ''
+  const refundLabel = preauthSettled ? '预授权已结算，剩余押金已释放' : depositMode === 'SETUP_INTENT' && cardDepositSettled ? '押金已结算' : refundStatus?.status === 'pending' ? '退款处理中' : refundStatus?.status === 'succeeded' ? (Number(refundStatus.refund_amount || 0) < Number(refundStatus.refundable_amount || refundStatus.refund_amount || 0) ? '部分退款' : '已退款') : ''
   const windowsData = typeof contract?.contract_data === 'string' ? (() => { try { return JSON.parse(contract.contract_data || '{}') } catch (_) { return {} } })() : (contract?.contract_data || {})
   const windowsPassword = await decryptSecret(c, windowsData.windows_password)
   const deliveryBlock = deliveryBookings.length ? `<section class="panel" style="margin-top:20px"><h3>配送状态</h3>${deliveryBookings.map((booking: any) => { const trackingUrl = safeDeliveryTrackingUrl(booking.trackingUrl); return `<div class="delivery-status-row"><div><strong>${booking.direction === 'return' ? '回收' : '派送'}：${esc(booking.statusLabel)}</strong><p class="form-text">${esc(booking.statusDescription)}</p>${booking.providerReference ? `<small class="form-text">配送编号：${esc(booking.providerReference)}</small>` : ''}${booking.locked ? '<small class="delivery-lock-note">该状态下不能更新或取消配送订单。</small>' : ''}</div>${trackingUrl ? `<a class="button button-secondary" href="${esc(trackingUrl)}" target="_blank" rel="noopener noreferrer">查看追踪链接</a>` : ''}</div>` }).join('')}</section>` : ''

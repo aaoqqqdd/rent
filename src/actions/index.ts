@@ -8,6 +8,7 @@ export * from './public/signContract';
 export * from './admin/saveSettings';
 export * from './admin/manualOrders';
 export * from './admin/rentalLinks';
+export * from './admin/devices';
 export * from './public/rentalLink';
 export * from './staff/cancelContract';
 export * from './coupons';

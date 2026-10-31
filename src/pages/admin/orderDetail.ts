@@ -7,7 +7,7 @@ import { buildLayout, getOrderById, getUserById, getDeviceById, getContractByOrd
 import { Context } from 'hono';
 import { renderOrderStatusFeedback } from './orderStatusFeedback';
 import { renderReconciliationPanel } from '../partials/reconciliationPanel';
-import { normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
+import { isCardDepositSettled, normalizeSecurityDepositMethod, securityDepositMethodLabel } from '../../domain/paymentPlan';
 import { getDeliveryBookingsForOrder, safeDeliveryTrackingUrl } from '../../services/deliveryViews'
 import { deliveryStatusInfo } from '../../deliveryStatus'
 import { renderAdminManualOrder } from './manualOrder'
@@ -86,12 +86,15 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   const isSetupIntentDeposit = String((order as any).deposit_payment_mode || '') === 'SETUP_INTENT'
   const canModifyRefundMethod = String(order.status) === 'completed' && !isSetupIntentDeposit && !completedRefund;
   const isPreauthDeposit = String((order as any).deposit_payment_mode || '') === 'PREAUTH'
+  const settledDepositRefund = refundRows.find((refund: any) => refund.type === 'deposit' && refund.status === 'succeeded')
+  const cardDepositSettled = isCardDepositSettled(order, Boolean(settledDepositRefund))
+  const preauthReleased = isPreauthDeposit && cardDepositSettled && (settledDepositRefund ? settledDepositRefund.refund_method === 'stripe' && Number(settledDepositRefund.refund_amount) === 0 : order.refundMethod === 'original')
   const preauthFee = Math.round(Math.max(0, Number(order.totalAmount) - depositAmount) * 0.025 * 100) / 100
   const depositMethod = normalizeSecurityDepositMethod((order as any).deposit_method, isSetupIntentDeposit ? 'card_hold' : 'bank_transfer')
   let proofImage = ''
   try { proofImage = transferProof?.image_url ? validateHostedImageUrls(transferProof.image_url, 1)[0] : '' } catch { }
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
-  const canSettleDeposit = order.status === 'completed' && (isSetupIntentDeposit || remainingRefundTotal > 0) && !(isPreauthDeposit && ['REFUNDED', 'PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status || ''))) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED')
+  const canSettleDeposit = order.status === 'completed' && !cardDepositSettled && (isSetupIntentDeposit || remainingRefundTotal > 0) && (!depositSettlement || depositSettlement.status === 'REJECTED' || depositSettlement.status === 'APPROVED')
   const showRefundCard = order.status === 'completed' || (order.status === 'paid' && order.startDate > today && !completedRefund)
 
   const statusLabels: Record<string, { label: string, color: string, bg: string, icon: string }> = {
@@ -114,7 +117,7 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
   // 订单“已完成”只代表设备已归还，跟押金是否真正结清（deposit_status）是两回事，
   // 单独一个徽章显示，不能让“已完成”看起来什么都办完了（对应 o-af1VCjmW 那次事故）。
   const settlementPending = order.status === 'completed' && order.settlement_status === 'PENDING';
-  const refundStatusLabel = completedRefund?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : completedRefund?.status === 'succeeded' ? (Number(completedRefund.refund_amount || 0) < Number(completedRefund.refundable_amount || completedRefund.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : '';
+  const refundStatusLabel = preauthReleased ? '预授权已结算，剩余押金已释放' : isSetupIntentDeposit && cardDepositSettled ? '押金已结算' : completedRefund?.status === 'pending' ? 'REFUND_PENDING: 退款处理中' : completedRefund?.status === 'succeeded' ? (Number(completedRefund.refund_amount || 0) < Number(completedRefund.refundable_amount || completedRefund.refund_amount || 0) ? 'PARTIALLY_REFUNDED: 部分退款' : 'REFUNDED: 已退款') : '';
   const deliveryBlock = deliveryBookings.length ? `<div class="panel" style="margin-bottom:24px"><div class="section-title"><div><h3>配送状态</h3></div></div>${deliveryBookings.map((booking: any) => { const info = deliveryStatusInfo(booking.status); const trackingUrl = safeDeliveryTrackingUrl(booking.trackingUrl); return `<div class="delivery-status-row"><div><strong>${booking.direction === 'return' ? '回收' : '派送'}：${escapeHtml(info.label)}</strong><p class="section-note">${escapeHtml(info.description)}</p>${booking.providerReference ? `<small class="section-note">配送编号：${escapeHtml(booking.providerReference)}</small>` : ''}${info.special ? '<small class="delivery-lock-note">该状态下不能更新或取消配送订单。</small>' : ''}</div>${trackingUrl ? `<a class="button button-secondary" href="${escapeHtml(trackingUrl)}" target="_blank" rel="noopener noreferrer">查看追踪链接</a>` : ''}</div>` }).join('')}</div>` : '';
 
   const body = `
@@ -325,14 +328,13 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
         </div>
 
         ${showRefundCard ? `<div style="padding: 24px; background: linear-gradient(135deg, #fef7ed 0%, #feedd9 100%); border-radius: 16px;">
-          <h4 style="margin: 0 0 16px 0; color: #c2410c;">退款处理</h4>
+          <h4 style="margin: 0 0 16px 0; color: #c2410c;">${order.status === 'completed' ? '押金结算' : '退款处理'}</h4>
           <p class="section-note">押金方式：${escapeHtml(securityDepositMethodLabel(depositMethod))}</p>
           ${hasTransferPriceRefund ? `<div class="alert"><strong>转账类付款待退差价：${formatCurrency(pendingPriceRefund)}</strong><br>该金额将在本次押金退款中一并退还；押金可退 ${formatCurrency(remainingDepositRefund)}，本次最多合计 ${formatCurrency(remainingRefundTotal)}。</div>` : ''}
-          ${isPreauthDeposit && order.refundMethod === 'original' && ['REFUNDED', 'PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status || '')) ? `<div class="alert">信用卡预授权已结算：押金扣款 ${formatCurrency(Number(order.deposit_deduction_amount || 0))}，已释放剩余押金 ${formatCurrency(Math.max(0, depositAmount - Number(order.deposit_deduction_amount || 0)))}。</div>` : completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
+          ${preauthReleased ? `<div class="alert">信用卡预授权已结算：押金扣款 ${formatCurrency(Number(order.deposit_deduction_amount || 0))}，已释放剩余押金 ${formatCurrency(Math.max(0, depositAmount - Number(order.deposit_deduction_amount || 0)))}。</div>` : isSetupIntentDeposit && cardDepositSettled ? `<div class="alert">押金已结算：实际扣款 ${formatCurrency(Number(order.deposit_deduction_amount || 0))}。</div>` : completedRefund?.status === 'succeeded' ? `<div class="alert">已通过${completedRefund.refund_method === 'stripe' ? 'Stripe' : completedRefund.refund_method === 'bank_transfer' ? '银行转账' : '账户余额'}处理${completedRefund.type === 'deposit' ? '押金' : '全额取消'}退款：${formatCurrency(completedRefund.refund_amount)}${Number(completedRefund.refunded_processing_fee || 0) ? `，另退押金对应手续费 ${formatCurrency(completedRefund.refunded_processing_fee)}` : ''}${completedRefund.deduction_amount ? `，扣除 ${formatCurrency(completedRefund.deduction_amount)}（${escapeHtml(completedRefund.deduction_reason)}）` : ''}</div>` : ''}
           ${depositSettlement && completedRefund?.status !== 'succeeded' ? `<div class="alert">结算单 ${escapeHtml(depositSettlement.settlement_number)}：${escapeHtml(depositSettlement.status)}${depositSettlement.review_note ? ` · ${escapeHtml(depositSettlement.review_note)}` : ''}</div>` : ''}
           ${canSettleDeposit ? `<form method="POST" action="/admin/orders/${order.id}/${depositSettlement?.status === 'APPROVED' ? 'deposit-refund' : 'deposit-settlements'}" data-site-confirm="${depositSettlement?.status === 'APPROVED' ? '将按已批准结算单执行本次押金结算。请核对退款金额、扣款金额和处理方式。' : '将提交本次押金结算供经理审批。请核对结算金额及扣款原因。'}" data-confirm-variant="${depositSettlement?.status === 'APPROVED' ? 'danger' : 'default'}" data-confirm-title="${depositSettlement?.status === 'APPROVED' ? '执行押金结算？' : '提交结算审批？'}" data-confirm-label="${depositSettlement?.status === 'APPROVED' ? '执行押金结算' : '提交审批'}">
             ${isSetupIntentDeposit ? `<input type="hidden" name="refundMethod" value="original"><p class="section-note">押金未预扣；无损坏或逾期填 0。</p>` : `<label class="form-label" for="refundMethod">退款方式</label>
-            ${isPreauthDeposit ? '<p class="section-note">余额：捕获全部预授权；原路：只捕获实际扣款。</p>' : ''}
             <select class="form-control" id="refundMethod" name="refundMethod" required>
               <option value="balance" ${(depositSettlement?.refund_method || order.refundMethod) !== 'original' ? 'selected' : ''}>退回账户余额</option>
               <option value="original" ${(depositSettlement?.refund_method || order.refundMethod) === 'original' && (isPreauthDeposit || order.paymentMethod !== 'bank_transfer') ? 'selected' : ''}>原路退回</option>
@@ -340,12 +342,12 @@ export async function renderAdminOrderDetail(c: Context, user: any, orderId: str
             </select>
             <div id="refundBankFields" class="grid grid-3" style="margin-top:12px;" ${order.refundMethod === 'original' && order.paymentMethod === 'bank_transfer' ? '' : 'hidden'}><div><label class="form-label">BSB</label><input class="form-control" name="refundBsb" value="${escapeHtml(order.refundBsb || '')}" placeholder="000-000"></div><div><label class="form-label">账号</label><input class="form-control" name="refundAccountNumber" value="${escapeHtml(order.refundAccountNumber || '')}"></div><div><label class="form-label">账户名</label><input class="form-control" name="refundAccountName" value="${escapeHtml(order.refundAccountName || '')}"></div></div>
             <script>document.getElementById('refundMethod')?.addEventListener('change',e=>{document.getElementById('refundBankFields').hidden=e.target.value!=='bank_transfer'})</script>`}
-            <label class="form-label" for="refundItem">退款项目</label>
+            ${isPreauthDeposit || isSetupIntentDeposit ? '<input type="hidden" name="refundItem" value="deposit">' : `<label class="form-label" for="refundItem">退款项目</label>
             <select class="form-control" id="refundItem" name="refundItem" required onchange="document.getElementById('customRefundItem').hidden=this.value!=='other';document.getElementById('customRefundItem').required=this.value==='other';">
               <option value="deposit">押金退款</option>
               <option value="other">其他退款项目</option>
             </select>
-            <input class="form-control" id="customRefundItem" name="customRefundItem" maxlength="100" placeholder="请输入退款项目名称" hidden>
+            <input class="form-control" id="customRefundItem" name="customRefundItem" maxlength="100" placeholder="请输入退款项目名称" hidden>`}
             ${isSetupIntentDeposit ? `<label class="form-label" for="deductionAmount">本次实际扣款金额（押金额度 ${formatCurrency(depositAmount)}）</label><input class="form-control" id="deductionAmount" name="deductionAmount" type="number" min="0" max="${depositAmount}" step="0.01" value="${Number(depositSettlement?.deduction_amount || 0)}" required>` : `<label class="form-label" for="refundAmount">${isPreauthDeposit ? '本次退回或释放押金额度' : '本次退款合计（押金 + 差价）'}（最多 ${formatCurrency(remainingRefundTotal)}）</label>
             <input class="form-control" id="refundAmount" name="refundAmount" type="number" min="0" max="${remainingRefundTotal}" step="0.01" value="${Math.min(Number(depositSettlement?.refund_amount ?? remainingRefundTotal), remainingRefundTotal)}" required>`}
             <label class="form-label" for="deductionReason">扣款原因（发生损坏或逾期时必填）</label>

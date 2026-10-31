@@ -57,6 +57,7 @@ export * from './admin/finance';
 export * from './admin/revenueStats';
 export * from './admin/coupons';
 export * from './admin/devices';
+export * from './admin/deviceRelist';
 export * from './admin/deviceNew';
 export * from './admin/deviceEdit';
 export * from './admin/deviceControl';

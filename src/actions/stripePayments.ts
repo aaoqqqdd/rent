@@ -10,7 +10,7 @@ import { createNotification } from '../services/notifications'
 import { stripeRequest, verifyStripeWebhook, getStripePublishableKey } from '../stripe'
 import { squareRequest } from '../square'
 import { releaseCouponForOrder } from './coupons'
-import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
+import { depositAuthorizationWindowDays, depositPaymentModeForOrder, depositPaymentModeForRental, isCardDepositSettled, normalizeSecurityDepositMethod, type DepositPaymentMode } from '../domain/paymentPlan'
 import { computeOrderSettlementStatus } from '../domain/orderSettlement'
 import { isPickupHoldExpired, returnOverdueDays } from '../domain/pickupHold'
 
@@ -1346,11 +1346,14 @@ export async function refundDeposit(c: Context, admin: any, orderId: string, for
   if (!order) return c.text('订单不存在', 404)
   if (order.status !== 'completed') return c.text('只有已归还并完成的订单才能处理押金', 409)
   const depositMode = depositPaymentModeForOrder(order)
+  if (depositMode !== 'PAID') {
+    const settled = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' LIMIT 1").bind(order.id).first()
+    if (isCardDepositSettled(order, Boolean(settled))) return c.text('该笔押金已结算，不能重复处理', 409)
+  }
   if (depositMode === 'PREAUTH') {
     // 逾期任务会提前把押金标为扣除，但预授权仍需在归还时实际请款。
-    const settled = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' LIMIT 1").bind(order.id).first()
     const overdueDeduction = Number(order.overdue_deposit_applied || 0) > 0 && ['PARTIALLY_DEDUCTED', 'FORFEITED'].includes(String(order.deposit_status || ''))
-    if (settled || (!['HELD', 'REFUND_PENDING'].includes(String(order.deposit_status || '')) && !overdueDeduction)) return c.text('该笔信用卡预授权已结算或未完成授权，不能重复处理', 409)
+    if (!['HELD', 'REFUND_PENDING'].includes(String(order.deposit_status || '')) && !overdueDeduction) return c.text('该笔信用卡预授权已结算或未完成授权，不能重复处理', 409)
     return settlePreauthorizedDeposit(c, admin, order, form)
   }
   if (depositMode === 'SETUP_INTENT') return settleSetupIntentDeposit(c, admin, order, form)
@@ -1460,7 +1463,7 @@ export async function settleCompletedOrderAuthorization(c: Context, actor: any, 
   const order = await getOrderById(c, orderId)
   if (!order || order.status !== 'completed' || depositPaymentModeForOrder(order) !== 'PREAUTH') return null
   const settled = await c.env.RENT.prepare("SELECT id FROM payment_refunds WHERE order_id = ? AND type = 'deposit' AND status = 'succeeded' LIMIT 1").bind(order.id).first()
-  if (settled) return null
+  if (isCardDepositSettled(order, Boolean(settled))) return null
   let settlement = await c.env.RENT.prepare('SELECT * FROM deposit_settlements WHERE order_id = ?').bind(order.id).first() as any
   if (!settlement) {
     const inspection = await c.env.RENT.prepare("SELECT snapshot_json FROM device_inspections WHERE rental_id = ? AND inspection_type = 'after_return' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1").bind(order.id).first() as any

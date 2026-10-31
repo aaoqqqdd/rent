@@ -38,3 +38,8 @@ export function depositPaymentModeForOrder(order: { deposit_payment_mode?: unkno
   if (stored === 'PREAUTH' || stored === 'SETUP_INTENT' || stored === 'PAID') return stored
   return 'PAID'
 }
+
+/** 预授权释放不产生现金退款，不能用已退款金额判断是否已结算。 */
+export function isCardDepositSettled(order: { deposit_payment_mode?: unknown; depositPaymentMode?: unknown; deposit_refund_at?: unknown; deposit_status?: unknown }, hasSucceededDepositRefund = false): boolean {
+  return depositPaymentModeForOrder(order) !== 'PAID' && (hasSucceededDepositRefund || Boolean(order.deposit_refund_at) || order.deposit_status === 'REFUNDED')
+}

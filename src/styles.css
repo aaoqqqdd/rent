@@ -11793,8 +11793,10 @@ td.mono, td code, td [style*="monospace"] {
 .button-success { background: var(--c-ok); border-color: var(--c-ok); color: #fff; }
 .button-success:hover { background: #155a3f; border-color: #155a3f; }
 
-.button-warning { background: var(--c-warn-tint); border-color: #e8cfa6; color: var(--c-warn); }
-.button-warning:hover { background: var(--c-warn); border-color: var(--c-warn); color: #fff; }
+.button-warning,
+button.button-warning { background: var(--c-warn-tint) !important; border-color: #e8cfa6; color: var(--c-warn); }
+.button-warning:hover,
+button.button-warning:hover { background: var(--c-warn) !important; border-color: var(--c-warn); color: #fff; }
 
 .button-danger { background: var(--c-danger); border-color: var(--c-danger); color: #fff; }
 .button-danger:hover { background: #8f1f18; border-color: #8f1f18; }
