@@ -15,6 +15,7 @@ import { getCloudinaryConfigSummary, saveCloudinaryConfig } from '../../lib/clou
 import { enqueueAgreementUpdate } from '../../services/notifications'
 import { normalizeTallyEmbedUrl } from '../../lib/tally'
 import { hasValidPickupTimeSettings, pickupTimeSettings } from '../../domain/pickupTimeSlots'
+import { validateReferralSettings } from '../../domain/referral'
 
 /** 保存协议更新记录，实际通知由定时任务统一发送。 */
 export async function notifyAgreementUpdate(c: Context, changedAgreements: Array<[string, string]>, _companyDetails?: any, _changedContent = ''): Promise<void> {
@@ -40,6 +41,15 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
   // Otherwise a fresh worker can overwrite database-backed agreements with
   // the in-code defaults when only company settings are being saved.
   await loadSystemSettingsFromDB(c)
+
+  const referralSettings = {
+    defaultRate: Number(payload.referralSettings?.defaultRate ?? getSystemSettings().referralSettings.defaultRate),
+    levelLimit: Number(payload.referralSettings?.levelLimit ?? getSystemSettings().referralSettings.levelLimit),
+    referralsPerLevel: Number(payload.referralSettings?.referralsPerLevel ?? getSystemSettings().referralSettings.referralsPerLevel),
+    rateIncreasePerLevel: Number(payload.referralSettings?.rateIncreasePerLevel ?? getSystemSettings().referralSettings.rateIncreasePerLevel),
+    settlementPeriod: Number(payload.referralSettings?.settlementPeriod ?? getSystemSettings().referralSettings.settlementPeriod),
+  }
+  validateReferralSettings(referralSettings)
 
   const currentFeedbackRewards = getSystemSettings().feedbackRewards
   const pickupHours = pickupTimeSettings({
@@ -123,11 +133,7 @@ export async function handleSaveAdminSettings(c: Context): Promise<Response> {
       alipayQrUrl: String(payload.rmbPayment?.alipayQrUrl ?? getSystemSettings().rmbPayment.alipayQrUrl).trim().slice(0, 500),
       wechatQrUrl: String(payload.rmbPayment?.wechatQrUrl ?? getSystemSettings().rmbPayment.wechatQrUrl).trim().slice(0, 500),
     },
-    referralSettings: {
-      defaultRate: Number(payload.referralSettings?.defaultRate ?? getSystemSettings().referralSettings.defaultRate),
-      levelLimit: Number(payload.referralSettings?.levelLimit ?? getSystemSettings().referralSettings.levelLimit),
-      settlementPeriod: Number(payload.referralSettings?.settlementPeriod ?? getSystemSettings().referralSettings.settlementPeriod),
-    },
+    referralSettings,
     rentalRules: {
       unavailableDates: Array.isArray(payload.rentalRules?.unavailableDates)
         ? payload.rentalRules.unavailableDates.map((value: unknown) => String(value).trim()).filter((value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)).slice(0, 366)

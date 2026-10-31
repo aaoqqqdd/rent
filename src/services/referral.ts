@@ -13,6 +13,7 @@ import { logError } from './audit'
 import { recordFinancialLedgerEntry } from './ledger'
 import { createNotification, ensureNotificationsTable } from './notifications'
 import { getReferralRiskAssessment } from './risk'
+import { calculateReferralRent, calculateReferralTier } from '../domain/referral'
 
 import { nanoid } from 'nanoid'
 
@@ -86,10 +87,23 @@ export async function lockReferralRelationship(c: Context, referrerId: string | 
   ])
 }
 
+export async function getEffectiveReferralCount(c: Context, referrerId: string, excludeReferralId = ''): Promise<number> {
+  // EXISTS avoids counting split withdrawal rewards or repeat orders twice.
+  const row = await c.env.RENT.prepare(`
+    SELECT COUNT(*) AS count FROM referrals r
+    JOIN orders o ON o.id = r.qualifying_order_id
+    WHERE r.referrer_customer_id = ? AND r.id <> ?
+      AND r.status IN ('QUALIFIED', 'REWARDED')
+      AND o.payment_status = 'PAID' AND o.rental_status = 'COMPLETED'
+      AND EXISTS (SELECT 1 FROM referral_rewards rw WHERE rw.referral_id = r.id AND rw.status NOT IN ('CANCELLED', 'REVERSED'))
+  `).bind(referrerId, excludeReferralId).first() as any
+  return Number(row?.count || 0)
+}
+
 export async function syncReferralOrderState(c: Context, orderId: string, rentalStatus: string): Promise<void> {
   if (!['ACTIVE', 'COMPLETED', 'CANCELLED'].includes(rentalStatus)) return
   await ensureReferralProgram(c)
-  const order = await c.env.RENT.prepare('SELECT id, userId, payment_status, totalAmount, depositAmount FROM orders WHERE id = ?').bind(orderId).first() as any
+  const order = await c.env.RENT.prepare('SELECT id, userId, payment_status, totalAmount, depositAmount, deliveryFee, serviceFee FROM orders WHERE id = ?').bind(orderId).first() as any
   if (!order) return
   const referral = await c.env.RENT.prepare("SELECT id, referrer_customer_id, referee_customer_id FROM referrals WHERE referee_customer_id = ? AND status IN ('REGISTERED','QUALIFYING','QUALIFIED')").bind(order.userId).first() as any
   if (!referral) return
@@ -97,11 +111,13 @@ export async function syncReferralOrderState(c: Context, orderId: string, rental
     await c.env.RENT.prepare("UPDATE referrals SET status = 'CANCELLED', invalid_reason = 'ORDER_CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(referral.id).run()
     await revokeReferralRewardForOrder(c, orderId, '订单已取消')
   } else if (order.payment_status === 'PAID' && rentalStatus === 'ACTIVE') {
-    await c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFYING', qualifying_order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id).run()
+    await c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFYING', qualifying_order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('REGISTERED', 'QUALIFYING')").bind(orderId, referral.id).run()
   } else if (order.payment_status === 'PAID' && rentalStatus === 'COMPLETED') {
-    const rentAmount = Math.max(0, Number(order.totalAmount || 0) - Number(order.depositAmount || 0))
-    const rate = Math.min(100, Math.max(0, Number(getSystemSettings().referralSettings.defaultRate || 0))) / 100
-    const rewardAmount = Number((rentAmount * rate).toFixed(2))
+    if (await c.env.RENT.prepare('SELECT id FROM referral_rewards WHERE referral_id = ?').bind(referral.id).first()) return
+    const rentAmount = calculateReferralRent(order)
+    const effectiveReferrals = await getEffectiveReferralCount(c, referral.referrer_customer_id, referral.id)
+    const tier = calculateReferralTier(effectiveReferrals + 1, getSystemSettings().referralSettings)
+    const rewardAmount = Number((rentAmount * tier.rate / 100).toFixed(2))
     const [referrerRisk, refereeRisk] = await Promise.all([
       getReferralRiskAssessment(c, String(referral.referrer_customer_id)),
       getReferralRiskAssessment(c, String(referral.referee_customer_id)),
@@ -113,8 +129,8 @@ export async function syncReferralOrderState(c: Context, orderId: string, rental
       : '订单已完成，等待结算期满后发放'
     const rewardId = `rrw-${nanoid(16)}`
     const batchResults = await c.env.RENT.batch([
-      c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFIED', qualifying_order_id = ?, qualified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(orderId, referral.id),
-      c.env.RENT.prepare("INSERT OR IGNORE INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_amount, status, reason) SELECT ?, ?, r.id, r.referrer_customer_id, ?, ?, ?, ? FROM referrals r WHERE r.id = ?").bind(rewardId, generateReferenceNumber('RFD').replace(/^RFD-/, 'RRW-'), orderId, rewardAmount, rewardStatus, rewardReason, referral.id),
+      c.env.RENT.prepare("UPDATE referrals SET status = 'QUALIFIED', qualifying_order_id = ?, qualified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND NOT EXISTS (SELECT 1 FROM referral_rewards WHERE referral_id = ?)").bind(orderId, referral.id, referral.id),
+      c.env.RENT.prepare("INSERT OR IGNORE INTO referral_rewards (id, reward_number, referral_id, customer_id, order_id, reward_amount, status, reason) SELECT ?, ?, r.id, r.referrer_customer_id, ?, ?, ?, ? FROM referrals r WHERE r.id = ? AND NOT EXISTS (SELECT 1 FROM referral_rewards WHERE referral_id = r.id)").bind(rewardId, generateReferenceNumber('RFD').replace(/^RFD-/, 'RRW-'), orderId, rewardAmount, rewardStatus, rewardReason, referral.id),
       ...(requiresReview ? [c.env.RENT.prepare("INSERT INTO referral_audit_logs (id, referral_id, action, reason, metadata) VALUES (?, ?, 'RISK_REVIEW_REQUIRED', ?, ?)").bind(`rfa-${nanoid(16)}`, referral.id, rewardReason, JSON.stringify({ rewardId, referrerScore: referrerRisk.score, refereeScore: refereeRisk.score }))] : []),
     ])
     if (requiresReview && Number((batchResults as any[])?.[1]?.meta?.changes ?? (batchResults as any[])?.[1]?.changes ?? 0)) {

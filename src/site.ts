@@ -38,6 +38,7 @@ import { generateUserId, generateReferralCode } from './lib/userId'
 import { validateHostedImageUrls } from './lib/hostedImages'
 import { uploadCloudinaryImage, uploadCloudinaryImages } from './lib/cloudinary'
 import { safeJsonParse } from './lib/json'
+import { normalizeReferralSettings } from './domain/referral'
 import { injectTableDataLabels } from './lib/tableLabels'
 import { dispatchChannelAlert } from './notifyChannels'
 
@@ -934,7 +935,7 @@ export async function loadSystemSettingsFromDB(c: Context): Promise<typeof syste
   // shape when loading those rows so all bank fields remain available to the UI.
   if (parsedBankDetails) systemSettings.bankDetails = { ...systemSettings.bankDetails, ...parsedBankDetails }
   if (parsedRmbPayment) systemSettings.rmbPayment = { ...systemSettings.rmbPayment, ...parsedRmbPayment }
-  if (parsedReferralSettings) systemSettings.referralSettings = parsedReferralSettings
+  if (parsedReferralSettings) systemSettings.referralSettings = normalizeReferralSettings(parsedReferralSettings)
   if (parsedCompanyDetails) systemSettings.companyDetails = { ...systemSettings.companyDetails, ...parsedCompanyDetails }
   if (parsedTaxInvoiceTemplate) systemSettings.taxInvoiceTemplate = { ...systemSettings.taxInvoiceTemplate, ...parsedTaxInvoiceTemplate }
   if (parsedRentalRules) systemSettings.rentalRules = { ...systemSettings.rentalRules, ...parsedRentalRules }

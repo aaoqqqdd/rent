@@ -5,6 +5,9 @@
 
 import { buildLayout, getUserById, formatCurrency, formatMelbourneDate } from '../../site';
 import { Context } from 'hono';
+import { getSystemSettings } from '../../settings/systemSettings';
+import { calculateReferralTier } from '../../domain/referral';
+import { getEffectiveReferralCount } from '../../services/referral';
 
 function desensitizeName(name: string): string {
   const n = name || ''
@@ -29,6 +32,7 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
   type RewardRow = { amount: number; status: string; withdrawn_at: string | null }
   const records = (rewardRows.results || []) as RewardRow[]
   const commissionBalance = Number(currentUser.commissionBalance || 0)
+  const tier = calculateReferralTier(await getEffectiveReferralCount(c, user.id), getSystemSettings().referralSettings)
 
   const active = records.filter((r) => !['CANCELLED', 'REVERSED'].includes(r.status))
   const totalReward = active.reduce((sum, r) => sum + (r.amount || 0), 0)
@@ -88,6 +92,12 @@ export async function renderCustomerReferral(c: Context, user: any, message?: st
       `}
 
       ${currentUser.referralCode ? `
+
+      <div class="grid grid-3">
+        <div class="card text-center"><h3>当前推荐等级</h3><p class="text-large">${tier.level}</p></div>
+        <div class="card text-center"><h3>当前租金分成比例</h3><p class="text-large">${tier.rate}%</p></div>
+        <div class="card text-center"><h3>有效推荐人数</h3><p class="text-large">${tier.effectiveReferrals}</p>${tier.referralsToNextLevel ? `<p class="form-text">距下一级还需 <strong>${tier.referralsToNextLevel}</strong> 人</p>` : '<p class="form-text">已达最高等级</p>'}</div>
+      </div>
 
       <div class="grid grid-3" style="margin-top: 30px;">
         <div class="card text-center">

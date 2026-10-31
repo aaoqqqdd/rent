@@ -99,12 +99,15 @@ export function renderAdminSettings(user: any) {
         </section>
 
         <section class="form-section">
-          <div class="form-section-title"><span class="mono">REF</span><div><h3>推荐分成规则</h3><p>控制推荐返佣比例、层级深度和结算周期。</p></div></div>
+          <div class="form-section-title"><span class="mono">REF</span><div><h3>推荐分成规则</h3><p>分成基数：租金</p></div></div>
           <div class="grid grid-3">
-            <div class="form-group"><label class="form-label" for="defaultReferralRate">默认推荐分成比例 (%)</label><input type="number" id="defaultReferralRate" name="defaultReferralRate" class="form-control" value="${settings.referralSettings.defaultRate}" min="0" max="100"></div>
-            <div class="form-group"><label class="form-label" for="referralLevelLimit">推荐层级限制</label><input type="number" id="referralLevelLimit" name="referralLevelLimit" class="form-control" value="${settings.referralSettings.levelLimit}" min="0"></div>
-            <div class="form-group"><label class="form-label" for="referralSettlementPeriod">分成结算周期 (天)</label><input type="number" id="referralSettlementPeriod" name="referralSettlementPeriod" class="form-control" value="${settings.referralSettings.settlementPeriod}" min="1"></div>
+            <div class="form-group"><label class="form-label" for="defaultReferralRate">基础分成比例（1级，%）</label><input type="number" id="defaultReferralRate" name="defaultReferralRate" class="form-control" value="${settings.referralSettings.defaultRate}" min="0" max="100" step="0.01" required></div>
+            <div class="form-group"><label class="form-label" for="referralLevelLimit">最高推荐等级</label><input type="number" id="referralLevelLimit" name="referralLevelLimit" class="form-control" value="${settings.referralSettings.levelLimit}" min="1" step="1" required></div>
+            <div class="form-group"><label class="form-label" for="referralsPerLevel">每级所需有效推荐人数</label><input type="number" id="referralsPerLevel" name="referralsPerLevel" class="form-control" value="${settings.referralSettings.referralsPerLevel}" min="1" step="1" required></div>
+            <div class="form-group"><label class="form-label" for="referralRateIncrease">每级累计增加（百分点）</label><input type="number" id="referralRateIncrease" name="referralRateIncrease" class="form-control" value="${settings.referralSettings.rateIncreasePerLevel}" min="0" max="100" step="0.01" required></div>
+            <div class="form-group"><label class="form-label" for="referralSettlementPeriod">分成结算周期 (天)</label><input type="number" id="referralSettlementPeriod" name="referralSettlementPeriod" class="form-control" value="${settings.referralSettings.settlementPeriod}" min="1" step="1" required></div>
           </div>
+          <small class="form-text">有效推荐：已付款并完成租赁；分成最高 100%。</small>
         </section>
 
         <div class="form-actions form-actions-right">
@@ -195,6 +198,10 @@ export function renderAdminSettings(user: any) {
         }
 
         const formData = new FormData(this);
+        const referralInputs = ['defaultReferralRate', 'referralLevelLimit', 'referralsPerLevel', 'referralRateIncrease', 'referralSettlementPeriod'];
+        for (const id of referralInputs) {
+          if (!document.getElementById(id).reportValidity()) return;
+        }
         const inputValue = (id) => document.getElementById(id)?.value || '';
         const timeRanges = kind => Array.from(document.querySelectorAll('[data-range-row="' + kind + '"]')).map(row => {
           const values = Array.from(row.querySelectorAll('input')).map(input => input.value);
@@ -261,9 +268,11 @@ export function renderAdminSettings(user: any) {
             bufferDays: Number(formData.get('bufferDays') || 0),
           },
           referralSettings: {
-            defaultRate: parseInt(formData.get('defaultReferralRate')),
-            levelLimit: parseInt(formData.get('referralLevelLimit')),
-            settlementPeriod: parseInt(formData.get('referralSettlementPeriod')),
+            defaultRate: Number(formData.get('defaultReferralRate')),
+            levelLimit: Number(formData.get('referralLevelLimit')),
+            referralsPerLevel: Number(formData.get('referralsPerLevel')),
+            rateIncreasePerLevel: Number(formData.get('referralRateIncrease')),
+            settlementPeriod: Number(formData.get('referralSettlementPeriod')),
           },
         };
         

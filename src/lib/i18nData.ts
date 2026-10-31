@@ -2347,6 +2347,12 @@ const status: Readonly<Record<string, string>> = {}
 
 // @domain admin —— 管理员端页面文案
 const admin: Readonly<Record<string, string>> = {
+  '分成基数：租金': 'Commission basis: rent',
+  '基础分成比例（1级，%）': 'Base commission rate (level 1, %)',
+  '最高推荐等级': 'Maximum referral level',
+  '每级所需有效推荐人数': 'Qualifying referrals per level',
+  '每级累计增加（百分点）': 'Cumulative increase per level (percentage points)',
+  '有效推荐：已付款并完成租赁；分成最高 100%。': 'Qualifying referrals: paid and completed rentals; commission capped at 100%.',
   '这是今天的经营概况': 'today\'s operations overview',
   '已确认收入 / REVENUE': 'Revenue confirmed / REVENUE',
   '进行中租赁': 'Active rentals',
@@ -3878,6 +3884,11 @@ const staff: Readonly<Record<string, string>> = {
 
 // @domain customer —— 客户 / 访客端页面文案
 const customer: Readonly<Record<string, string>> = {
+  '当前推荐等级': 'Current referral level',
+  '当前租金分成比例': 'Current rent commission rate',
+  '有效推荐人数': 'Qualifying referrals',
+  '距下一级还需': 'Referrals needed for the next level:',
+  '已达最高等级': 'Maximum level reached',
   '账户余额 / BALANCE': 'Account balance / BALANCE',
   '账户余额 /': 'Account balance /',
   '使用中': 'In use',
@@ -4433,6 +4444,8 @@ const legal: Readonly<Record<string, string>> = {
 
 // @domain errors —— 错误与空状态提示
 const errors: Readonly<Record<string, string>> = {
+  '推荐分成比例和每级加成必须在 0% 到 100% 之间': 'Referral commission and per-level increases must be between 0% and 100%',
+  '最高推荐等级、升级人数和结算天数必须为正整数': 'Maximum referral level, referrals per level and settlement days must be positive integers',
   '该订单已忽略退款': 'The refund for this order has already been dismissed',
   '该订单没有待处理退款': 'This order has no pending refund',
   '连接': 'Connection',

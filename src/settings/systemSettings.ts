@@ -3,6 +3,8 @@
  * Noncommercial use, modification, and distribution are permitted.
  * Keep this notice and the LICENSE file with all copies and modified versions. */
 
+import { DEFAULT_REFERRAL_SETTINGS } from '../domain/referral'
+
 // 系统设置的内存默认值 + 只读访问器。真正生效的值由 site.ts 的
 // loadSystemSettingsFromDB(c) 从 D1 读出后就地写回这个对象（导入的是同一个引用）。
 // 法律文档默认留空，避免 Worker 重启后把未保存的编辑误当成已持久化文档。
@@ -332,11 +334,7 @@ export const systemSettings = {
 PC Rental电脑租赁团队
 {company_phone} | {company_email}`,
   */
-  referralSettings: {
-    defaultRate: 10,
-    levelLimit: 3,
-    settlementPeriod: 30,
-  },
+  referralSettings: { ...DEFAULT_REFERRAL_SETTINGS },
 }
 
 // Legal documents must come from D1. Empty defaults prevent an unsaved edit
